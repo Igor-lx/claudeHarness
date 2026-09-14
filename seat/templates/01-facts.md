@@ -19,6 +19,7 @@
 | --- | --- |
 | `task` | `.claude/skills/task/SKILL.md` |
 | `probe` | `.claude/skills/probe/SKILL.md` |
+| `handoff` | `.claude/skills/handoff/SKILL.md` |
 | `audit` | `.claude/skills/audit/SKILL.md` |
 | `purpose` | `.claude/skills/purpose/SKILL.md` |
 

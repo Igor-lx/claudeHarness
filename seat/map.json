@@ -1,0 +1,61 @@
+{
+  "_": "Карта посадки: что из семян куда кладётся. Данные, а не проза — по ним работает и режим `handoff`, когда проверяет снимок посадкой, и сама посадка. Пока эта карта была только таблицей в инструкции, машине приходилось разбирать прозу, а проза и данные расходятся.",
+  "dirs": [".claude", ".context", "src", "docs"],
+  "copy": [
+    { "from": "seat/templates/settings.json", "to": ".claude/settings.json" },
+    { "from": "seat/templates/CLAUDE.md", "to": "CLAUDE.md" },
+    {
+      "from": "seat/templates/graph.config.mjs",
+      "to": ".context/graph.config.mjs"
+    },
+    { "from": "seat/templates/00-map.md", "to": ".context/00-map.md" },
+    { "from": "seat/templates/01-facts.md", "to": ".context/01-facts.md" },
+    { "from": "seat/templates/02-todo.md", "to": ".context/02-todo.md" },
+    {
+      "from": "seat/templates/07-invariants.md",
+      "to": ".context/07-invariants.md"
+    },
+    { "from": "seat/templates/08-tests.md", "to": ".context/08-tests.md" },
+    {
+      "from": "seat/templates/09-decisions.md",
+      "to": ".context/09-decisions.md"
+    },
+    { "from": "seat/templates/10-idioms.md", "to": ".context/10-idioms.md" },
+    {
+      "from": "seat/templates/11-readiness.md",
+      "to": ".context/11-readiness.md"
+    },
+    { "from": "seat/templates/12-purpose.md", "to": ".context/12-purpose.md" },
+    {
+      "from": "seat/templates/13-questions.md",
+      "to": ".context/13-questions.md"
+    },
+    { "from": "seat/templates/package.json", "to": "package.json" },
+    { "from": "seat/templates/.nvmrc", "to": ".nvmrc" },
+    { "from": "seat/templates/tsconfig.json", "to": "tsconfig.json" },
+    { "from": "seat/templates/eslint.config.js", "to": "eslint.config.js" },
+    { "from": "seat/templates/.prettierrc.json", "to": ".prettierrc.json" },
+    { "from": "seat/templates/.prettierignore", "to": ".prettierignore" },
+    { "from": "seat/templates/src/index.ts", "to": "src/index.ts" },
+    {
+      "from": "seat/templates/docs/CONVENTIONS.md",
+      "to": "docs/CONVENTIONS.md"
+    },
+    { "from": "seat/templates/docs/FEATURES.md", "to": "docs/FEATURES.md" }
+  ],
+  "later": [
+    {
+      "from": "seat/templates/stryker.config.json",
+      "to": "stryker.config.json",
+      "when": "с первыми тестами"
+    }
+  ],
+  "fromDoctrine": [
+    {
+      "block": "gitattributes",
+      "in": "rules/environment.md",
+      "to": ".gitattributes"
+    }
+  ],
+  "projectOwnedInsideHarness": ["settings.json", "settings.local.json"]
+}

@@ -16,7 +16,7 @@
       "Bash(npx prettier --write *)",
       "Bash(npm run test:coverage)",
       "Bash(npx stryker run *)",
-      "Bash(node .claude/work/tools/graph.mjs *)",
+      "Bash(node .claude/tools/graph.mjs *)",
       "Bash(grep *)",
       "Bash(sed -n *)",
       "Bash(cat *)",

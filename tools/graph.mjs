@@ -1,11 +1,14 @@
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,10 +28,10 @@ import {
 // проектное живёт в этом файле и только в нём.
 //
 // Путь фиксирован раскладкой: обвязка лежит в `.claude/`, база — в `.context/`,
-// обе соседями в корне проекта. Инструмент поэтому поднимается на три уровня и
+// обе соседями в корне проекта. Инструмент поэтому поднимается на два уровня и
 // спускается в базу. Менять адрес — значит менять раскладку, а она объявлена в
 // инструкции посадки.
-import { BASE, CONFIG } from "../../../.context/graph.config.mjs";
+import { BASE, CONFIG } from "../../.context/graph.config.mjs";
 
 /** Папка самого инструмента. Нужна ровно там, где речь о его собственных
  * соседях — справочнике режимов и словаре области. Всё остальное считается от
@@ -599,7 +602,7 @@ const mode = process.argv[2];
 // Неизвестный или пропущенный режим — отказ, а не молчание.
 //
 // До этого инструмент на `graph.mjs verfiy` печатал пусто и отдавал `0`. В
-// цепочке проверок последним звеном стоит `node .claude/work/tools/graph.mjs verify`:
+// цепочке проверок последним звеном стоит `node .claude/tools/graph.mjs verify`:
 // опечатка там — или режим, переименованный в инструменте и не переименованный
 // в манифесте — делали бы прогон зелёным, не проверив ничего. Сверка звеньев
 // цепочки этого не видит: она смотрит имена npm-скриптов, а не режимы.
@@ -699,6 +702,149 @@ const reportUnknown = (given) => {
   return true;
 };
 
+// --- handoff: собрать обвязку для передачи -----------------------------------
+//
+// Отвечает на вопрос «что именно копировать, чтобы папка была самодостаточной».
+// Раньше ответ держался памятью и звучал как «эта папка плюс те файлы, и не
+// забыть вот это» — форма, которая ломается через месяц.
+//
+// Отбор ИСКЛЮЧАЮЩИЙ, а не включающий: копируется всё, кроме объявленного
+// проектного. Включающий список отстал бы от первого же нового файла доктрины,
+// и снимок уехал бы неполным молча.
+if (mode === "handoff") {
+  const dest = process.argv[3];
+  if (dest === undefined) {
+    console.log("Укажи путь: node <инструмент> handoff <куда собрать>");
+    process.exit(1);
+  }
+  if (SHELF === null) {
+    console.log("=== Обвязка не заявлена ===");
+    console.log("  В настройке проекта поле `shelf` пусто: собирать нечего.");
+    process.exit(1);
+  }
+  const mapAt = path.join(SHELF, "seat/map.json");
+  if (!existsSync(mapAt)) {
+    console.log("=== Карты посадки нет ===");
+    console.log("  Ожидалась: " + rel0(mapAt));
+    process.exit(1);
+  }
+  const NEWLINE = String.fromCharCode(10);
+  const CRLF = String.fromCharCode(13) + NEWLINE;
+  const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+  const skip = new Set(seatMap.projectOwnedInsideHarness ?? []);
+
+  const copied = [];
+  const copyTree = (from, to) => {
+    mkdirSync(to, { recursive: true });
+    for (const e of readdirSync(from)) {
+      if (OUT_OF_TREE.has(e)) continue;
+      const src = path.join(from, e);
+      const rel = path.relative(SHELF, src).split(path.sep).join("/");
+      if (skip.has(rel)) continue;
+      if (statSync(src).isDirectory()) copyTree(src, path.join(to, e));
+      else {
+        // Концы строк приводятся к одному виду: снимок едет между машинами, а
+        // на машине с иной политикой многострочная правка перестаёт находиться.
+        writeFileSync(
+          path.join(to, e),
+          readFileSync(src, "utf8").split(CRLF).join(NEWLINE),
+        );
+        copied.push(rel);
+      }
+    }
+  };
+
+  const root = path.resolve(dest);
+  const claudeAt = path.join(root, ".claude");
+  copyTree(SHELF, claudeAt);
+
+  // Памятка получателю лежит РЯДОМ с папкой, а не внутри неё. Внутри она
+  // сделала бы обвязку не той же самой, и сверка состава краснела бы на файле,
+  // которого в обвязке быть не должно.
+  const stamp = new Date().toISOString().slice(0, 10);
+  writeFileSync(
+    path.join(root, "ЧИТАТЬ-ПЕРВЫМ.md"),
+    [
+      "# Обвязка: что это и что с ней делать",
+      "",
+      "Рядом лежит папка `.claude` — это рабочий порядок: правила качества,",
+      "устройство базы знаний, счётный инструмент, скиллы и заготовки всех",
+      "файлов, которые нужны новому проекту.",
+      "",
+      "## Что сделать",
+      "",
+      "1. Скопировать папку `.claude` в корень своего проекта — как есть, с",
+      "   точкой в начале имени. Переименовывать ничего не нужно.",
+      "2. Сказать ассистенту: **посади обвязку**. Дальше он работает по",
+      "   инструкции внутри — `.claude/seat/seat.md`.",
+      "",
+      "**Если в проекте уже есть `.claude`** — не затирать её целиком: файл",
+      "`settings.json` принадлежит проекту, а не обвязке. Посадка это учитывает",
+      "и существующие файлы не перезаписывает.",
+      "",
+      "**На macOS и Linux папка с точкой скрыта.** Копировать командой либо",
+      "включить показ скрытых файлов.",
+      "",
+      "## Откуда снимок",
+      "",
+      "- собран: " + stamp,
+      "- файлов: " + copied.length,
+      "- проверен посадкой в пустую папку: см. вывод сборки",
+    ].join(NEWLINE) + NEWLINE,
+  );
+
+  console.log("=== Собрано ===");
+  console.log("  файлов: " + copied.length + " → " + norm(claudeAt));
+
+  // Самопроверка: снимок сажается в пустую папку и прогоняется сверкой.
+  // Без неё «самодостаточна» остаётся обещанием: собранная папка, в которой
+  // чего-то не хватает, выглядит ровно так же, как полная, и обнаруживается
+  // это у получателя через неделю.
+  const probe = path.join(root, ".проба-посадки");
+  try {
+    rmSync(probe, { recursive: true, force: true });
+    for (const d of seatMap.dirs)
+      mkdirSync(path.join(probe, d), { recursive: true });
+    copyTree(claudeAt, path.join(probe, ".claude"));
+    for (const one of seatMap.copy) {
+      const src = path.join(claudeAt, one.from);
+      const dst = path.join(probe, one.to);
+      if (!existsSync(src)) throw new Error("в снимке нет семени: " + one.from);
+      mkdirSync(path.dirname(dst), { recursive: true });
+      writeFileSync(dst, readFileSync(src, "utf8"));
+    }
+    const out = execFileSync(
+      process.execPath,
+      [path.join(probe, ".claude/tools/graph.mjs"), "verify"],
+      { encoding: "utf8", cwd: probe },
+    );
+    const red = out
+      .split(NEWLINE)
+      .filter((l) => /^ {4}S/.test(l))
+      .filter((l) => !l.includes("<"));
+    console.log("=== Снимок проверен посадкой ===");
+    console.log(
+      red.length === 0
+        ? "  посажен в пустую папку, сверка базы — код 0. Снимок годен."
+        : "  сверка нашла расхождений: " + red.length,
+    );
+    for (const r of red) console.log("  " + r.trim());
+    if (red.length) process.exitCode = 1;
+  } catch (e) {
+    console.log("=== Снимок НЕ прошёл проверку ===");
+    // Печатается вывод СВЕРКИ, а не текст исключения: «команда завершилась
+    // ошибкой» не говорит, чего не хватило, и чинить по нему нечего.
+    const said = String(e.stdout ?? "").split(NEWLINE);
+    const red = said.filter((l) => /^ {4}S/.test(l) && !l.includes("<"));
+    if (red.length) for (const r of red) console.log("  " + r.trim());
+    else console.log("  " + String(e.message).split(NEWLINE)[0]);
+    console.log("  Отдавать его нельзя: у получателя он не встанет.");
+    process.exitCode = 1;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+  process.exit(process.exitCode ?? 0);
+}
 if (mode === "dead") {
   console.log(
     "=== Экспорты, которые нигде не импортируют (тесты включены) ===\n",
@@ -775,7 +921,7 @@ if (mode === "plan") {
   const hits = matched.filter((f) => !isTest(f));
   if (!arg) {
     console.log(
-      "Укажи путь: node .claude/work/tools/graph.mjs plan <путь или его хвост>",
+      "Укажи путь: node .claude/tools/graph.mjs plan <путь или его хвост>",
     );
     process.exitCode = 1;
   } else if (hits.length === 0 && matched.length > 0) {
@@ -982,9 +1128,9 @@ if (mode === "open") {
   // поэтому здесь фильтра больше нет.
   const docBodies = docFiles.map((d) => [rel(d), readFileSync(d, "utf8")]);
   const unanchored = [];
-  // Имя файла без папки — ещё не адрес. `defaults.ts` лежит в трёх местах, и
-  // документация карусели про `config/defaults.ts` засчитывалась полке
-  // `engines/kinetic/internal/defaults.ts`: пункт, который нельзя закрыть, —
+  // Имя файла без папки — ещё не адрес. Одноимённый файл лежал в проекте в трёх
+  // местах, и документ про один из них засчитывался другому, в соседней папке:
+  // пункт, который нельзя закрыть, —
   // якорь из полки на документы компонента как раз и есть та связь, которой в
   // полке быть не должно. Поэтому для неуникальных имён требуем два последних
   // сегмента пути; для уникальных прежнего имени достаточно.
@@ -1206,7 +1352,7 @@ if (mode === "tested") {
     // `touchedCode` он не попадает, и раньше правка стилей получала ответ
     // «правка кода не касается». Между тем держат стили как раз тесты, читающие
     // их ТЕКСТОМ: соответствие переменных, слои, фолбэки. Найдено пробой:
-    // тронутый `Carousel.module.scss` не назвал ни одного из пяти своих тестов.
+    // тронутый файл стилей не назвал ни одного из своих тестов, а их было пять.
     const touchedStyles = [...touched].filter(
       (f) => styleFiles.includes(f) && existsSync(f),
     );
@@ -1944,7 +2090,7 @@ if (mode === "brief") {
   const arg = argPath(process.argv[3]);
   if (!arg) {
     console.log(
-      "Укажи путь: node .claude/work/tools/graph.mjs brief <путь или его хвост>",
+      "Укажи путь: node .claude/tools/graph.mjs brief <путь или его хвост>",
     );
     process.exitCode = 1;
   } else {
@@ -2170,24 +2316,15 @@ if (mode === "verify") {
 
   // Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу
   // раздела, затем по однозначному суффиксу.
+  // Сокращения объявлены НАСТРОЙКОЙ, а не зашиты сюда. Прежде здесь стояла
+  // раскладка одного конкретного проекта: префиксы его папок разрешались в его
+  // же адреса. В любом другом проекте те же префиксы указывали в несуществующие
+  // места — и делали это молча, потому что неразрешённый адрес просто уходил
+  // дальше по цепочке разрешения. Найдено поиском следов проекта в обвязке.
   const expand = (q) => {
     if (q.startsWith("src/")) return path.join(REPO, q);
-    if (
-      q.startsWith("client/") ||
-      q.startsWith("boundary/") ||
-      q.startsWith("data-gen/")
-    )
-      return path.join(REPO, "src/components/Carousel", q);
-    if (q.startsWith("docs/") || q.startsWith("modules/"))
-      return path.join(REPO, "src/components/Carousel/client", q);
-    if (q.startsWith("basic/") || q.startsWith("widget/"))
-      return path.join(
-        REPO,
-        "src/components/Carousel/client/modules/Pagination",
-        q,
-      );
-    if (q.startsWith("shared/") || q.startsWith("app/"))
-      return path.join(REPO, "src", q);
+    for (const [prefix, base] of CONFIG.pathShortcuts ?? [])
+      if (q.startsWith(prefix)) return path.join(REPO, base, q);
     return null;
   };
 
@@ -2306,7 +2443,7 @@ if (mode === "verify") {
   const HEAD_RE = /^#{2,4}[^`]*`([^`]+)`/;
   const HEAD_FILES_RE = /`([\w./{},*-]+\.(?:tsx|ts|scss))`/g;
   const ANCHOR_TAIL = /\.(tsx?|scss|md|json|html)$/;
-  // Якорь с цитатой: (`:31` `export const buildCarouselLayout`). Номер съедет
+  // Якорь с цитатой: номер строки плюс сама конструкция в кавычках. Номер съедет
   // от любой вставки выше, цитата — нет, поэтому проверяется именно она.
   //
   // Цитата есть у единиц, а номер съезжает у всех. Поэтому у якоря без цитаты
@@ -3335,9 +3472,9 @@ if (mode === "verify") {
       CONFIG.questions,
     ]);
   if (SHELF !== null) {
-    const at = shelfAt("work/questions.md");
+    const at = shelfAt("state/questions.md");
     if (at !== null && existsSync(at))
-      questionLists.push(["доктрина", at, "work/questions.md"]);
+      questionLists.push(["доктрина", at, "state/questions.md"]);
   }
   for (const [origin, at, shown] of questionLists) {
     if (!existsSync(at)) {
@@ -3758,7 +3895,8 @@ if (mode === "verify") {
     //
     // Форма подстановки — угловые скобки с ЗАГЛАВНОЙ кириллицей либо многоточие.
     // Уже, чем «любые угловые скобки», и намеренно: замерено, что в живых
-    // правилах законно стоят `<Carousel>`, `<Diagnostic />` и десяток `<путь>` —
+    // правилах законно стоят имена компонентов в угловых скобках и десяток
+    // оборотов вида `<путь>` —
     // на них сверка кричала бы. Латиница исключена по той же причине: в базе
     // законно стоит `<T>`, параметр обобщённого типа. Замер по всему
     // репозиторию дал попадания только в самой заготовке и в цитатах инструкции
@@ -4540,44 +4678,53 @@ if (mode === "verify") {
 
   const unexplained = [];
   {
-    // Спрашивается только с СЕМЯН. Остальное — доктрина, инструмент, скиллы —
-    // переносится папкой целиком, и перечислять его в инструкции незачем:
-    // забыть при копировании папки нечего. У семени назначение своё: оно едет
-    // в конкретное место проекта под конкретным именем, и это соответствие
-    // существует только в тексте инструкции. Прежде сверка спрашивала со всей
-    // полки — тогда файлы копировались по одному, и пропущенный оставался в
-    // старом месте молча.
-    const instructionAt = shelfAt("seat/seat.md");
+    // Спрашивается с СЕМЯН, и спрашивается по КАРТЕ ПОСАДКИ, а не по прозе.
+    //
+    // Остальное — доктрина, инструмент, скиллы — переносится папкой целиком, и
+    // перечислять его незачем: забыть при копировании папки нечего. У семени
+    // назначение своё: оно едет в конкретное место проекта под конкретным
+    // именем, и это соответствие существует только в карте.
+    //
+    // Прежде сверка смотрела в таблицу инструкции, а карта появилась рядом с
+    // теми же данными — и они разошлись бы при первой правке. Источник теперь
+    // один: карту читает и эта сверка, и самопроверка снимка, и посадка.
+    const mapAt = shelfAt("seat/map.json");
     const seedsAt = shelfAt("seat/templates");
     if (
       SHELF !== null &&
-      instructionAt !== null &&
-      existsSync(instructionAt) &&
+      mapAt !== null &&
+      existsSync(mapAt) &&
       seedsAt !== null &&
       existsSync(seedsAt)
     ) {
-      const text = readFileSync(instructionAt, "utf8");
-      (function walkShelf(dir) {
+      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+      const placed = new Set(
+        [...(seatMap.copy ?? []), ...(seatMap.later ?? [])].map((c) => c.from),
+      );
+      (function walkSeeds(dir) {
         for (const entry of readdirSync(dir)) {
           if (OUT_OF_TREE.has(entry)) continue;
           const full = path.join(dir, entry);
           if (statSync(full).isDirectory()) {
-            walkShelf(full);
+            walkSeeds(full);
             continue;
           }
           const rel = path.relative(SHELF, full).split(path.sep).join("/");
-          // Сравнение по ПОЛНОМУ пути, а не по имени файла: имя совпадало с
-          // чужим упоминанием, и семя считалось объяснённым строкой про
-          // одноимённый файл базы. Замер при заведении семян: из тринадцати
-          // новых файлов сверка увидела пять.
-          if (text.includes(rel)) continue;
-          unexplained.push(rel);
+          if (placed.has(rel)) continue;
+          unexplained.push(
+            rel + " — семя без адреса назначения в карте посадки",
+          );
         }
       })(seedsAt);
+      // Обратная сторона: карта называет семя, которого нет. Без неё запись
+      // переживает удалённый файл, и посадка падает на копировании.
+      for (const one of placed)
+        if (!existsSync(path.join(SHELF, one)))
+          unexplained.push(one + " — назван в карте посадки, а файла нет");
     }
   }
-  console.log("=== Инструкция посадки называет всё, что на полке ===");
-  console.log(`  файлов полки без объяснения: ${unexplained.length}`);
+  console.log("=== У каждого семени есть адрес назначения ===");
+  console.log(`  расхождений: ${unexplained.length}`);
   for (const u of unexplained) console.log("    " + u);
 
   // Вторая сторона предыдущей: файл доктрины назван не только в СОСТАВЕ полки,
@@ -4630,7 +4777,7 @@ if (mode === "verify") {
       // Доктрина — это папка правил, а не всё, что лежит в корне обвязки.
       // Плоский обход брал и памятку для человека, и требовал назвать её в
       // порядке чтения — то есть открывать каждой сессией описание папки.
-      const doctrineDir = shelfAt("work/rules");
+      const doctrineDir = shelfAt("rules");
       const doctrine =
         doctrineDir !== null && existsSync(doctrineDir)
           ? readdirSync(doctrineDir).filter((n) => n.endsWith(".md"))
