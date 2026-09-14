@@ -21,392 +21,18 @@ import {
   touchesRuntime,
 } from "./graph.predicates.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
+// Настройка проекта и якорь его базы. Инструмент от проекта не зависит: всё
+// проектное живёт в этом файле и только в нём.
+import { BASE, CONFIG } from "./graph.config.mjs";
 
-// --- настройка -------------------------------------------------------------
-// Единственное место, где проект задаёт свои пути и имена. Всё остальное в
-// файле от проекта не зависит: инструмент переносится копированием, и правится
-// в нём только этот блок.
-const CONFIG = {
-  /** Корень исходников, относительно папки базы. */
-  src: "../src",
-  /** Карта кода: каждый файл исходников обязан быть в ней назван. */
-  map: "00-map.md",
-  /** Реестр тестов: каждый тестовый файл обязан быть в нём назван. */
-  tests: "08-tests.md",
-  /** Каталог ограничений: адресат пометок CONSTRAINT из кода. */
-  invariants: "07-invariants.md",
-  /** Реестр решений: адресат пометок «сделано намеренно» из кода. */
-  decisions: "09-decisions.md",
-  /** Заголовок таблицы правил направления импортов, в любом файле базы. */
-  rulesHeading: null,
-  /** Заголовок таблицы изоляции — правила наоборот: слой и то, что ему
-   * РАЗРЕШЕНО импортировать, всё остальное запрещено. Нужна она потому, что
-   * запрет перечислением отстаёт от появления соседней папки и отстаёт молча:
-   * у чистого ядра в запретах стояла половина соседей, и импорт в любую из
-   * прочих проходил зелёным. Найдено пробой. */
-  isolationHeading: null,
-  /** Парные форки: папка и её копия. Копии НЕ обязаны совпадать байт в байт —
-   * одиночной библиотеке и фасадной сборке нужны местами разные решения, и это
-   * законное расхождение. Обязаны совпадать смысл, поведение и корректность:
-   * найденный БАГ чинится в обеих. Отсюда и форма проверки — не сверка
-   * содержимого, а напоминание в момент правки (режим `twins`). */
-  forks: [],
-  /** **Полка этого места — одним переключателем.**
-   *
-   * У полки две фазы, и обе у одной папки. Сперва **донор**: из неё копируют,
-   * когда ставят обвязку, и посадка в неё не пишет ничего. Дальше —
-   * **принимающая сторона**: правила и находки этого места дописываются в неё
-   * той же правкой, что и в проект, и вот тут её нельзя дать отстать — отсюда
-   * побайтовые сверки ниже и вопрос режима `twins`.
-   *
-   * `null` ставят в одном случае: проект сознательно не раздаёт обвязку дальше.
-   * Тогда всё, что зависит от полки, выключается разом. Раньше это были семь
-   * разных полей, и посадка без полки требовала погасить каждое: инструкция
-   * называла одно, а падало на шести. Найдено пробой. */
-  shelf: "../../Shelf",
-  /** Список разрешений среды: проектный и шаблон на полке. Правила и инструмент
-   * переносятся копированием, а среда — нет, и её расхождение платится не
-   * красным прогоном, а часом простоя: длинная задача встаёт на запросе
-   * подтверждения и ждёт человека, который отошёл. Сверяется **включение**, а
-   * не равенство: проект вправе добавить своё, но не вправе потерять то, что
-   * полка обещает следующему проекту. `null` — пары нет. */
-  settingsProject: "../.claude/settings.json",
-  /** Известные исключения к сверке путей в обратных кавычках: адрес, которого
-   * на диске нет намеренно. Формат `<файл>|<токен>`, причина — строкой рядом.
-   * Список короткий не случайно: разрастётся — значит проверка ловит не то, и
-   * чинить надо её, а не пополнять список. */
-  docPathExceptions: [
-    // --- полочные: адреса, которых в проекте нет и не будет ----------------
-    // Таблица разделов правил и таблица скиллов называют ФАЙЛЫ ПОЛКИ: это их
-    // предмет — «где на полке лежит оригинал». Полка лежит снаружи репозитория,
-    // поэтому изнутри эти имена неразрешимы по построению, а не по недосмотру.
-    '01-facts.md|CLAUDE.template.md',
-    '01-facts.md|task.skill.template.md',
-    '01-facts.md|probe.skill.template.md',
-    '01-facts.md|audit.skill.template.md',
-    // --- проектные: при посадке в следующий проект пересматриваются ---------
-    // Скилл входа называет два документа для человека. В проекте без кода их
-    // нет: витрине возможностей нечего показывать, а правила записи прозы
-    // приехали доктриной и лежат в копии доктрины. Появятся
-    // документы — строки умрут, и сверка «Исключения сверок используются»
-    // скажет об этом.
-    '.claude/skills/task/SKILL.md|docs/CONVENTIONS.md',
-    '.claude/skills/task/SKILL.md|docs/FEATURES.md',
-  ],
-  /** Папка, куда доктрина скопирована в проект. Её адреса и ссылки не
-   * сверяются, и это не послабление, а следствие устройства.
-   *
-   * Доктрина пишется для ЛЮБОГО проекта и называет соседей по полке —
-   * `./settings.template.json`, шаблоны скиллов, образцы форм записи. На полке
-   * они существуют и там же проверяются; в проекте их нет и быть не должно —
-   * там вместо шаблона лежит заполненный файл. Один и тот же текст в двух
-   * раскладках, и в одной из них часть его адресов не разрешима по построению.
-   *
-   * Что копию держит вместо этого: побайтовая пара с оригиналом. Текст тот же,
-   * значит и адреса те же, а проверены они там, где живут. Заводить на каждый
-   * такой адрес исключение значило бы вести список, который растёт от каждой
-   * правки доктрины и ничего не ловит.
-   *
-   * `null` — доктрина в проект не копировалась. */
-  doctrineCopies: "rules",
-  // Отложенное: закрытый пункт отсюда удаляют, а не помечают.
-  todo: "02-todo.md",
-  /** Вопросы разработчику, оставшиеся без ответа. Отдельно от отложенного
-   * намеренно: там работа с принятым решением, здесь — место, где решения нет.
-   *
-   * Машина не видит отчёта и потому не может проверить, что вопрос в нём
-   * назван. Но она может не дать ему исчезнуть: список печатается каждым
-   * прогоном, а форма записи сверяется. Обещание «назвать в отчёте» держится
-   * этой печатью и правилом отчёта — прямой опоры у него нет и быть не может.
-   *
-   * `null` — список не заведён, и тогда вопросы живут только в переписке.
-   * Именно так и терялись: заданный посреди длинного отчёта вопрос читают по
-   * диагонали, а задавшая его сессия контекст теряет и второй раз не спросит. */
-  questions: "13-questions.md",
-  /** Доктрина названа в порядке чтения шаблона правил — вторая сторона сверки
-   * «инструкция посадки называет всё, что на полке».
-   *
-   * Та держит, что файл доктрины не потеряется из СОСТАВА полки. Но состав не
-   * говорит, когда файл открывают, а всё устройство свода держится именно на
-   * этом: сессия читает не всю доктрину, а нужную в этот момент. Файл, не
-   * вписанный в порядок чтения, лежит непрочитанным — правила в нём есть, и
-   * открыть их некому. Односторонняя сверка тут и есть самый живучий класс
-   * дефекта, поэтому вторая сторона заводится, а не откладывается.
-   *
-   * Заголовки объявлены здесь, а не ищутся по словам: переформулированный
-   * заголовок дал бы пустой разбор, а пустой разбор печатается как «0» — то
-   * есть выключение читалось бы как здоровье. Раздел, названный здесь и не
-   * найденный в файле, роняет прогон.
-   *
-   * `null` — полки нет, и сверять состав доктрины не с чем. */
-  doctrineReading: {
-    template: "CLAUDE.template.md",
-    listHeading: "## Правила, которые не зависят от проекта",
-    orderHeading: "## Первыми же действиями, до любых действий с кодом",
-  },
-  /** Полка правил: те же методы, что в `CLAUDE.md` проекта, но уезжающие в
-   * следующий проект. Инструмент держит побайтовая сверка `toolCopy`, а текст
-   * не держало ничто — и полка отстала молча в первый же заход, когда правило
-   * добавили в проект. Сверяется не формулировка (полка пишет обобщённо), а
-   * то, что **обе таблицы машинных сверок описывают одинаковое их число**:
-   * завёл сверку — опиши в обеих, иначе следующий проект увезёт инструмент с
-   * проверками, которых его база не знает. */
-  checkTableProject: "01-facts.md",
-  /** Заголовок таблицы машинных сверок — один и тот же в обоих файлах. */
-  checkTableHeading: "| Что сверяется | Как |",
-  /** Разделы правил проекта против полки. Сверяется не текст и не совпадение
-   * заголовков с шаблоном — шаблон обобщённый, и у проекта законно есть свои
-   * разделы. Сверяется, что про КАЖДЫЙ раздел решение принято и записано: либо
-   * назван его адрес на полке, либо он помечен проектным. Новый раздел без
-   * строки в таблице роняет прогон — и это единственный момент, когда вопрос
-   * «а на полку это едет?» ещё дёшево задать. `null` — таблицы нет. */
-  rulesManifest: {
-    rules: ["../CLAUDE.md"],
-    table: "01-facts.md",
-    heading: "| Раздел правил проекта | Где на полке |",
-    refExceptions: ["упомянут по имени"],
-  },
-  /** Связи через DOM и CSS: имена, которых нет в графе импортов. Один файл
-   * пишет атрибут или переменную, другой читает — и переименование не роняет ни
-   * сборку, ни типы, ни тесты, если сделано согласованно. Ломается при этом
-   * ЗАПИСЬ: таблица связей продолжает описывать имя, которого нет, а она —
-   * единственный способ узнать радиус такой правки. Найдено пробой:
-   * переименовал `data-moving` в коде и стилях, прогон остался зелёным.
-   *
-   * Сверяется одна сторона — «названное в таблице существует». Обратная
-   * («каждое имя из кода названо в таблице») не заводится: имена приходят и от
-   * хоста, и от браузера, и список бы врал.
-   *
-   * `null` — таблиц связей у проекта нет. */
-  domTables: null,
-  /** Имена из ЧУЖИХ API, которые база вправе называть в кавычках: они выглядят
-   * как наш идентификатор, но живут в браузере или во фреймворке, и требовать их
-   * присутствия в исходниках значило бы краснеть на законном тексте.
-   *
-   * Список короткий не случайно: разрастётся — значит сверка ловит не то. Своё
-   * выдуманное имя-шаблон сюда не пишут, его убирают из кавычек: обратные
-   * кавычки в базе означают «это существует», и placeholder им не является.
-   * Мёртвую запись здесь ловит сверка «Исключения сверок используются». */
-  foreignNames: [],
-  /** Манифест проекта: из него берётся объявленный диапазон версии среды.
-   * Прогон сверяет с ним ту версию, на которой запущен, и **говорит, а не
-   * запрещает** — решение разработчика (`09-decisions.md`, § I). Жёсткий вариант
-   * (`engine-strict` в `.npmrc`) заводили и сняли: он проверяет требования не
-   * только проекта, но и каждой зависимости, и падал на живом дереве из-за
-   * dev-инструмента — цена измерена, польза меньше.
-   *
-   * `null` — манифеста нет или диапазон не объявлен. */
-  manifest: "../package.json",
-  /** Звенья обязательной цепочки проверок: чем каждое исполняется и есть ли для
-   * него шаблон настройки на полке.
-   *
-   * Заведено пробой, и пробел был не гипотетический: полка сажается ДО первой
-   * строчки кода и велит завести цепочку «типы → линт → формат → тесты», а
-   * откуда возьмутся сами инструменты, не говорила нигде. Замерено: манифест
-   * без линтера — прогон зелёный и молчит, а `check` падает позже сообщением
-   * менеджера пакетов, из которого не следует ни что ставить, ни как
-   * настраивать.
-   *
-   * **Предупреждает, а не запрещает** — то же решение, что по версии среды:
-   * набор инструментов у проекта может быть другим (один линтер-форматтер
-   * вместо пары), и падать на этом значило бы врать. Спрашивается только
-   * ОБЪЯВЛЕННОЕ здесь, поэтому соврать нечем: чего в списке нет, о том и не
-   * спросят.
-   *
-   * `template` — шаблон на полке; `null` значит «настраивается руками»: конфиг
-   * этого звена слишком зависит от вида проекта, чтобы ехать шаблоном, и тогда
-   * прогон хотя бы предупредит, вместо того чтобы молчать.
-   *
-   * `null` вместо списка — проверка выключена целиком. */
-  toolchain: [
-    {
-      script: "typecheck",
-      packages: ["typescript"],
-      template: null,
-      why: "типы: без них строгость объявлена и не проверяется",
-    },
-    {
-      script: "lint",
-      packages: ["eslint", "typescript-eslint", "eslint-config-prettier"],
-      template: "eslint.config.template.js",
-      why: "линт с типами, правила хуков, и он не спорит с форматтером",
-    },
-    {
-      script: "format:check",
-      packages: ["prettier"],
-      template: "prettierrc.template.json",
-      why: "формат: снимает спор о нём, а не переносит его в ревью",
-    },
-    {
-      script: "test",
-      packages: [],
-      template: null,
-      why: "тесты: раннер выбирается под вид проекта",
-    },
-  ],
-  /** Указатель документации: папка документов и таблица «нужно понять → файл».
-   * Документ, которого нет в указателе, находит только тот, кто уже знает о его
-   * существовании, — довод тот же, что у адресуемости решений. Найдено пробой:
-   * указатель знал 17 документов из 22 и молчал об этом.
-   *
-   * `null` — указателя у проекта нет. */
-  docsIndex: null,
-  /** Разделы политики качества «по применимости»: объявление против предмета.
-   *
-   * Политика делится на ядро (действует всегда) и разделы, у которых предмета
-   * может не быть вовсе — сети, локалей, прода, конвейера. Каждый такой раздел
-   * объявляется живым или неприменимым **с причиной**, и объявление обязано
-   * проверяться: иначе оно держится совестью, а раздел, объявленный
-   * неприменимым при живом предмете, выключает пункты молча.
-   *
-   * Предмет ищется на диске **сам**, без подсказки конфига, — тот же приём, что
-   * у «сверок, выключенных при живом предмете». Обратная сторона не
-   * проверяется намеренно: объявить лишнее значит прочитать больше нужного,
-   * вреда в этом нет.
-   *
-   * `null` — деления на ядро и применимые у политики нет.
-   *
-   * `policy` указывает на файл, где лежат САМИ разделы по применимости, а не на
-   * ядро: они вынесены отдельно по моменту чтения, и заголовки `## K.`–`## U.`
-   * ищутся там. Указать ядро — ошибка, но не молчаливая: проверено подстановкой,
-   * прогон даёт по расхождению на каждый объявленный раздел («объявлен раздел,
-   * которого нет в политике»), потому что таблица применимости перечисляет их
-   * все, а в ядре ни одного такого заголовка нет. */
-  qualityScope: {
-    policy: "rules/quality-scoped.md",
-    table: "01-facts.md",
-    heading: "| Раздел политики | Применим | Чем подтверждается |",
-  },
-  /** Разделы базы, где числа законны по определению: базовая линия и состав
-   * инструментов проверки. Их получают прогоном команды и той же командой
-   * перепроверяют — устаревшее число ловится прогоном, а не чтением. Сверка
-   * чисел в прозе эти разделы пропускает целиком.
-   *
-   * `null` — таких разделов нет, и тогда числа запрещены везде. */
-  baselineSections: ["Базовая линия"],
-  /** Бочки со звёздным реэкспортом. Такой файл ВЫКЛЮЧАЕТ анализ мёртвых
-   * экспортов для себя — разобрать, что именно утянули, нельзя, — поэтому их
-   * список объявлен и сверяется в обе стороны: новая звёздочка гасит проверку
-   * молча, а исчезнувшая оставляет в базе запись о том, чего нет. Найдено
-   * пробой: база говорила «ровно в пяти бочках» при четырёх на диске и называла
-   * файл, который давно перечисляет экспорты поимённо.
-   *
-   * Пустой список — звёздных бочек в проекте нет. */
-  starBarrels: [],
-  /** Область, чью поломку видно ТОЛЬКО в браузере: кадры, посадка, ввод. Задета
-   * правкой — смоук обязателен, и напоминает об этом `tested`, а не память:
-   * прогон «по требованию» без machinery, которая это требование предъявляет,
-   * превращается в инструмент, о котором никто не вспомнит.
-   *
-   * Список намеренно узкий — ровно то, про что смоук делает утверждения. Шире
-   * значило бы требовать прогон, который про эту правку ничего не докажет, а
-   * канал, кричащий не по делу, перестают читать. */
-  smokeScope: [],
-  /** Команда смоука — печатается в напоминании, чтобы её не искали. */
-  smokeCommand: "npm run test:e2e",
-  /** Скиллы проекта: папка, где они лежат, и таблица, объявляющая их состав.
-   * Проверяется трижды: объявленный существует, существующий объявлен, и его
-   * шаблон на полке совпадает с рабочим файлом байт в байт. Последнее — то же
-   * правило, что у инструмента: скилл, разошедшийся с полкой, увезёт в новый
-   * проект не тот порядок работы. Агенты сюда не входят: они не файлы
-   * репозитория, и проверить их наличие скриптом нельзя — они названы прозой в
-   * `environment.md`. `null` — скиллов у проекта нет. */
-  skills: {
-    dir: "../.claude/skills",
-    table: "01-facts.md",
-    heading: "| Скилл | Шаблон на полке |",
-    /** Памятка по скиллам — файл для человека в папке скиллов. Он третий
-     * список одних и тех же сущностей после таблицы фактов и шапок самих
-     * скиллов, а третий список расходится первым: этот класс здесь уже
-     * срабатывал на таблице сверок, на полке правил и на указателе
-     * документации. Поэтому памятка заводится вместе со сверкой, а не до неё.
-     * Сверяется состав строк, а не их содержание: назначение и слова вызова
-     * пишутся для человека, и требовать от них дословного совпадения со
-     * скиллом значило бы краснеть на законной переформулировке. */
-    memo: "README.md",
-    memoHeading: "| Скилл | Зачем | Кто зовёт и когда |",
-  },
-  /** Реестр решений в документации: папка ADR и то, чем на них ссылаются.
-   * Решение, на которое не ссылается ни код, ни документ, читают только те, кто
-   * уже знает о его существовании, — а таких через месяц нет. Проверяется
-   * адресуемость, а не содержание: ссылкой считается номер (`ADR-004`) или имя
-   * файла. `null` — папки решений у проекта нет. */
-  adr: null,
-  /** Таблицы настроек против документов, которые обещают объяснять **каждую**
-   * константу. Обещание стояло словами и не проверялось ничем: новая константа
-   * уезжала в конфиг без строки в документе и проходила зелёной — поймано
-   * пробой, посаженной константой. Обратная сторона уже закрыта общей сверкой
-   * имён в тексте, поэтому здесь только прямая.
-   *
-   * Документ вправе называть парные константы сокращённо — полное имя одной и
-   * `…СЕРЕДИНА…` второй, — и это не поблажка, а форма записи: разворачивается
-   * она строго, по соседу в той же строке, у которого совпадают все сегменты
-   * имени, кроме одного. Без разворота сверка объявила бы недокументированными
-   * пять законных записей, то есть соврала бы (F4).
-   *
-   * `null` — таблиц настроек у проекта нет. */
-  configDocs: null,
-  /** Точечные `eslint-disable` в коде против таблицы, которая их объясняет.
-   * Сверяется СОСТАВ ФАЙЛОВ в обе стороны, а не количество: в таблице одна
-   * строка может покрывать две директивы («×2»), и счёт по ней был бы разбором
-   * прозы. Заведено после пробы: правила говорили «сейчас их восемь», база —
-   * «все пять», на диске было семь, и две директивы не объяснял никто. `null` —
-   * таблицы нет. */
-  lintExceptions: null,
-  /** Выключения правил на уровне САМОГО конфига линта — не те, что точечными
-   * директивами в коде. Правило проекта запрещает гасить правила файлами и
-   * ослаблять их; держалось оно вниманием, и проба это показала: правило
-   * `react-hooks`, выключенное на весь репозиторий, прошло зелёным.
-   *
-   * Сверяется пара «область → правило» **в обе стороны**: выключение, которого
-   * здесь нет, роняет прогон, и запись, которой в конфиге больше нет, — тоже.
-   * Расширение области ловится тем же: область тестов и область всего
-   * репозитория — разные пары, и подмена одной другою краснеет.
-   * Список здесь, а не в прозе, потому что прозу нельзя сверить; почему каждое
-   * выключение законно — в таблице `lintExceptions.table`, раздел A2.
-   *
-   * `null` — конфига линта у проекта нет. */
-  lintConfigOff: {
-    file: "../eslint.config.js",
-    allowed: [
-      ["**/tests/**/*.{ts,tsx}", "@typescript-eslint/require-await"],
-      ["**/tests/**/*.{ts,tsx}", "react-hooks/globals"],
-      ["**/tests/**/*.{ts,tsx}", "react-hooks/refs"],
-    ],
-  },
-  /** Раздел, куда складывают обещания обвязки без машинной опоры. Сводка
-   * открытого собирает их ПО СЛОВУ в графе «держится», и потому обещание,
-   * записанное мимо словаря («Держится: привычкой»), исчезает из неё молча — а
-   * читают именно её. Найдено пробой: слово снято, `open` показал на одну
-   * запись меньше, `verify` остался зелёным.
-   *
-   * Раздел объявлен и перечислим, поэтому обратная сторона возможна: каждая
-   * графа «Держится» внутри него обязана нести узнаваемое слово. Краснеть на
-   * законном ей нечем — раздел по своему заголовку и есть место для обещаний,
-   * которых машина не держит; графа «держится: тестом» означала бы, что запись
-   * лежит не здесь.
-   *
-   * `null` — раздела у проекта нет. */
-  promises: {
-    file: "07-invariants.md",
-    heading: "## Обещания обвязки, которые не держит машина",
-  },
-  /** Отчёт последнего мутационного прогона. HTML-репортер держит внутри тот
-   * же объект, что отдал бы JSON, поэтому второй репортер не нужен. */
-  mutationReport: "../reports/mutation/mutation.html",
-  /** Конфиг мутационного прогона: из него берётся ОБЛАСТЬ. Считать долг по
-   * всему `src` значило бы врать — часть файлов исключена намеренно. */
-  mutationConfig: "../stryker.config.json",
-  /** Накопительный реестр замеров: файл → счёт и хеш содержимого, на котором
-   * он получен. Нужен потому, что Stryker ПЕРЕЗАПИСЫВАЕТ отчёт каждым
-   * прогоном: без реестра однофайловый прогон стирал бы память о полном, и
-   * долг считался бы неверно. Хеш, а не время: клон ставит всем файлам одну
-   * свежую метку, и по времени всё выглядело бы устаревшим. */
-  mutationLedger: "mutation-ledger.json",
-};
+/** Папка самого инструмента. Нужна ровно там, где речь о его собственных
+ * соседях — справочнике режимов и словаре области. Всё остальное считается от
+ * папки базы: у этих двух адресов разные хозяева, и пока они назывались одним
+ * именем, перенос инструмента увёз бы за собой всю базу. */
+const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-const ROOT = path.join(HERE, CONFIG.src).split(path.sep).join("/");
+
+const ROOT = path.join(BASE, CONFIG.src).split(path.sep).join("/");
 
 /** Папки, которых в описи нет: порождённые инструментами копии дерева и
  * служебные каталоги. Список один на всех, кто обходит дерево, — опись голых
@@ -436,7 +62,7 @@ const OUT_OF_TREE = new Set([
 // Всё, что зависит от своей полки, считается здесь и нигде больше. Раньше эти
 // адреса стояли семью отдельными полями, и «полку с собой не берём» означало
 // погасить каждое: инструкция называла одно, посадка ломалась на шести.
-const SHELF = CONFIG.shelf == null ? null : path.join(HERE, CONFIG.shelf);
+const SHELF = CONFIG.shelf == null ? null : path.join(BASE, CONFIG.shelf);
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
 /** Побайтовые пары «рабочий файл → копия на полке». Полки нет — пар нет. */
 const TOOL_COPY = shelfAt("tools/graph.mjs");
@@ -489,7 +115,7 @@ const TOOL_PAIRS =
  * сверка продолжала бы читать, а напоминание печатать пустоту. */
 const qualityScopeDeclared = () => {
   if (CONFIG.qualityScope == null) return null;
-  const at = path.join(HERE, CONFIG.qualityScope.table);
+  const at = path.join(BASE, CONFIG.qualityScope.table);
   if (!existsSync(at)) return null;
   // Перевод строки берётся литералом: помощник объявлен выше по файлу, чем
   // общая константа, и обращение к ней здесь падало бы на загрузке модуля.
@@ -546,7 +172,7 @@ const rel0 = (p) =>
   p == null
     ? "—"
     : path.isAbsolute(p)
-      ? path.relative(HERE, p).split(path.sep).join("/")
+      ? path.relative(BASE, p).split(path.sep).join("/")
       : p;
 
 const norm = (f) => f.split(path.sep).join("/").replace(/[/]+$/, "");
@@ -566,7 +192,7 @@ const files = [];
  * файл правил», — каждая заведена под свой случай, и следующий случай потребовал
  * бы четвёртой. Найдено пробой: лечится класс, а не пример. */
 const RULE_FILES = new Set(
-  CONFIG.rulesManifest.rules.map((r) => norm(path.join(HERE, r))),
+  CONFIG.rulesManifest.rules.map((r) => norm(path.join(BASE, r))),
 );
 const SHELF_DIR = SHELF === null ? "\u0000нет полки" : norm(SHELF) + "/";
 const isMachinery = (full) =>
@@ -615,7 +241,7 @@ const ADR_REF = /\bADR[-\s](\d+)/g;
 // однозначен, а полный путь пришлось бы вычислять от каждого файла заново.
 const adrByNumber = new Map();
 if (CONFIG.adr != null) {
-  const adrDir = norm(path.join(HERE, CONFIG.adr.dir));
+  const adrDir = norm(path.join(BASE, CONFIG.adr.dir));
   if (existsSync(adrDir)) {
     const tail = adrDir.split("/").slice(-2).join("/");
     for (const name of readdirSync(adrDir)) {
@@ -792,8 +418,8 @@ const dossierLines = () => {
     readFileSync(d, "utf8")
       .split(LF)
       .forEach((line, i) => docs.push([rel(d), i + 1, line]));
-  for (const name of readdirSync(HERE).filter((n) => n.endsWith(".md")))
-    readFileSync(path.join(HERE, name), "utf8")
+  for (const name of readdirSync(BASE).filter((n) => n.endsWith(".md")))
+    readFileSync(path.join(BASE, name), "utf8")
       .split(LF)
       .forEach((line, i) => base.push([name, i + 1, line]));
   LINES_CACHE = { base, docs };
@@ -1049,7 +675,7 @@ const argPath = (a) => {
  * полки правил отвечало ровно тем же, чем на выдуманный путь. */
 const outOfScope = (arg) => {
   const tick = String.fromCharCode(96);
-  const here = [path.join(HERE, "..", arg), path.join(ROOT, argPath(arg))];
+  const here = [path.join(BASE, "..", arg), path.join(ROOT, argPath(arg))];
   return here.some((one) => existsSync(one))
     ? `${tick}${arg}${tick} — файл есть, но он вне области разбора:` +
         ` инструмент смотрит код и стили внутри исходников, а своды правил,` +
@@ -1078,11 +704,11 @@ const unknownGiven = (given) => given.filter((one) => canonical(one) === null);
  * и это правильный ответ, а не отказ. */
 const canonical = (one) => {
   const s = one.split("\\").join("/").replace(/^\.\//, "");
-  if (existsSync(path.join(HERE, "..", s))) return s;
+  if (existsSync(path.join(BASE, "..", s))) return s;
   // Форма ответа — от корня репозитория: именно её отдаёт git, и именно с ней
   // режимы сравнивают. `rel()` здесь не годится, он срезает корень исходников.
   const fromRepo = (f) =>
-    path.relative(path.join(HERE, ".."), f).split(path.sep).join("/");
+    path.relative(path.join(BASE, ".."), f).split(path.sep).join("/");
   const tail = "/" + s;
   const hits = [...files, ...styleFiles]
     .map(fromRepo)
@@ -1314,7 +940,6 @@ if (mode === "cycles") {
 // Три сводки, каждая считается заново. Написанные рукой, они бы устарели первыми
 // — а нужны они именно тому, кто садится за рефактор с чистого листа.
 if (mode === "open") {
-  const BASE = HERE;
   const NEWLINE = String.fromCharCode(10);
   const TICK = String.fromCharCode(96);
 
@@ -1472,7 +1097,7 @@ if (mode === "twins") {
     changed = canonicalList(changed);
   }
   if (changed.length === 0) {
-    changed = await changedPaths(path.join(HERE, ".."));
+    changed = await changedPaths(path.join(BASE, ".."));
     if (changed === null) {
       console.log(
         "git недоступен — передай пути аргументами: graph.mjs twins <путь> …",
@@ -1481,7 +1106,7 @@ if (mode === "twins") {
     }
   }
   if (changed !== null) {
-    const srcPrefix = norm(path.relative(path.join(HERE, ".."), ROOT)) + "/";
+    const srcPrefix = norm(path.relative(path.join(BASE, ".."), ROOT)) + "/";
     const touched = new Set(
       changed
         .map(norm)
@@ -1530,7 +1155,7 @@ if (mode === "twins") {
     // нельзя: полка пишет обобщённо, без имён файлов проекта. Поэтому тот же
     // вопрос в тот же момент — правило тронули здесь, а увозят его отсюда.
     const all = new Set(changed.map(norm));
-    const shelf = norm(path.relative(path.join(HERE, ".."), SHELF_RULES));
+    const shelf = norm(path.relative(path.join(BASE, ".."), SHELF_RULES));
     const rulesTouched = [...all].filter(
       (f) => /(^|\/)CLAUDE\.md$/.test(f) || f.startsWith(".context/"),
     );
@@ -1568,7 +1193,7 @@ if (mode === "tested") {
     changed = canonicalList(changed);
   }
   if (changed.length === 0) {
-    changed = await changedPaths(path.join(HERE, ".."));
+    changed = await changedPaths(path.join(BASE, ".."));
     if (changed === null) {
       console.log(
         "git недоступен — передай пути аргументами: graph.mjs tested <путь> …",
@@ -1577,7 +1202,7 @@ if (mode === "tested") {
     }
   }
   if (changed !== null) {
-    const repoRoot = path.join(HERE, "..");
+    const repoRoot = path.join(BASE, "..");
     const abs = (f) => norm(path.join(repoRoot, f));
     const touched = new Set(changed.map(abs));
     const touchedCode = [...touched].filter(
@@ -2015,9 +1640,9 @@ if (mode === "tested") {
       return hits.length === 1 ? hits[0] : null;
     };
     const atRisk = [];
-    for (const name of readdirSync(HERE).filter((n) => n.endsWith(".md"))) {
+    for (const name of readdirSync(BASE).filter((n) => n.endsWith(".md"))) {
       let current = null;
-      for (const line of readFileSync(path.join(HERE, name), "utf8").split(
+      for (const line of readFileSync(path.join(BASE, name), "utf8").split(
         NEWLINE,
       )) {
         // Заголовок раздела карты задаёт файл для относительных якорей.
@@ -2057,8 +1682,8 @@ if (mode === "tested") {
 // приходится обходить по девяти файлам базы вручную.
 if (mode === "mutated") {
   const NEWLINE = String.fromCharCode(10);
-  const repoRoot = path.join(HERE, "..");
-  const ledgerPath = path.join(HERE, CONFIG.mutationLedger);
+  const repoRoot = path.join(BASE, "..");
+  const ledgerPath = path.join(BASE, CONFIG.mutationLedger);
 
   // Содержимое, а не время: реестр переживает клон, где mtime у всех файлов
   // одинаковый и новее любой записи. Концы строк нормализуются — иначе одна
@@ -2077,7 +1702,7 @@ if (mode === "mutated") {
   // всему `src` значило бы врать: часть файлов исключена намеренно и с
   // записанной причиной, и они бы числились долгом навсегда.
   const mutateGlobs = (() => {
-    const cfg = path.join(HERE, CONFIG.mutationConfig);
+    const cfg = path.join(BASE, CONFIG.mutationConfig);
     if (!existsSync(cfg)) return null;
     return JSON.parse(readFileSync(cfg, "utf8")).mutate ?? [];
   })();
@@ -2113,7 +1738,7 @@ if (mode === "mutated") {
   // Отчёт последнего прогона. HTML-репортер Stryker держит внутри ТОТ ЖЕ
   // объект, что отдал бы JSON-репортер: `app.report = {…}` перед закрытием
   // тега. Разбираем его, а не заводим второй источник истины рядом.
-  const reportPath = path.join(HERE, CONFIG.mutationReport);
+  const reportPath = path.join(BASE, CONFIG.mutationReport);
   let merged = 0;
   if (existsSync(reportPath)) {
     const html = readFileSync(reportPath, "utf8");
@@ -2526,7 +2151,6 @@ if (mode === "sizes") {
 }
 
 if (mode === "verify") {
-  const BASE = HERE;
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
   const NEWLINE = String.fromCharCode(10);
@@ -3193,7 +2817,7 @@ if (mode === "verify") {
   const barrelDrift = [];
   {
     const CAMEL = /^(?=.*[a-z])(?=.*[A-Z])[A-Za-z][A-Za-z0-9]*$/;
-    const mapLines = readFileSync(path.join(HERE, CONFIG.map), "utf8").split(
+    const mapLines = readFileSync(path.join(BASE, CONFIG.map), "utf8").split(
       NEWLINE,
     );
     let barrel = null;
@@ -3309,7 +2933,7 @@ if (mode === "verify") {
   }
   for (const [own, shelf] of TOOL_PAIRS) {
     const flat = (f) => readFileSync(f, "utf8").split(CR_LF).join(NEWLINE);
-    const mine = path.join(HERE, own);
+    const mine = path.join(TOOL_DIR, own);
     if (!existsSync(mine)) toolDrift.push(`нет файла: ${own}`);
     else if (!existsSync(shelf)) toolDrift.push(`копии нет: ${rel0(shelf)}`);
     else if (flat(mine) !== flat(shelf))
@@ -3323,11 +2947,11 @@ if (mode === "verify") {
   {
     const modes = toolModes();
     const named = (text, m) => new RegExp("`" + m + "\\b").test(text);
-    const manualAt = path.join(HERE, TOOL_MANUAL);
+    const manualAt = path.join(BASE, TOOL_MANUAL);
     const manual = existsSync(manualAt) ? readFileSync(manualAt, "utf8") : null;
     const rulesText = CONFIG.rulesManifest.rules
       .map((r) => {
-        const at = path.join(HERE, r);
+        const at = path.join(BASE, r);
         return existsSync(at) ? readFileSync(at, "utf8") : "";
       })
       .join("\n");
@@ -3375,7 +2999,7 @@ if (mode === "verify") {
         .some((line) => DIRECTIVE.test(line));
       if (hit) withDirective.add(rel(f));
     }
-    const at = path.join(HERE, CONFIG.lintExceptions.table);
+    const at = path.join(BASE, CONFIG.lintExceptions.table);
     const text = existsSync(at) ? readFileSync(at, "utf8").split(NEWLINE) : [];
     const start = text.findIndex((l) =>
       l.startsWith(CONFIG.lintExceptions.heading),
@@ -3418,7 +3042,7 @@ if (mode === "verify") {
   const orphanAdr = [];
   const danglingAdr = [];
   if (CONFIG.adr != null) {
-    const dir = norm(path.join(HERE, CONFIG.adr.dir));
+    const dir = norm(path.join(BASE, CONFIG.adr.dir));
     // Нет папки — нет предмета: у нового проекта решений ещё не было, и
     // требовать её значило бы ронять посадку на пустом месте. Поймано
     // пересадкой, ровно как со сверкой исключений линта.
@@ -3446,8 +3070,8 @@ if (mode === "verify") {
   const undocumentedConst = [];
   let constantsChecked = 0;
   if (CONFIG.configDocs != null) {
-    const dir = norm(path.join(HERE, CONFIG.configDocs.dir));
-    const docsDir = norm(path.join(HERE, CONFIG.configDocs.docs));
+    const dir = norm(path.join(BASE, CONFIG.configDocs.dir));
+    const docsDir = norm(path.join(BASE, CONFIG.configDocs.docs));
     // Как и у решений: нет предмета — нет сверки. Новый проект садится на
     // пустое место, и требовать с него таблиц значило бы ронять первый прогон.
     if (existsSync(dir) && existsSync(docsDir)) {
@@ -3550,7 +3174,7 @@ if (mode === "verify") {
   // 9f. выключения правил в самом конфиге линта — против объявленного списка.
   const offDrift = [];
   if (CONFIG.lintConfigOff != null) {
-    const at = path.join(HERE, CONFIG.lintConfigOff.file);
+    const at = path.join(BASE, CONFIG.lintConfigOff.file);
     if (!existsSync(at)) offDrift.push(`конфига линта нет: ${rel0(at)}`);
     else {
       // Конфиг разбирается ТЕКСТОМ, а не импортом: импорт потянул бы за собой
@@ -3616,7 +3240,7 @@ if (mode === "verify") {
       const parsed = JSON.parse(readFileSync(at, "utf8"));
       return parsed?.permissions?.allow ?? [];
     };
-    const readList = (relPath) => readListAbs(path.join(HERE, relPath));
+    const readList = (relPath) => readListAbs(path.join(BASE, relPath));
     const mine = readList(CONFIG.settingsProject);
     const shelf = readListAbs(SETTINGS_SHELF);
     if (mine === null)
@@ -3906,7 +3530,7 @@ if (mode === "verify") {
     // причина относилась только к одной из двух сетей.
     for (const rp of [
       ...baseDocs.map((n) => path.join(BASE, n)),
-      ...CONFIG.rulesManifest.rules.map((r) => path.join(HERE, r)),
+      ...CONFIG.rulesManifest.rules.map((r) => path.join(BASE, r)),
     ]) {
       if (!existsSync(rp)) continue;
       const lines = readFileSync(rp, "utf8").split(NEWLINE);
@@ -3914,7 +3538,7 @@ if (mode === "verify") {
         const bare = line.replace(/`[^`]*`/g, " ");
         if (CODE_MARK.test(bare))
           parked.push(
-            `${path.relative(HERE, rp).split(path.sep).join("/")}:${i + 1} — маркер отложенной работы в тексте`,
+            `${path.relative(BASE, rp).split(path.sep).join("/")}:${i + 1} — маркер отложенной работы в тексте`,
           );
       });
     }
@@ -4086,7 +3710,7 @@ if (mode === "verify") {
     // опаснее её отсутствия, следующий заход на неё обопрётся.
     {
       const declared = new Set(
-        CONFIG.rulesManifest.rules.map((r) => norm(path.join(HERE, r))),
+        CONFIG.rulesManifest.rules.map((r) => norm(path.join(BASE, r))),
       );
       const skipDirs = new Set([
         "node_modules",
@@ -4109,7 +3733,7 @@ if (mode === "verify") {
     }
     const heads = [];
     for (const one of CONFIG.rulesManifest.rules) {
-      const at = path.join(HERE, one);
+      const at = path.join(BASE, one);
       if (!existsSync(at)) {
         unclassified.push(`нет файла правил: ${one}`);
         continue;
@@ -4153,7 +3777,7 @@ if (mode === "verify") {
     // репозиторию дал попадания только в самой заготовке и в цитатах инструкции
     // посадки, то есть ложных срабатываний нет по построению.
     for (const one of CONFIG.rulesManifest.rules) {
-      const at = path.join(HERE, one);
+      const at = path.join(BASE, one);
       if (!existsSync(at)) continue;
       const body = readFileSync(at, "utf8");
       const left = body.match(/<(?:[А-ЯЁ][А-ЯЁ ]*|\.\.\.)>/g);
@@ -4211,7 +3835,7 @@ if (mode === "verify") {
       CONFIG.skills == null
         ? []
         : (() => {
-            const dir = path.join(HERE, CONFIG.skills.dir);
+            const dir = path.join(BASE, CONFIG.skills.dir);
             if (!existsSync(dir)) return [];
             return readdirSync(dir)
               .map((n) => path.join(dir, n, "SKILL.md"))
@@ -4231,7 +3855,7 @@ if (mode === "verify") {
     // из того же корпуса, поэтому ссылка «документ → документ» тоже разрешается.
     const sources = [
       ...CONFIG.rulesManifest.rules
-        .map((one) => [one, path.join(HERE, one)])
+        .map((one) => [one, path.join(BASE, one)])
         .filter(([, at]) => existsSync(at)),
       ...mdUnder(BASE).map((at) => [path.basename(at), at]),
       ...docFiles.map((at) => [rel(at), at]),
@@ -4239,7 +3863,7 @@ if (mode === "verify") {
       // бы абсолютным, в отличие от соседей по списку. Считается от корня
       // репозитория, как в остальных режимах.
       ...skillFiles.map((at) => [
-        norm(path.relative(path.join(HERE, ".."), at)),
+        norm(path.relative(path.join(BASE, ".."), at)),
         at,
       ]),
     ];
@@ -4289,7 +3913,7 @@ if (mode === "verify") {
   // 13c. Скиллы проекта: объявлены, лежат на месте, совпадают с полкой.
   const skillDrift = [];
   if (CONFIG.skills != null) {
-    const dir = path.join(HERE, CONFIG.skills.dir);
+    const dir = path.join(BASE, CONFIG.skills.dir);
     const onDisk = existsSync(dir)
       ? readdirSync(dir).filter((n) =>
           existsSync(path.join(dir, n, "SKILL.md")),
@@ -4437,7 +4061,7 @@ if (mode === "verify") {
   }
   if (CONFIG.lintConfigOff == null) {
     const at = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"]
-      .map((n) => path.join(HERE, "..", n))
+      .map((n) => path.join(BASE, "..", n))
       .find((f) => existsSync(f) && /:\s*"off"/.test(readFileSync(f, "utf8")));
     if (at !== undefined)
       disarmed.push(
@@ -4445,7 +4069,7 @@ if (mode === "verify") {
       );
   }
   if (CONFIG.skills == null) {
-    const at = path.join(HERE, "../.claude/skills");
+    const at = path.join(BASE, "../.claude/skills");
     if (existsSync(at) && readdirSync(at).length)
       disarmed.push("скиллы уже есть, а CONFIG.skills пуст");
   }
@@ -4474,7 +4098,7 @@ if (mode === "verify") {
   const scopeDrift = [];
   const liveScopes = [];
   if (CONFIG.qualityScope != null) {
-    const policyAt = path.join(HERE, CONFIG.qualityScope.policy);
+    const policyAt = path.join(BASE, CONFIG.qualityScope.policy);
     const tableAt = path.join(BASE, CONFIG.qualityScope.table);
     if (!existsSync(policyAt)) scopeDrift.push("политики нет");
     else if (!existsSync(tableAt)) scopeDrift.push("файла таблицы нет");
@@ -4497,7 +4121,7 @@ if (mode === "verify") {
               return m !== null && !inComment(line, m.index);
             }),
         );
-      const manifest = path.join(HERE, "..", "package.json");
+      const manifest = path.join(BASE, "..", "package.json");
       const pkg = existsSync(manifest)
         ? JSON.parse(readFileSync(manifest, "utf8"))
         : {};
@@ -4567,7 +4191,7 @@ if (mode === "verify") {
             "Jenkinsfile",
             "bitbucket-pipelines.yml",
             ".woodpecker.yml",
-          ].some((p) => existsSync(path.join(HERE, "..", p))),
+          ].some((p) => existsSync(path.join(BASE, "..", p))),
       };
       const declared = qualityScopeDeclared();
       if (declared === null) scopeDrift.push("таблицу применимости не нашли");
@@ -4596,7 +4220,7 @@ if (mode === "verify") {
   // 13f. каждый документ назван в указателе.
   const indexDrift = [];
   if (CONFIG.docsIndex != null) {
-    const dir = norm(path.join(HERE, CONFIG.docsIndex.dir));
+    const dir = norm(path.join(BASE, CONFIG.docsIndex.dir));
     const table = path.join(BASE, CONFIG.docsIndex.table);
     if (existsSync(dir) && existsSync(table)) {
       const text = readFileSync(table, "utf8");
@@ -4627,7 +4251,7 @@ if (mode === "verify") {
   // нижняя граница `>=` и верхняя `<`. Форма, которой разбор не знает, честно
   // называется неразобранной — иначе предупреждение врало бы уверенным тоном.
   if (CONFIG.manifest != null) {
-    const at = path.join(HERE, CONFIG.manifest);
+    const at = path.join(BASE, CONFIG.manifest);
     const want = existsSync(at)
       ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
       : null;
@@ -4670,7 +4294,7 @@ if (mode === "verify") {
   // предупреждает и не роняет — набор инструментов у проекта может быть
   // другим. Спрашивается только объявленное в `CONFIG.toolchain`.
   if (CONFIG.toolchain != null && CONFIG.manifest != null) {
-    const at = path.join(HERE, CONFIG.manifest);
+    const at = path.join(BASE, CONFIG.manifest);
     const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
     const scripts = pkg?.scripts ?? {};
     const declared = new Set([
@@ -5066,7 +4690,7 @@ if (mode === "verify") {
   // Общий источник для всех трёх: файлы базы (по имени), документация рядом с
   // кодом (путём от `src`), файлы правил и скиллы.
   const skillDocs = () => {
-    const root = norm(path.join(HERE, CONFIG.skills.dir));
+    const root = norm(path.join(BASE, CONFIG.skills.dir));
     if (!existsSync(root)) return [];
     const found = [];
     (function walk(dir) {
@@ -5104,17 +4728,17 @@ if (mode === "verify") {
         const full = norm(path.join(dir, e));
         if (statSync(full).isDirectory()) out.push(...walkBase(full));
         else if (e.endsWith(".md"))
-          out.push([norm(path.relative(HERE, full)), full]);
+          out.push([norm(path.relative(BASE, full)), full]);
       }
       return out;
-    })(norm(HERE)),
+    })(norm(BASE)),
     ...docFiles.map((d) => [rel(d), d]),
     // Файлы правил сюда не входили, и это ловилось только вниманием: битая
     // ссылка на вложенный `CLAUDE.md` прошла пробу молча. Читают их чаще всего
     // остального, а проверяли — реже: адреса в них живут ровно так же и
     // устаревают ровно так же.
     ...CONFIG.rulesManifest.rules
-      .map((r) => norm(path.join(HERE, r)))
+      .map((r) => norm(path.join(BASE, r)))
       .filter((p) => existsSync(p))
       .map((p) => [path.relative(REPO, p).split(path.sep).join("/"), p]),
     // Скиллы — те же документы с адресами: скилл начала задачи целиком состоит
@@ -5143,7 +4767,7 @@ if (mode === "verify") {
   // готовым набором скриптов и с обобщённым шаблоном правил, и первый же прогон
   // краснел бы на состоянии, которое ещё никто не успел описать.
   if (CONFIG.manifest != null) {
-    const at = path.join(HERE, CONFIG.manifest);
+    const at = path.join(BASE, CONFIG.manifest);
     const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
     const scripts = Object.keys(pkg?.scripts ?? {});
     if (scripts.length) {
@@ -5184,7 +4808,7 @@ if (mode === "verify") {
   // из комментария. Номер сравнивается числом, а не строкой, — иначе `ADR-4` и
   // `ADR-004` считались бы разными решениями, хотя решение одно.
   if (CONFIG.adr != null) {
-    const dir = norm(path.join(HERE, CONFIG.adr.dir));
+    const dir = norm(path.join(BASE, CONFIG.adr.dir));
     const known = new Set(
       (existsSync(dir) ? readdirSync(dir) : [])
         .filter((n) => /\.md$/.test(n))
@@ -5449,7 +5073,7 @@ if (mode === "verify") {
             if (!inComment(line, hit.index)) liveCamel.add(hit[0]);
       }
     }
-  })(norm(path.join(HERE, "..")));
+  })(norm(path.join(BASE, "..")));
   const goneCamel = [];
   const foreignUsed = new Set();
   let camelTokens = 0;
