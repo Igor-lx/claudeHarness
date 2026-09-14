@@ -66,7 +66,21 @@ const SHAPED = {
   rulesManifest: ["rules"],
   lintConfigOff: ["file", "allowed"],
   domTables: ["file", "headings"],
+  lintExceptions: ["table", "heading"],
+  adr: ["dir"],
+  configDocs: ["dir", "docs"],
+  doctrineReading: ["template", "listHeading", "orderHeading"],
+  qualityScope: ["policy", "table", "heading"],
+  skills: ["dir", "table", "heading"],
+  promises: ["file", "heading"],
 };
+
+/** Поля, которые объектом БЫВАЮТ, но вид их держит не этот список.
+ *
+ * Список рядом с закрытым намеренно: без него «объявлен ли вид» пришлось бы
+ * решать на глаз, а глаз этот класс уже пропустил четыре раза подряд.
+ */
+const SHAPE_FREE = new Set(["toolchain", "minVersions"]);
 for (const [field, parts] of Object.entries(SHAPED)) {
   const v = CONFIG[field];
   if (v == null) continue;
@@ -80,6 +94,31 @@ for (const [field, parts] of Object.entries(SHAPED)) {
   console.log("  ожидали: объект с частями " + parts.join(", "));
   console.log("  стоит:   " + JSON.stringify(v));
   console.log("  Править: .context/graph.config.mjs");
+  process.exit(2);
+}
+
+// Объектное поле, вид которого нигде не объявлен, — сама по себе поломка.
+//
+// Прежде список видов пополняли по случаю: падало на поле — вписывали поле. За
+// четыре захода это повторилось четырежды, и каждый раз изнутри выглядело
+// единичной оплошностью. Признак у класса один и механический: поле держит
+// объект, а частей его никто не назвал, — значит первое же обращение к части
+// уйдёт в `undefined` и кончится стеком из `node:path` вместо имени поля.
+//
+// Список `SHAPE_FREE` называет те объектные поля, чей вид проверяют иначе:
+// объявление звеньев цепочки, минимумы версий, таблицы настроек. Он закрытый,
+// и держать его дешевле, чем ловить пятый случай.
+for (const [field, v] of Object.entries(CONFIG)) {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) continue;
+  if (SHAPED[field] !== undefined || SHAPE_FREE.has(field)) continue;
+  console.log("=== ВИД ПОЛЯ НАСТРОЙКИ НЕ ОБЪЯВЛЕН ===");
+  console.log("  поле:  " + field);
+  console.log("  стоит: " + JSON.stringify(v));
+  console.log(
+    "  Поле держит объект, а частей его никто не назвал: первое обращение",
+  );
+  console.log("  к части уйдёт в undefined и кончится стеком вместо имени.");
+  console.log("  Править: список видов в .claude/tools/graph.mjs.");
   process.exit(2);
 }
 
@@ -1020,6 +1059,12 @@ if (mode === "falsify") {
   const caught = [];
   const silent = [];
   const broken = [];
+  // Рецепт, помеченный «под свой проект», ломает файлы КОНКРЕТНОГО проекта:
+  // его код, его карту, его факты. В другом проекте своего места он не находит,
+  // и это не порча рецепта, а его природа. Смешанный с настоящей порчей, он
+  // давал посаженному проекту семнадцать строк «рецепт устарел» на первом же
+  // прогоне — вид, в котором долг не читают вовсе.
+  const foreign = [];
   try {
     const clean = sectionsOf(runVerify(tmp));
 
@@ -1074,7 +1119,7 @@ if (mode === "falsify") {
       if (Array.isArray(r.edits)) {
         const { failed, after } = runSteps(r);
         if (failed !== undefined) {
-          broken.push(r.section + " — " + failed);
+          (r.own === true ? foreign : broken).push(r.section + " — " + failed);
           continue;
         }
         const wasThere = clean.has(r.section);
@@ -1113,7 +1158,9 @@ if (mode === "falsify") {
       }
       const at = path.join(tmp, r.file);
       if (!existsSync(at)) {
-        broken.push(r.section + " — файла нет: " + r.file);
+        (r.own === true ? foreign : broken).push(
+          r.section + " — файла нет: " + r.file,
+        );
         continue;
       }
       const before = readFileSync(at, "utf8");
@@ -1140,7 +1187,9 @@ if (mode === "falsify") {
         rmSync(at);
       } else {
         if (!before.includes(r.find.split("\n").join(NEWLINE))) {
-          broken.push(r.section + " — рецепт не находит своего места");
+          (r.own === true ? foreign : broken).push(
+            r.section + " — рецепт не находит своего места",
+          );
           continue;
         }
         writeFileSync(
@@ -1229,6 +1278,21 @@ if (mode === "falsify") {
   }
 
   console.log("");
+  if (foreign.length) {
+    console.log("");
+    console.log("=== РЕЦЕПТЫ НАПИСАНЫ ПОД СВОЙ ПРОЕКТ ===");
+    console.log(
+      "  их " +
+        foreign.length +
+        ": ломают файлы того проекта, где написаны, и в этом места не нашли.",
+    );
+    for (const f of foreign) console.log("    " + f);
+    console.log(
+      "  Это НЕ порча: перенацелить их на свои файлы — работа проекта,",
+    );
+    console.log("  и она стоит шагом плана перехода.");
+  }
+
   console.log("=== ДОЛГ: СВЕРКИ БЕЗ РЕЦЕПТА ===");
   console.log(
     "  без рецепта: " + uncovered.length + " из " + CHECK_SECTIONS.length,
@@ -4038,11 +4102,37 @@ if (mode === "verify") {
       for (const file of decisions) {
         const number = /^(\d+)/.exec(file)?.[1] ?? null;
         const marks = [file.replace(/\.md$/, ""), file];
-        if (number !== null) marks.push(`ADR-${number}`, `ADR ${number}`);
-        const found = [...files, ...styleFiles, ...docFiles].some((f) => {
+        // Корпус ссылок включает ФАЙЛЫ ПРАВИЛ. Правила — естественное место
+        // сослаться на решение: «почему так» там и объясняют. Без них решение,
+        // названное только в правилах, читалось как никем не адресованное, и
+        // предлагалось снести живую запись. Найдено посадкой в проект со
+        // вложенными правилами единицы.
+        const rulesFiles = (CONFIG.rulesManifest?.rules ?? [])
+          .map((one) => norm(path.join(BASE, one)))
+          .filter((one) => existsSync(one));
+        const found = [
+          ...files,
+          ...styleFiles,
+          ...docFiles,
+          ...rulesFiles,
+        ].some((f) => {
           if (norm(f) === norm(path.join(dir, file))) return false;
           const body = readFileSync(f, "utf8");
-          return marks.some((m) => body.includes(m));
+          if (marks.some((m) => body.includes(m))) return true;
+          // Номер сравнивается ЧИСЛОМ, а не строкой. Имя файла решения
+          // дополняют нулями до ширины — `0001`, — а ссылаются на него коротко:
+          // `ADR-1`. Так написан и заголовок самого документа. Сравнение строкой
+          // требовало дословного `ADR-0001`, и проект, сославшийся естественной
+          // формой, получал «на решение не ссылается никто» — при том что
+          // СОСЕДНЯЯ сверка, разбирающая якоря на документы, ту же ссылку
+          // разрешает: она номер к числу приводит. Два места инструмента читали
+          // одну форму по-разному, и расходились они молча.
+          if (number === null) return false;
+          ADR_REF.lastIndex = 0;
+          let hit;
+          while ((hit = ADR_REF.exec(body)) !== null)
+            if (Number(hit[1]) === Number(number)) return true;
+          return false;
         });
         if (!found) orphanAdr.push(`на решение не ссылается никто: ${file}`);
       }
@@ -4107,6 +4197,15 @@ if (mode === "verify") {
       // удалении файла сверка иначе просто замолкает, потому что перебирать
       // становится нечего. Найдено пробой.
       for (const doc of readdirSync(docsDir).filter((n) => /\.md$/.test(n))) {
+        // Спрашивается только с документа, который КОНСТАНТЫ И ОПИСЫВАЕТ, —
+        // признак: он называет хотя бы одно имя из заглавных букв в обратных
+        // кавычках. Папка документации держит и другое: соглашения проекта,
+        // витрину возможностей, решения. Требовать таблицы настроек от них
+        // значило бы краснеть на законном — и краснеть в первую очередь на
+        // СОБСТВЕННЫХ семенах обвязки, которые кладутся в ту же папку. Найдено
+        // посадкой в проект, впервые объявивший таблицы настроек.
+        const body = readFileSync(path.join(docsDir, doc), "utf8");
+        if (!/`[A-Z][A-Z0-9_]*`/.test(body)) continue;
         const table = path.join(dir, doc.replace(/\.md$/, ".ts"));
         if (!existsSync(table))
           undocumentedConst.push(`документ без таблицы: ${doc}`);
@@ -4345,7 +4444,14 @@ if (mode === "verify") {
       // (`shared/engines/motion/README.md`). Поэтому пробуются все предки.
       let dir = norm(path.dirname(f));
       let found = false;
-      while (dir.length >= ROOT.length) {
+      // Подъём идёт до корня РЕПОЗИТОРИЯ, а не исходников. Папка документации
+      // лежит рядом с исходниками, а не внутри: адрес, начинающийся с папки
+      // документации, с остановкой на корне исходников не разрешался никогда.
+      // Пока решений у
+      // проектов не было, это не проявлялось — первая же ссылка на решение из
+      // кода легла в «ведут в никуда», при живом файле на диске.
+      const stop = norm(path.join(BASE, ".."));
+      while (dir.length >= stop.length) {
         if (docFiles.includes(norm(path.join(dir, spec)))) {
           found = true;
           break;

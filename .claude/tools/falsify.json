@@ -5,19 +5,22 @@
       "section": "Покрытие карты",
       "file": ".context/00-map.md",
       "find": "| `src/App.tsx` | корневой компонент | нет | нет |",
-      "replace": ""
+      "replace": "",
+      "own": true
     },
     {
       "section": "Покрытие тестов",
       "file": ".context/08-tests.md",
       "find": "| `tests/App.test.tsx` |",
-      "replace": "| `tests/НЕТУ.test.tsx` |"
+      "replace": "| `tests/НЕТУ.test.tsx` |",
+      "own": true
     },
     {
       "section": "Пометки решений",
       "file": ".context/09-decisions.md",
       "find": "Якорь с цитатой: `src/App.tsx:4` `Trivial on purpose`.",
-      "replace": ""
+      "replace": "",
+      "own": true
     },
     {
       "section": "Режимы инструмента описаны",
@@ -46,13 +49,15 @@
       "section": "Шаблон правил заполнен",
       "file": "CLAUDE.md",
       "find": "# claudeHarness — что это за репозиторий",
-      "replace": "# <ИМЯ ПРОЕКТА> — что это за репозиторий"
+      "replace": "# <ИМЯ ПРОЕКТА> — что это за репозиторий",
+      "own": true
     },
     {
       "section": "Отложенное без закрытых пунктов",
       "file": ".context/02-todo.md",
       "find": "Отложенного нет.",
-      "replace": "## Прежний пункт — ЗАКРЫТО"
+      "replace": "## Прежний пункт — ЗАКРЫТО",
+      "own": true
     },
     {
       "section": "У каждого семени есть адрес назначения",
@@ -110,8 +115,9 @@
     {
       "section": "Сверки, выключенные при живом предмете",
       "file": ".context/graph.config.mjs",
-      "find": "  docsIndex: {",
-      "replace": "  docsIndexOff: null, docsIndex_disabled: {"
+      "find": "  docsIndex: {\n    dir: \"../docs\",\n    table: \"01-facts.md\",\n    heading: \"| Нужно понять | Файл |\",\n  },",
+      "replace": "  docsIndex: null,",
+      "own": true
     },
     {
       "section": "Проза целиком попадает в корпус сверок",
@@ -129,18 +135,21 @@
       "section": "Файлы базы заведены под свой предмет",
       "file": "src/App.tsx",
       "find": "export function App()",
-      "replace": "export function App() { useState(0); }\nexport function AppOld()"
+      "replace": "export function App() { useState(0); }\nexport function AppOld()",
+      "own": true
     },
     {
       "section": "Вопрос о планке задан на конечном виде правки",
       "file": "src/App.tsx",
       "find": "export function App()",
-      "replace": "export function App() /* проба */"
+      "replace": "export function App() /* проба */",
+      "own": true
     },
     {
       "section": "Тесты лежат в `tests/`",
       "file": "src/App.tsx",
-      "copyTo": "src/App.test.tsx"
+      "copyTo": "src/App.test.tsx",
+      "own": true
     },
     {
       "section": "Один предмет — один файл настройки",
@@ -156,7 +165,8 @@
     {
       "section": "Каркас обвязки не лежит в живом проекте",
       "file": "src/App.tsx",
-      "copyTo": "src/Own.tsx"
+      "copyTo": "src/Own.tsx",
+      "own": true
     },
     {
       "section": "Цепочка проверок объявлена данными",
@@ -168,7 +178,8 @@
       "section": "Звено цепочки не задвоено",
       "file": "package.json",
       "find": "\"typecheck\": \"tsc --noEmit\",",
-      "replace": "\"typecheck\": \"tsc --noEmit\",\n    \"types\": \"tsc --noEmit -p tsconfig.json\","
+      "replace": "\"typecheck\": \"tsc --noEmit\",\n    \"types\": \"tsc --noEmit -p tsconfig.json\",",
+      "own": true
     },
     {
       "section": "Правила направления",
@@ -180,116 +191,137 @@
       "section": "Правила изоляции",
       "file": ".context/graph.config.mjs",
       "find": "  isolationHeading: null,",
-      "replace": "  isolationHeading: \"Раздела с таким именем нет\","
+      "replace": "  isolationHeading: \"Раздела с таким именем нет\",",
+      "own": true
     },
     {
       "section": "Пометки CONSTRAINT",
       "file": "src/App.tsx",
       "find": "export function App()",
-      "replace": "// CONSTRAINT: форма не та\nexport function App()"
+      "replace": "// CONSTRAINT: форма не та\nexport function App()",
+      "own": true
     },
     {
       "section": "Якоря",
       "file": ".context/09-decisions.md",
       "find": "`src/App.tsx:4` `Trivial on purpose`",
-      "replace": "`src/App.tsx:400` `Trivial on purpose`"
+      "replace": "`src/App.tsx:400` `Trivial on purpose`",
+      "own": true
     },
     {
       "section": "Новые якоря — с цитатой",
       "file": ".context/09-decisions.md",
-      "append": "Якорь: `src/App.tsx:5`."
+      "append": "Якорь: `src/App.tsx:5`.",
+      "own": true
     },
     {
       "section": "Найденное — исправлено, а не отложено",
       "file": ".context/02-todo.md",
-      "append": "TODO: дописать это когда-нибудь потом."
+      "append": "TODO: дописать это когда-нибудь потом.",
+      "own": true
     },
     {
       "section": "Ссылки на разделы",
       "file": ".context/00-map.md",
-      "append": "См. раздел «Такого раздела здесь нет»."
+      "append": "См. раздел «Такого раздела здесь нет».",
+      "own": true
     },
     {
       "section": "Имена из кода в тексте",
       "file": ".context/00-map.md",
-      "append": "Функция `zzAbsentFromSources` тут ни при чём."
+      "append": "Функция `zzAbsentFromSources` тут ни при чём.",
+      "own": true
     },
     {
       "section": "Имена констант в тексте",
       "file": ".context/00-map.md",
-      "append": "Константа `NO_SUCH_CONSTANT` тут ни при чём."
+      "append": "Константа `NO_SUCH_CONSTANT` тут ни при чём.",
+      "own": true
     },
     {
       "section": "Документы названы в указателе",
       "file": "docs/CONVENTIONS.md",
-      "copyTo": "docs/НЕНАЗВАННЫЙ.md"
+      "copyTo": "docs/НЕНАЗВАННЫЙ.md",
+      "own": true
     },
     {
       "section": "Разделы правил классифицированы",
       "file": "CLAUDE.md",
-      "copyTo": "src/CLAUDE.md"
+      "copyTo": "src/CLAUDE.md",
+      "own": true
     },
     {
       "section": "Исключения сверок используются",
       "file": ".context/graph.config.mjs",
       "find": "  corpusOutside: null,",
-      "replace": "  corpusOutside: [\"ТАКОГО-ФАЙЛА-НЕТ.md\"],"
+      "replace": "  corpusOutside: [\"ТАКОГО-ФАЙЛА-НЕТ.md\"],",
+      "own": true
     },
     {
       "section": "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
       "file": "package.json",
       "find": "\"scripts\": {",
-      "replace": "\"scripts\": {\n    \"ничего-не-делает\": \"node -e 0\","
+      "replace": "\"scripts\": {\n    \"ничего-не-делает\": \"node -e 0\",",
+      "own": true
     },
     {
       "section": "Версия среды (предупреждение, прогон не роняет)",
       "file": "package.json",
       "find": "\"node\": \">=22.0.0\"",
-      "replace": "\"node\": \">=99.0.0\""
+      "replace": "\"node\": \">=99.0.0\"",
+      "own": true
     },
     {
       "section": "Инструменты обвязки (предупреждение, прогон не роняет)",
       "file": "package.json",
       "find": "npm test && node .claude/tools/graph.mjs verify",
-      "replace": "npm test && npm run unknown-link && node .claude/tools/graph.mjs verify"
+      "replace": "npm test && npm run unknown-link && node .claude/tools/graph.mjs verify",
+      "own": true
     },
     {
       "section": "Звёздные бочки",
       "file": "src/App.tsx",
-      "append": "export * from \"./main\";"
+      "append": "export * from \"./main\";",
+      "own": true
     },
     {
       "section": "Якоря на документацию в коде",
       "file": "src/App.tsx",
-      "append": "// See docs/NOTHERE.md"
+      "append": "// See docs/NOTHERE.md",
+      "own": true
     },
     {
       "section": "Обещания без опоры собираются сводкой",
       "file": ".context/07-invariants.md",
-      "append": "**Проба.**\nДержится: привычкой."
+      "append": "**Проба.**\nДержится: привычкой.",
+      "own": true
     },
     {
       "section": "Выключения правил линта",
       "file": "eslint.config.js",
-      "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };"
+      "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };",
+      "own": true
     },
     {
       "section": "Объявленный состав папок и радиусы",
       "file": ".context/00-map.md",
-      "append": "Папка `src/tests/` (99 файлов)."
+      "append": "Папка `src/tests/` (99 файлов).",
+      "own": true
     },
     {
       "section": "Разрешения, нажитые по ходу работы",
       "create": {
         "path": ".claude/settings.local.json",
         "text": "{\n  \"permissions\": {\n    \"allow\": [\"Bash(проба:*)\"]\n  }\n}"
-      }
+      },
+      "own": true
     },
     {
       "section": "Версии установленного",
       "file": ".context/graph.config.mjs",
       "find": "    prettier: \"3.0.0\",",
-      "replace": "    prettier: \"99.0.0\","
+      "replace": "    prettier: \"99.0.0\",",
+      "own": true
     },
     {
       "section": "Состав бочки в записи карты",
@@ -298,7 +330,8 @@
           "file": ".context/00-map.md",
           "append": "### `main.tsx` — бочка модуля\n\nОтдаёт наружу: `zzNotExported`."
         }
-      ]
+      ],
+      "own": true
     },
     {
       "section": "Правила про существующее",
@@ -312,7 +345,8 @@
           "file": ".context/00-map.md",
           "append": "## Проба направления\n\n| Слой | Что запрещено | Разрешено исключением |\n| --- | --- | --- |\n| `src/такого-слоя-нет` | `src/main.tsx` | нет |"
         }
-      ]
+      ],
+      "own": true
     },
     {
       "section": "Объявленные области существуют",
@@ -322,7 +356,8 @@
           "find": "  smokeScope: [],",
           "replace": "  smokeScope: [\"src/такой-папки-нет\"],"
         }
-      ]
+      ],
+      "own": true
     },
     {
       "section": "Связи через DOM и CSS",
@@ -336,12 +371,14 @@
           "file": ".context/00-map.md",
           "append": "## Проба связей\n\n| Имя | Кто ставит | Кто читает |\n| --- | --- | --- |\n| `zzNoSuchHook` | нет | нет |"
         }
-      ]
+      ],
+      "own": true
     },
     {
       "section": "Не разобрано (проверкой не покрыто)",
       "file": ".context/00-map.md",
-      "append": "Папка `src/no-such-dir/` (3 файла)."
+      "append": "Папка `src/no-such-dir/` (3 файла).",
+      "own": true
     }
   ]
 }
