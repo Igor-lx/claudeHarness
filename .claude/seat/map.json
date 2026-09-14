@@ -165,7 +165,7 @@
   "chainScripts": [
     {
       "name": "typecheck",
-      "recognise": "^\\s*tsc\\b[^&|]*--noEmit[^&|]*$"
+      "recognise": "^\\s*tsc\\b[^&|]*$"
     },
     {
       "name": "lint",

@@ -3364,9 +3364,10 @@ if (mode === "verify") {
       .replace(/\s+/g, " ")
       .toLowerCase();
 
-  const markerCheck = ({ inCode, names, anchors }) => {
+  const markerCheck = ({ inCode, nearMiss, names, anchors }) => {
     const bodies = new Map();
     const marks = new Map();
+    const missed = [];
     let total = 0;
     for (const f of marked) {
       const body = readFileSync(f, "utf8").split(NEWLINE);
@@ -3374,6 +3375,10 @@ if (mode === "verify") {
       const found = [];
       body.forEach((line, index) => {
         if (inCode(line)) found.push(index + 1);
+        else if (nearMiss !== undefined && nearMiss(line))
+          missed.push(
+            rel(f) + ":" + (index + 1) + " — форма пометки не та: ждём тире",
+          );
       });
       if (found.length !== 0) marks.set(f, found);
       total += found.length;
@@ -3405,7 +3410,7 @@ if (mode === "verify") {
           gone.add(`${rel(a.file)}:${a.from} «${q}»`);
       }
     }
-    return { total, unlisted, gone: [...gone] };
+    return { total, unlisted, missed, gone: [...gone] };
   };
 
   // Слова решения ищутся только в комментарии: те же слова встречаются внутри
@@ -3425,6 +3430,19 @@ if (mode === "verify") {
       // В коде пометка пишется с тире: `CONSTRAINT — что нельзя`. Запись тире
       // не повторяет — она называет пометку одним словом.
       inCode: (line) => /(CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/.test(line),
+      // Почти-верная форма: слово пометки есть, тире нет. Пишут её постоянно —
+      // двоеточие после ключевого слова привычнее тире, — и до этой ветки она
+      // была НЕВИДИМА: ограничение объявлено в коде, сканер его не находит,
+      // сверка печатает ноль и остаётся зелёной. Свод такое запрещает прямо:
+      // проверка, которая может быть только зелёной, хуже отсутствующей.
+      //
+      // Второй формой двоеточие НЕ принимается намеренно. Форма — интерфейс, и
+      // двух интерфейсов у одного предмета не бывает: приняв оба, сверка
+      // перестала бы учить форме, а следующая пометка была бы написана третьим
+      // способом. Она называет промах и требует поправить.
+      nearMiss: (line) =>
+        /(CONSTRAINT|ОГРАНИЧЕНИЕ)\s*[:\-–]/.test(line) &&
+        !/(CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/.test(line),
       names: /CONSTRAINT|ОГРАНИЧЕНИЕ/,
       anchors: invariantAnchors,
     },
@@ -3721,8 +3739,10 @@ if (mode === "verify") {
     checkHead(kind.title);
     console.log(
       `  в коде: ${kind.total}, без записи в ${kind.base}: ${kind.unlisted.length}` +
-        `, названо записью и снято из кода: ${kind.gone.length}`,
+        `, названо записью и снято из кода: ${kind.gone.length}` +
+        (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
     );
+    for (const m of kind.missed ?? []) console.log("    " + m);
     for (const u of kind.unlisted) console.log("    " + u);
     for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
   }
@@ -6968,7 +6988,9 @@ if (mode === "verify") {
     unnamed.length ||
     goneTests.length ||
     goneMapped.length ||
-    markerKinds.some((k) => k.unlisted.length || k.gone.length) ||
+    markerKinds.some(
+      (k) => k.unlisted.length || k.gone.length || (k.missed?.length ?? 0),
+    ) ||
     broken7.length ||
     brokenIso.length ||
     emptyRules.length ||

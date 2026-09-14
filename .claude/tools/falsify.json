@@ -181,6 +181,12 @@
       "file": ".context/graph.config.mjs",
       "find": "  isolationHeading: null,",
       "replace": "  isolationHeading: \"Раздела с таким именем нет\","
+    },
+    {
+      "section": "Пометки CONSTRAINT",
+      "file": "src/App.tsx",
+      "find": "export function App()",
+      "replace": "// CONSTRAINT: форма не та\nexport function App()"
     }
   ]
 }
