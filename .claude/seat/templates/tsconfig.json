@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true
   },
-  "include": ["src"]
+  "include": ["src", "vite.config.ts"]
 }

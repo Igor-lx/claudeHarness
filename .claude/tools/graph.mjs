@@ -3496,6 +3496,57 @@ if (mode === "verify") {
           if (!shared[kind].includes(entry))
             settingsEarned.push(`${kind}: ${entry}`);
   }
+  // Версии установленного против объявленных минимумов.
+  //
+  // Спрашивается то, что РЕАЛЬНО лежит в зависимостях, а не диапазон из
+  // манифеста: диапазон говорит о намерении, а работает установленное. У среды
+  // версия берётся у самого запущенного процесса.
+  //
+  // **Уведомляет, а не роняет.** Решение обновляться принимает разработчик;
+  // прогон, останавливающий работу из-за минорной версии, начнут гонять реже, и
+  // тогда он перестанет ловить то, ради чего заведён.
+  const oldVersions = [];
+  if (CONFIG.minVersions != null) {
+    const older = (have, need) => {
+      const a = String(have)
+        .replace(/^[^0-9]*/, "")
+        .split(".")
+        .map(Number);
+      const b = String(need).split(".").map(Number);
+      for (let i = 0; i < 3; i += 1) {
+        const x = a[i] ?? 0;
+        const y = b[i] ?? 0;
+        if (x !== y) return x < y;
+      }
+      return false;
+    };
+    for (const [name, need] of Object.entries(CONFIG.minVersions)) {
+      if (name === "node") {
+        if (older(process.versions.node, need))
+          oldVersions.push(
+            `node ${process.versions.node} — нужно не ниже ${need}`,
+          );
+        continue;
+      }
+      const at = path.join(BASE, "..", "node_modules", name, "package.json");
+      if (!existsSync(at)) continue;
+      const have = JSON.parse(readFileSync(at, "utf8")).version;
+      if (older(have, need))
+        oldVersions.push(`${name} ${have} — нужно не ниже ${need}`);
+    }
+  }
+
+  console.log("=== Версии установленного ===");
+  console.log(
+    CONFIG.minVersions == null
+      ? "  минимумы не объявлены"
+      : oldVersions.length === 0
+        ? "  всё не ниже объявленных минимумов"
+        : `  ниже минимума: ${oldVersions.length}.` +
+          " Обновить — решение разработчика, прогон это не роняет",
+  );
+  for (const o of oldVersions) console.log("    " + o);
+
   console.log("=== Разрешения, нажитые по ходу работы ===");
   console.log(
     settingsEarned.length === 0

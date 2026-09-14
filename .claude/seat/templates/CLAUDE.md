@@ -62,10 +62,14 @@
 
 | Проверка | Команда |
 | --- | --- |
+| Сервер разработки | `npm run dev` |
+| Сборка | `npm run build` |
+| Посмотреть собранное | `npm run preview` |
 | Типы | `npm run typecheck` |
 | Тесты | `npm test` |
 | Линт | `npm run lint` |
 | Формат | `npm run format:check` |
+| Покрытие (по требованию) | `npm run test:coverage` |
 | Всё разом | `npm run check` |
 | Правка против её тестов, базы и доков | `node .claude/tools/graph.mjs tested` |
 | База знаний | `node .claude/tools/graph.mjs verify` |

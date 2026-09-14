@@ -75,10 +75,6 @@
       "to": ".prettierignore"
     },
     {
-      "from": "seat/templates/src/index.ts",
-      "to": "src/index.ts"
-    },
-    {
       "from": "seat/templates/docs/CONVENTIONS.md",
       "to": "docs/CONVENTIONS.md"
     },
@@ -89,6 +85,26 @@
     {
       "from": "seat/templates/.gitattributes",
       "to": ".gitattributes"
+    },
+    {
+      "from": "seat/templates/vite.config.ts",
+      "to": "vite.config.ts"
+    },
+    {
+      "from": "seat/templates/index.html",
+      "to": "index.html"
+    },
+    {
+      "from": "seat/templates/src/main.tsx",
+      "to": "src/main.tsx"
+    },
+    {
+      "from": "seat/templates/src/App.tsx",
+      "to": "src/App.tsx"
+    },
+    {
+      "from": "seat/templates/src/tests/App.test.tsx",
+      "to": "src/tests/App.test.tsx"
     }
   ],
   "later": [
