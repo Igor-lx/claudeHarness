@@ -22,10 +22,27 @@
 import * as vocabulary from "./graph.predicates.mjs";
 
 /** Тест: лежит в папке слоя `tests/` либо назван суффиксом. */
-export const isTestPath = (f) => /\/tests\//.test(f) || /\.test\.tsx?$/.test(f);
+// Имена тестов бывают двух видов, и второй не реже первого. `.spec` — форма из
+// мира, откуда пришли раннеры: её везут все поколения инструментов, и живой
+// проект зовёт свои тесты так же часто, как `.test`.
+//
+// Пока опознавался один вид, инструмент отвечал «тестовых файлов: ноль» на
+// проекте, где раннер собирал тридцать шесть зелёных тестов, — а сверка
+// покрытия тестов была при этом ЗЕЛЕНОЙ, потому что не видела ничего. Найдено
+// посадкой в чужую библиотеку.
+export const isTestPath = (f) =>
+  /\/tests\//.test(f) ||
+  /\/__tests__\//.test(f) ||
+  /\.(test|spec)\.tsx?$/.test(f);
 
-/** Лист стилей. В граф импортов не входит — его подключает сборщик. */
-export const isStylePath = (f) => /\.scss$/.test(f);
+/** Лист стилей. В граф импортов не входит — его подключает сборщик.
+ *
+ * Собираются ВСЕ языки стилей, а не один. Пока опознавался только `.scss`,
+ * проект на обычных модулях CSS проходил как проект без стилей вовсе: сто
+ * девяносто непустых строк — больше, чем весь его код — не попадали ни в карту,
+ * ни в замер чтения, ни в поиск предмета для раздела планки о стилях. Раздел
+ * из-за этого выключался молча, и сверка применимости была зелёной. */
+export const isStylePath = (f) => /\.(css|scss|sass|less|styl)$/.test(f);
 
 /** Документ. */
 export const isDocPath = (f) => /\.md$/.test(f);
@@ -67,11 +84,15 @@ export const PREDICATE_CASES = [
   ["isTestPath", "src/a/tests/b.ts", true],
   ["isTestPath", "src/a/b.test.ts", true],
   ["isTestPath", "src/a/b.test.tsx", true],
+  ["isTestPath", "src/a/b.spec.tsx", true],
+  ["isTestPath", "__tests__/b.spec.tsx", true],
   ["isTestPath", "src/a/b.ts", false],
   ["isTestPath", "src/a/testing/b.ts", false],
 
   // --- isStylePath ---
   ["isStylePath", "src/a/b.module.scss", true],
+  ["isStylePath", "src/a/b.module.css", true],
+  ["isStylePath", "src/a/b.less", true],
   ["isStylePath", "src/a/b.ts", false],
 
   // --- isDocPath ---
@@ -85,6 +106,8 @@ export const PREDICATE_CASES = [
   ["isCodePath", "src/a/b.test.ts", false],
   ["isCodePath", "src/a/README.md", false],
   ["isCodePath", "src/a/b.scss", false],
+  ["isCodePath", "src/a/b.css", false],
+  ["isCodePath", "src/a/b.spec.tsx", false],
 
   // Точка в расширении — литерал, а не «любой символ». Различить это можно
   // только входом, где перед `ts` стоит буква: на настоящих путях обе формы
@@ -99,6 +122,8 @@ export const PREDICATE_CASES = [
   ["touchesRuntime", "src/a/b.ts", true],
   ["touchesRuntime", "src/a/b.tsx", true],
   ["touchesRuntime", "src/a/b.module.scss", true],
+  ["touchesRuntime", "src/a/b.module.css", true],
+  ["touchesRuntime", "__tests__/b.spec.tsx", false],
   ["touchesRuntime", "src/a/README.md", false],
   ["touchesRuntime", "src/a/tests/b.test.tsx", false],
   ["touchesRuntime", "src/a/b.test.ts", false],
@@ -136,3 +161,12 @@ export const selfCheck = () => {
   }
   return failed;
 };
+
+/** Расширение кода или листа стилей — одним образцом на весь инструмент.
+ *
+ * Заведён после того, как восемь мест спрашивали его порознь и каждое называло
+ * один язык стилей из пяти. Проект на обычных модулях CSS от этого терял адреса
+ * в прозе, разбор коротких имён и опознание токенов — по одной сверке за место,
+ * и каждый раз молча. Один образец нельзя поправить наполовину.
+ */
+export const CODE_OR_STYLE = /\.(tsx?|css|scss|sass|less|styl)$/;

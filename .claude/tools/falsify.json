@@ -141,6 +141,22 @@
       "section": "Тесты лежат в `tests/`",
       "file": "src/App.tsx",
       "copyTo": "src/App.test.tsx"
+    },
+    {
+      "section": "Один предмет — один файл настройки",
+      "file": ".nvmrc",
+      "copyTo": ".node-version"
+    },
+    {
+      "section": "Одноранговая зависимость не продублирована",
+      "file": "package.json",
+      "find": "\"dependencies\": {",
+      "replace": "\"peerDependencies\": { \"react\": \">=18\" },\n  \"dependencies\": {"
+    },
+    {
+      "section": "Каркас обвязки не лежит в живом проекте",
+      "file": "src/App.tsx",
+      "copyTo": "src/Own.tsx"
     }
   ]
 }

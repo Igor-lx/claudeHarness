@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 import {
   inComment,
   isCodePath,
+  CODE_OR_STYLE,
+  isStylePath,
   isTestPath,
   selfCheck,
   touchesRuntime,
@@ -237,16 +239,34 @@ const styleFiles = [];
 // этом законна и штатна: обвязку сажают до первой строчки кода. Подтверждено
 // пробой на копии проекта с удалённой папкой.
 const walkable = (dir) => existsSync(dir) && statSync(dir).isDirectory();
-(function walk(dir) {
+const collect = (dir) => {
   if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
+    if (OUT_OF_TREE.has(e)) continue;
     const full = norm(path.join(dir, e));
-    if (statSync(full).isDirectory()) walk(full);
-    else if (/\.tsx?$/.test(e)) files.push(full);
-    else if (/\.md$/.test(e) && !isMachinery(full)) docFiles.push(full);
-    else if (/\.scss$/.test(e)) styleFiles.push(full);
+    if (statSync(full).isDirectory()) collect(full);
+    else if (/\.tsx?$/.test(e)) {
+      if (!files.includes(full)) files.push(full);
+    } else if (/\.md$/.test(e) && !isMachinery(full)) docFiles.push(full);
+    else if (isStylePath(full) && !styleFiles.includes(full))
+      styleFiles.push(full);
   }
-})(ROOT);
+};
+collect(ROOT);
+
+// Папки с тестами, лежащие ВНЕ корня исходников.
+//
+// Обход выше идёт по корню исходников, и живой проект вправе держать тесты
+// рядом с ним, а не внутри: `__tests__/` соседом с `lib/` — раскладка не реже
+// объявленной. Пока эти папки не обходились, инструмент отвечал «тестовых
+// файлов: ноль» на проекте, где раннер собирал тридцать шесть зелёных тестов, а
+// сверка покрытия тестов была ЗЕЛЕНОЙ, потому что ей нечего было проверять.
+//
+// Раскладка от этого не становится объявленной: сверка «Тесты лежат в `tests/`»
+// продолжает их называть, и цена отступления платится списком исключений. Но
+// НЕВИДИМОСТЬ и НЕСОГЛАСИЕ — разные вещи, и вторая лучше первой: несогласие
+// печатается, невидимость молчит.
+for (const one of CONFIG.testDirs ?? []) collect(norm(path.join(BASE, one)));
 
 // Документы, лежащие ВНЕ исходников. Обход выше идёт по корню исходников, и
 // папка документации в корне репозитория не попадала в корпус ни одной
@@ -318,7 +338,17 @@ const docRefsIn = (body) => {
   return out;
 };
 
-const rel = (f) => f.replace(ROOT + "/", "");
+/** Короткий адрес файла: от корня исходников, а для лежащих вне его — от корня
+ * репозитория.
+ *
+ * Вторая половина заведена по случаю: тесты живого проекта умеют лежать рядом с
+ * корнем исходников, а не внутри, и для них замена префикса не срабатывала
+ * вовсе — в реестр и в вывод шёл полный путь с буквой диска. Записанный в базу,
+ * он сделал бы её непереносимой между машинами. */
+const rel = (f) =>
+  f.startsWith(ROOT + "/")
+    ? f.slice(ROOT.length + 1)
+    : norm(path.relative(path.join(BASE, ".."), f));
 
 // --- разрешение спецификатора импорта в файл ---------------------------------
 const resolve = (fromFile, spec) => {
@@ -576,7 +606,7 @@ const baseHitsFor = (target) => {
     quotedIn(line).some(
       (t) =>
         t.includes("/") &&
-        /[.](tsx?|scss)$/.test(t) &&
+        CODE_OR_STYLE.test(t) &&
         dir.endsWith(t.slice(0, t.lastIndexOf("/"))),
     );
   const exact = dossierLines().base.filter(([, , line]) =>
@@ -592,7 +622,7 @@ const baseHitsFor = (target) => {
   const namesOther = (line) =>
     quotedIn(line).some(
       (t) =>
-        /[.](tsx?|scss)$/.test(t) &&
+        CODE_OR_STYLE.test(t) &&
         t !== base &&
         !r.endsWith("/" + t) &&
         files.some((f) => rel(f) === t || rel(f).endsWith("/" + t)),
@@ -843,6 +873,9 @@ const CHECK_SECTIONS = [
   "Таблица сверок описывает существующие сверки",
   "Вопрос о планке задан на конечном виде правки",
   "Файлы базы заведены под свой предмет",
+  "Каркас обвязки не лежит в живом проекте",
+  "Один предмет — один файл настройки",
+  "Одноранговая зависимость не продублирована",
   "План перехода не потерялся",
   "Вопросы разработчику без ответа",
 ];
@@ -1359,7 +1392,7 @@ if (mode === "plan") {
       // У стиля радиус считается по тексту, а не по графу: см. `styleUsers`.
       // Печатать ему «прямых 0» значило бы сказать «никому не нужен» про файл,
       // который подключён побочным импортом.
-      const isStyle = r.endsWith(".scss");
+      const isStyle = isStylePath(r);
       const direct = (
         isStyle
           ? styleUsers(target).modules
@@ -1552,7 +1585,7 @@ if (mode === "open") {
     // Имя без расширения засчитывается, только если документация называет его
     // КАК КОД, в обратных кавычках: голое слово вроде resolve встречается в
     // прозе трёх десятков документов и топит сигнал.
-    const bare = base.replace(/[.](tsx?|scss)$/, "");
+    const bare = base.replace(CODE_OR_STYLE, "");
     const asCode = "`" + bare + "`";
     const withParent = rel(f).split("/").slice(-2).join("/");
     const named = docBodies.filter(([, body]) =>
@@ -2616,7 +2649,7 @@ if (mode === "brief") {
           console.log(
             "  «что накрывает его» тут не спрашивают: тест и есть проверка; что он закрепляет — записи базы ниже",
           );
-        } else if (r.endsWith(".scss")) {
+        } else if (isStylePath(r)) {
           // Разбор по тексту общий с `plan`, см. `styleUsers`: стиль часто
           // подключают побочным импортом без `from`, и граф его не видит.
           const { modules: users, tests: named } = styleUsers(target);
@@ -2848,12 +2881,21 @@ if (mode === "verify") {
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
       if (statSync(full).isDirectory()) walkAll(full);
-      else if (/\.(tsx?|scss|md)$/.test(e)) {
+      else if (/\.tsx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
         everyPath.push(full.split(path.sep).join("/"));
         if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
       }
     }
-  })(norm(path.join(REPO, "src")));
+    // Корень исходников берётся ИЗ НАСТРОЙКИ, а не зашит именем `src`.
+    //
+    // Поле настройки существует именно затем, что корень бывает другой:
+    // библиотеки зовут его `lib`, каркасы — `app`. Пока имя стояло здесь
+    // строкой, у такого проекта этот обход возвращал ПУСТО, и всё, что на нём
+    // стоит, молчало — в первую очередь покрытие карты по файлам стилей.
+    // Заметить это было нечем: соседний список собирается другим обходом, тоже
+    // молча, и сверка печатала правдоподобное число. Найдено сверкой двух
+    // замеров одного и того же проекта, разошедшихся на единицу.
+  })(ROOT);
 
   // Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
   // хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
@@ -3198,15 +3240,15 @@ if (mode === "verify") {
             const existsSomewhere = files.some(
               (f) => rel(f) === one || rel(f).endsWith("/" + one),
             );
-            if (name === TESTS && /\.test\.tsx?$/.test(one) && !existsSomewhere)
+            if (name === TESTS && isTestPath(one) && !existsSomewhere)
               goneTests.push(`${name}: ${one}`);
             // Шаблоны со звёздочкой и перечисления расширений (`.ts/.tsx`)
             // адресами не являются: они описывают форму, а не файл. Замер на
             // здоровом дереве дал ровно три таких и ноль настоящих.
             if (
               name === MAP &&
-              /\.(tsx?|scss)$/.test(one) &&
-              !/\.test\.tsx?$/.test(one) &&
+              (/\.tsx?$/.test(one) || isStylePath(one)) &&
+              !isTestPath(one) &&
               !one.includes("*") &&
               one.split("/").every((s) => !s.startsWith(".")) &&
               !existsSomewhere
@@ -3247,7 +3289,7 @@ if (mode === "verify") {
   // делал сканер: ограничения он в них не искал, решения искал.
   const marked = [
     ...files.filter((f) => !isTest(f)),
-    ...everyFile.filter((f) => f.endsWith(".scss")),
+    ...everyFile.filter(isStylePath),
   ];
   // Названной пометка считается тогда, когда запись её ПРОЦИТИРОВАЛА — в
   // обратных апострофах или в кавычках, как и написан весь каталог («Решено:
@@ -3350,7 +3392,7 @@ if (mode === "verify") {
   // Ambient-объявления описывать нечем: в них нет ни поведения, ни связей.
   const code = [
     ...files.filter((f) => !isTest(f) && !f.endsWith(".d.ts")),
-    ...everyFile.filter((f) => f.endsWith(".scss")),
+    ...everyFile.filter(isStylePath),
   ];
   const missing = code.filter((f) => !mapMentions.has(f));
   // Долг карты — храповик, и заведён он под посадку в ЖИВОЙ проект. Там
@@ -5695,10 +5737,18 @@ if (mode === "verify") {
     const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
     const scripts = Object.keys(pkg?.scripts ?? {});
     if (scripts.length) {
+      // Семена в счёт не идут. Файл в `seat/templates/` — ЗАГОТОВКА, а не проза
+      // этого проекта: он называет `npm run dev`, потому что так у приложения,
+      // и в библиотеке такого скрипта нет и не будет. Пока семена читались
+      // наравне с прозой, предупреждение висело вечно и указывало на файл,
+      // который никто не писал под этот проект. Найдено посадкой в чужую
+      // библиотеку.
       const spans = new Set();
-      for (const [, src] of docSources)
+      for (const [, src] of docSources) {
+        if (norm(src).includes("/seat/templates/")) continue;
         for (const hit of readFileSync(src, "utf8").matchAll(/`([^`\n]+)`/g))
           spans.add(hit[1].trim());
+      }
       const named = (s) =>
         spans.has(s) || spans.has(`npm ${s}`) || spans.has(`npm run ${s}`);
       const silent = scripts.filter((s) => !named(s));
@@ -5813,7 +5863,9 @@ if (mode === "verify") {
       if (statSync(full).isDirectory()) walkScripts(full);
       else if (e.endsWith(".mjs")) scriptFiles.push(norm(full));
     }
-  })(norm(path.join(REPO, "src")));
+    // Корень исходников — из настройки, а не имя `src` строкой: см. соседний
+    // обход. У проекта, зовущего его иначе, этот список выходил пустым.
+  })(ROOT);
   const inventory = [...everyPath, ...scriptFiles];
   // Ссылка markdown — ВТОРАЯ форма адреса, и её не читала ни одна сверка.
   // Разница с обратными кавычками принципиальная: там адрес может оказаться
@@ -6003,7 +6055,7 @@ if (mode === "verify") {
     (CONFIG.testsOutside ?? []).map((one) => norm(path.join(REPO, one))),
   );
   const testsOutsideUsed = new Set(
-    files.filter((f) => /\.test\.tsx?$/.test(f) && testsOutside.has(f)),
+    files.filter((f) => isTestPath(f) && testsOutside.has(f)),
   );
   for (const one of testsOutside)
     if (!testsOutsideUsed.has(one))
@@ -6295,9 +6347,15 @@ if (mode === "verify") {
   // предлагала выбор, которого не было. Список закрывает эту дыру и полностью
   // повторяет идиому остальных исключений обвязки — мёртвое исключение
   // называется, а разросшийся список ловит порог.
+  // Опознаётся тест ТЕМ ЖЕ предикатом, каким его опознаёт весь остальной
+  // инструмент, а не своим образцом. Пока здесь стоял свой, он видел одно
+  // написание из двух: файл с именем через `spec`, лежащий не там, попадал в
+  // сбор тестов и НЕ попадал в эту сверку — то есть раскладка расходилась с
+  // объявленной, и об этом не говорила ни одна строка. Найдено сразу после
+  // того, как сбор научился видеть второе написание: видимость появилась,
+  // несогласие осталось немым.
   const strayTests = files.filter(
-    (f) =>
-      /\.test\.tsx?$/.test(f) && !f.includes("/tests/") && !testsOutside.has(f),
+    (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutside.has(f),
   );
   checkHead("Тесты лежат в `tests/`");
   console.log(
@@ -6502,6 +6560,122 @@ if (mode === "verify") {
   console.log("  предмет есть, файла нет: " + baseGap.length);
   for (const g of baseGap) console.log("    " + g);
 
+  // 45a. Каркас обвязки не лежит в живом проекте.
+  //
+  // Каркас — точка входа, корневой компонент, разметка страницы и тест на неё —
+  // нужен ПУСТОМУ проекту, чтобы цепочке было на чём прогнаться с первого дня.
+  // Живому он не нужен: у того свой корень.
+  //
+  // Правило это в карте помечено `onlyWhenEmpty`, и посадка читала пометку как
+  // «путь свободен». Замерено на чужой библиотеке: путям не обо что было
+  // столкнуться — проект держит код в `lib/`, а каркас кладётся в `src/`, — и
+  // каркас приехал ЦЕЛИКОМ. В пакет с `exports` и одноранговыми зависимостями
+  // легли демо-приложение, страница и второй корень исходников.
+  //
+  // Настоящий признак другой и проверяется здесь: файл каркаса лежит ПОБАЙТОВО
+  // такой же, как семя, а рядом есть чужой код. Побайтово — потому что каркас,
+  // который начали править, каркасом быть перестал: это уже корень проекта.
+  const frameLitter = [];
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt)) {
+      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+      const frame = (seatMap.copy ?? []).filter((e) => e.onlyWhenEmpty);
+      // Концы строк приводятся к одному виду: снимок едет между машинами, и на
+      // машине с иной политикой побайтовое сравнение расходилось бы на каждой
+      // строке, не говоря ничего о содержимом.
+      const eol = String.fromCharCode(13) + NEWLINE;
+      const same = (a, b) =>
+        readFileSync(a, "utf8").split(eol).join(NEWLINE) ===
+        readFileSync(b, "utf8").split(eol).join(NEWLINE);
+      const laid = frame.filter((e) => {
+        const to = path.join(REPO, e.to);
+        const from = shelfAt(e.from);
+        return (
+          existsSync(to) && from !== null && existsSync(from) && same(to, from)
+        );
+      });
+      const frameTargets = new Set(
+        frame.map((e) => norm(path.join(REPO, e.to))),
+      );
+      const own = files.filter((f) => !frameTargets.has(f));
+      if (laid.length && own.length)
+        for (const e of laid)
+          frameLitter.push(
+            e.to +
+              " — семя каркаса, а в проекте " +
+              own.length +
+              " своих файлов",
+          );
+    }
+  }
+  checkHead("Каркас обвязки не лежит в живом проекте");
+  console.log("  семян каркаса при живом коде: " + frameLitter.length);
+  for (const g of frameLitter) console.log("    " + g);
+
+  // 45b. Один предмет — один файл настройки.
+  //
+  // Столкновение семени с проектным файлом посадка ищет ПО ИМЕНИ, а один и тот
+  // же предмет живой проект часто держит под другим именем. Тогда столкновения
+  // нет, семя ложится рядом, и два файла говорят об одном — по-разному.
+  //
+  // Замерено на чужой библиотеке дважды. Версия среды: привезённый `.nvmrc`
+  // сказал `22`, проектный `.node-version` — `20.11.1`, и какой прочтёт
+  // менеджер версий, зависит от того, какой менеджер стоит. Конфиг линтера:
+  // привезённый плоский ПЕРЕХВАТИЛ проектный старого формата — не при
+  // обновлении, а сразу, — и линтер стал падать на ненайденном пакете вместо
+  // разбора кода.
+  //
+  // Пары «семя → другие его имена» объявлены в карте посадки, а не здесь:
+  // список растёт вместе с составом семян, и держать его в инструменте значило
+  // бы править инструмент при заведении каждого нового.
+  const twinConfigs = [];
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt)) {
+      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+      for (const e of seatMap.copy ?? []) {
+        if (!Array.isArray(e.alsoKnownAs) || !e.alsoKnownAs.length) continue;
+        if (!existsSync(path.join(REPO, e.to))) continue;
+        for (const other of e.alsoKnownAs)
+          if (existsSync(path.join(REPO, other)))
+            twinConfigs.push(
+              e.to + " и " + other + " — один предмет, два файла настройки",
+            );
+      }
+    }
+  }
+  checkHead("Один предмет — один файл настройки");
+  console.log("  предметов с двумя файлами: " + twinConfigs.length);
+  for (const g of twinConfigs) console.log("    " + g);
+
+  // 45c. Одноранговая зависимость не продублирована.
+  //
+  // Библиотека объявляет то, что ждёт от потребителя, одноранговыми
+  // зависимостями: React ставит приложение, а не пакет. Слияние манифеста
+  // читало только `dependencies`, не нашло их там и дописало — потому что
+  // формально их там не было.
+  //
+  // Замерено на чужой библиотеке: `react` и `react-dom` оказались в обоих
+  // списках сразу. Потребитель получил бы вторую копию React, а два React в
+  // одном приложении ломают хуки в рантайме — дефект ПОСТАВКИ, которого не
+  // видят ни типы, ни тесты, ни линтер.
+  const peerDup = [];
+  if (CONFIG.manifest != null) {
+    const at = path.join(BASE, CONFIG.manifest);
+    if (existsSync(at)) {
+      const pkg = JSON.parse(readFileSync(at, "utf8"));
+      for (const name of Object.keys(pkg.peerDependencies ?? {}))
+        if (pkg.dependencies?.[name] !== undefined)
+          peerDup.push(
+            name + " — объявлен и одноранговым, и обычной зависимостью",
+          );
+    }
+  }
+  checkHead("Одноранговая зависимость не продублирована");
+  console.log("  продублировано: " + peerDup.length);
+  for (const g of peerDup) console.log("    " + g);
+
   // 45. План перехода живого проекта не потерялся.
   //
   // Посадка в живой проект заканчивается раньше, чем заканчивается переход:
@@ -6643,6 +6817,9 @@ if (mode === "verify") {
     corpusGap.length ||
     transitionDrift.length ||
     baseGap.length ||
+    frameLitter.length ||
+    twinConfigs.length ||
+    peerDup.length ||
     unasked.length ||
     goneNames.length ||
     frozenNumbers.length ||

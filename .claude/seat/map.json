@@ -56,7 +56,8 @@
     },
     {
       "from": "seat/templates/.nvmrc",
-      "to": ".nvmrc"
+      "to": ".nvmrc",
+      "alsoKnownAs": [".node-version", ".tool-versions"]
     },
     {
       "from": "seat/templates/tsconfig.json",
@@ -64,11 +65,27 @@
     },
     {
       "from": "seat/templates/eslint.config.js",
-      "to": "eslint.config.js"
+      "to": "eslint.config.js",
+      "alsoKnownAs": [
+        ".eslintrc.cjs",
+        ".eslintrc.js",
+        ".eslintrc.json",
+        ".eslintrc.yml",
+        ".eslintrc.yaml",
+        ".eslintrc"
+      ]
     },
     {
       "from": "seat/templates/.prettierrc.json",
-      "to": ".prettierrc.json"
+      "to": ".prettierrc.json",
+      "alsoKnownAs": [
+        ".prettierrc",
+        ".prettierrc.js",
+        ".prettierrc.cjs",
+        "prettier.config.js",
+        "prettier.config.cjs",
+        ".prettierrc.yml"
+      ]
     },
     {
       "from": "seat/templates/.prettierignore",
@@ -88,7 +105,8 @@
     },
     {
       "from": "seat/templates/vite.config.ts",
-      "to": "vite.config.ts"
+      "to": "vite.config.ts",
+      "alsoKnownAs": ["vite.config.js", "vite.config.mjs"]
     },
     {
       "from": "seat/templates/index.html",
@@ -112,7 +130,8 @@
     },
     {
       "from": "seat/templates/stryker.config.json",
-      "to": "stryker.config.json"
+      "to": "stryker.config.json",
+      "alsoKnownAs": ["stryker.conf.json", "stryker.conf.js"]
     },
     {
       "from": "seat/templates/14-probes.md",
