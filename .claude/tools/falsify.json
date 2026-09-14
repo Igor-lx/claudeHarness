@@ -130,6 +130,12 @@
       "file": "src/App.tsx",
       "find": "export function App()",
       "replace": "export function App() { useState(0); }\nexport function AppOld()"
+    },
+    {
+      "section": "Вопрос о планке задан на конечном виде правки",
+      "file": "src/App.tsx",
+      "find": "export function App()",
+      "replace": "export function App() /* проба */"
     }
   ]
 }
