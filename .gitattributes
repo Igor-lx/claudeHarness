@@ -1,0 +1,12 @@
+# Line endings are repository policy, not a per-machine setting: LF in the
+# repository and in the working tree, whatever core.autocrlf happens to be.
+* text=auto eol=lf
+
+# Binary assets must never be touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
