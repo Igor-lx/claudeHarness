@@ -64,16 +64,11 @@
 | --- | --- |
 | Типы | `npm run typecheck` |
 | Тесты | `npm test` |
-| Сборка | `npm run build` |
 | Линт | `npm run lint` |
 | Формат | `npm run format:check` |
 | Всё разом | `npm run check` |
 | Правка против её тестов, базы и доков | `node .claude/work/tools/graph.mjs tested` |
 | База знаний | `node .claude/work/tools/graph.mjs verify` |
-| Покрытие (по требованию) | `npm run test:coverage` |
-| Мутации по файлам правки | `npx stryker run --mutate "<пути>"` |
-| Долг по мутациям | `node .claude/work/tools/graph.mjs mutated` |
-| Проверка в настоящем движке (по требованию и перед публикацией) | `npm run test:e2e` |
 
 **Команды даны для `npm` — это объявленное умолчание.** Менеджер другой —
 правятся эти строки, и только они: по всему своду `npm` больше не упоминается
