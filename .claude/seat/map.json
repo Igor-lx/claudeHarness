@@ -109,6 +109,10 @@
     {
       "from": "seat/templates/stryker.config.json",
       "to": "stryker.config.json"
+    },
+    {
+      "from": "seat/templates/14-probes.md",
+      "to": ".context/14-probes.md"
     }
   ],
   "projectOwnedInsideHarness": ["settings.local.json"]

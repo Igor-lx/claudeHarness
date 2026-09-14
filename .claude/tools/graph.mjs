@@ -211,6 +211,22 @@ const walkable = (dir) => existsSync(dir) && statSync(dir).isDirectory();
   }
 })(ROOT);
 
+// Документы, лежащие ВНЕ исходников. Обход выше идёт по корню исходников, и
+// папка документации в корне репозитория не попадала в корпус ни одной
+// текстовой сверки: её адреса, имена из кода и ссылки не проверялись вовсе.
+// Найдено первым же прогоном сверки «Проза целиком попадает в корпус сверок» —
+// то есть сверка, заведённая под этот класс, нашла его экземпляр сразу.
+if (CONFIG.docsIndex != null) {
+  (function walkDocs(dir) {
+    if (!walkable(dir)) return;
+    for (const e of readdirSync(dir)) {
+      const full = norm(path.join(dir, e));
+      if (statSync(full).isDirectory()) walkDocs(full);
+      else if (/.md$/.test(e) && !docFiles.includes(full)) docFiles.push(full);
+    }
+  })(norm(path.join(BASE, CONFIG.docsIndex.dir)));
+}
+
 const isTest = isTestPath;
 
 /** Графа «держится», означающая отсутствие машинной опоры. Один источник на два
@@ -777,6 +793,7 @@ const CHECK_SECTIONS = [
   "Решения адресуемы",
   "Пути в обратных кавычках",
   "Ссылки markdown",
+  "Проза целиком попадает в корпус сверок",
   "Исключения сверок используются",
   "Списки исключений не разрослись",
   "Имена из кода в тексте",
@@ -5636,15 +5653,7 @@ if (mode === "verify") {
         else if (e.endsWith(".md")) mdFiles.push(norm(full));
       }
     })(norm(REPO));
-    // Копия доктрины в проекте пропускается: её ссылки написаны про полку, там
-    // же и проверяются, а копию держит побайтовая пара. Причина целиком — у
-    // `CONFIG.doctrineCopies`.
-    const copiesAt =
-      CONFIG.doctrineCopies == null
-        ? null
-        : norm(path.join(BASE, CONFIG.doctrineCopies)) + "/";
     for (const f of mdFiles) {
-      if (copiesAt !== null && f.startsWith(copiesAt)) continue;
       for (const m of readFileSync(f, "utf8").matchAll(/\]\(([^)\s]+)\)/g)) {
         const spec = m[1];
         // Внешние адреса, якоря внутри страницы, плейсхолдеры и абсолютные
@@ -5668,13 +5677,6 @@ if (mode === "verify") {
   const danglingPaths = [];
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
-    // Копия доктрины — по той же причине, что и у ссылок: её адреса написаны
-    // про полку. См. `CONFIG.doctrineCopies`.
-    if (
-      CONFIG.doctrineCopies != null &&
-      name.startsWith(CONFIG.doctrineCopies + "/")
-    )
-      continue;
     const dir = norm(path.dirname(at));
     for (const hit of readFileSync(at, "utf8").matchAll(/`([^`\n]+)`/g)) {
       let tok = hit[1].trim();
@@ -5745,6 +5747,58 @@ if (mode === "verify") {
   checkHead("Ссылки markdown");
   console.log(`  ведут в никуда: ${danglingLinks.length}`);
   for (const d of danglingLinks) console.log("    " + d);
+
+  // 14a-2. Проза целиком попадает в корпус сверок.
+  //
+  // Сверка печатает, СКОЛЬКО она проверила, и никогда — сколько должна была.
+  // Разница между этими двумя числами и есть слепое пятно: «проверено: 15»
+  // читается как работа, а не как дыра, а «проверено: 0» неотличимо от «предмета
+  // нет». Замерено на живом случае: адресов проверялось пятнадцать при ста
+  // девяноста семи, и тридцать восемь файлов прозы из пятидесяти одного не
+  // читала ни одна текстовая сверка. Заметил это человек чтением, не прогон.
+  //
+  // Поэтому сверяется не объявление, а САМ КОРПУС: множество файлов, которые
+  // сверки действительно прочитали, против всей прозы репозитория. Объявлением
+  // тут не отделаться — объявить корень можно и не читать его.
+  const corpusGap = [];
+  const proseFiles = [];
+  {
+    const inCorpus = new Set(docSources.map(([, at]) => norm(at)));
+    const shortOf = (full) =>
+      path.relative(REPO, full).split(path.sep).join("/");
+    const outside = new Set(
+      (CONFIG.corpusOutside ?? []).map((one) => norm(path.join(REPO, one))),
+    );
+    const outsideUsed = new Set();
+    (function walkProse(dir) {
+      for (const e of readdirSync(dir)) {
+        if (OUT_OF_TREE.has(e)) continue;
+        const full = norm(path.join(dir, e));
+        if (statSync(full).isDirectory()) {
+          walkProse(full);
+          continue;
+        }
+        if (!e.endsWith(".md")) continue;
+        proseFiles.push(full);
+        if (inCorpus.has(full)) continue;
+        if (outside.has(full)) {
+          outsideUsed.add(full);
+          continue;
+        }
+        corpusGap.push(shortOf(full) + " — прозу не читает ни одна сверка");
+      }
+    })(norm(REPO));
+    for (const one of outside)
+      if (!outsideUsed.has(one))
+        deadExceptions.push(
+          "проза вне корпуса: " + shortOf(one) + " — ничего не исключает",
+        );
+  }
+  checkHead("Проза целиком попадает в корпус сверок");
+  console.log(
+    `  файлов прозы: ${proseFiles.length}, вне корпуса: ${corpusGap.length}`,
+  );
+  for (const c of corpusGap) console.log("    " + c);
 
   checkHead("Исключения сверок используются");
   console.log(`  мёртвых исключений: ${deadExceptions.length}`);
@@ -6163,6 +6217,7 @@ if (mode === "verify") {
     deadExceptions.length ||
     danglingPaths.length ||
     danglingLinks.length ||
+    corpusGap.length ||
     goneNames.length ||
     frozenNumbers.length ||
     goneCamel.length ||

@@ -112,6 +112,12 @@
       "file": ".context/graph.config.mjs",
       "find": "  docsIndex: {",
       "replace": "  docsIndexOff: null, docsIndex_disabled: {"
+    },
+    {
+      "section": "Проза целиком попадает в корпус сверок",
+      "file": ".context/graph.config.mjs",
+      "find": "    dir: \"../docs\",",
+      "replace": "    dir: \"../docs-нет\","
     }
   ]
 }
