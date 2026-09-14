@@ -187,6 +187,161 @@
       "file": "src/App.tsx",
       "find": "export function App()",
       "replace": "// CONSTRAINT: форма не та\nexport function App()"
+    },
+    {
+      "section": "Якоря",
+      "file": ".context/09-decisions.md",
+      "find": "`src/App.tsx:4` `Trivial on purpose`",
+      "replace": "`src/App.tsx:400` `Trivial on purpose`"
+    },
+    {
+      "section": "Новые якоря — с цитатой",
+      "file": ".context/09-decisions.md",
+      "append": "Якорь: `src/App.tsx:5`."
+    },
+    {
+      "section": "Найденное — исправлено, а не отложено",
+      "file": ".context/02-todo.md",
+      "append": "TODO: дописать это когда-нибудь потом."
+    },
+    {
+      "section": "Ссылки на разделы",
+      "file": ".context/00-map.md",
+      "append": "См. раздел «Такого раздела здесь нет»."
+    },
+    {
+      "section": "Имена из кода в тексте",
+      "file": ".context/00-map.md",
+      "append": "Функция `zzAbsentFromSources` тут ни при чём."
+    },
+    {
+      "section": "Имена констант в тексте",
+      "file": ".context/00-map.md",
+      "append": "Константа `NO_SUCH_CONSTANT` тут ни при чём."
+    },
+    {
+      "section": "Документы названы в указателе",
+      "file": "docs/CONVENTIONS.md",
+      "copyTo": "docs/НЕНАЗВАННЫЙ.md"
+    },
+    {
+      "section": "Разделы правил классифицированы",
+      "file": "CLAUDE.md",
+      "copyTo": "src/CLAUDE.md"
+    },
+    {
+      "section": "Исключения сверок используются",
+      "file": ".context/graph.config.mjs",
+      "find": "  corpusOutside: null,",
+      "replace": "  corpusOutside: [\"ТАКОГО-ФАЙЛА-НЕТ.md\"],"
+    },
+    {
+      "section": "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
+      "file": "package.json",
+      "find": "\"scripts\": {",
+      "replace": "\"scripts\": {\n    \"ничего-не-делает\": \"node -e 0\","
+    },
+    {
+      "section": "Версия среды (предупреждение, прогон не роняет)",
+      "file": "package.json",
+      "find": "\"node\": \">=22.0.0\"",
+      "replace": "\"node\": \">=99.0.0\""
+    },
+    {
+      "section": "Инструменты обвязки (предупреждение, прогон не роняет)",
+      "file": "package.json",
+      "find": "npm test && node .claude/tools/graph.mjs verify",
+      "replace": "npm test && npm run unknown-link && node .claude/tools/graph.mjs verify"
+    },
+    {
+      "section": "Звёздные бочки",
+      "file": "src/App.tsx",
+      "append": "export * from \"./main\";"
+    },
+    {
+      "section": "Якоря на документацию в коде",
+      "file": "src/App.tsx",
+      "append": "// See docs/NOTHERE.md"
+    },
+    {
+      "section": "Обещания без опоры собираются сводкой",
+      "file": ".context/07-invariants.md",
+      "append": "**Проба.**\nДержится: привычкой."
+    },
+    {
+      "section": "Выключения правил линта",
+      "file": "eslint.config.js",
+      "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };"
+    },
+    {
+      "section": "Объявленный состав папок и радиусы",
+      "file": ".context/00-map.md",
+      "append": "Папка `src/tests/` (99 файлов)."
+    },
+    {
+      "section": "Разрешения, нажитые по ходу работы",
+      "create": {
+        "path": ".claude/settings.local.json",
+        "text": "{\n  \"permissions\": {\n    \"allow\": [\"Bash(проба:*)\"]\n  }\n}"
+      }
+    },
+    {
+      "section": "Версии установленного",
+      "file": ".context/graph.config.mjs",
+      "find": "    prettier: \"3.0.0\",",
+      "replace": "    prettier: \"99.0.0\","
+    },
+    {
+      "section": "Состав бочки в записи карты",
+      "edits": [
+        {
+          "file": ".context/00-map.md",
+          "append": "### `main.tsx` — бочка модуля\n\nОтдаёт наружу: `zzNotExported`."
+        }
+      ]
+    },
+    {
+      "section": "Правила про существующее",
+      "edits": [
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  rulesHeading: null,",
+          "replace": "  rulesHeading: \"Проба направления\","
+        },
+        {
+          "file": ".context/00-map.md",
+          "append": "## Проба направления\n\n| Слой | Что запрещено | Разрешено исключением |\n| --- | --- | --- |\n| `src/такого-слоя-нет` | `src/main.tsx` | нет |"
+        }
+      ]
+    },
+    {
+      "section": "Объявленные области существуют",
+      "edits": [
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  smokeScope: [],",
+          "replace": "  smokeScope: [\"src/такой-папки-нет\"],"
+        }
+      ]
+    },
+    {
+      "section": "Связи через DOM и CSS",
+      "edits": [
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  domTables: null,",
+          "replace": "  domTables: { file: \"00-map.md\", headings: [\"Проба связей\"] },\n  domTablesOff: null,"
+        },
+        {
+          "file": ".context/00-map.md",
+          "append": "## Проба связей\n\n| Имя | Кто ставит | Кто читает |\n| --- | --- | --- |\n| `zzNoSuchHook` | нет | нет |"
+        }
+      ]
+    },
+    {
+      "section": "Не разобрано (проверкой не покрыто)",
+      "file": ".context/00-map.md",
+      "append": "Папка `src/no-such-dir/` (3 файла)."
     }
   ]
 }

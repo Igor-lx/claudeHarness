@@ -65,6 +65,7 @@ const SHAPED = {
   docsIndex: ["dir", "table", "heading"],
   rulesManifest: ["rules"],
   lintConfigOff: ["file", "allowed"],
+  domTables: ["file", "headings"],
 };
 for (const [field, parts] of Object.entries(SHAPED)) {
   const v = CONFIG[field];
@@ -930,6 +931,32 @@ if (mode === "falsify") {
     }
   };
 
+  /** Манифесты установленных пакетов — и только они.
+   *
+   * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и к
+   * содержимому сверок отношения не имеет. Но сверка версий читает именно её —
+   * номер версии лежит в манифесте каждого пакета, — и в песочнице ей нечего
+   * было читать: она не краснела НИКОГДА, то есть рецепта под неё не
+   * существовало в принципе. Манифесты весят килобайты, и этого довольно.
+   *
+   * Найдено при выплате долга рецептов: поломка, работающая на самом проекте,
+   * в песочнице молчала. */
+  const copyManifests = (from, to) => {
+    if (!existsSync(from)) return;
+    for (const e of readdirSync(from)) {
+      const dir = path.join(from, e);
+      if (!statSync(dir).isDirectory()) continue;
+      if (e.startsWith("@")) {
+        copyManifests(dir, path.join(to, e));
+        continue;
+      }
+      const manifest = path.join(dir, "package.json");
+      if (!existsSync(manifest)) continue;
+      mkdirSync(path.join(to, e), { recursive: true });
+      writeFileSync(path.join(to, e, "package.json"), readFileSync(manifest));
+    }
+  };
+
   const sectionsOf = (out) => {
     const found = new Map();
     const lines = out.split(NEWLINE);
@@ -958,6 +985,10 @@ if (mode === "falsify") {
 
   rmSync(tmp, { recursive: true, force: true });
   copyTree(REPO_ROOT, tmp);
+  copyManifests(
+    path.join(REPO_ROOT, "node_modules"),
+    path.join(tmp, "node_modules"),
+  );
 
   // В песочнице заводится СВОЙ репозиторий, и это не удобство. Часть сверок
   // читает состояние репозитория — какие файлы правлены прямо сейчас, — а копия
@@ -991,7 +1022,95 @@ if (mode === "falsify") {
   const broken = [];
   try {
     const clean = sectionsOf(runVerify(tmp));
+
+    /** Шестая форма: НЕСКОЛЬКО правок разом.
+     *
+     * Часть сверок держит предмет и его объявление в разных файлах — бочку и
+     * запись о ней в карте, таблицу слоёв и поле настройки, папку и её адрес в
+     * списке. Сломать такую одной правкой нельзя: одна половина без другой
+     * сверку не будит, а рецепт «промолчал» выглядит как непокрытая сверка.
+     *
+     * Шаги — те же формы, что и у одиночного рецепта. Отменяются в обратном
+     * порядке: созданное удаляется, правленое возвращается.
+     */
+    const runSteps = (r) => {
+      const undo = [];
+      for (const step of r.edits) {
+        if (step.create !== undefined) {
+          const madeAt = path.join(tmp, step.create.path);
+          mkdirSync(path.dirname(madeAt), { recursive: true });
+          writeFileSync(
+            madeAt,
+            step.create.text.split("\n").join(NEWLINE) + NEWLINE,
+          );
+          undo.push(() => rmSync(madeAt));
+          continue;
+        }
+        const stepAt = path.join(tmp, step.file);
+        if (!existsSync(stepAt)) return { failed: "файла нет: " + step.file };
+        const was = readFileSync(stepAt, "utf8");
+        undo.push(() => writeFileSync(stepAt, was));
+        if (step.append !== undefined)
+          writeFileSync(
+            stepAt,
+            was + NEWLINE + step.append.split("\n").join(NEWLINE),
+          );
+        else {
+          const needle = step.find.split("\n").join(NEWLINE);
+          if (!was.includes(needle))
+            return { failed: "рецепт не находит своего места: " + step.file };
+          writeFileSync(
+            stepAt,
+            was.replace(needle, step.replace.split("\n").join(NEWLINE)),
+          );
+        }
+      }
+      const after = sectionsOf(runVerify(tmp));
+      for (const back of undo.reverse()) back();
+      return { after };
+    };
+
     for (const r of recipes) {
+      if (Array.isArray(r.edits)) {
+        const { failed, after } = runSteps(r);
+        if (failed !== undefined) {
+          broken.push(r.section + " — " + failed);
+          continue;
+        }
+        const wasThere = clean.has(r.section);
+        const nowThere = after.has(r.section);
+        if (!wasThere && nowThere) caught.push(r.section);
+        else if (!nowThere) broken.push(r.section + " — секции в выводе нет");
+        else if (after.get(r.section) === true && clean.get(r.section) !== true)
+          caught.push(r.section);
+        else silent.push(r.section);
+        continue;
+      }
+      // Пятая форма: ЗАВЕСТИ файл с заданным содержимым. Ни правка, ни копия
+      // тут не годятся — ломать надо тем, чего в дереве нет вовсе и чего неоткуда
+      // скопировать: местным файлом разрешений с лишней строкой, документом с
+      // заведомо битой ссылкой. Заведена при выплате долга рецептов.
+      if (r.create !== undefined) {
+        const madeAt = path.join(tmp, r.create.path);
+        mkdirSync(path.dirname(madeAt), { recursive: true });
+        writeFileSync(
+          madeAt,
+          r.create.text.split("\n").join(NEWLINE) + NEWLINE,
+        );
+        const after0 = sectionsOf(runVerify(tmp));
+        const wasThere0 = clean.has(r.section);
+        const nowThere0 = after0.has(r.section);
+        if (!wasThere0 && nowThere0) caught.push(r.section);
+        else if (!nowThere0) broken.push(r.section + " — секции в выводе нет");
+        else if (
+          after0.get(r.section) === true &&
+          clean.get(r.section) !== true
+        )
+          caught.push(r.section);
+        else silent.push(r.section);
+        rmSync(madeAt);
+        continue;
+      }
       const at = path.join(tmp, r.file);
       if (!existsSync(at)) {
         broken.push(r.section + " — файла нет: " + r.file);
@@ -1006,6 +1125,16 @@ if (mode === "falsify") {
       // отсутствующего.
       if (r.copyTo !== undefined) {
         writeFileSync(path.join(tmp, r.copyTo), before);
+      } else if (r.append !== undefined) {
+        // Четвёртая форма: ДОПИСАТЬ в конец. Часть сверок ловит появление новой
+        // записи — строки таблицы, нового заголовка, нового якоря, — и правка
+        // существующего текста тут не годится: ломать надо тем, что добавили.
+        // Заведена под долг рецептов: без неё половина сверок базы остаётся
+        // непроверяемой, а непроверенная сверка неотличима от здоровой.
+        writeFileSync(
+          at,
+          before + NEWLINE + r.append.split("\n").join(NEWLINE),
+        );
       } else if (r.rename !== undefined) {
         writeFileSync(path.join(tmp, r.rename), before);
         rmSync(at);
@@ -1025,8 +1154,26 @@ if (mode === "falsify") {
       const after = sectionsOf(runVerify(tmp));
       const wasRed = clean.get(r.section) === true;
       const nowRed = after.get(r.section) === true;
-      if (!after.has(r.section))
-        broken.push(r.section + " — секции в выводе нет");
+      // Часть сверок печатает секцию ТОЛЬКО когда есть что сказать: звенья
+      // цепочки без инструмента, версия среды, скрипты без описания. У здоровой
+      // такой сверки секции в выводе нет вовсе, и «нет секции» для неё —
+      // ЗДОРОВЬЕ, а не устаревший рецепт. Появление секции после поломки и есть
+      // её срабатывание.
+      //
+      // Прежде прогон считал отсутствие секции поломкой рецепта и требовал его
+      // переписать — то есть объявлял неисправимым то, что исправно. Найдено
+      // при выплате долга рецептов: две сверки-предупреждения нельзя было
+      // покрыть в принципе.
+      const wasThere = clean.has(r.section);
+      const nowThere = after.has(r.section);
+      if (!wasThere && nowThere) caught.push(r.section);
+      else if (!nowThere)
+        broken.push(
+          r.section +
+            (wasThere
+              ? " — секция пропала из вывода"
+              : " — секции в выводе нет ни до, ни после"),
+        );
       else if (nowRed && !wasRed) caught.push(r.section);
       else silent.push(r.section);
       if (r.copyTo !== undefined) rmSync(path.join(tmp, r.copyTo));
@@ -1045,7 +1192,30 @@ if (mode === "falsify") {
   // которые сегодня ничего не известно. Долг тогда выглядел бы меньше, чем он
   // есть, причём тем меньше, чем беднее проект.
   const covered = new Set(recipes.map((r) => r.section));
-  const uncovered = CHECK_SECTIONS.filter((s) => !covered.has(s));
+  // Сверка, чей предмет у ЭТОГО проекта отсутствует, рецепта иметь не может:
+  // ломать нечего. Считать её долгом значит держать в списке пункт, который на
+  // этом проекте не закрывается никогда, — и долг перестают читать, потому что
+  // он не убывает. Такие называются отдельно и с причиной.
+  //
+  // Список закрытый и держится полем настройки: предмет появится — поле
+  // заполнят, и сверка вернётся в долг сама.
+  const NEEDS = {
+    "Константы настроек описаны": "configDocs",
+    "Точечные исключения линта": "lintExceptions",
+    "Решения адресуемы": "adr",
+    "Связи через DOM и CSS": "domTables",
+  };
+  const noSubject = [];
+  const uncovered = [];
+  for (const s of CHECK_SECTIONS) {
+    if (covered.has(s)) continue;
+    const field = NEEDS[s];
+    if (field !== undefined && CONFIG[field] == null) {
+      noSubject.push(s + " — предмета нет: поле `" + field + "` не заполнено");
+      continue;
+    }
+    uncovered.push(s);
+  }
 
   console.log("=== СВЕРКИ ЕЩЁ ЛОВЯТ ===");
   console.log("  поймали поломку: " + caught.length + " из " + recipes.length);
@@ -1068,6 +1238,15 @@ if (mode === "falsify") {
     "  Это долг, а не состояние: сверка без рецепта фальсифицирована один раз,",
   );
   console.log("  при заведении, и с тех пор её здоровье никем не проверено.");
+
+  if (noSubject.length) {
+    console.log("");
+    console.log("=== БЕЗ ПРЕДМЕТА: РЕЦЕПТА БЫТЬ НЕ МОЖЕТ ===");
+    for (const n of noSubject) console.log("  " + n);
+    console.log(
+      "  Ломать нечего. Заполнится поле — сверка вернётся в долг сама.",
+    );
+  }
 
   if (silent.length || broken.length) process.exitCode = 1;
   process.exit(process.exitCode ?? 0);
@@ -6290,6 +6469,13 @@ if (mode === "verify") {
       const full = norm(path.join(dir, entry));
       if (statSync(full).isDirectory()) walkNames(full);
       else {
+        // Каталог рецептов фальсификации — НЕ исходник. В нём лежат заведомо
+        // несуществующие имена: рецепт ломает сверку тем, что называет имя,
+        // которого в коде нет. Прочитанный как исходник, он делал это имя
+        // «живым» и гасил ровно ту сверку, которую рецепт проверяет — то есть
+        // рецепт удовлетворял собственное условие и молчал. Найдено при выплате
+        // долга рецептов: сверка имён не покрывалась в принципе.
+        if (full.endsWith("/falsify.json")) continue;
         fileStems.add(entry.replace(/\.[a-z.]+$/, ""));
         if (!new RegExp("\\.(" + CODE_STYLE_ALT + "|mjs|js|json)$").test(entry))
           continue;
