@@ -106,6 +106,12 @@
       "file": ".claude/rules/base-format.md",
       "find": "| Ссылки markdown | адрес в круглых скобках",
       "replace": "| Ссылки markdownn | адрес в круглых скобках"
+    },
+    {
+      "section": "Сверки, выключенные при живом предмете",
+      "file": ".context/graph.config.mjs",
+      "find": "  docsIndex: {",
+      "replace": "  docsIndexOff: null, docsIndex_disabled: {"
     }
   ]
 }

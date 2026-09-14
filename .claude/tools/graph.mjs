@@ -2178,6 +2178,15 @@ if (mode === "tested") {
 // задача всегда приходит ПО АДРЕСУ: без этой сборки знание об одном файле
 // приходится обходить по девяти файлам базы вручную.
 if (mode === "mutated") {
+  // Мутационный прогон бывает не у всякого проекта, и молчать об этом нельзя.
+  // Прежде поле указывало на конфиг, которого нет, область прогона выходила
+  // пустой, и режим печатал «правка файлов в области прогона не касается» —
+  // то есть зелёное. Выключенное и «нечего делать» выглядели одинаково.
+  if (CONFIG.mutationConfig == null) {
+    console.log("=== Мутационный прогон против правки ===");
+    console.log("  мутационный прогон в этом проекте не заявлен");
+    process.exit(0);
+  }
   const NEWLINE = String.fromCharCode(10);
   const repoRoot = path.join(BASE, "..");
   const ledgerPath = path.join(BASE, CONFIG.mutationLedger);
@@ -4652,6 +4661,49 @@ if (mode === "verify") {
     disarmed.push("список вопросов уже есть, а CONFIG.questions пуст");
   if (CONFIG.doctrineReading == null && SHELF !== null)
     disarmed.push("полка есть, а CONFIG.doctrineReading пуст");
+  // Страж был неполон: смотрел шесть необязательных полей из полутора десятков,
+  // и какие именно — не говорил нигде. Сверка готовности нашла живой пример:
+  // папка документации с двумя документами при пустом `docsIndex`. Список
+  // дополняется вместе с каждым новым необязательным полем — иначе страж
+  // стареет ровно так же, как то, что он стережёт.
+  if (CONFIG.docsIndex == null) {
+    const at = path.join(BASE, "../docs");
+    if (
+      existsSync(at) &&
+      readdirSync(at).filter((n) => n.endsWith(".md")).length
+    )
+      disarmed.push("документы уже есть (docs/), а CONFIG.docsIndex пуст");
+  }
+  if (CONFIG.mutationConfig == null) {
+    const at = ["stryker.config.json", "stryker.conf.json"]
+      .map((n) => path.join(BASE, "..", n))
+      .find((f) => existsSync(f));
+    if (at !== undefined)
+      disarmed.push(
+        "конфиг мутационного прогона уже есть, а CONFIG.mutationConfig пуст",
+      );
+  }
+  if (CONFIG.lintExceptions == null) {
+    const hit = files.find((f) =>
+      /eslint-disable-next-line|eslint-disable-line/.test(
+        readFileSync(f, "utf8"),
+      ),
+    );
+    if (hit !== undefined)
+      disarmed.push(
+        "точечные исключения линта уже есть (" +
+          rel(hit) +
+          "), а CONFIG.lintExceptions пуст",
+      );
+  }
+  if (CONFIG.checksTable == null && SHELF !== null) {
+    const at = path.join(SHELF, "rules/base-format.md");
+    if (
+      existsSync(at) &&
+      readFileSync(at, "utf8").includes("| Что сверяется |")
+    )
+      disarmed.push("таблица сверок уже есть, а CONFIG.checksTable пуст");
+  }
   // 13e. Сверка состава критериев снята намеренно, а не потеряна: её место
   // занял побайтовый двойник доктрины (`rules/quality.md` в парах выше).
   // Состав сличал перечень имён и молчал о формулировках — полка могла увезти
@@ -5130,9 +5182,7 @@ if (mode === "verify") {
       existsSync(seedsAt)
     ) {
       const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      const placed = new Set(
-        [...(seatMap.copy ?? []), ...(seatMap.later ?? [])].map((c) => c.from),
-      );
+      const placed = new Set((seatMap.copy ?? []).map((c) => c.from));
       (function walkSeeds(dir) {
         for (const entry of readdirSync(dir)) {
           if (OUT_OF_TREE.has(entry)) continue;
@@ -5337,14 +5387,26 @@ if (mode === "verify") {
     })(root);
     return found;
   };
-  // Полка из сверки адресов исключена, и это не послабление, а точность.
-  // Её файлы описывают проект, которого ЕЩЁ НЕТ: инструкция посадки называет
-  // `.claude/skills/task/SKILL.md`, который заводят на седьмом шаге, а шаблон
-  // скилла — файлы базы, заводимые «когда появится содержимое». В этом проекте
-  // такие адреса случайно живые, в новом — нет, и первый же `verify` после
-  // посадки краснел бы на тексте, приехавшем вместе с правилами. Поймано
-  // пересадкой в пустой проект. Полку держит другое: побайтовые копии
-  // инструмента, справочника и скилла плюс равенство таблиц сверок.
+  // Полка из сверки адресов исключалась ЦЕЛИКОМ, и исключение пережило свой
+  // повод. Повод был верный: её файлы описывают проект, которого ЕЩЁ НЕТ —
+  // инструкция посадки называет файлы базы, заводимые позже, и первый же
+  // прогон после посадки краснел бы на тексте, приехавшем вместе с правилами.
+  //
+  // Но с тех пор на полку переехала САМА ДОКТРИНА, и вместе с чужими адресами
+  // из сверки выпали её собственные: сто девяносто семь адресов свода не
+  // проверялись вовсе, семь из них вели в файл, удалённый при расщеплении
+  // доктрины, и прогон оставался зелёным. Это тот самый класс «исключение
+  // сужено по источнику, а причина его про предмет», который свод уже знает, —
+  // и он выстрелил снова, тем же способом.
+  //
+  // Поэтому исключается не источник, а ФОРМА адреса: файл базы проекта
+  // (`NN-имя.md`), документация проекта (`docs/…`) и местный файл разрешений —
+  // ровно то, чего в новом проекте ещё нет. Всё остальное на полке обязано
+  // разрешаться: оно говорит про саму обвязку, а она существует уже сейчас.
+  const ofAnyProject = (tok) =>
+    /^\d\d-[^/]+\.md$/.test(tok) ||
+    tok.startsWith("docs/") ||
+    tok.endsWith("settings.local.json");
   const SHELF_ROOT = SHELF === null ? "\u0000нет полки" : norm(SHELF);
   const docSources = [
     // База обходится ВГЛУБЬ. Плоский обход брал только верхний уровень, а база
@@ -5376,7 +5438,28 @@ if (mode === "verify") {
     // из «прочитай вот это». Умерший адрес в нём отправляет туда каждую сессию,
     // и молча — сверка его не читала.
     ...(CONFIG.skills == null ? [] : skillDocs()),
-  ].filter(([, at]) => !at.startsWith(SHELF_ROOT));
+    // Собственные файлы полки: доктрина, инструкция посадки, справочник
+    // инструмента, памятки. Читают их чаще всего остального, а адреса в них
+    // до сих пор не проверялись ни одной сверкой.
+    ...(SHELF === null
+      ? []
+      : (function walkShelf(dir) {
+          const out = [];
+          for (const e of readdirSync(dir)) {
+            const full = norm(path.join(dir, e));
+            if (statSync(full).isDirectory()) out.push(...walkShelf(full));
+            else if (e.endsWith(".md"))
+              out.push([
+                path.relative(REPO, full).split(path.sep).join("/"),
+                full,
+              ]);
+          }
+          return out;
+        })(norm(SHELF))),
+  ]
+    // Скиллы приходят дважды — своим сборщиком и обходом полки.
+    .filter((one, i, all) => all.findIndex(([, at]) => at === one[1]) === i)
+    .map(([name, at]) => [name, at, at.startsWith(SHELF_ROOT)]);
 
   // Скрипты манифеста против прозы — в обе стороны.
   //
@@ -5503,8 +5586,11 @@ if (mode === "verify") {
   // проза — «положите рядом `config.json`», «суффикс `.test.ts`», — и сверка по
   // ним краснела бы на законном тексте: замерено, пять таких на 1110 токенов.
   // У документа наоборот: голое имя это ссылка, и другой формы у неё обычно нет.
+  // Основа имени обязана быть непустой: `.md` в тексте — это расширение как
+  // предмет разговора, а не адрес. Без этого условия форма записи, объясняемая
+  // прозой, читалась бы как несуществующий файл.
   const looksLikeBareName = (tok) =>
-    !tok.includes("/") && /\.md$/.test(tok) && !isExtensionList(tok);
+    !tok.includes("/") && /[^.]\.md$/.test(tok) && !isExtensionList(tok);
   // `everyPath` собран под подсчёт папок и намеренно держит только
   // `.ts/.tsx/.scss/.md`; расширять его нельзя — на его составе стоят числа
   // заявленных папок. Поэтому у сверки путей свой инвентарь: тот же список
@@ -5581,7 +5667,7 @@ if (mode === "verify") {
   const knownUsed = new Set();
   const danglingPaths = [];
   let pathTokens = 0;
-  for (const [name, at] of docSources) {
+  for (const [name, at, fromShelf] of docSources) {
     // Копия доктрины — по той же причине, что и у ссылок: её адреса написаны
     // про полку. См. `CONFIG.doctrineCopies`.
     if (
@@ -5594,6 +5680,9 @@ if (mode === "verify") {
       let tok = hit[1].trim();
       if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
       tok = tok.replace(/[:#].*$/, "");
+      // Адрес, принадлежащий ЛЮБОМУ проекту, а не этому: в тексте полки его
+      // требовать нельзя — в новом проекте такого файла ещё нет.
+      if (fromShelf === true && ofAnyProject(tok)) continue;
       if (looksLikeBareName(tok)) {
         // Неоднозначное имя отсутствием не является — тот же принцип, что у
         // реестра тестов и у карты: список, наполненный живыми файлами,
@@ -5613,6 +5702,15 @@ if (mode === "verify") {
         tok.startsWith("./") || tok.startsWith("../")
           ? norm(path.resolve(dir, tok))
           : null;
+      // Текст полки адресует своих соседей от КОРНЯ ОБВЯЗКИ, а не от папки
+      // самого файла: инструкция посадки пишет `seat/map.json`, лёжа в
+      // `seat/`. Разрешение от папки файла давало бы `seat/seat/map.json` —
+      // то есть сверка краснела бы на законной форме записи.
+      const fromShelfRoot =
+        fromShelf === true && SHELF !== null
+          ? norm(path.join(SHELF, tok))
+          : null;
+      if (fromShelfRoot !== null && existsSync(fromShelfRoot)) continue;
       // `locate` требует ОДНОЗНАЧНОГО разрешения и молчит, когда путь есть в
       // двух копиях, — а у парных форков так почти всё (`runtime/types.ts`
       // живёт и в движке, и в форке). Для вопроса «существует ли файл»
@@ -5772,7 +5870,9 @@ if (mode === "verify") {
   // доктрине проверяются как раз наоборот — они обязаны разрешаться, и глубокий
   // обход туда заведён именно за этим. Найдено пробой: обход втянул доктрину
   // сразу в обе сверки, и во второй он был неправ.
-  const nameSources = docSources.filter(([n]) => !/^rules[/]/.test(n));
+  const nameSources = docSources.filter(
+    ([, , fromShelf]) => fromShelf !== true,
+  );
   for (const [name, at] of nameSources)
     for (const [i, line] of readFileSync(at, "utf8").split(NEWLINE).entries())
       for (const span of line.split(BACKTICK).filter((_, k) => k % 2 === 1)) {

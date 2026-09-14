@@ -105,13 +105,10 @@
     {
       "from": "seat/templates/src/tests/App.test.tsx",
       "to": "src/tests/App.test.tsx"
-    }
-  ],
-  "later": [
+    },
     {
       "from": "seat/templates/stryker.config.json",
-      "to": "stryker.config.json",
-      "when": "с первыми тестами"
+      "to": "stryker.config.json"
     }
   ],
   "projectOwnedInsideHarness": ["settings.local.json"]
