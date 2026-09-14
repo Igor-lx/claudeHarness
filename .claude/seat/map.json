@@ -169,7 +169,7 @@
     },
     {
       "name": "lint",
-      "recognise": "^\\s*eslint\\b[^&|]*$"
+      "recognise": "^\\s*eslint\\b(?![^&|]*--fix)[^&|]*$"
     },
     {
       "name": "format:check",

@@ -20,6 +20,7 @@ import {
   inComment,
   isCodePath,
   CODE_OR_STYLE,
+  CODE_STYLE_ALT,
   isStylePath,
   isTestPath,
   selfCheck,
@@ -39,6 +40,9 @@ import { BASE, CONFIG } from "../../.context/graph.config.mjs";
  * соседях — справочнике режимов и словаре области. Всё остальное считается от
  * папки базы: у этих двух адресов разные хозяева, и пока они назывались одним
  * именем, перенос инструмента увёз бы за собой всю базу. */
+/** Расширение кода или стиля в конце имени: снимается с голого имени файла. */
+const BARE_EXT = new RegExp("[.](" + CODE_STYLE_ALT + ")$");
+
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** Вид полей настройки сверяется ДО работы, и неверный называется строкой.
@@ -579,7 +583,9 @@ const styleUsers = (target) => {
 // которого перед двоеточием пусто, остаётся как есть: без имени файла он и не
 // адрес. Образец такой формы здесь намеренно не приведён — сверка новых якорей
 // прочла бы его как настоящий, и ровно это и случилось при первой записи.
-const LINE_SUFFIX = /(\.(?:tsx?|scss|md|json|html)):\d+(?:-\d+)?$/;
+const LINE_SUFFIX = new RegExp(
+  "(\\.(?:" + CODE_STYLE_ALT + "|md|json|html)):\\d+(?:-\\d+)?$",
+);
 
 const quotedIn = (line) =>
   line
@@ -593,7 +599,7 @@ const quotedIn = (line) =>
 const baseHitsFor = (target) => {
   const r = rel(target);
   const base = r.slice(r.lastIndexOf("/") + 1);
-  const bare = base.replace(/\.(tsx?|scss)$/, "");
+  const bare = base.replace(BARE_EXT, "");
   const dir = r.slice(0, r.lastIndexOf("/"));
   // Голое имя засчитывается, только если оно в проекте одно: `index.ts` носят
   // сорок один файл, `types.ts` — двадцать.
@@ -1803,7 +1809,7 @@ if (mode === "tested") {
     // и должно быть сказано, что именно осталось висеть.
     const deletedCode = changed
       .map(abs)
-      .filter((f) => /\.(tsx?|scss)$/.test(f) && !isTest(f) && !existsSync(f));
+      .filter((f) => CODE_OR_STYLE.test(f) && !isTest(f) && !existsSync(f));
 
     // Стиль в граф импортов не входит — его подключает сборщик, — поэтому в
     // `touchedCode` он не попадает, и раньше правка стилей получала ответ
@@ -2261,7 +2267,7 @@ if (mode === "tested") {
       for (const f of touchedCode) {
         const r = rel(f);
         const base = r.slice(r.lastIndexOf("/") + 1);
-        const bare = base.replace(/\.(tsx?|scss)$/, "");
+        const bare = base.replace(BARE_EXT, "");
         const named = [
           ...new Set(
             DOC_LINES.filter(([, , line]) =>
@@ -2632,7 +2638,7 @@ if (mode === "brief") {
       for (const target of hits.slice(0, 12)) {
         const r = rel(target);
         const base = r.slice(r.lastIndexOf("/") + 1);
-        const bare = base.replace(/\.(tsx?|scss)$/, "");
+        const bare = base.replace(BARE_EXT, "");
         console.log(`${NEWLINE}=== ${r} ===`);
 
         const down = [...(importsOf.get(target) ?? [])].map(rel).sort();
@@ -2871,6 +2877,15 @@ if (mode === "verify") {
     if (q.startsWith("src/")) return path.join(REPO, q);
     for (const [prefix, base] of CONFIG.pathShortcuts ?? [])
       if (q.startsWith(prefix)) return path.join(REPO, base, q);
+    // Адрес ОТ КОРНЯ ИСХОДНИКОВ — та форма, в которой инструмент сам их и
+    // печатает: `components/CheckboxPanel/domain/selection.ts`. Ветка выше
+    // знает один литерал `src/`, и проект, зовущий корень иначе, не разрешал
+    // ни одного адреса с косой чертой — а признака у этого не было: сверка
+    // слоёв краснела строкой «слоя нет на диске» про папку, которая есть.
+    // Слой без косой черты при этом проходил зелёным по другой ветке, и
+    // расхождение выглядело случайным. Найдено посадкой в проект со слоями.
+    const atRoot = path.join(ROOT, q);
+    if (existsSync(atRoot)) return atRoot;
     return null;
   };
 
@@ -2994,10 +3009,16 @@ if (mode === "verify") {
   // а не по папке, поэтому и живёт в проверке, а не в тексте.
   const IMPORTERS_RE =
     /`([\w./*{},-]+\/(?:\*\*)?)`[^`\n]*?(\d+) импортёр[а-я]*(?: \(\+(\d+) тест[а-я]*\))?/g;
-  const PATH_RE = /`([\w./{},*-]+\.(?:tsx|ts|scss))`/g;
+  const PATH_RE = new RegExp(
+    "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
+    "g",
+  );
   const HEAD_RE = /^#{2,4}[^`]*`([^`]+)`/;
-  const HEAD_FILES_RE = /`([\w./{},*-]+\.(?:tsx|ts|scss))`/g;
-  const ANCHOR_TAIL = /\.(tsx?|scss|md|json|html)$/;
+  const HEAD_FILES_RE = new RegExp(
+    "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
+    "g",
+  );
+  const ANCHOR_TAIL = new RegExp("\\.(" + CODE_STYLE_ALT + "|md|json|html)$");
   // Якорь с цитатой: номер строки плюс сама конструкция в кавычках. Номер съедет
   // от любой вставки выше, цитата — нет, поэтому проверяется именно она.
   //
@@ -3088,12 +3109,41 @@ if (mode === "verify") {
   const testMentions = new Set();
 
   // Строки таблицы «Правила направления»: слой, запреты, разрешённые исключения.
-  const RULES_HEAD = new RegExp("^#+.*" + CONFIG.rulesHeading);
-  const ISOLATION_HEAD = new RegExp("^#+.*" + CONFIG.isolationHeading);
+  // Заголовок из настройки — ТЕКСТ, а не образец, и подставляется он
+  // экранированным.
+  //
+  // Настройка называет шапку таблицы дословно, а шапка markdown-таблицы состоит
+  // из вертикальных черт — в регулярном выражении это «или». Подставленная как
+  // есть, она превращала образец в «любой заголовок ИЛИ вот это», и `inRules`
+  // вставал на ПЕРВОМ же заголовке файла и не сбрасывался. Дальше правилом
+  // направления читалась каждая трёхколоночная строка базы: строки таблиц
+  // файлов в карте, строки базовой линии в фактах. Замерено на посадке в проект
+  // со слоями: двенадцать правил вместо трёх, и ячейки чужих строк объявлены
+  // мёртвыми разрешениями.
+  //
+  // Не находило это ничто: во всех предыдущих проектах поле стояло `null`, и
+  // сверка молчала за отсутствием предмета. Первый же проект, объявивший слои,
+  // получил её сломанной.
+  // Поле не объявлено — таблицы нет, и разбор не запускается ВОВСЕ. Образец из
+  // пустого текста совпал бы с любым заголовком, то есть ровно с тем, что эта
+  // правка и чинит: пустая подстановка опаснее неверной, потому что выглядит
+  // безобидно. Поймано тем же прогоном сразу после первой редакции.
+  const headRe = (text) =>
+    text == null
+      ? { test: () => false }
+      : new RegExp("^#+.*" + text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const RULES_HEAD = headRe(CONFIG.rulesHeading);
+  const ISOLATION_HEAD = headRe(CONFIG.isolationHeading);
   const ROW_RE = /^\|(.+)\|(.+)\|(.*)\|\s*$/;
   const ISO_ROW_RE = /^\|([^|]+)\|([^|]+)\|\s*$/;
   const cellPaths = (cell) => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
   const rules = [];
+  // Нашёлся ли РАЗДЕЛ с объявленным заголовком — отдельно от того, разобрались
+  // ли в нём строки. Это разные поломки: заголовок назван неверно, либо таблица
+  // под ним другой формы. Одно сообщение на оба случая отправляло бы искать не
+  // там — поймано собственной правкой на живом проекте.
+  let rulesHeadSeen = false;
+  let isolationHeadSeen = false;
   const isolation = [];
 
   for (const name of readdirSync(BASE)) {
@@ -3128,7 +3178,7 @@ if (mode === "verify") {
         const token = head[1];
         prefix = !token.includes("/")
           ? null
-          : /\.(tsx?|scss)$/.test(token)
+          : CODE_OR_STYLE.test(token)
             ? token.slice(0, token.lastIndexOf("/") + 1)
             : bare(token) + "/";
         const named = line.match(HEAD_FILES_RE) ?? [];
@@ -3139,7 +3189,9 @@ if (mode === "verify") {
       }
       if (line.startsWith("#")) {
         inRules = RULES_HEAD.test(line);
+        if (inRules) rulesHeadSeen = true;
         inIsolation = ISOLATION_HEAD.test(line);
+        if (inIsolation) isolationHeadSeen = true;
       }
 
       const row = inRules ? ROW_RE.exec(line) : null;
@@ -3477,8 +3529,32 @@ if (mode === "verify") {
         deadRuleAllowances.push(
           `правила направления: ${rule.layer} → ${q} — ничего не разрешает`,
         );
+  // Объявленный и ненайденный заголовок НАЗЫВАЕТСЯ, а не молчит.
+  //
+  // Поле настройки описано прозой, примера в файле нет, и естественное неверное
+  // прочтение давало ноль правил при живой таблице на диске. Ноль тут читается
+  // как «слой один, проверять нечего» — то есть сверка зелена оттого, что не
+  // нашла своего предмета, а это худший из возможных исходов.
+  const headingMissed =
+    CONFIG.rulesHeading == null || rules.length > 0
+      ? null
+      : rulesHeadSeen
+        ? "РАЗДЕЛ «" +
+          CONFIG.rulesHeading +
+          "» найден, но ни одной строки правила в нём нет: таблица направления" +
+          " состоит из ТРЁХ граф — слой, что запрещено, что разрешено исключением." +
+          " Таблица из двух граф — это изоляция, и объявляется она полем" +
+          " `isolationHeading`"
+        : "ЗАГОЛОВОК ОБЪЯВЛЕН, А РАЗДЕЛА С НИМ НЕТ: «" +
+          CONFIG.rulesHeading +
+          "» — объявляется текст ЗАГОЛОВКА РАЗДЕЛА, а не шапка таблицы";
   checkHead("Правила направления");
   console.log(`  правил: ${rules.length}, нарушено: ${broken7.length}`);
+  // Находка печатается строкой С ОТСТУПОМ — той же формой, какой её печатают все
+  // сверки. Приписанная к строке счёта, она не делала секцию красной ни для
+  // глаза, ни для режима фальсификации: числа оставались нулями. Поймано
+  // рецептом, который «промолчал» на заведомо неверном поле.
+  if (headingMissed !== null) console.log("    " + headingMissed);
   for (const b of broken7) console.log("    " + b);
 
   // 7a. изоляция слоя: импортировать можно только объявленное.
@@ -3576,8 +3652,25 @@ if (mode === "verify") {
   console.log(`  имён названо неверно: ${barrelDrift.length}`);
   for (const b of barrelDrift) console.log("    " + b);
 
+  // Тот же крючок, что у направления: объявленный и не сработавший заголовок
+  // называется. Ноль слоёв читается как «изоляции нет, проверять нечего», и
+  // отличить это от «таблица на диске есть, а разбор её не нашёл» по числу
+  // нельзя.
+  const isoMissed =
+    CONFIG.isolationHeading == null || isolation.length > 0
+      ? null
+      : isolationHeadSeen
+        ? "РАЗДЕЛ «" +
+          CONFIG.isolationHeading +
+          "» найден, но ни одной строки в нём нет: таблица изоляции состоит из" +
+          " ДВУХ граф — слой и то, что ему разрешено. Таблица из трёх граф — это" +
+          " направление, и объявляется она полем `rulesHeading`"
+        : "ЗАГОЛОВОК ОБЪЯВЛЕН, А РАЗДЕЛА С НИМ НЕТ: «" +
+          CONFIG.isolationHeading +
+          "» — объявляется текст ЗАГОЛОВКА РАЗДЕЛА, а не шапка таблицы";
   checkHead("Правила изоляции");
   console.log(`  слоёв: ${isolation.length}, нарушено: ${brokenIso.length}`);
+  if (isoMissed !== null) console.log("    " + isoMissed);
   for (const b of brokenIso) console.log("    " + b);
 
   // 7c. правило про несуществующий предмет.
@@ -5820,7 +5913,7 @@ if (mode === "verify") {
   // с перечислениями вырезало все адреса в скрытых папках — то есть всю
   // `.context/**`, самый называемый адрес проекта. Найдено пробой: `.context/
   // graph2.mjs` (файла нет) прошёл молча.
-  const PATH_EXT = /\.(tsx?|scss|md|json|mjs)$/;
+  const PATH_EXT = new RegExp("\\.(" + CODE_STYLE_ALT + "|md|json|mjs)$");
   // Составное расширение (`.test.ts`) — тоже расширение, а не адрес: прежний
   // образец требовал одного куска после точки и на нём спотыкался.
   const isExtensionList = (tok) =>
@@ -6178,7 +6271,8 @@ if (mode === "verify") {
       if (statSync(full).isDirectory()) walkNames(full);
       else {
         fileStems.add(entry.replace(/\.[a-z.]+$/, ""));
-        if (!/\.(tsx?|scss|mjs|js|json)$/.test(entry)) continue;
+        if (!new RegExp("\\.(" + CODE_STYLE_ALT + "|mjs|js|json)$").test(entry))
+          continue;
         for (const line of readFileSync(full, "utf8").split(NEWLINE))
           for (const hit of line.matchAll(CAMEL_TOKEN))
             if (!inComment(line, hit.index)) liveCamel.add(hit[0]);
@@ -6930,6 +7024,8 @@ if (mode === "verify") {
     goneNames.length ||
     frozenNumbers.length ||
     goneCamel.length ||
+    (headingMissed === null ? 0 : 1) ||
+    (isoMissed === null ? 0 : 1) ||
     strayTests.length ||
     unresolved.length
   )

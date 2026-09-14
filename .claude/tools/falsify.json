@@ -169,6 +169,18 @@
       "file": "package.json",
       "find": "\"typecheck\": \"tsc --noEmit\",",
       "replace": "\"typecheck\": \"tsc --noEmit\",\n    \"types\": \"tsc --noEmit -p tsconfig.json\","
+    },
+    {
+      "section": "Правила направления",
+      "file": ".context/graph.config.mjs",
+      "find": "  rulesHeading: null,",
+      "replace": "  rulesHeading: \"| Слой | Кому разрешено |\","
+    },
+    {
+      "section": "Правила изоляции",
+      "file": ".context/graph.config.mjs",
+      "find": "  isolationHeading: null,",
+      "replace": "  isolationHeading: \"Раздела с таким именем нет\","
     }
   ]
 }
