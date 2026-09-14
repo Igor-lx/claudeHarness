@@ -74,7 +74,6 @@ export const CONFIG = {
     // Таблица разделов правил и таблица скиллов называют ФАЙЛЫ ПОЛКИ: это их
     // предмет — «где на полке лежит оригинал». Полка лежит снаружи репозитория,
     // поэтому изнутри эти имена неразрешимы по построению, а не по недосмотру.
-    '01-facts.md|CLAUDE.template.md',
     '01-facts.md|task.skill.template.md',
     '01-facts.md|probe.skill.template.md',
     '01-facts.md|audit.skill.template.md',
@@ -134,7 +133,7 @@ export const CONFIG = {
    *
    * `null` — полки нет, и сверять состав доктрины не с чем. */
   doctrineReading: {
-    template: "CLAUDE.template.md",
+    template: "entry.md",
     listHeading: "## Правила, которые не зависят от проекта",
     orderHeading: "## Первыми же действиями, до любых действий с кодом",
   },
@@ -156,8 +155,8 @@ export const CONFIG = {
    * «а на полку это едет?» ещё дёшево задать. `null` — таблицы нет. */
   rulesManifest: {
     rules: ["../CLAUDE.md"],
-    table: "01-facts.md",
-    heading: "| Раздел правил проекта | Где на полке |",
+    table: null,
+    heading: null,
     refExceptions: ["упомянут по имени"],
   },
   /** Связи через DOM и CSS: имена, которых нет в графе импортов. Один файл

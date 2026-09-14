@@ -96,6 +96,7 @@ const TOOL_PAIRS =
         // которая сошлась, — и файл без неё расходится молча. Их полноту
         // держит сверка «доктрина названа в порядке чтения»: файл доктрины на
         // полке, не доехавший до проекта, ею и ловится.
+        ["rules/entry.md", shelfAt("entry.md")],
         ["rules/glossary.md", shelfAt("glossary.md")],
         ["rules/loop.md", shelfAt("loop.md")],
         ["rules/code.md", shelfAt("code.md")],
@@ -2946,23 +2947,21 @@ if (mode === "verify") {
   const undocumented = [];
   {
     const modes = toolModes();
-    const named = (text, m) => new RegExp("`" + m + "\\b").test(text);
-    const manualAt = path.join(BASE, TOOL_MANUAL);
+    // Справочник лежит рядом с ИНСТРУМЕНТОМ, а не с базой: это его собственный
+    // сосед, и переезд инструмента уводит справочник с собой.
+    const manualAt = path.join(TOOL_DIR, TOOL_MANUAL);
     const manual = existsSync(manualAt) ? readFileSync(manualAt, "utf8") : null;
-    const rulesText = CONFIG.rulesManifest.rules
-      .map((r) => {
-        const at = path.join(BASE, r);
-        return existsSync(at) ? readFileSync(at, "utf8") : "";
-      })
-      .join("\n");
     const implemented = new Set(modes);
+    // Вторая половина сверки — «режим назван в файлах правил» — снята вместе с
+    // перечнем режимов в правилах. Перечень был вторым списком тех же имён и
+    // разошёлся бы со справочником при первом новом режиме. Правила называют
+    // инструмент одним указателем, а режимы описаны там, где живут.
     for (const m of [...implemented].sort()) {
       if (
         manual !== null &&
         !new RegExp("^### `" + m + "\\b", "m").test(manual)
       )
         undocumented.push(`нет раздела в справочнике: ${m}`);
-      if (!named(rulesText, m)) undocumented.push(`не назван в правилах: ${m}`);
     }
     // Обратная сторона: раздел справочника про режим, которого нет. Справочник
     // объявляет себя полным, и такой раздел отправляет читателя вызывать
@@ -3692,7 +3691,15 @@ if (mode === "verify") {
   // они одной секцией: заведи четвёртый, и вопрос «а он живой?» задастся сам.
   const deadExceptions = [...deadRuleAllowances];
   if (CONFIG.rulesManifest != null) {
-    const tableAt = path.join(BASE, CONFIG.rulesManifest.table);
+    // Таблица классификации разделов необязательна, и это следствие
+    // раскладки: в файле правил проекта лежит ТОЛЬКО проектное, доктрина —
+    // отдельными файлами рядом. Классифицировать стало нечего, вопрос «этот
+    // раздел едет на полку?» задаётся не здесь, а тем, куда человек кладёт
+    // текст. Таблица объявлена — сверяется по-прежнему.
+    const tableAt =
+      CONFIG.rulesManifest.table == null
+        ? null
+        : path.join(BASE, CONFIG.rulesManifest.table);
     // Заголовки собираются со ВСЕХ заявленных файлов правил: разложенные по
     // папкам, они остаются одним корпусом, и сверять их надо как один.
     // Обратная сторона: файл правил, лежащий на диске и НЕ объявленный.
@@ -3741,7 +3748,9 @@ if (mode === "verify") {
       for (const line of readFileSync(at, "utf8").split(NEWLINE))
         if (line.startsWith("## ")) heads.push(line.slice(3).trim());
     }
-    if (!existsSync(tableAt))
+    if (tableAt === null) {
+      // классификация не заявлена — сверять нечего
+    } else if (!existsSync(tableAt))
       unclassified.push(`нет файла таблицы: ${CONFIG.rulesManifest.table}`);
     else {
       const lines = readFileSync(tableAt, "utf8").split(NEWLINE);
@@ -4603,7 +4612,18 @@ if (mode === "verify") {
         if (order !== null && !order.includes(name))
           doctrineDrift.push(`не назван в порядке чтения: ${name}`);
       }
-      const known = new Set(readdirSync(SHELF));
+      // Опись обходит полку ВГЛУБЬ: справочник инструмента лежит подпапкой, и
+      // плоская опись объявляла его отсутствующим — то есть сверка краснела на
+      // живом файле. Найдено при выносе порядка чтения из шаблона правил.
+      const known = new Set();
+      (function walkKnown(dir) {
+        for (const e of readdirSync(dir)) {
+          if (OUT_OF_TREE.has(e)) continue;
+          const full = path.join(dir, e);
+          if (statSync(full).isDirectory()) walkKnown(full);
+          else known.add(e);
+        }
+      })(SHELF);
       for (const [where, text] of [
         ["списке правил", list],
         ["порядке чтения", order],
@@ -4615,6 +4635,9 @@ if (mode === "verify") {
           // спрашивать с них полку значило бы краснеть на законном: на полке
           // их нет и быть не может, они заводятся в проекте при посадке.
           if (/^\d\d-/.test(m[1])) continue;
+          // Файл правил проекта — тот же класс: он живёт в проекте, на полке
+          // его нет и быть не может, а порядок чтения обязан его называть.
+          if (m[1] === "CLAUDE.md") continue;
           if (!known.has(m[1]))
             doctrineDrift.push(`назван в ${where}, но на полке нет: ${m[1]}`);
         }
@@ -4663,8 +4686,8 @@ if (mode === "verify") {
   console.log("=== Разделы правил классифицированы ===");
   console.log(
     CONFIG.rulesManifest == null
-      ? "  таблица разделов не заявлена"
-      : `  без решения «на полку или проектное»: ${unclassified.length}`,
+      ? "  файлы правил не заявлены"
+      : `  расхождений: ${unclassified.length}`,
   );
   for (const u of unclassified) console.log("    " + u);
 
