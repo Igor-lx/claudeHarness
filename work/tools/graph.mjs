@@ -36,7 +36,6 @@ import { BASE, CONFIG } from "../../../.context/graph.config.mjs";
  * именем, перенос инструмента увёз бы за собой всю базу. */
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-
 const ROOT = path.join(BASE, CONFIG.src).split(path.sep).join("/");
 
 /** Папки, которых в описи нет: порождённые инструментами копии дерева и
@@ -2149,7 +2148,6 @@ if (mode === "verify") {
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
   const NEWLINE = String.fromCharCode(10);
-  const CR_LF = String.fromCharCode(13) + NEWLINE;
   const REPO = path.join(BASE, "..");
 
   const bare = (q) => q.replace(/[*]+$/, "").replace(/[/]+$/, "");
@@ -3315,7 +3313,11 @@ if (mode === "verify") {
   // столько, сколько его помнила сессия.
   const questionLists = [];
   if (CONFIG.questions != null)
-    questionLists.push(["проект", path.join(BASE, CONFIG.questions), CONFIG.questions]);
+    questionLists.push([
+      "проект",
+      path.join(BASE, CONFIG.questions),
+      CONFIG.questions,
+    ]);
   if (SHELF !== null) {
     const at = shelfAt("work/questions.md");
     if (at !== null && existsSync(at))
@@ -3629,7 +3631,6 @@ if (mode === "verify") {
   console.log(`  отложенного без решения: ${parked.length}`);
   for (const p of parked) console.log("    " + p);
 
-
   // 13b. Каждый раздел правил проекта КЛАССИФИЦИРОВАН: либо назван его адрес
   // на полке, либо он помечен проектным. Сверять заголовки проекта с
   // заголовками шаблона напрямую нельзя — шаблон обобщённый, у проекта законно
@@ -3687,6 +3688,10 @@ if (mode === "verify") {
         for (const e of readdirSync(dir)) {
           if (skipDirs.has(e)) continue;
           const full = norm(path.join(dir, e));
+          // Обвязка из обхода исключена целиком: в её семенах лежит заготовка
+          // файла правил, и обход объявлял её незаявленным файлом правил
+          // проекта. Найдено пересадкой начисто.
+          if (SHELF !== null && full.startsWith(norm(SHELF) + "/")) continue;
           if (statSync(full).isDirectory()) walkRules(full);
           else if (e === "CLAUDE.md" && !declared.has(full))
             unclassified.push(
@@ -3934,7 +3939,7 @@ if (mode === "verify") {
       if (!head.some((l) => /^user-invocable:\s*true\s*$/.test(l)))
         skillDrift.push(`не вызываем по имени: ${name}`);
     }
-    for (const [name, template] of listed) {
+    for (const [name] of listed) {
       if (!onDisk.includes(name)) {
         skillDrift.push(`объявлен, но файла нет: ${name}`);
         continue;
@@ -4598,12 +4603,14 @@ if (mode === "verify") {
         doctrineDrift.push(
           `раздела нет: ${CONFIG.doctrineReading.orderHeading}`,
         );
-      const doctrine = readdirSync(SHELF).filter(
-        (n) =>
-          n.endsWith(".md") &&
-          n !== "README-claude.md" &&
-          !n.includes(".template."),
-      );
+      // Доктрина — это папка правил, а не всё, что лежит в корне обвязки.
+      // Плоский обход брал и памятку для человека, и требовал назвать её в
+      // порядке чтения — то есть открывать каждой сессией описание папки.
+      const doctrineDir = shelfAt("work/rules");
+      const doctrine =
+        doctrineDir !== null && existsSync(doctrineDir)
+          ? readdirSync(doctrineDir).filter((n) => n.endsWith(".md"))
+          : [];
       for (const name of doctrine) {
         if (list !== null && !list.includes(name))
           doctrineDrift.push(`не назван в списке правил: ${name}`);

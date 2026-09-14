@@ -159,7 +159,7 @@ export const CONFIG = {
     rules: ["../CLAUDE.md"],
     table: null,
     heading: null,
-    refExceptions: ["упомянут по имени"],
+    refExceptions: [],
   },
   /** Связи через DOM и CSS: имена, которых нет в графе импортов. Один файл
    * пишет атрибут или переменную, другой читает — и переименование не роняет ни

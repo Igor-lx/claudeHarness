@@ -12,7 +12,7 @@
 
 ## Что снимается списком разрешений
 
-Рядом лежит [`settings.template.json`](./settings.template.json) — его кладут в
+Рядом лежит [`settings.template.json`](../../seat/templates/settings.json) — его кладут в
 новый проект как `.claude/settings.json`. Список закрывает две группы:
 
 - **команды проверок и работы:** `npm run …`, `npx vitest|eslint|tsc|prettier`,
