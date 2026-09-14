@@ -130,7 +130,6 @@ const liveQualityScopes = () => {
     live: [...declared].filter(([, v]) => v.live).map(([k]) => k),
   };
 };
-const SETTINGS_SHELF = shelfAt("seat/templates/settings.json");
 const SHELF_RULES = SHELF === null ? null : SHELF.split(path.sep).join("/");
 /** Путь для сообщений: от папки базы, чтобы читалось как в `CONFIG`. Принимает
  * и относительный — тогда возвращает его как есть. */
@@ -712,11 +711,11 @@ const reportUnknown = (given) => {
 // проектного. Включающий список отстал бы от первого же нового файла доктрины,
 // и снимок уехал бы неполным молча.
 if (mode === "handoff") {
-  const dest = process.argv[3];
-  if (dest === undefined) {
-    console.log("Укажи путь: node <инструмент> handoff <куда собрать>");
-    process.exit(1);
-  }
+  // Имя по умолчанию — рядом с проектом и не `.claude`: редактор держит свои
+  // папки настроек и в проекте, и в рабочей области, и снимок, положенный туда,
+  // сливается с ними. Найдено попыткой собрать снимок в корень рабочей области,
+  // где уже лежали локальные разрешения.
+  const dest = process.argv[3] ?? path.join(BASE, "..", "..", "claudeHandoff");
   if (SHELF === null) {
     console.log("=== Обвязка не заявлена ===");
     console.log("  В настройке проекта поле `shelf` пусто: собирать нечего.");
@@ -731,16 +730,29 @@ if (mode === "handoff") {
   const NEWLINE = String.fromCharCode(10);
   const CRLF = String.fromCharCode(13) + NEWLINE;
   const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+  // Границу между «едет» и «не едет» проводит САМА СРЕДА, а не наша догадка.
+  // Она читает два файла разрешений: общий коммитится и достаётся всем,
+  // местный она держит вне git и именно в него пишет всё, что человек нажал
+  // кнопкой «больше не спрашивай». Значит нажитое по ходу работы не едет по
+  // умолчанию, а чтобы поехало — его переносят в общий файл руками.
+  //
+  // Прежде здесь стоял отбор по форме строки. Он угадывал и промахивался в обе
+  // стороны молча: "Read(src/**)" — путь, но общий, а "./scripts/release.sh" —
+  // и путь, и скрипт проекта сразу.
   const skip = new Set(seatMap.projectOwnedInsideHarness ?? []);
 
   const copied = [];
+  const left = [];
   const copyTree = (from, to) => {
     mkdirSync(to, { recursive: true });
     for (const e of readdirSync(from)) {
       if (OUT_OF_TREE.has(e)) continue;
       const src = path.join(from, e);
       const rel = path.relative(SHELF, src).split(path.sep).join("/");
-      if (skip.has(rel)) continue;
+      if (skip.has(rel)) {
+        left.push(rel);
+        continue;
+      }
       if (statSync(src).isDirectory()) copyTree(src, path.join(to, e));
       else {
         // Концы строк приводятся к одному виду: снимок едет между машинами, а
@@ -754,8 +766,33 @@ if (mode === "handoff") {
     }
   };
 
-  const root = path.resolve(dest);
+  // Названная папка понимается как «куда положить», а не «что заполнить».
+  // Человек говорит «собери в такую-то папку», имея в виду, что внутри неё
+  // появится папка снимка, — и указывает при этом живое место: корень рабочей
+  // области, диск флешки. Прежде режим пытался заполнить названную папку саму и
+  // отказывался, раз она не пуста. Найдено прямым несовпадением: разработчик
+  // назвал корень рабочей области и получил отказ вместо снимка.
+  const named = path.resolve(dest);
+  const busy = existsSync(named) && readdirSync(named).length > 0;
+  const root = busy ? path.join(named, "claudeHandoff") : named;
   const claudeAt = path.join(root, ".claude");
+
+  // Цель осматривается ДО записи, и осматривается ЦЕЛИКОМ, а не только её
+  // вложенная папка настроек. Правило то же, что у первой фазы посадки:
+  // существующее не перезаписывается. Без этой проверки режим положил бы
+  // полсотни файлов в чужую папку настроек — редактор держит свои и в проекте,
+  // и в рабочей области. Найдено попыткой собрать снимок в корень области.
+  if (existsSync(root) && readdirSync(root).length > 0) {
+    console.log("=== СНИМОК НЕ СОБРАН ===");
+    console.log("  Папка снимка уже занята: " + norm(root));
+    console.log("  В ней лежит: " + readdirSync(root).slice(0, 6).join(", "));
+    console.log(
+      "  Снимок кладут в пустое место: слитый с чужим содержимым он ломает",
+    );
+    console.log("  и его, и себя. Удалите её либо назовите другую папку.");
+    process.exit(1);
+  }
+
   copyTree(SHELF, claudeAt);
 
   // Памятка получателю лежит РЯДОМ с папкой, а не внутри неё. Внутри она
@@ -790,11 +827,42 @@ if (mode === "handoff") {
       "- собран: " + stamp,
       "- файлов: " + copied.length,
       "- проверен посадкой в пустую папку: см. вывод сборки",
+      "",
+      "---",
+      "",
+      "**Этот файл — памятка переноса, а не часть обвязки.** К её работе он",
+      "отношения не имеет, никуда не копируется и ничем не проверяется.",
+      "Прочитали — удаляйте.",
     ].join(NEWLINE) + NEWLINE,
   );
 
-  console.log("=== Собрано ===");
-  console.log("  файлов: " + copied.length + " → " + norm(claudeAt));
+  // Печатается то, из чего состоит отчёт о сборке: путь, счёт, что исключено.
+  // Иначе эти числа пересказываются по памяти, и проверить их по отчёту нечем.
+  console.log("=== СНИМОК СОБРАН ===");
+  console.log("  путь:      " + norm(root));
+  console.log("  файлов:    " + copied.length);
+  // Называется то, что РЕАЛЬНО не поехало, а не список правил исключения.
+  // Прежде печатались правила, и в отчёте стоял файл, которого в проекте нет
+  // вовсе. Найдено прямым вопросом.
+  //
+  // И называется полным адресом: файлов с похожим именем несколько, а
+  // «settings.json» без адреса читается как любой из них.
+  //
+  // Плюс сказано, что с исключённым происходит. Строка «исключено» звучит как
+  // «потеряно», хотя общая половина этих разрешений уже уехала семенем, а
+  // осталась только проектная. Найдено тем же вопросом: «а разве оно не едет?»
+  if (left.length) {
+    console.log("  исключено: " + left.map((s) => ".claude/" + s).join(", "));
+    console.log(
+      "             это местный файл разрешений: среда пишет в него всё, что",
+    );
+    console.log(
+      "             нажато кнопкой, и держит вне git. Общее из него переносят",
+    );
+    console.log(
+      "             в общий файл руками — тот едет со снимком целиком",
+    );
+  }
 
   // Самопроверка: снимок сажается в пустую папку и прогоняется сверкой.
   // Без неё «самодостаточна» остаётся обещанием: собранная папка, в которой
@@ -822,23 +890,33 @@ if (mode === "handoff") {
       .split(NEWLINE)
       .filter((l) => /^ {4}S/.test(l))
       .filter((l) => !l.includes("<"));
-    console.log("=== Снимок проверен посадкой ===");
     console.log(
       red.length === 0
-        ? "  посажен в пустую папку, сверка базы — код 0. Снимок годен."
-        : "  сверка нашла расхождений: " + red.length,
+        ? "  проверка:  посажен в пустую папку, сверка базы — код 0"
+        : "  проверка:  сверка нашла расхождений: " + red.length,
     );
-    for (const r of red) console.log("  " + r.trim());
-    if (red.length) process.exitCode = 1;
+    for (const r of red) console.log("             " + r.trim());
+    if (red.length === 0) {
+      console.log("");
+      console.log("=== ЧТО С НИМ ДЕЛАТЬ ===");
+      console.log("  - взять папку целиком: " + norm(root));
+      console.log(
+        "  - получатель копирует .claude в корень своего проекта и говорит",
+      );
+      console.log("    «посади обвязку»");
+      console.log(
+        "  - памятка ЧИТАТЬ-ПЕРВЫМ.md одноразовая, удаляется после прочтения",
+      );
+    } else process.exitCode = 1;
   } catch (e) {
-    console.log("=== Снимок НЕ прошёл проверку ===");
+    console.log("=== СНИМОК НЕ СОБРАН ===");
     // Печатается вывод СВЕРКИ, а не текст исключения: «команда завершилась
     // ошибкой» не говорит, чего не хватило, и чинить по нему нечего.
     const said = String(e.stdout ?? "").split(NEWLINE);
     const red = said.filter((l) => /^ {4}S/.test(l) && !l.includes("<"));
     if (red.length) for (const r of red) console.log("  " + r.trim());
     else console.log("  " + String(e.message).split(NEWLINE)[0]);
-    console.log("  Отдавать его нельзя: у получателя он не встанет.");
+    console.log("  Отдавать нельзя: у получателя он не встанет.");
     process.exitCode = 1;
   } finally {
     rmSync(probe, { recursive: true, force: true });
@@ -3370,29 +3448,65 @@ if (mode === "verify") {
 
   // 9b. список разрешений среды не потерял того, что обещает полка
   const settingsDrift = [];
-  if (SETTINGS_SHELF !== null) {
-    const readListAbs = (at) => {
+  const settingsEarned = [];
+  {
+    // Правило записывается двумя равными формами: `Bash(ls *)` и `Bash(ls:*)`
+    // — среда считает их одним и тем же, а диалог подтверждения пишет первую.
+    // Сравнение дословно объявляло бы потерянным правило, записанное второй
+    // формой, то есть краснело бы на законном. Проверено по описанию среды.
+    const same = (one) =>
+      one.replace(new RegExp(":\\*\\)$"), " *)").replace(/\s+/g, " ");
+    // Спрашиваются ТРИ списка, а не один. Прежде смотрели только `allow`, и
+    // проект, потерявший запреты, проходил зелёным — при том что `deny` и
+    // `ask` и есть страховка от разрушительного, а `allow` всего лишь снимает
+    // вопросы. Хуже того: `allow` начинает действовать только после того, как
+    // папке доверились, а `deny` и `ask` — сразу.
+    const kinds = ["deny", "ask", "allow"];
+    const readAt = (at) => {
       if (!existsSync(at)) return null;
       const parsed = JSON.parse(readFileSync(at, "utf8"));
-      return parsed?.permissions?.allow ?? [];
+      return Object.fromEntries(
+        kinds.map((k) => [k, (parsed?.permissions?.[k] ?? []).map(same)]),
+      );
     };
-    const readList = (relPath) => readListAbs(path.join(BASE, relPath));
-    const mine = readList(CONFIG.settingsProject);
-    const shelf = readListAbs(SETTINGS_SHELF);
-    if (mine === null)
+    const shared = readAt(path.join(BASE, CONFIG.settingsProject));
+    const local = readAt(
+      path
+        .join(BASE, CONFIG.settingsProject)
+        .replace(/settings.json$/, "settings.local.json"),
+    );
+    if (shared === null)
       settingsDrift.push(`нет файла: ${CONFIG.settingsProject}`);
-    else if (shelf === null)
-      settingsDrift.push(`нет файла: ${rel0(SETTINGS_SHELF)}`);
-    else
-      for (const entry of shelf)
-        if (!mine.includes(entry)) settingsDrift.push(`потеряно: ${entry}`);
+    // Обратная сторона, и она НЕ роняет прогон. Проект наживает разрешения по
+    // ходу работы, и большая часть из них законно проектная — свои скрипты,
+    // свои пути, свои службы. Но часть общая, и семя о ней не узнаёт ничем:
+    // следующий проект начнёт с нуля и нажмёт те же подтверждения заново.
+    // Замерено на живом файле рабочей области: сорок пять общих правил,
+    // которых в семени не было, нашлись только ручным сравнением.
+    //
+    // Печатается вопросом, а не ошибкой: судить «общее или проектное» может
+    // только человек, а прогон, краснеющий на законном, перестают читать.
+    // Нажитое кнопкой попадает в местный файл, и туда ему и дорога: оно не
+    // едет. Но часть нажитого общая, и тогда её переносят в общий файл руками.
+    // Вопрос об этом задаётся здесь; молча общее правило осталось бы местным
+    // навсегда, и следующий проект нажал бы его заново.
+    if (shared !== null && local !== null)
+      for (const kind of kinds)
+        for (const entry of local[kind])
+          if (!shared[kind].includes(entry))
+            settingsEarned.push(`${kind}: ${entry}`);
   }
-  console.log("=== Разрешения среды ===");
+  console.log("=== Разрешения, нажитые по ходу работы ===");
   console.log(
-    SETTINGS_SHELF === null
-      ? "  пара не заявлена"
-      : `  из шаблона полки потеряно: ${settingsDrift.length}`,
+    settingsEarned.length === 0
+      ? "  нет: местный файл разрешений ничего не добавляет к общему"
+      : `  в местном файле есть, а в общем нет: ${settingsEarned.length}.` +
+          " Общее — перенести в общий, проектное — оставить местным",
   );
+  for (const e of settingsEarned) console.log("    " + e);
+
+  console.log("=== Разрешения среды ===");
+  console.log(`  расхождений: ${settingsDrift.length}`);
   for (const s of settingsDrift) console.log("    " + s);
 
   // 10. якорь на документацию в коде указывает на существующий файл
