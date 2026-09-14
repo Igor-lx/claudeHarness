@@ -124,6 +124,12 @@
       "file": ".context/graph.config.mjs",
       "find": "  transition: null,",
       "replace": "  transition: { file: \"15-transition.md\", heading: \"| Шаг |\" },"
+    },
+    {
+      "section": "Файлы базы заведены под свой предмет",
+      "file": "src/App.tsx",
+      "find": "export function App()",
+      "replace": "export function App() { useState(0); }\nexport function AppOld()"
     }
   ]
 }

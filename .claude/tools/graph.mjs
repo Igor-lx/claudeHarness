@@ -804,6 +804,7 @@ const CHECK_SECTIONS = [
   "Не разобрано (проверкой не покрыто)",
   "Конфиг звена цепочки на месте",
   "Таблица сверок описывает существующие сверки",
+  "Файлы базы заведены под свой предмет",
   "План перехода не потерялся",
   "Вопросы разработчику без ответа",
 ];
@@ -5243,7 +5244,11 @@ if (mode === "verify") {
       existsSync(seedsAt)
     ) {
       const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      const placed = new Set((seatMap.copy ?? []).map((c) => c.from));
+      const placed = new Set(
+        [...(seatMap.copy ?? []), ...(seatMap.onSubject ?? [])].map(
+          (c) => c.from,
+        ),
+      );
       (function walkSeeds(dir) {
         for (const entry of readdirSync(dir)) {
           if (OUT_OF_TREE.has(entry)) continue;
@@ -6211,6 +6216,57 @@ if (mode === "verify") {
     console.log("  действие, и делает его фаза 2, а не прогон.");
   }
 
+  // 44a. Файл базы заведён под свой предмет.
+  //
+  // Часть файлов базы приезжает не на посадке, а когда в коде появляется их
+  // предмет: состояние и порядок выполнения. У пустого проекта их нет, у живого
+  // они обычно есть с первого дня — и не спрашивал о них никто. Доктрина велит
+  // заводить их «с первого состояния» и «с первого эффекта или таймера», а
+  // machinery у этого требования не было: прогон вообще не знал, что такие
+  // файлы бывают. Найдено вопросом человека при разборе плана перехода.
+  //
+  // Предмет ищется в ИСПОЛНЯЕМОМ тексте исходников, мимо тестов: тест вправе
+  // завести состояние ради самой проверки, и требовать из-за этого записи о
+  // состоянии проекта значило бы краснеть на законном.
+  const SUBJECTS = {
+    // Имя, за которым идёт круглая ИЛИ угловая скобка: `useState<Set<string>>(`
+    // это тот же предмет, а выражение с одной круглой его не видело. Поймано
+    // полигоном: компонент с двумя состояниями и тремя ссылками прошёл как
+    // «предмета нет».
+    state: new RegExp(
+      "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]",
+    ),
+    timing: new RegExp(
+      "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
+    ),
+  };
+  const baseGap = [];
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt)) {
+      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+      const body = files
+        .filter((f) => !isTest(f))
+        .map((f) => readFileSync(f, "utf8"))
+        .join(NEWLINE);
+      for (const one of seatMap.onSubject ?? []) {
+        const re = SUBJECTS[one.subject];
+        if (re === undefined) {
+          baseGap.push(one.to + " — предмет «" + one.subject + "» неизвестен");
+          continue;
+        }
+        if (!re.test(body)) continue;
+        if (!existsSync(path.join(REPO, one.to)))
+          baseGap.push(
+            one.to + " — предмет в коде есть, а файла базы нет: " + one.subject,
+          );
+      }
+    }
+  }
+  checkHead("Файлы базы заведены под свой предмет");
+  console.log("  предмет есть, файла нет: " + baseGap.length);
+  for (const g of baseGap) console.log("    " + g);
+
   // 45. План перехода живого проекта не потерялся.
   //
   // Посадка в живой проект заканчивается раньше, чем заканчивается переход:
@@ -6344,6 +6400,7 @@ if (mode === "verify") {
     danglingLinks.length ||
     corpusGap.length ||
     transitionDrift.length ||
+    baseGap.length ||
     goneNames.length ||
     frozenNumbers.length ||
     goneCamel.length ||
