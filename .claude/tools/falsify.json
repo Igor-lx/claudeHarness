@@ -1,0 +1,111 @@
+{
+  "_": "Рецепты повторяемой фальсификации: как сломать предмет каждой сверки, чтобы убедиться, что она ещё ловит. Одноразовой фальсификации при заведении мало: сверка, сломавшаяся через месяц, печатает такой же ноль, как здоровая, и отличить их нечем. Режим `falsify` прогоняет эти рецепты на временной копии проекта; сверка без рецепта печатается отдельным списком, и список этот обязан укорачиваться, а не расти.",
+  "recipes": [
+    {
+      "section": "Покрытие карты",
+      "file": ".context/00-map.md",
+      "find": "| `src/App.tsx` | корневой компонент | нет | нет |",
+      "replace": ""
+    },
+    {
+      "section": "Покрытие тестов",
+      "file": ".context/08-tests.md",
+      "find": "| `tests/App.test.tsx` |",
+      "replace": "| `tests/НЕТУ.test.tsx` |"
+    },
+    {
+      "section": "Пометки решений",
+      "file": ".context/09-decisions.md",
+      "find": "Якорь с цитатой: `src/App.tsx:4` `Trivial on purpose`.",
+      "replace": ""
+    },
+    {
+      "section": "Режимы инструмента описаны",
+      "file": ".claude/tools/graph.md",
+      "find": "### `handoff [путь]`",
+      "replace": "### `handoffff [путь]`"
+    },
+    {
+      "section": "Разрешения среды",
+      "file": ".claude/settings.json",
+      "rename": "settings.json.hidden"
+    },
+    {
+      "section": "Применимость разделов планки",
+      "file": ".context/01-facts.md",
+      "find": "| M. Модель рендера фреймворка | да |",
+      "replace": "| M. Модель рендера фреймворка | нет |"
+    },
+    {
+      "section": "Скиллы проекта",
+      "file": ".context/01-facts.md",
+      "find": "| `handoff` | `.claude/skills/handoff/SKILL.md` |",
+      "replace": ""
+    },
+    {
+      "section": "Шаблон правил заполнен",
+      "file": "CLAUDE.md",
+      "find": "# claudeHarness — что это за репозиторий",
+      "replace": "# <ИМЯ ПРОЕКТА> — что это за репозиторий"
+    },
+    {
+      "section": "Отложенное без закрытых пунктов",
+      "file": ".context/02-todo.md",
+      "find": "## Завести конфиг мутационного прогона",
+      "replace": "## Завести конфиг мутационного прогона — ЗАКРЫТО"
+    },
+    {
+      "section": "У каждого семени есть адрес назначения",
+      "file": ".claude/seat/map.json",
+      "find": "\"from\": \"seat/templates/00-map.md\"",
+      "replace": "\"from\": \"seat/templates/НЕТУ.md\""
+    },
+    {
+      "section": "Доктрина названа в порядке чтения",
+      "file": ".claude/rules/entry.md",
+      "find": "- `.claude/rules/glossary.md`",
+      "replace": "- `.claude/rules/glossaryyy.md`"
+    },
+    {
+      "section": "Конфиг звена цепочки на месте",
+      "file": "tsconfig.json",
+      "rename": "tsconfig.json.hidden"
+    },
+    {
+      "section": "Числа в прозе базы",
+      "file": ".context/02-todo.md",
+      "find": "# Отложенное",
+      "replace": "# Отложенное\n\nЗдесь 7 правил и 3 сверки."
+    },
+    {
+      "section": "Ссылки markdown",
+      "file": ".context/00-map.md",
+      "find": "# Карта исходников",
+      "replace": "# Карта исходников\n\nСм. [это](./НЕТУ.md)."
+    },
+    {
+      "section": "Пути в обратных кавычках",
+      "file": ".context/00-map.md",
+      "find": "# Карта исходников",
+      "replace": "# Карта исходников\n\nФайл `src/НЕТУ.tsx` тут ни при чём."
+    },
+    {
+      "section": "Вопросы разработчику без ответа",
+      "file": ".context/13-questions.md",
+      "find": "Открытых вопросов нет.",
+      "replace": "## Вопрос 1. Проба\n\n**Задан:** пробой.\n\n**Что решить.** Ничего.\n\n**Последствие отсутствия ответа.** Нет."
+    },
+    {
+      "section": "Списки исключений не разрослись",
+      "file": ".context/graph.config.mjs",
+      "find": "  docPathExceptions: [],",
+      "replace": "  docPathExceptions: [\"a|a\", \"b|b\", \"c|c\", \"d|d\", \"e|e\", \"f|f\"],"
+    },
+    {
+      "section": "Таблица сверок описывает существующие сверки",
+      "file": ".claude/rules/base-format.md",
+      "find": "| Ссылки markdown | адрес в круглых скобках",
+      "replace": "| Ссылки markdownn | адрес в круглых скобках"
+    }
+  ]
+}
