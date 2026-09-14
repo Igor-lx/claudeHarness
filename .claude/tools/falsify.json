@@ -157,6 +157,18 @@
       "section": "Каркас обвязки не лежит в живом проекте",
       "file": "src/App.tsx",
       "copyTo": "src/Own.tsx"
+    },
+    {
+      "section": "Цепочка проверок объявлена данными",
+      "file": ".claude/seat/map.json",
+      "find": "\"typecheck\",",
+      "replace": "\"typecheckkk\","
+    },
+    {
+      "section": "Звено цепочки не задвоено",
+      "file": "package.json",
+      "find": "\"typecheck\": \"tsc --noEmit\",",
+      "replace": "\"typecheck\": \"tsc --noEmit\",\n    \"types\": \"tsc --noEmit -p tsconfig.json\","
     }
   ]
 }

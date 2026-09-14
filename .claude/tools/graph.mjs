@@ -875,6 +875,8 @@ const CHECK_SECTIONS = [
   "Файлы базы заведены под свой предмет",
   "Каркас обвязки не лежит в живом проекте",
   "Один предмет — один файл настройки",
+  "Цепочка проверок объявлена данными",
+  "Звено цепочки не задвоено",
   "Одноранговая зависимость не продублирована",
   "План перехода не потерялся",
   "Вопросы разработчику без ответа",
@@ -6672,6 +6674,108 @@ if (mode === "verify") {
           );
     }
   }
+  // 45d. Объявленная цепочка проверок и семя манифеста сходятся.
+  //
+  // Какие скрипты составляют цепочку, объявлено ДАННЫМИ в карте посадки:
+  // по этому списку слияние манифеста решает, что дописывать живому проекту.
+  // Прежде список жил прозой инструкции, а слияние шло по семени целиком — и в
+  // библиотеку без страницы трижды подряд приезжали скрипты сервера разработки
+  // и просмотра собранного, каждый раз снимаемые руками.
+  //
+  // Данные и семя — два места, и разойтись они могут в обе стороны: звено
+  // объявлено, а скрипта под него в семени нет (пустой проект получит цепочку с
+  // дырой); либо скрипт цепочки в семени есть, а в списке его нет (живому
+  // проекту его не допишут, и звено у него не появится вовсе). Сверяется
+  // поэтому В ОБЕ СТОРОНЫ, как у таблицы сверок.
+  const chainDrift = [];
+  {
+    const mapAt = shelfAt("seat/map.json");
+    const seedAt = shelfAt("seat/templates/package.json");
+    if (
+      mapAt !== null &&
+      existsSync(mapAt) &&
+      seedAt !== null &&
+      existsSync(seedAt)
+    ) {
+      const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
+      if (Array.isArray(declared)) {
+        const seedScripts =
+          JSON.parse(readFileSync(seedAt, "utf8")).scripts ?? {};
+        const names = declared.map((e) => e.name);
+        for (const one of names)
+          if (seedScripts[one] === undefined)
+            chainDrift.push(one + " — звено объявлено, а скрипта в семени нет");
+        // Обратная сторона названа списком исключений, а не догадкой: скрипты
+        // каркаса нужны пустому проекту и не нужны живому, и это НЕ дыра.
+        const frameScripts = new Set(["dev", "build", "preview"]);
+        for (const one of Object.keys(seedScripts))
+          if (!names.includes(one) && !frameScripts.has(one))
+            chainDrift.push(
+              one + " — скрипт в семени есть, а в цепочке не объявлен",
+            );
+        // Образец опознания обязан узнавать СВОЙ скрипт в семени, и только его.
+        // Образец, не узнающий ничего, молча превращает слияние обратно в
+        // сопоставление по имени; образец, узнающий лишнее, объявит чужой
+        // скрипт звеном. Ни то, ни другое изнутри посадки не видно.
+        for (const e of declared) {
+          if (e.recognise == null) continue;
+          const re = new RegExp(e.recognise);
+          const hits = Object.entries(seedScripts)
+            .filter(([, body]) => re.test(body))
+            .map(([n]) => n);
+          if (hits.length !== 1 || hits[0] !== e.name)
+            chainDrift.push(
+              e.name +
+                " — образец опознания находит в семени: " +
+                (hits.length ? hits.join(", ") : "ничего"),
+            );
+        }
+      }
+    }
+  }
+  checkHead("Цепочка проверок объявлена данными");
+  console.log("  расхождений списка и семени: " + chainDrift.length);
+  for (const g of chainDrift) console.log("    " + g);
+
+  // 45e. Звено цепочки не задвоено в манифесте проекта.
+  //
+  // Слияние манифеста сопоставляло скрипты ПО ИМЕНИ, и проект, назвавший то же
+  // звено иначе, получал близнеца: `types` проекта и привезённый `typecheck` —
+  // два скрипта, один компилятор, одна работа, разные вызовы. Правилось руками
+  // на каждой посадке и каждый раз записывалось решением; вещь, которую правят
+  // руками всякий раз, решением не является — это дефект.
+  //
+  // Звено опознаётся теперь по тому, что скрипт ЗОВЁТ, а не по его имени, и
+  // образцы объявлены в карте посадки. Эта сверка держит результат: двух
+  // скриптов на одно звено в манифесте быть не должно. Расходящиеся вызовы
+  // одного инструмента — источник вопроса «какой из них прав», и отвечать на
+  // него приходится по очереди.
+  const chainTwins = [];
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt) && CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
+      if (existsSync(at) && Array.isArray(declared)) {
+        const scripts = JSON.parse(readFileSync(at, "utf8")).scripts ?? {};
+        for (const e of declared) {
+          if (e.recognise == null) continue;
+          const re = new RegExp(e.recognise);
+          const hits = Object.entries(scripts)
+            .filter(([, body]) => re.test(body))
+            .map(([n]) => n);
+          if (hits.length > 1)
+            chainTwins.push(
+              e.name + " — одно звено под именами: " + hits.join(", "),
+            );
+        }
+      }
+    }
+  }
+  checkHead("Звено цепочки не задвоено");
+  console.log("  задвоенных звеньев: " + chainTwins.length);
+  for (const g of chainTwins) console.log("    " + g);
+
   checkHead("Одноранговая зависимость не продублирована");
   console.log("  продублировано: " + peerDup.length);
   for (const g of peerDup) console.log("    " + g);
@@ -6819,6 +6923,8 @@ if (mode === "verify") {
     baseGap.length ||
     frameLitter.length ||
     twinConfigs.length ||
+    chainDrift.length ||
+    chainTwins.length ||
     peerDup.length ||
     unasked.length ||
     goneNames.length ||
