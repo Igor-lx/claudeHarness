@@ -8,8 +8,8 @@
 
 ## Как здесь работают
 
-Порядок работы, планка качества, правила базы и среды — в `.context/rules/`.
-**Первым действием открывается `.context/rules/entry.md` целиком**: там состав
+Порядок работы, планка качества, правила базы и среды — в `.claude/work/rules/`.
+**Первым действием открывается `.claude/work/rules/entry.md` целиком**: там состав
 доктрины и момент чтения каждого её файла.
 
 Ничего из доктрины в этом файле не повторяется. Файл правил проекта содержит
@@ -68,11 +68,11 @@
 | Линт | `npm run lint` |
 | Формат | `npm run format:check` |
 | Всё разом | `npm run check` |
-| Правка против её тестов, базы и доков | `node .context/graph.mjs tested` |
-| База знаний | `node .context/graph.mjs verify` |
+| Правка против её тестов, базы и доков | `node .claude/work/tools/graph.mjs tested` |
+| База знаний | `node .claude/work/tools/graph.mjs verify` |
 | Покрытие (по требованию) | `npm run test:coverage` |
 | Мутации по файлам правки | `npx stryker run --mutate "<пути>"` |
-| Долг по мутациям | `node .context/graph.mjs mutated` |
+| Долг по мутациям | `node .claude/work/tools/graph.mjs mutated` |
 | Проверка в настоящем движке (по требованию и перед публикацией) | `npm run test:e2e` |
 
 **Команды даны для `npm` — это объявленное умолчание.** Менеджер другой —

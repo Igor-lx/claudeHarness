@@ -23,7 +23,12 @@ import {
 
 // Настройка проекта и якорь его базы. Инструмент от проекта не зависит: всё
 // проектное живёт в этом файле и только в нём.
-import { BASE, CONFIG } from "./graph.config.mjs";
+//
+// Путь фиксирован раскладкой: обвязка лежит в `.claude/`, база — в `.context/`,
+// обе соседями в корне проекта. Инструмент поэтому поднимается на три уровня и
+// спускается в базу. Менять адрес — значит менять раскладку, а она объявлена в
+// инструкции посадки.
+import { BASE, CONFIG } from "../../../.context/graph.config.mjs";
 
 /** Папка самого инструмента. Нужна ровно там, где речь о его собственных
  * соседях — справочнике режимов и словаре области. Всё остальное считается от
@@ -64,51 +69,14 @@ const OUT_OF_TREE = new Set([
 // погасить каждое: инструкция называла одно, посадка ломалась на шести.
 const SHELF = CONFIG.shelf == null ? null : path.join(BASE, CONFIG.shelf);
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
-/** Побайтовые пары «рабочий файл → копия на полке». Полки нет — пар нет. */
-const TOOL_COPY = shelfAt("tools/graph.mjs");
-/** Справочник режимов — назван отдельно, потому что его читают, а не только
- * сверяют: позиционная ссылка на «первый элемент списка» переживала бы
- * добавление любой новой пары ровно до первого добавления. */
+/** Справочник режимов — лежит рядом с инструментом и читается из работы.
+ *
+ * Побайтовых пар здесь больше нет, и это следствие раскладки: доктрина,
+ * инструмент и скиллы существуют в ОДНОМ экземпляре — в папке обвязки.
+ * Пары сверяли копию с оригиналом; копии не стало, сверять нечего. Вместе с
+ * ними ушло правило «поправил — скопируй на полку», из-за которого полка
+ * после каждой посадки увозила состояние предыдущего проекта. */
 const TOOL_MANUAL = "graph.md";
-/** Всё, что обязано лежать на полке байт в байт: сам инструмент сверяется
- * отдельно (он сравнивает себя с собой), остальное — здесь. Словарь области и
- * его набор тестов входят сюда с рождения: полка, увезённая без них, получит
- * инструмент, чьи ответы никем не проверены. */
-const TOOL_PAIRS =
-  SHELF === null
-    ? []
-    : [
-        [TOOL_MANUAL, shelfAt(`tools/${TOOL_MANUAL}`)],
-        ["graph.predicates.mjs", shelfAt("tools/graph.predicates.mjs")],
-        [
-          "graph.predicates.test.mjs",
-          shelfAt("tools/graph.predicates.test.mjs"),
-        ],
-        // Доктрина — побайтовые двойники, как инструмент, и по той же причине.
-        // Раньше у планки сверялся только СОСТАВ пунктов: перечень совпадал, а
-        // формулировки могли разъезжаться сколько угодно, и полка увозила в
-        // следующий проект другой текст под теми же именами. Байты не
-        // разъезжаются. Цена: правило формулируется без адресов проекта —
-        // проектные примеры живут в `CLAUDE.md`, а не в доктрине.
-        //
-        // Пары заведены на ВСЕ десять файлов доктрины сразу, а не по одному по
-        // мере надобности: пара, которой нет, ничем не отличается от пары,
-        // которая сошлась, — и файл без неё расходится молча. Их полноту
-        // держит сверка «доктрина названа в порядке чтения»: файл доктрины на
-        // полке, не доехавший до проекта, ею и ловится.
-        ["rules/entry.md", shelfAt("entry.md")],
-        ["rules/glossary.md", shelfAt("glossary.md")],
-        ["rules/loop.md", shelfAt("loop.md")],
-        ["rules/code.md", shelfAt("code.md")],
-        ["rules/close.md", shelfAt("close.md")],
-        ["rules/base.md", shelfAt("base.md")],
-        ["rules/base-format.md", shelfAt("base-format.md")],
-        ["rules/documentation.md", shelfAt("documentation.md")],
-        ["rules/writing.md", shelfAt("writing.md")],
-        ["rules/environment.md", shelfAt("environment.md")],
-        ["rules/quality.md", shelfAt("quality.md")],
-        ["rules/quality-scoped.md", shelfAt("quality-scoped.md")],
-      ];
 /** Объявление применимости разделов политики: карта «раздел → живой ли и почему».
  *
  * Разбор один на оба места — на сверку и на вопрос закрытия работы. Две копии
@@ -160,8 +128,7 @@ const liveQualityScopes = () => {
     live: [...declared].filter(([, v]) => v.live).map(([k]) => k),
   };
 };
-const SETTINGS_SHELF = shelfAt("settings.template.json");
-const SKILLS_SHELF = SHELF;
+const SETTINGS_SHELF = shelfAt("seat/templates/settings.json");
 const SHELF_RULES = SHELF === null ? null : SHELF.split(path.sep).join("/");
 /** Путь для сообщений: от папки базы, чтобы читалось как в `CONFIG`. Принимает
  * и относительный — тогда возвращает его как есть. */
@@ -201,7 +168,14 @@ const docFiles = [];
 // Стили в граф импортов не входят — их подключает сборщик, а не разбор, —
 // но адрес у них такой же, и досье обязано о них отвечать.
 const styleFiles = [];
+// Обход корня исходников переживает его отсутствие. Прежде первый же
+// `readdirSync` падал стеком на верхнем уровне модуля — то есть без папки
+// `src` не работал НИ ОДИН режим, включая сверку базы и досье. Пустая папка при
+// этом законна и штатна: обвязку сажают до первой строчки кода. Подтверждено
+// пробой на копии проекта с удалённой папкой.
+const walkable = (dir) => existsSync(dir) && statSync(dir).isDirectory();
 (function walk(dir) {
+  if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
     const full = norm(path.join(dir, e));
     if (statSync(full).isDirectory()) walk(full);
@@ -626,7 +600,7 @@ const mode = process.argv[2];
 // Неизвестный или пропущенный режим — отказ, а не молчание.
 //
 // До этого инструмент на `graph.mjs verfiy` печатал пусто и отдавал `0`. В
-// цепочке проверок последним звеном стоит `node .context/graph.mjs verify`:
+// цепочке проверок последним звеном стоит `node .claude/work/tools/graph.mjs verify`:
 // опечатка там — или режим, переименованный в инструменте и не переименованный
 // в манифесте — делали бы прогон зелёным, не проверив ничего. Сверка звеньев
 // цепочки этого не видит: она смотрит имена npm-скриптов, а не режимы.
@@ -802,7 +776,7 @@ if (mode === "plan") {
   const hits = matched.filter((f) => !isTest(f));
   if (!arg) {
     console.log(
-      "Укажи путь: node .context/graph.mjs plan <путь или его хвост>",
+      "Укажи путь: node .claude/work/tools/graph.mjs plan <путь или его хвост>",
     );
     process.exitCode = 1;
   } else if (hits.length === 0 && matched.length > 0) {
@@ -1377,6 +1351,30 @@ if (mode === "tested") {
       // вовсе, — молчание. Находку, которую не записали, не поймает ни одна
       // сверка, поэтому вопрос задаётся здесь, в момент закрытия работы, а не
       // остаётся разделом правил, куда надо заглянуть.
+      // Третий вопрос закрытия, и до него у прозы не было ни одного. Свод
+      // правил записи объявлял про себя, что держится «чтением диффа и
+      // вопросом в момент закрытия работы», а такого вопроса не существовало
+      // нигде: ни в правилах закрытия, ни здесь. То есть файл называл
+      // механизм, которого нет, — ровно тот класс, который петля запрещает
+      // отдельным правилом. Спрашивается по факту правки прозы: тронут хоть
+      // один документ — вопрос печатается.
+      if (changed.some((c) => /.md$/.test(norm(c)))) {
+        console.log(NEWLINE + "=== Проза: форма записи ===");
+        console.log(
+          "  Тронут текст. Сверена ли его форма по каталогу приёмов из свода",
+        );
+        console.log(
+          "  правил записи: оценка без величины, метафора вместо механизма,",
+        );
+        console.log(
+          "  правило без критерия выполнения, оценка в позиции требования?",
+        );
+        console.log(
+          "  Разработчик задаёт смысл разговорным языком — в свод он попадает",
+        );
+        console.log("  в проверяемой форме, и перевод делает записывающий.");
+      }
+
       console.log(NEWLINE + "=== Попутные находки ===");
       console.log(
         "  Что попалось по дороге — в коде, в тестах, в базе, в правилах, в",
@@ -1931,7 +1929,7 @@ if (mode === "brief") {
   const arg = argPath(process.argv[3]);
   if (!arg) {
     console.log(
-      "Укажи путь: node .context/graph.mjs brief <путь или его хвост>",
+      "Укажи путь: node .claude/work/tools/graph.mjs brief <путь или его хвост>",
     );
     process.exitCode = 1;
   } else {
@@ -2184,6 +2182,7 @@ if (mode === "verify") {
   const everyFile = [];
   const everyPath = [];
   (function walkAll(dir) {
+    if (!walkable(dir)) return;
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
       if (statSync(full).isDirectory()) walkAll(full);
@@ -2692,13 +2691,28 @@ if (mode === "verify") {
     ...everyFile.filter((f) => f.endsWith(".scss")),
   ];
   const missing = code.filter((f) => !mapMentions.has(f));
+  // Долг карты — храповик, и заведён он под посадку в ЖИВОЙ проект. Там
+  // описать триста файлов в день посадки нельзя, а требовать этого значит
+  // оставить проект красным навсегда — после чего красный прогон перестают
+  // читать. Долг объявляется числом на день посадки, печатается каждым
+  // прогоном и **расти не может**: новый файл обязан быть описан сразу, старый
+  // долг ждёт команды разработчика. Пустое поле — долга нет, карта обязана быть
+  // полной.
+  const mapDebt = CONFIG.mapDebt ?? 0;
+  const overDebt = Math.max(0, missing.length - mapDebt);
   console.log("=== Покрытие карты ===");
   console.log(
     `  файлов кода и стилей (без тестов): ${code.length}, не упомянуто: ${missing.length}` +
+      (mapDebt > 0 ? `, из них долг посадки: ${mapDebt}` : "") +
       (goneMapped.length
         ? `, названо и не существует: ${goneMapped.length}`
         : ""),
   );
+  if (mapDebt > 0 && overDebt === 0)
+    console.log(
+      "  Долг не вырос. Уменьшить его — работа по команде разработчика:" +
+        " описать файлы и уменьшить поле долга в настройке.",
+    );
   for (const f of missing) console.log("    " + rel(f));
   for (const m of goneMapped) console.log("    " + m);
 
@@ -2919,23 +2933,6 @@ if (mode === "verify") {
     `  проверено: ${anchors}, из них с цитатой: ${cited}, битых: ${broken.length}`,
   );
   for (const b of broken) console.log("    " + b);
-  // 9. побайтовые копии на полке совпадают с рабочими файлами
-  const toolDrift = [];
-  if (TOOL_COPY !== null) {
-    const copy = TOOL_COPY;
-    const flat = (f) => readFileSync(f, "utf8").split(CR_LF).join(NEWLINE);
-    if (!existsSync(copy)) toolDrift.push(`копии нет: ${rel0(TOOL_COPY)}`);
-    else if (flat(copy) !== flat(fileURLToPath(import.meta.url)))
-      toolDrift.push(`копия разошлась: ${rel0(TOOL_COPY)}`);
-  }
-  for (const [own, shelf] of TOOL_PAIRS) {
-    const flat = (f) => readFileSync(f, "utf8").split(CR_LF).join(NEWLINE);
-    const mine = path.join(TOOL_DIR, own);
-    if (!existsSync(mine)) toolDrift.push(`нет файла: ${own}`);
-    else if (!existsSync(shelf)) toolDrift.push(`копии нет: ${rel0(shelf)}`);
-    else if (flat(mine) !== flat(shelf))
-      toolDrift.push(`копия разошлась: ${rel0(shelf)}`);
-  }
   // 9a. каждый режим инструмента описан в справочнике и назван в правилах.
   // Заведено после пробы: справочник объявляет себя полным («оговорки и ловушки
   // КАЖДОГО режима»), а держать это обещание было нечему — новый режим мог
@@ -2975,13 +2972,6 @@ if (mode === "verify") {
   // «копия разошлась: …/quality.md» отправляла читателя искать инструмент —
   // ответ не на тот вопрос, тот же класс, что уже записан про «Ничего не
   // нашлось» на живом файле. Найдено пробой: пару завели, заголовок не тронули.
-  console.log("=== Побайтовые копии на полке ===");
-  console.log(
-    TOOL_COPY === null
-      ? "  пар не заявлено"
-      : `  расхождений: ${toolDrift.length}`,
-  );
-  for (const t of toolDrift) console.log("    " + t);
 
   // 9c. каждое точечное исключение линта объяснено, и каждое объяснение живо.
   const lintDrift = [];
@@ -3318,11 +3308,23 @@ if (mode === "verify") {
   // шум, пока список не перестают читать целиком.
   const openQuestions = [];
   const malformedQuestions = [];
-  if (CONFIG.questions != null) {
-    const at = path.join(BASE, CONFIG.questions);
-    if (!existsSync(at))
-      malformedQuestions.push(`файла нет: ${CONFIG.questions}`);
-    else {
+  // Списков два, и читаются они одинаково: проектный — про этот репозиторий,
+  // доктринальный — про саму обвязку, и он едет с ней дальше. Второй не
+  // печатался никем, и единственная машинная опора требования «назвать каждый
+  // вопрос в отчёте» для него была выключена: вопрос о доктрине жил ровно
+  // столько, сколько его помнила сессия.
+  const questionLists = [];
+  if (CONFIG.questions != null)
+    questionLists.push(["проект", path.join(BASE, CONFIG.questions), CONFIG.questions]);
+  if (SHELF !== null) {
+    const at = shelfAt("work/questions.md");
+    if (at !== null && existsSync(at))
+      questionLists.push(["доктрина", at, "work/questions.md"]);
+  }
+  for (const [origin, at, shown] of questionLists) {
+    if (!existsSync(at)) {
+      malformedQuestions.push(`файла нет: ${shown}`);
+    } else {
       const text = readFileSync(at, "utf8");
       const lines = text.split(NEWLINE);
       const heads = [];
@@ -3355,7 +3357,7 @@ if (mode === "verify") {
           malformedQuestions.push(
             `«${h.title}» — нет граф: ${missing.join(", ")}`,
           );
-        openQuestions.push(`Вопрос ${h.n}. ${h.title}`);
+        openQuestions.push(`[${origin}] Вопрос ${h.n}. ${h.title}`);
       }
     }
   }
@@ -3740,7 +3742,15 @@ if (mode === "verify") {
     // законно стоит `<T>`, параметр обобщённого типа. Замер по всему
     // репозиторию дал попадания только в самой заготовке и в цитатах инструкции
     // посадки, то есть ложных срабатываний нет по построению.
-    for (const one of CONFIG.rulesManifest.rules) {
+    // Корпус шире файлов правил, и это починка класса. Сверка смотрела только
+    // в них, а заготовки приезжают и в конфиги, и в файлы базы: после посадки в
+    // пустой проект места под заполнение остались в конфиге линтера и в списке
+    // исключений форматтера, и не увидел их никто. Список засеянного объявлен в
+    // настройке — чего в нём нет, о том и не спросят.
+    for (const one of [
+      ...CONFIG.rulesManifest.rules,
+      ...(CONFIG.seeded ?? []),
+    ]) {
       const at = path.join(BASE, one);
       if (!existsSync(at)) continue;
       const body = readFileSync(at, "utf8");
@@ -3929,19 +3939,10 @@ if (mode === "verify") {
         skillDrift.push(`объявлен, но файла нет: ${name}`);
         continue;
       }
-      // Побайтовая пара существует только у проекта, который держит свой
-      // комплект. Проект, посаженный из донора и полку с собой не взявший,
-      // сверять её не с чем — и требовать шаблон значило бы ронять прогон за
-      // то, чего он не обещал. Найдено пробой посадки без полки.
-      if (SKILLS_SHELF === null) continue;
-      const shelfAt = path.join(SKILLS_SHELF, template);
-      if (!existsSync(shelfAt)) {
-        skillDrift.push(`нет шаблона на полке: ${template}`);
-        continue;
-      }
-      const flat = (f) => readFileSync(f, "utf8").split(CR_LF).join(NEWLINE);
-      if (flat(shelfAt) !== flat(path.join(dir, name, "SKILL.md")))
-        skillDrift.push(`шаблон разошёлся с рабочим файлом: ${template}`);
+      // Побайтовой пары у скилла больше нет: он существует в одном
+      // экземпляре, в папке обвязки, и сверять его не с чем. Вторая графа
+      // таблицы называет его адрес там же — она отвечает на вопрос «где
+      // лежит оригинал», а не служит опорой сверки.
     }
     // Памятка по скиллам — против состава, в обе стороны. Спрашивается только
     // когда скиллы уже есть: на пустой папке памятке нечего описывать, и
@@ -4483,10 +4484,49 @@ if (mode === "verify") {
   // Соврать нечем: файл полки либо назван текстом инструкции, либо нет. Ложных
   // срабатываний тоже нет по построению — полка и есть то, что инструкция
   // ставит, и файл, о котором она молчит, приезжает необъяснённым.
+  // Пакет объявлен, а его конфиг не положен — цепочка зеленеет, не проверяя
+  // ничего. Требование записано в инструкции посадки с критерием выполнения:
+  // пакет в манифесте и конфиг на месте. Здесь его машинная половина.
+  const toolchainDrift = [];
+  if (CONFIG.toolchain != null) {
+    const manifestAt = path.join(BASE, "..", "package.json");
+    const pkg = existsSync(manifestAt)
+      ? JSON.parse(readFileSync(manifestAt, "utf8"))
+      : {};
+    const deps = Object.keys({
+      ...(pkg.dependencies ?? {}),
+      ...(pkg.devDependencies ?? {}),
+    });
+    for (const link of CONFIG.toolchain) {
+      if (link.config == null) continue;
+      const installed = link.packages.every((p) => deps.includes(p));
+      if (!installed) continue;
+      const at = path.join(BASE, "..", link.config);
+      if (!existsSync(at))
+        toolchainDrift.push(
+          `${link.script}: пакеты стоят, а конфига нет — ${link.config}`,
+        );
+    }
+  }
+
   const unexplained = [];
   {
-    const instructionAt = shelfAt("README-claude.md");
-    if (SHELF !== null && instructionAt !== null && existsSync(instructionAt)) {
+    // Спрашивается только с СЕМЯН. Остальное — доктрина, инструмент, скиллы —
+    // переносится папкой целиком, и перечислять его в инструкции незачем:
+    // забыть при копировании папки нечего. У семени назначение своё: оно едет
+    // в конкретное место проекта под конкретным именем, и это соответствие
+    // существует только в тексте инструкции. Прежде сверка спрашивала со всей
+    // полки — тогда файлы копировались по одному, и пропущенный оставался в
+    // старом месте молча.
+    const instructionAt = shelfAt("seat/seat.md");
+    const seedsAt = shelfAt("seat/templates");
+    if (
+      SHELF !== null &&
+      instructionAt !== null &&
+      existsSync(instructionAt) &&
+      seedsAt !== null &&
+      existsSync(seedsAt)
+    ) {
       const text = readFileSync(instructionAt, "utf8");
       (function walkShelf(dir) {
         for (const entry of readdirSync(dir)) {
@@ -4497,16 +4537,14 @@ if (mode === "verify") {
             continue;
           }
           const rel = path.relative(SHELF, full).split(path.sep).join("/");
-          if (rel === "README-claude.md") continue;
-          // Сравнение по ПОЛНОМУ пути, а не по имени файла. Имя совпадало с
-          // чужим упоминанием: семя `seat/templates/00-map.md` считалось
-          // объяснённым строкой про файл базы `00-map.md`, а про само семя в
-          // инструкции не было ни слова. Замер при заведении семян: из
-          // тринадцати новых файлов сверка увидела пять.
+          // Сравнение по ПОЛНОМУ пути, а не по имени файла: имя совпадало с
+          // чужим упоминанием, и семя считалось объяснённым строкой про
+          // одноимённый файл базы. Замер при заведении семян: из тринадцати
+          // новых файлов сверка увидела пять.
           if (text.includes(rel)) continue;
           unexplained.push(rel);
         }
-      })(SHELF);
+      })(seedsAt);
     }
   }
   console.log("=== Инструкция посадки называет всё, что на полке ===");
@@ -4863,6 +4901,7 @@ if (mode === "verify") {
   // плюс скрипты, на которые база ссылается по имени.
   const scriptFiles = [];
   (function walkScripts(dir) {
+    if (!walkable(dir)) return;
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
       if (statSync(full).isDirectory()) walkScripts(full);
@@ -5225,6 +5264,19 @@ if (mode === "verify") {
   // Печатается заголовками, а не числом: число рядом с сорока другими числами
   // проглядывают, а вопрос, названный своими словами, — нет. Ради того же он
   // стоит последней секцией: последнее прочитанное и есть прочитанное.
+  console.log("=== Конфиг звена цепочки на месте ===");
+  console.log(`  расхождений: ${toolchainDrift.length}`);
+  for (const d of toolchainDrift) console.log("    " + d);
+
+  if (CONFIG.seating != null) {
+    console.log("");
+    console.log("=== ПОСАДКА НЕ ЗАВЕРШЕНА ===");
+    console.log("  Фаза 1 пройдена, фаза 2 — нет. Пока флаг стоит, три сверки");
+    console.log("  смягчены: незаполненные места заготовок, долг карты и");
+    console.log("  несобранная цепочка проверок. Снять флаг — отдельное");
+    console.log("  действие, и делает его фаза 2, а не прогон.");
+  }
+
   console.log("=== Вопросы разработчику без ответа ===");
   console.log(
     CONFIG.questions == null
@@ -5238,7 +5290,7 @@ if (mode === "verify") {
   for (const q of malformedQuestions) console.log("    сломана форма: " + q);
 
   if (
-    missing.length ||
+    (CONFIG.seating == null ? missing.length : overDebt) ||
     unnamed.length ||
     goneTests.length ||
     goneMapped.length ||
@@ -5251,7 +5303,6 @@ if (mode === "verify") {
     barrelDrift.length ||
     broken.length ||
     wrong.length ||
-    toolDrift.length ||
     orphanAdr.length ||
     danglingAdr.length ||
     undocumentedConst.length ||
@@ -5273,13 +5324,14 @@ if (mode === "verify") {
     settingsDrift.length ||
     skillDrift.length ||
     disarmed.length ||
+    toolchainDrift.length ||
     indexDrift.length ||
     domDrift.length ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
     unclassified.length ||
-    unfilledTemplate.length ||
+    (CONFIG.seating == null ? unfilledTemplate.length : 0) ||
     scopeDrift.length ||
     danglingRefs.length ||
     deadExceptions.length ||

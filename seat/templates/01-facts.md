@@ -11,15 +11,16 @@
 
 ## Скиллы проекта
 
-Объявленный скилл обязан существовать, существующий — быть объявлен, а его текст
-обязан совпадать с полкой байт в байт.
+Объявленный скилл обязан существовать, а существующий — быть объявлен. Вторая
+графа отвечает на вопрос «где лежит», а не служит опорой сверки: скилл
+существует в одном экземпляре, и сверять его не с чем.
 
-| Скилл | Шаблон на полке |
+| Скилл | Где лежит |
 | --- | --- |
-| `task` | `task.skill.template.md` |
-| `probe` | `probe.skill.template.md` |
-| `audit` | `audit.skill.template.md` |
-| `purpose` | `purpose.skill.template.md` |
+| `task` | `.claude/skills/task/SKILL.md` |
+| `probe` | `.claude/skills/probe/SKILL.md` |
+| `audit` | `.claude/skills/audit/SKILL.md` |
+| `purpose` | `.claude/skills/purpose/SKILL.md` |
 
 ## Применимость разделов планки качества
 
