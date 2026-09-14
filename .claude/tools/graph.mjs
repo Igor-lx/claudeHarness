@@ -4817,6 +4817,13 @@ if (mode === "verify") {
       // движок движения, набор локализации. Список закрытый и назван поимённо —
       // угадывать он не пытается, а известное закрывает.
       const hasMarkup = () => code.some((f) => /\.(tsx|jsx)$/.test(f));
+      // Третья сеть: СТИЛИ. Два признака анимации — объявление перехода и
+      // ключевые кадры — по природе живут в файлах стилей, а корпус выше держит
+      // только исполняемый текст. То есть сработать они не могли никогда, и
+      // проект, у которого вся анимация сделана классами, проходил как «анимации
+      // нет». Найдено вторым полигоном посадки.
+      const hasStyle = (re) =>
+        styleFiles.some((f) => re.test(readFileSync(f, "utf8")));
       const probe = {
         K: () =>
           hasCode(
@@ -4832,10 +4839,13 @@ if (mode === "verify") {
         M: hasMarkup,
         N: () =>
           hasCode(
-            /requestAnimationFrame\(|\.animate\(|pointerdown|pointermove|touchstart|@keyframes|transition:/,
+            new RegExp(
+              "\\brequestAnimationFrame\\s*\\(|\\.animate\\s*\\(|pointerdown|pointermove|touchstart",
+            ),
           ) ||
+          hasStyle(new RegExp("@keyframes|transition\\s*:|animation\\s*:")) ||
           dep(
-            /^(framer-motion|motion|gsap|react-spring|@react-spring|popmotion|anime|lottie)/i,
+            /^(framer-motion|motion|gsap|react-spring|@react-spring|popmotion|anime|lottie|react-transition-group|react-transition-state)/i,
           ),
         O: () =>
           styleFiles.length > 0 ||
@@ -6350,7 +6360,14 @@ if (mode === "verify") {
   for (const q of malformedQuestions) console.log("    сломана форма: " + q);
 
   if (
-    (CONFIG.seating == null ? missing.length : overDebt) ||
+    // Долг карты роняет прогон только СВЕРХ объявленного, и это верно всегда,
+    // а не только пока стоит флаг посадки. Прежде связка была с флагом: фаза 2
+    // снимала его, и объявленный долг переставал работать — прогон краснел до
+    // тех пор, пока карта не описана целиком. Это спорило и с самим полем,
+    // заведённым ради живого проекта, где описать всё за день нельзя, и с
+    // рубежом завершения посадки, где красной вправе остаться только цепочка
+    // проверок по чужому коду. Найдено исполнением плана перехода на полигоне.
+    overDebt ||
     unnamed.length ||
     goneTests.length ||
     goneMapped.length ||
