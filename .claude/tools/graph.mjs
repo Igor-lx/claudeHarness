@@ -39,6 +39,43 @@ import { BASE, CONFIG } from "../../.context/graph.config.mjs";
  * именем, перенос инструмента увёз бы за собой всю базу. */
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+/** Вид полей настройки сверяется ДО работы, и неверный называется строкой.
+ *
+ * Поля настройки бывают трёх видов: строка-адрес, число и объект из нескольких
+ * частей. Какой именно вид у поля, описано прозой рядом с ним, а примера в
+ * файле нет — там стоит `null`. Догадка «раз адрес, значит строка» естественна
+ * и неверна, и до этой проверки она стоила падения стеком из `node:path`:
+ * сообщение говорило про аргумент функции пути и ни слова про то, какое поле
+ * задано не так.
+ *
+ * Найдено посадкой в живой проект на поле плана перехода — первом же случае,
+ * когда живой проект это поле вообще заполнял. Роняем здесь и сразу: настройка
+ * читается раньше любого режима, и работать с ней вслепую нельзя ни одному.
+ *
+ * Список закрытый: сюда вписывают поле, когда оно заводится объектом. */
+const SHAPED = {
+  transition: ["file", "heading"],
+  checksTable: ["file", "heading"],
+  docsIndex: ["dir", "table", "heading"],
+  rulesManifest: ["rules"],
+  lintConfigOff: ["file", "allowed"],
+};
+for (const [field, parts] of Object.entries(SHAPED)) {
+  const v = CONFIG[field];
+  if (v == null) continue;
+  const bad =
+    typeof v !== "object" ||
+    Array.isArray(v) ||
+    parts.some((p) => v[p] == null);
+  if (!bad) continue;
+  console.log("=== НАСТРОЙКА ЗАДАНА НЕВЕРНО ===");
+  console.log("  поле:    " + field);
+  console.log("  ожидали: объект с частями " + parts.join(", "));
+  console.log("  стоит:   " + JSON.stringify(v));
+  console.log("  Править: .context/graph.config.mjs");
+  process.exit(2);
+}
+
 const ROOT = path.join(BASE, CONFIG.src).split(path.sep).join("/");
 
 /** Папки, которых в описи нет: порождённые инструментами копии дерева и
@@ -920,7 +957,15 @@ if (mode === "falsify") {
         continue;
       }
       const before = readFileSync(at, "utf8");
-      if (r.rename !== undefined) {
+      // `copyTo` — третья форма рецепта: не правка файла и не его пропажа, а
+      // ПОЯВЛЕНИЕ нового. Часть сверок ловит именно лишнее: файл не там, где
+      // ему положено. Сломать их правкой существующего нельзя — ломать надо
+      // составом дерева. Заведена под сверку раскладки тестов, у которой с этой
+      // посадки есть механизм исключений: непроверяемое исключение хуже
+      // отсутствующего.
+      if (r.copyTo !== undefined) {
+        writeFileSync(path.join(tmp, r.copyTo), before);
+      } else if (r.rename !== undefined) {
         writeFileSync(path.join(tmp, r.rename), before);
         rmSync(at);
       } else {
@@ -943,7 +988,8 @@ if (mode === "falsify") {
         broken.push(r.section + " — секции в выводе нет");
       else if (nowRed && !wasRed) caught.push(r.section);
       else silent.push(r.section);
-      if (r.rename !== undefined) {
+      if (r.copyTo !== undefined) rmSync(path.join(tmp, r.copyTo));
+      else if (r.rename !== undefined) {
         writeFileSync(at, before);
         rmSync(path.join(tmp, r.rename));
       } else writeFileSync(at, before);
@@ -2735,14 +2781,40 @@ if (mode === "sizes") {
       .split(NEWLINE)
       .filter((l) => l.trim() !== "").length;
   const arg = process.argv[3];
-  const rows = files
-    .filter((f) => (arg ? rel(f).includes(arg) : true))
-    .map((f) => [rel(f), size(f)])
-    .sort((a, b) => b[1] - a[1]);
+  // Стили считаются НАРАВНЕ с кодом, а не пропускаются.
+  //
+  // Этот режим называет цену последнего шага плана перехода — сплошного чтения
+  // всего кода под описание в карте. А карта описывает «файлы кода И СТИЛЕЙ»:
+  // сверка покрытия требует записи о каждом файле стилей так же, как о файле
+  // кода. Пока режим их не считал, объявленная цена была занижена, и занижена
+  // молча. Замерено посадкой в живой проект: режим напечатал двести тринадцать
+  // непустых строк на весь проект, а сто восемьдесят пять строк стилей в это
+  // число не входили — то есть почти половина чтения была невидима.
+  //
+  // Тесты из счёта не убираются: их тоже читают, и реестр тестов требует
+  // записи о каждом. Но печатаются они отдельным счётом — предмет чтения у них
+  // другой, и смешанное число не даёт оценить ни то, ни другое.
+  const pick = (list) =>
+    list
+      .filter((f) => (arg ? rel(f).includes(arg) : true))
+      .map((f) => [rel(f), size(f)])
+      .sort((a, b) => b[1] - a[1]);
+  const codeRows = pick(files.filter((f) => !isTest(f)));
+  const testRows = pick(files.filter((f) => isTest(f)));
+  const styleRows = pick(styleFiles);
+  const sum = (rows) => rows.reduce((s, r) => s + r[1], 0);
+
   console.log("=== Непустых строк на файл ===" + NEWLINE);
-  for (const [f, n] of rows) console.log(String(n).padStart(5) + "  " + f);
-  const total = rows.reduce((sum, r) => sum + r[1], 0);
-  console.log(NEWLINE + `Файлов: ${rows.length}, непустых строк: ${total}.`);
+  for (const [f, n] of [...codeRows, ...styleRows, ...testRows])
+    console.log(String(n).padStart(5) + "  " + f);
+  const line = (what, rows) =>
+    `${what} — файлов: ${rows.length}, непустых строк: ${sum(rows)}.`;
+  console.log(NEWLINE + line("Код", codeRows));
+  console.log(line("Стили", styleRows));
+  console.log(line("Тесты", testRows));
+  console.log(
+    line("ПОД ОПИСАНИЕ В КАРТЕ, код и стили", [...codeRows, ...styleRows]),
+  );
 }
 
 if (mode === "verify") {
@@ -5922,6 +5994,25 @@ if (mode === "verify") {
   );
   for (const c of corpusGap) console.log("    " + c);
 
+  // Тесты, которым решением разрешено лежать вне своей папки. Считается ЗДЕСЬ,
+  // а печатается сверкой «Тесты лежат в `tests/`» ниже: мёртвое исключение
+  // называет сверка, которая идёт раньше, и посчитанное после неё она бы уже не
+  // увидела. Найдено фальсификацией самого списка — снятый тест при оставшемся
+  // исключении не дал ни одной строки.
+  const testsOutside = new Set(
+    (CONFIG.testsOutside ?? []).map((one) => norm(path.join(REPO, one))),
+  );
+  const testsOutsideUsed = new Set(
+    files.filter((f) => /\.test\.tsx?$/.test(f) && testsOutside.has(f)),
+  );
+  for (const one of testsOutside)
+    if (!testsOutsideUsed.has(one))
+      deadExceptions.push(
+        "тест вне своей папки: " +
+          path.relative(REPO, one).split(path.sep).join("/") +
+          " — ничего не исключает",
+      );
+
   checkHead("Исключения сверок используются");
   console.log(`  мёртвых исключений: ${deadExceptions.length}`);
   for (const d of deadExceptions) console.log("    " + d);
@@ -5964,6 +6055,11 @@ if (mode === "verify") {
       "разрешения в правилах направления",
       rules.reduce((n, r) => n + r.allowed.length, 0),
       "поправить раскладку слоёв, а не копить разрешения",
+    ],
+    [
+      "тесты вне своей папки",
+      (CONFIG.testsOutside ?? []).length,
+      "перенести тесты в папку слоя, а не копить исключения",
     ],
   ];
   const excTotal = excLists.reduce((n, one) => n + one[1], 0);
@@ -6186,11 +6282,30 @@ if (mode === "verify") {
   // считается по коду, отдельно от путей со словом `tests`. Перенос теста к
   // его файлу не уронил бы ни один прогон — `isTest` ловит и по суффиксу
   // имени, — зато обессмыслил бы записи базы молча.
+  //
+  // У соглашения есть ИСКЛЮЧЕНИЯ, и заведены они по факту. Доктрина объявляет
+  // отступление от умолчания законным решением, которое записывают в реестр
+  // «вместе с ценой: какая сверка из-за этого краснеет постоянно». Цена была
+  // названа неверно. Замерено посадкой в живой проект: один тест рядом со своим
+  // компонентом даёт сверке базы код возврата `1`, то есть красной становится
+  // ВСЯ цепочка и навсегда — а свод тут же запрещает такое состояние, потому
+  // что прогон, красный всегда, перестают читать целиком.
+  //
+  // Решение, за которое нечем заплатить, решением не является: доктрина
+  // предлагала выбор, которого не было. Список закрывает эту дыру и полностью
+  // повторяет идиому остальных исключений обвязки — мёртвое исключение
+  // называется, а разросшийся список ловит порог.
   const strayTests = files.filter(
-    (f) => /\.test\.tsx?$/.test(f) && !f.includes("/tests/"),
+    (f) =>
+      /\.test\.tsx?$/.test(f) && !f.includes("/tests/") && !testsOutside.has(f),
   );
   checkHead("Тесты лежат в `tests/`");
-  console.log(`  вне своей папки: ${strayTests.length}`);
+  console.log(
+    `  вне своей папки: ${strayTests.length}` +
+      (testsOutsideUsed.size
+        ? `, объявлено решением: ${testsOutsideUsed.size}`
+        : ""),
+  );
   for (const s of strayTests) console.log("    " + rel(s));
 
   checkHead("Объявленный состав папок и радиусы");
