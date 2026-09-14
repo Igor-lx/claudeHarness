@@ -1,5 +1,5 @@
 {
-  "_": "Карта посадки: что из семян куда кладётся. Данные, а не проза — по ним работает и режим `handoff`, когда проверяет снимок посадкой, и сама посадка. Извлечения из прозы здесь нет: каждый файл приезжает семенем, а не разбором кодового блока в тексте правил. Разрешения сюда не входят: общий файл `.claude/settings.json` приезжает со снимком как есть, а местный `.claude/settings.local.json` не едет — среда сама держит его вне git и пишет в него всё нажатое кнопкой.",
+  "_": "Карта посадки: что из семян куда кладётся. Данные, а не проза — по ним работает и режим `handoff`, когда проверяет снимок посадкой, и сама посадка. Извлечения из прозы здесь нет: каждый файл приезжает семенем, а не разбором кодового блока в тексте правил. Разрешения сюда не входят: общий файл `.claude/settings.json` приезжает со снимком как есть, а местный `.claude/settings.local.json` не едет — среда сама держит его вне git и пишет в него всё нажатое кнопкой. Семена с пометкой onlyWhenEmpty — каркас приложения: он нужен пустому проекту, чтобы цепочке было на чём прогнаться, и не нужен живому, у которого своя точка входа. В живой проект они не кладутся вовсе, а не ложатся рядом как .seat. Семена из mergeWhenBusy при столкновении не подменяют проектный файл и не остаются лежать .seat-ом: их содержимое ДОПИСЫВАЕТСЯ в проектный, и делает это фаза 1 — от них зависят установка пакетов и прогон цепочки. Семя теста названо с хвостом .seed намеренно: файл внутри .claude, оканчивающийся на .test.tsx, раннер тестов подбирает как тест проекта — в живом проекте это падение на чужом импорте, а в пустом молчаливое удвоение прогона.",
   "dirs": [".claude", ".context", "src", "docs"],
   "copy": [
     {
@@ -92,19 +92,23 @@
     },
     {
       "from": "seat/templates/index.html",
-      "to": "index.html"
+      "to": "index.html",
+      "onlyWhenEmpty": true
     },
     {
       "from": "seat/templates/src/main.tsx",
-      "to": "src/main.tsx"
+      "to": "src/main.tsx",
+      "onlyWhenEmpty": true
     },
     {
       "from": "seat/templates/src/App.tsx",
-      "to": "src/App.tsx"
+      "to": "src/App.tsx",
+      "onlyWhenEmpty": true
     },
     {
-      "from": "seat/templates/src/tests/App.test.tsx",
-      "to": "src/tests/App.test.tsx"
+      "from": "seat/templates/src/tests/App.test.tsx.seed",
+      "to": "src/tests/App.test.tsx",
+      "onlyWhenEmpty": true
     },
     {
       "from": "seat/templates/stryker.config.json",
@@ -115,5 +119,12 @@
       "to": ".context/14-probes.md"
     }
   ],
-  "projectOwnedInsideHarness": ["settings.local.json"]
+  "projectOwnedInsideHarness": ["settings.local.json"],
+  "mergeWhenBusy": [
+    "package.json",
+    "tsconfig.json",
+    "vite.config.ts",
+    ".prettierignore",
+    "eslint.config.js"
+  ]
 }
