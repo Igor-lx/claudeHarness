@@ -503,15 +503,131 @@ const rel = (f) =>
     : norm(path.relative(path.join(BASE, ".."), f));
 
 // --- разрешение спецификатора импорта в файл ---------------------------------
+/** Короткие адреса импорта — те, что объявлены конфигом компилятора.
+ *
+ * Разбор импортов считал внутренним только то, что начинается с точки.
+ * Импорт через короткий адрес — `~/app/store`, `@/shared` — от точки не
+ * начинается, и в граф он не попадал ВОВСЕ.
+ *
+ * Цена измеряется только там, где есть и короткие адреса, и слои. Замерено на
+ * первом таком проекте: связь между слоями через короткий адрес не видел
+ * никто — правила направления и изоляции проходили зелёными, радиус поражения
+ * не считал импортёра, а объявленное исключение легло в «мёртвые», потому что
+ * запрет, который оно снимает, не срабатывал ни разу.
+ *
+ * Источник истины — конфиг компилятора: короткие адреса объявляют ему, а
+ * сборщик и раннер повторяют объявленное. Читается он вместе с тем, что
+ * продолжает: раскладка со ссылками держит общие опции в отдельном файле.
+ */
+const ALIASES = (() => {
+  const named = (CONFIG.toolchain ?? []).find((l) => l.script === "typecheck");
+  const start = named?.config ?? "tsconfig.json";
+  const out = [];
+  const seen = new Set();
+  const read = (at) => {
+    if (seen.has(at) || !existsSync(at)) return;
+    seen.add(at);
+    const raw = readFileSync(at, "utf8");
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Конфиг компилятора допускает комментарии, а разбор JSON — нет. Снимать
+      // их образцом по всему тексту нельзя: маска вида `src` со звёздами
+      // содержит последовательность, неотличимую от пустого блочного
+      // комментария, и образец съедает её ИЗНУТРИ СТРОКИ. Поймано сразу:
+      // короткий адрес превращался в огрызок, таблица выходила пустой, и
+      // разрешение коротких адресов не работало бы молча.
+      //
+      // Поэтому сканер, знающий про строки, и зовётся он только тогда, когда
+      // простой разбор уже не удался.
+      let out = "";
+      let inString = false;
+      for (let i = 0; i < raw.length; i += 1) {
+        const c = raw[i];
+        if (inString) {
+          out += c;
+          if (c === "\\") {
+            out += raw[i + 1] ?? "";
+            i += 1;
+            continue;
+          }
+          if (c === '"') inString = false;
+          continue;
+        }
+        if (c === '"') {
+          inString = true;
+          out += c;
+          continue;
+        }
+        if (c === "/" && raw[i + 1] === "/") {
+          while (i < raw.length && raw[i] !== "\n") i += 1;
+          out += "\n";
+          continue;
+        }
+        if (c === "/" && raw[i + 1] === "*") {
+          const end = raw.indexOf("*/", i + 2);
+          i = end < 0 ? raw.length : end + 1;
+          continue;
+        }
+        out += c;
+      }
+      try {
+        parsed = JSON.parse(out);
+      } catch {
+        return;
+      }
+    }
+    const here = path.dirname(at);
+    const paths = parsed.compilerOptions?.paths;
+    if (paths !== undefined)
+      for (const [pattern, targets] of Object.entries(paths))
+        for (const target of targets)
+          out.push({
+            head: pattern.replace(/\*$/, ""),
+            star: pattern.endsWith("*"),
+            to: norm(
+              path.resolve(
+                here,
+                parsed.compilerOptions?.baseUrl ?? ".",
+                target.replace(/\*$/, ""),
+              ),
+            ),
+          });
+    if (typeof parsed.extends === "string")
+      read(path.resolve(here, parsed.extends));
+  };
+  read(path.join(BASE, "..", start));
+  return out;
+})();
 const resolve = (fromFile, spec) => {
-  if (!spec.startsWith(".")) return null;
-  const base = path.resolve(path.dirname(fromFile), spec).replace(/\\/g, "/");
+  let base;
+  if (spec.startsWith(".")) {
+    base = norm(path.resolve(path.dirname(fromFile), spec));
+  } else {
+    // Самый длинный подходящий короткий адрес: объявить можно и `~/`, и
+    // `~/shared/`, и тогда второй точнее первого.
+    const hit = ALIASES.filter((a) => spec.startsWith(a.head)).sort(
+      (x, y) => y.head.length - x.head.length,
+    )[0];
+    if (hit === undefined) return null;
+    base = norm(path.join(hit.to, spec.slice(hit.head.length)));
+  }
+  // Расширения перечислены ВСЕ, а не только пара машинописных: проект на
+  // обычном JavaScript пишет импорт без расширения так же, и его связи
+  // терялись бы тем же молчанием.
   const cands = [
+    base,
     base + ".ts",
     base + ".tsx",
+    base + ".js",
+    base + ".jsx",
+    base + ".mjs",
+    base + ".cjs",
     base + "/index.ts",
     base + "/index.tsx",
-    base,
+    base + "/index.js",
+    base + "/index.jsx",
   ];
   for (const c of cands) if (files.includes(c)) return c;
   return null;
@@ -3954,15 +4070,21 @@ if (mode === "verify") {
     for (const q of rule.allowed)
       for (const hit of inside(q, null)?.hits ?? []) allowedBy.set(hit, q);
     for (const banned of rule.banned) {
-      const target = banned.includes("/")
-        ? new Set(inside(banned, null)?.hits ?? [])
-        : null;
+      // Папка это или имя пакета — ЗАМЕР, а не догадка по косой черте.
+      //
+      // Прежде запрет без косой черты считался именем пакета и сверялся с
+      // написанным спецификатором. Слой, лежащий одной папкой в корне
+      // исходников, — `app`, `ui`, `domain` — под это правило попадал целиком:
+      // запрет на него не проверялся НИ РАЗУ, и таблица направления молчала
+      // при живом нарушении. Замерено на проекте, где фиче запрещён импорт из
+      // слоя приложения: импорт был, запрет был, нарушений — ноль.
+      //
+      // Спрашиваются теперь обе стороны сразу: область на диске и имя пакета
+      // как написано. Совпасть может и то, и другое — пакет, названный как
+      // папка, законен, и молчать о нём было бы тем же дефектом.
+      const target = new Set(inside(banned, null)?.hits ?? []);
       for (const f of layer) {
-        if (target === null) {
-          if (specsOf.get(f)?.has(banned))
-            broken7.push(`${rel(f)} → ${banned}`);
-          continue;
-        }
+        if (specsOf.get(f)?.has(banned)) broken7.push(`${rel(f)} → ${banned}`);
         for (const dep of importsOf.get(f) ?? []) {
           if (!target.has(dep)) continue;
           const by = allowedBy.get(dep);
@@ -5778,9 +5900,15 @@ if (mode === "verify") {
     // не спросят. Найдено пробой — сверка была односторонней с рождения.
     const chain = scripts.check ?? null;
     if (chain !== null) {
+      // Связка читается именем менеджера, объявленного ПРОЕКТОМ. Прежде имя
+      // стояло здесь литералом, и на проекте с другим менеджером связка
+      // читалась как пустая: обратная сторона сверки не видела в ней ни
+      // одного звена и молчать могла только зелено.
+      const call = new RegExp(PACKAGE_MANAGER + " run ([\\w:-]+)", "g");
+      const short = new RegExp("(^|&&)\\s*" + PACKAGE_MANAGER + " test\\b");
       const inChain = [
-        ...[...chain.matchAll(/npm run ([\w:-]+)/g)].map((m) => m[1]),
-        ...(/(^|&&)\s*npm test\b/.test(chain) ? ["test"] : []),
+        ...[...chain.matchAll(call)].map((m) => m[1]),
+        ...(short.test(chain) ? ["test"] : []),
       ];
       // Известными считаются и семенные имена звеньев, и те, под которыми
       // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
@@ -7429,6 +7557,36 @@ if (mode === "verify") {
                 (hits.length ? hits.join(", ") : "ничего"),
             );
         }
+      }
+    }
+  }
+  // Вторая сторона: связка проверок зовёт звенья именем менеджера, который
+  // объявил ПРОЕКТ. Семя связки написано умолчанием — словом `npm`, — и
+  // правило о переходе на другой менеджер говорило только про таблицу
+  // проверок в правилах. Про связку не говорило ничего, и она уезжала в
+  // проект чужим словом.
+  //
+  // Цена не в том, что связка не запустится: менеджеры чужие скрипты зовут.
+  // Цена в том, что ЧИТАТЬ её инструмент будет именем объявленного менеджера
+  // и не увидит в ней ни одного звена — то есть обратная сторона сверки
+  // инструментов замолчит навсегда. Замерено на проекте, объявившем yarn.
+  if (CONFIG.manifest != null) {
+    const at = path.join(BASE, CONFIG.manifest);
+    if (existsSync(at)) {
+      const body = (JSON.parse(readFileSync(at, "utf8")).scripts ?? {}).check;
+      if (typeof body === "string") {
+        const mine = new RegExp(PACKAGE_MANAGER + " (run\\s+[\\w:-]+|test\\b)");
+        const alien = /\b(npm|pnpm|yarn|bun)\s+(run\s+[\w:-]+|test\b)/.exec(
+          body,
+        );
+        if (!mine.test(body) && alien !== null)
+          chainDrift.push(
+            "связка зовёт звенья через «" +
+              alien[1] +
+              "», а проект объявил менеджером «" +
+              PACKAGE_MANAGER +
+              "»: читать её инструмент будет вторым именем и не увидит ни одного звена",
+          );
       }
     }
   }
