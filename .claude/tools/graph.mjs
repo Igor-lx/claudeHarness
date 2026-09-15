@@ -8493,14 +8493,20 @@ if (mode === "verify") {
             .map((c) => c.trim());
           if (cells.length < 4) continue;
           const proof = cells[3];
-          // Названо ли измерение: имя сверки в кавычках-ёлочках или имя
-          // звена. Оба ищутся ЦЕЛИКОМ — вхождением любое слово сошло бы.
+          // Названо ли измерение. Имя сверки пишется в кавычках-ёлочках и
+          // сверяется целиком; имя звена или режима — в обратных кавычках и
+          // внутри КОМАНДЫ, поэтому команда разбирается на слова и целиком
+          // сверяется каждое.
+          //
+          // Прежде здесь стояли `endsWith` и `includes(' ' + x)` при
+          // комментарии «ищутся целиком»: комментарий открещивался ровно от
+          // того, что код и делал, и `какой-то-test` проходил хвостом слова.
+          const words = (text) =>
+            text.split(/[^A-Za-z0-9:._-]+/).filter(Boolean);
           const named =
             [...proof.matchAll(/«([^»]+)»/g)].some((m) => measures.has(m[1])) ||
             [...proof.matchAll(/`([^`]+)`/g)].some((m) =>
-              [...measures].some(
-                (x) => m[1] === x || m[1].includes(" " + x) || m[1].endsWith(x),
-              ),
+              words(m[1]).some((w) => measures.has(w)),
             );
           if (!named)
             stepsAdrift.push(
@@ -8525,10 +8531,14 @@ if (mode === "verify") {
   for (const a of stepsAdrift) console.log("    " + a);
 
   const hookOff = [];
-  if (CONFIG.transition != null && CONFIG.settingsProject != null) {
-    const at = path.join(BASE, CONFIG.settingsProject);
-    if (!existsSync(at))
-      hookOff.push("файла разрешений нет: " + CONFIG.settingsProject);
+  // Адрес берётся у ПОЛКИ, а не из поля `settingsProject`. Поле
+  // необязательное: проект вправе поставить `null`, и тогда сверка замолчала
+  // бы вместе с ним — при том что хук живёт в настройках среды независимо от
+  // того, сверяет их кто-нибудь с полкой или нет.
+  if (CONFIG.transition != null) {
+    const at = shelfAt("settings.json");
+    if (at === null || !existsSync(at))
+      hookOff.push("файла разрешений среды нет: напоминание включить нечем");
     else {
       let parsed = null;
       try {
