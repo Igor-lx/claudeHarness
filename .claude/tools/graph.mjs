@@ -996,7 +996,7 @@ const CHECK_SECTIONS = [
   "Точечные исключения линта",
   "Выключения правил линта",
   "Режимы инструмента описаны",
-  "Версии установленного",
+  "Версии установленного (предупреждение, прогон не роняет)",
   "Разрешения, нажитые по ходу работы",
   "Разрешения среды",
   "Якоря на документацию в коде",
@@ -4569,7 +4569,7 @@ if (mode === "verify") {
     }
   }
 
-  checkHead("Версии установленного");
+  checkHead("Версии установленного (предупреждение, прогон не роняет)");
   console.log(
     CONFIG.minVersions == null
       ? "  минимумы не объявлены"
@@ -4578,7 +4578,7 @@ if (mode === "verify") {
         : `  ниже объявленного: ${oldVersions.length}.` +
           " Объявленное — версии, на которых обвязка проверялась, а не" +
           " измеренный порог совместимости: ниже них поведение не сломано," +
-          " а неизвестно. Обновить — решение разработчика, прогон это не роняет",
+          " а неизвестно. Обновить — решение разработчика",
   );
   for (const o of oldVersions) console.log("    " + o);
 
@@ -7484,6 +7484,34 @@ if (mode === "verify") {
     const link = CONFIG.toolchain.find((l) => l.script === "lint");
     const shelfRel = path.relative(REPO, SHELF).split(path.sep).join("/");
     const mustCover = shelfRel + "/seat/templates";
+    // Область разбора задаёт СКРИПТ, а не только конфиг. Проект вправе звать
+    // линтер по двум своим папкам — тогда до полки он не доходит вовсе, и
+    // требовать исключения значит краснеть на здоровом устройстве. Ложное
+    // срабатывание тут дороже пропуска: оно учит не читать вывод, и поймано
+    // оно было первым же проектом с таким скриптом.
+    //
+    // Разбор скрипта простой: после имени инструмента берутся лексемы, не
+    // начинающиеся с тире и не идущие сразу за такой лексемой — значение ключа
+    // не область. Областей нет вовсе — линтер идёт от текущей папки, то есть
+    // достаёт до всего.
+    const lintArea = () => {
+      if (CONFIG.manifest == null) return null;
+      const mAt = path.join(BASE, CONFIG.manifest);
+      if (!existsSync(mAt)) return null;
+      const scripts = JSON.parse(readFileSync(mAt, "utf8")).scripts ?? {};
+      const own = linkOwnName("lint", scripts);
+      const body = scripts[own ?? "lint"];
+      if (typeof body !== "string") return null;
+      const parts = body.trim().split(/\s+/).slice(1);
+      const areas = [];
+      for (let i = 0; i < parts.length; i += 1) {
+        if (parts[i].startsWith("-")) continue;
+        if (i > 0 && parts[i - 1].startsWith("-")) continue;
+        areas.push(parts[i].replace(/^\.\//, ""));
+      }
+      return areas;
+    };
+
     if (link != null && link.config != null) {
       // Конфиг в силе — не обязательно семенной: у живого проекта он свой и
       // часто под другим именем. Берётся тот, что лежит.
@@ -7503,7 +7531,12 @@ if (mode === "verify") {
         const covered = [...text.matchAll(/["'`]([^"'`]+)["'`]/g)].some((m) =>
           mustCover.startsWith(m[1].replace(/\/\*\*?$/, "")),
         );
-        if (!covered)
+        const areas = lintArea();
+        const reaches =
+          areas === null ||
+          areas.length === 0 ||
+          areas.some((one) => one === "." || mustCover.startsWith(one));
+        if (!covered && reaches)
           seedLint.push(
             path.relative(REPO, at).split(path.sep).join("/") +
               " — не исключает " +
