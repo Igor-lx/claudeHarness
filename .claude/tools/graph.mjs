@@ -123,6 +123,34 @@ for (const [field, v] of Object.entries(CONFIG)) {
   process.exit(2);
 }
 
+/** Менеджер пакетов ЭТОГО проекта — тот, что объявлен его манифестом.
+ *
+ * Умолчание свода — npm, и команды в правилах пишут им. Но свод прямо
+ * разрешает другой менеджер и велит переписать под него таблицу проверок:
+ * «менеджер другой — правятся эти строки». Сверка скриптов при этом знала одно
+ * имя и после такой правки переставала видеть таблицу вовсе.
+ *
+ * Замерено на проекте, объявившем pnpm полем манифеста: таблица проверок
+ * назвала все звенья, а сверка доложила ЧЕТЫРЕ скрипта, о которых «решение не
+ * принято». Ложное срабатывание ровно на том действии, которого свод сам и
+ * требует.
+ *
+ * Имя берётся из поля манифеста и обрезается по собачке: там пишут версию.
+ * Поля нет — значит умолчание, npm.
+ */
+const PACKAGE_MANAGER = (() => {
+  if (CONFIG.manifest == null) return "npm";
+  const at = path.join(BASE, CONFIG.manifest);
+  if (!existsSync(at)) return "npm";
+  try {
+    const declared = JSON.parse(readFileSync(at, "utf8")).packageManager;
+    if (typeof declared !== "string" || declared === "") return "npm";
+    return declared.split("@")[0];
+  } catch {
+    return "npm";
+  }
+})();
+
 const ROOT = path.join(BASE, CONFIG.src).split(path.sep).join("/");
 
 /** Папки, которых в описи нет: порождённые инструментами копии дерева и
@@ -327,10 +355,46 @@ const styleFiles = [];
 // этом законна и штатна: обвязку сажают до первой строчки кода. Подтверждено
 // пробой на копии проекта с удалённой папкой.
 const walkable = (dir) => existsSync(dir) && statSync(dir).isDirectory();
+
+/** Папка обвязки — НИКОГДА не код проекта, куда бы ни указывал корень исходников.
+ *
+ * Обычно корень исходников лежит глубже полки, и вопрос не встаёт. Но проект с
+ * ДВУМЯ корнями — скажем, браузерным и серверным — описать одним полем нельзя
+ * иначе, чем указав на их общего родителя, а общий родитель у них — корень
+ * репозитория. И тогда обход забирает полку целиком.
+ *
+ * Замерено на таком проекте: в «код проекта» попали три СЕМЕНИ обвязки — её
+ * конфиг линта, её точка входа, её конфиг сборщика, — и покрытие карты
+ * потребовало описать их наравне с кодом. Проект не может закрыть это в
+ * принципе: файлы не его, править их он не вправе.
+ *
+ * Исключение здесь, а не в списке имён папок: имя полки задаёт проект, и
+ * списком голых имён его не выразить.
+ */
+const insideShelf = (full) =>
+  SHELF !== null &&
+  (full === norm(SHELF) || full.startsWith(norm(SHELF) + "/"));
+
+/** Вне описи ли эта запись — ОДИН вопрос и один ответ на весь инструмент.
+ *
+ * Обходов дерева три, и каждый спрашивал это по-своему: один смотрел список
+ * служебных имён, другой не смотрел ничего. Пока корень исходников лежал глубже
+ * полки и глубже папки зависимостей, разницы не было видно. Корень, равный
+ * корню репозитория, показал её сразу: покрытие карты потребовало описать пять
+ * файлов стилей ИЗ ПАПКИ ЗАВИСИМОСТЕЙ, а замер объёма чтения тех же файлов не
+ * видел — два числа об одном предмете разошлись молча.
+ *
+ * Тот же класс ловили уже дважды: зашитый корень в двух обходах и язык стилей в
+ * четырёх местах порознь. Поэтому вопрос теперь один, и поправить его наполовину
+ * нельзя.
+ */
+const outOfTree = (name, full) =>
+  OUT_OF_TREE.has(name) || insideShelf(norm(full));
+
 const collect = (dir) => {
   if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
-    if (OUT_OF_TREE.has(e)) continue;
+    if (outOfTree(e, path.join(dir, e))) continue;
     const full = norm(path.join(dir, e));
     if (statSync(full).isDirectory()) collect(full);
     else if (/\.[jt]sx?$/.test(e)) {
@@ -3240,6 +3304,7 @@ if (mode === "verify") {
     if (!walkable(dir)) return;
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
+      if (outOfTree(e, full)) continue;
       if (statSync(full).isDirectory()) walkAll(full);
       else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
         everyPath.push(full.split(path.sep).join("/"));
@@ -6276,7 +6341,9 @@ if (mode === "verify") {
           spans.add(hit[1].trim());
       }
       const named = (s) =>
-        spans.has(s) || spans.has(`npm ${s}`) || spans.has(`npm run ${s}`);
+        spans.has(s) ||
+        spans.has(`${PACKAGE_MANAGER} ${s}`) ||
+        spans.has(`${PACKAGE_MANAGER} run ${s}`);
       const silent = scripts.filter((s) => !named(s));
       const declared = new Set(scripts);
       const phantom = new Set();
@@ -6298,7 +6365,9 @@ if (mode === "verify") {
               "      исключённых его не называет: решение о нём не принято",
           );
         for (const s of phantom)
-          console.log(`    npm run ${s} — названо в прозе, скрипта нет`);
+          console.log(
+            `    ${PACKAGE_MANAGER} run ${s} — названо в прозе, скрипта нет`,
+          );
       }
     }
   }
@@ -7006,6 +7075,9 @@ if (mode === "verify") {
   // Сравнивается содержимое, а не время: клон ставит всем файлам одну свежую
   // метку, и по времени всё выглядело бы устаревшим.
   const unasked = [];
+  // Слепота сверки — отдельное состояние, и держит его своя переменная:
+  // «правленого нет» и «смотреть нечем» печатаются разными строками.
+  let ledgerBlind = false;
   if (CONFIG.testedLedger != null) {
     const at = path.join(BASE, CONFIG.testedLedger);
     const seen = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : {};
@@ -7026,9 +7098,16 @@ if (mode === "verify") {
         .map((f) => norm(path.join(BASE, "..", f)))
         .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"));
     } catch {
-      changedNow = [];
+      // Репозитория нет или git недоступен. Это НЕ «правленого нет»: сверке
+      // нечего смотреть, и молчать об этом нельзя. Проект без репозитория
+      // существует — на таком стенде сверка печатала «правленого без вопроса
+      // нет» и проходила зелёной, то есть была зелена оттого, что ей нечего
+      // проверять. Прогон при этом не роняется: жить без репозитория законно,
+      // а красный навсегда перестают читать.
+      changedNow = null;
+      ledgerBlind = true;
     }
-    for (const f of changedNow) {
+    for (const f of changedNow ?? []) {
       const now = createHash("sha1")
         .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
         .digest("hex")
@@ -7040,11 +7119,13 @@ if (mode === "verify") {
   console.log(
     CONFIG.testedLedger == null
       ? "  след прогона не ведётся — вопрос держится памятью целиком"
-      : unasked.length === 0
-        ? "  правленого без вопроса нет"
-        : "  правлено после последнего вопроса: " +
-          unasked.length +
-          ". Позвать режим «правка против её тестов» и пройти по планке",
+      : ledgerBlind
+        ? "  состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет"
+        : unasked.length === 0
+          ? "  правленого без вопроса нет"
+          : "  правлено после последнего вопроса: " +
+            unasked.length +
+            ". Позвать режим «правка против её тестов» и пройти по планке",
   );
   for (const u of unasked) console.log("    " + u);
 
