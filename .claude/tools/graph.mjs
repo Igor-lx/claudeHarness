@@ -1338,6 +1338,7 @@ const CHECK_SECTIONS = [
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
   "Находки закрыты",
+  "Шаги перехода закрывают измерение",
   "Напоминание о переходе включено",
   "Объявленный долг назван планом перехода",
   "План перехода не потерялся",
@@ -8448,6 +8449,77 @@ if (mode === "verify") {
   // после этого молчит: напоминания просто не будет, а признака у этого нет
   // никакого. Спрашивается он только при живом переходе — проекту без плана
   // напоминать не о чем.
+  // Переход — ЗАВЕРШЕНИЕ ПОСАДКИ, а не аудит: заполнить базу, настроить
+  // инструменты, перенацелить рецепты. Починка чужого кода, рефактор и аудит
+  // в план не входят — обвязку ставят затем, чтобы такую работу стало
+  // возможно вести потом и по правилам.
+  //
+  // Признак механический: шаг закрывает ИЗМЕРЕНИЕ обвязки — сверку из
+  // закрытого списка либо звено цепочки. Графа «чем проверяется» обязана
+  // назвать его. Шаг, закрытие которого обвязке не видно, переходом не
+  // является, как бы полезен он ни был, и место ему в отложенном.
+  //
+  // Прежде графу разрешалось заполнить словами «сверки нет, закрывается
+  // чтением», и эта форма проглатывала что угодно. Замерено на посадке в
+  // стенд одного компонента: из семи шагов правилами обвязки держались два.
+  const stepsAdrift = [];
+  if (CONFIG.transition != null) {
+    const at = path.join(BASE, CONFIG.transition.file);
+    if (existsSync(at)) {
+      const rows = readFileSync(at, "utf8").split(NEWLINE);
+      const head = rows.findIndex((l) =>
+        l.startsWith(CONFIG.transition.heading),
+      );
+      if (head >= 0) {
+        // Словарь измерений: имена сверок и имена звеньев цепочки. Звенья
+        // берутся из карты посадки — там они объявлены данными.
+        const measures = new Set(CHECK_SECTIONS);
+        {
+          const mapAt = shelfAt("seat/map.json");
+          if (mapAt !== null && existsSync(mapAt))
+            for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
+              .chainScripts ?? [])
+              measures.add(e.name);
+        }
+        const { rows: stepRows } = tableAfter(rows, head);
+        for (const row of stepRows) {
+          const cells = row
+            .split("|")
+            .slice(1, -1)
+            .map((c) => c.trim());
+          if (cells.length < 4) continue;
+          const proof = cells[3];
+          // Названо ли измерение: имя сверки в кавычках-ёлочках или имя
+          // звена. Оба ищутся ЦЕЛИКОМ — вхождением любое слово сошло бы.
+          const named =
+            [...proof.matchAll(/«([^»]+)»/g)].some((m) => measures.has(m[1])) ||
+            [...proof.matchAll(/`([^`]+)`/g)].some((m) =>
+              [...measures].some(
+                (x) => m[1] === x || m[1].includes(" " + x) || m[1].endsWith(x),
+              ),
+            );
+          if (!named)
+            stepsAdrift.push(
+              "шаг " +
+                cells[0] +
+                " не называет измерения обвязки: «" +
+                proof +
+                "»",
+            );
+        }
+      }
+    }
+  }
+  checkHead("Шаги перехода закрывают измерение");
+  console.log(
+    CONFIG.transition == null
+      ? "  перехода нет: проверять нечего"
+      : stepsAdrift.length
+        ? "  шагов мимо измерения: " + stepsAdrift.length
+        : "  каждый шаг называет сверку или звено цепочки",
+  );
+  for (const a of stepsAdrift) console.log("    " + a);
+
   const hookOff = [];
   if (CONFIG.transition != null && CONFIG.settingsProject != null) {
     const at = path.join(BASE, CONFIG.settingsProject);
@@ -8556,6 +8628,7 @@ if (mode === "verify") {
     // заведённым ради живого проекта, где описать всё за день нельзя, и с
     // рубежом завершения посадки, где красной вправе остаться только цепочка
     // проверок по чужому коду. Найдено исполнением плана перехода на полигоне.
+    stepsAdrift.length ||
     hookOff.length ||
     debtUnplanned ||
     overDebt ||
