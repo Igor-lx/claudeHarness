@@ -33,7 +33,7 @@ import * as vocabulary from "./graph.predicates.mjs";
 export const isTestPath = (f) =>
   /\/tests\//.test(f) ||
   /\/__tests__\//.test(f) ||
-  /\.(test|spec)\.tsx?$/.test(f);
+  /\.(test|spec)\.[jt]sx?$/.test(f);
 
 /** Лист стилей. В граф импортов не входит — его подключает сборщик.
  *
@@ -51,7 +51,7 @@ export const isDocPath = (f) => /\.md$/.test(f);
  * Исполняемый модуль: то, у чего есть форма и ответ, то есть контракт. Тест
  * сюда не входит — он сам проверка, поверхности у него нет.
  */
-export const isCodePath = (f) => /\.tsx?$/.test(f) && !isTestPath(f);
+export const isCodePath = (f) => /\.[jt]sx?$/.test(f) && !isTestPath(f);
 
 /**
  * То, чья правка меняет наблюдаемое поведение продукта: код или стиль. Стиль
@@ -85,6 +85,8 @@ export const PREDICATE_CASES = [
   ["isTestPath", "src/a/b.test.ts", true],
   ["isTestPath", "src/a/b.test.tsx", true],
   ["isTestPath", "src/a/b.spec.tsx", true],
+  ["isTestPath", "src/a/b.test.jsx", true],
+  ["isTestPath", "src/a/b.spec.js", true],
   ["isTestPath", "__tests__/b.spec.tsx", true],
   ["isTestPath", "src/a/b.ts", false],
   ["isTestPath", "src/a/testing/b.ts", false],
@@ -102,6 +104,9 @@ export const PREDICATE_CASES = [
   // --- isCodePath: дефект — тест считался кодом с поверхностью ---
   ["isCodePath", "src/a/b.ts", true],
   ["isCodePath", "src/a/b.tsx", true],
+  ["isCodePath", "src/a/b.js", true],
+  ["isCodePath", "src/a/b.jsx", true],
+  ["isCodePath", "src/a/b.test.jsx", false],
   ["isCodePath", "src/a/tests/b.test.tsx", false],
   ["isCodePath", "src/a/b.test.ts", false],
   ["isCodePath", "src/a/README.md", false],
@@ -162,6 +167,20 @@ export const selfCheck = () => {
   return failed;
 };
 
+/** Язык модуля: TypeScript И обычный JavaScript.
+ *
+ * Умолчание обвязки — TypeScript, и половина планки стоит на его строгости. Но
+ * умолчание говорит, на чём НАЧИНАЮТ проект, а не что инструмент способен
+ * прочесть: живой проект на обычном JavaScript существует, и обвязку в него
+ * сажают так же. Пока опознавался один язык, такой проект был для инструмента
+ * ПУСТ — «файлов кода: ноль» при шести файлах на диске, — и молчали разом карта,
+ * реестр тестов, замер чтения и поиск предмета для разделов планки.
+ *
+ * Расхождение с умолчанием этим не отменяется: оно называется отчётом посадки и
+ * платится тем, что критерии о строгости проверять нечем. Но невидимость и
+ * несогласие — разные вещи, и вторая лучше первой.
+ */
+
 /** Расширение кода или листа стилей — одним образцом на весь инструмент.
  *
  * Заведён после того, как восемь мест спрашивали его порознь и каждое называло
@@ -183,4 +202,4 @@ export const CODE_OR_STYLE = /\.(tsx?|css|scss|sass|less|styl)$/;
 export const STYLE_ALT = "css|scss|sass|less|styl";
 
 /** Код или стиль — альтернатива для образцов, а не готовый образец. */
-export const CODE_STYLE_ALT = "tsx?|" + STYLE_ALT;
+export const CODE_STYLE_ALT = "[jt]sx?|" + STYLE_ALT;

@@ -397,7 +397,16 @@ export const CONFIG = {
     },
     {
       script: "lint",
-      packages: ["eslint", "typescript-eslint", "eslint-config-prettier"],
+      // Компилятор назван и здесь: правила линта с типами держатся на нём, и
+      // без него линтер не работает даже там, где звена типов нет вовсе.
+      // Пакет служит не одному звену, и пока это не было объявлено, пропуск
+      // пакетов неприменимого звена унёс бы компилятор вместе с линтером.
+      packages: [
+        "eslint",
+        "typescript",
+        "typescript-eslint",
+        "eslint-config-prettier",
+      ],
       template: "seat/templates/eslint.config.js",
       config: "eslint.config.js",
       why: "линт с типами, правила хуков, и он не спорит с форматтером",
@@ -545,9 +554,9 @@ export const CONFIG = {
   lintConfigOff: {
     file: "../eslint.config.js",
     allowed: [
-      ["**/tests/**/*.{ts,tsx}", "@typescript-eslint/require-await"],
-      ["**/tests/**/*.{ts,tsx}", "react-hooks/globals"],
-      ["**/tests/**/*.{ts,tsx}", "react-hooks/refs"],
+      ["**/tests/**/*.{ts,tsx,js,jsx}", "@typescript-eslint/require-await"],
+      ["**/tests/**/*.{ts,tsx,js,jsx}", "react-hooks/globals"],
+      ["**/tests/**/*.{ts,tsx,js,jsx}", "react-hooks/refs"],
     ],
   },
   /** Раздел, куда складывают обещания обвязки без машинной опоры. Сводка

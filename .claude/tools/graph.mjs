@@ -289,7 +289,7 @@ const collect = (dir) => {
     if (OUT_OF_TREE.has(e)) continue;
     const full = norm(path.join(dir, e));
     if (statSync(full).isDirectory()) collect(full);
-    else if (/\.tsx?$/.test(e)) {
+    else if (/\.[jt]sx?$/.test(e)) {
       if (!files.includes(full)) files.push(full);
     } else if (/\.md$/.test(e) && !isMachinery(full)) docFiles.push(full);
     else if (isStylePath(full) && !styleFiles.includes(full))
@@ -445,7 +445,8 @@ for (const f of files) {
     if (!namesPulledBy.has(f)) namesPulledBy.set(f, new Set());
     const mine = namesPulledBy.get(f);
     if (clause.includes("*")) {
-      (set.add("*"), mine.add("*"));
+      set.add("*");
+      mine.add("*");
       continue;
     }
     const braces = clause.match(/\{([\s\S]*)\}/);
@@ -454,7 +455,10 @@ for (const f of files) {
         part = part.trim().replace(/^type\s+/, "");
         if (!part) continue;
         const name = part.split(/\s+as\s+/)[0].trim();
-        if (NAME_RE.test(name)) (set.add(name), mine.add(name));
+        if (NAME_RE.test(name)) {
+          set.add(name);
+          mine.add(name);
+        }
       }
     }
     const def = clause
@@ -462,7 +466,10 @@ for (const f of files) {
       .replace(/^type\s+/, "")
       .split(",")[0]
       .trim();
-    if (def && NAME_RE.test(def)) (set.add("default"), mine.add("default"));
+    if (def && NAME_RE.test(def)) {
+      set.add("default");
+      mine.add("default");
+    }
   }
 
   // Импорт-побочный-эффект (`import "x";`) — ребро графа без имён: он ничего
@@ -3107,6 +3114,28 @@ if (mode === "verify") {
   const NEWLINE = String.fromCharCode(10);
   const REPO = path.join(BASE, "..");
 
+  /** Предмет звена цепочки: файлы, которые читает его инструмент.
+   *
+   * Объявлен в карте посадки — там же, откуда его берёт слияние манифеста.
+   * Двух источников тут быть не должно: разойдясь, они дали бы разные ответы
+   * на один вопрос «нужно ли этому проекту такое звено». */
+  const linkNeeds = new Map();
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt))
+      for (const e of JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ??
+        [])
+        if (Array.isArray(e.needsFiles)) linkNeeds.set(e.name, e.needsFiles);
+  }
+  const linkHasSubject = (script) => {
+    const want = linkNeeds.get(script);
+    if (want === undefined) return true;
+    const ext = new Set(want.map((x) => "." + x));
+    return [...files, ...styleFiles].some((f) =>
+      ext.has(f.slice(f.lastIndexOf("."))),
+    );
+  };
+
   const bare = (q) => q.replace(/[*]+$/, "").replace(/[/]+$/, "");
 
   // Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу
@@ -3141,7 +3170,7 @@ if (mode === "verify") {
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
       if (statSync(full).isDirectory()) walkAll(full);
-      else if (/\.tsx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
+      else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
         everyPath.push(full.split(path.sep).join("/"));
         if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
       }
@@ -5559,6 +5588,8 @@ if (mode === "verify") {
     ]);
     const gaps = [];
     for (const link of CONFIG.toolchain) {
+      // Звено без предмета пробелом не является: его не дописывают намеренно.
+      if (!linkHasSubject(link.script)) continue;
       const noScript = link.script != null && scripts[link.script] == null;
       const missing = (link.packages ?? []).filter((p) => !declared.has(p));
       if (!noScript && missing.length === 0) continue;
@@ -5788,6 +5819,11 @@ if (mode === "verify") {
     });
     for (const link of CONFIG.toolchain) {
       if (link.config == null) continue;
+      // Звено, для которого в проекте нет ни одного файла его вида, конфига и не
+      // требует: его не дописывают намеренно. Пакеты при этом могут стоять —
+      // они служат и другому звену. Прежде сверка звала это расхождением, то
+      // есть краснела на законном устройстве проекта.
+      if (!linkHasSubject(link.script)) continue;
       const installed = link.packages.every((p) => deps.includes(p));
       if (!installed) continue;
       const at = path.join(BASE, "..", link.config);
@@ -6145,7 +6181,12 @@ if (mode === "verify") {
       // библиотеку.
       const spans = new Set();
       for (const [, src] of docSources) {
-        if (norm(src).includes("/seat/templates/")) continue;
+        // Вся папка ПОСАДКИ, а не только семена: сама инструкция лежит рядом с
+        // ними и называет команды так же — как образец, а не как утверждение об
+        // этом проекте. Пока исключались только семена, инструкция называла
+        // звено, которого у проекта нет намеренно, и предупреждение висело на
+        // законном устройстве. Найдено посадкой в проект без TypeScript.
+        if (norm(src).includes("/seat/")) continue;
         for (const hit of readFileSync(src, "utf8").matchAll(/`([^`\n]+)`/g))
           spans.add(hit[1].trim());
       }
