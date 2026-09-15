@@ -1449,7 +1449,8 @@ if (mode === "handoff") {
   // папки настроек и в проекте, и в рабочей области, и снимок, положенный туда,
   // сливается с ними. Найдено попыткой собрать снимок в корень рабочей области,
   // где уже лежали локальные разрешения.
-  const dest = process.argv[3] ?? path.join(BASE, "..", "..", "claudeHandoff");
+  const asked = process.argv[3] ?? null;
+  const dest = asked ?? path.join(BASE, "..", "..", "claudeHandoff");
   if (SHELF === null) {
     console.log("=== Обвязка не заявлена ===");
     console.log("  В настройке проекта поле `shelf` пусто: собирать нечего.");
@@ -1507,8 +1508,17 @@ if (mode === "handoff") {
   // отказывался, раз она не пуста. Найдено прямым несовпадением: разработчик
   // назвал корень рабочей области и получил отказ вместо снимка.
   const named = path.resolve(dest);
+  // Вкладывать снимок в занятую папку можно ТОЛЬКО когда её назвали. Человек
+  // говорит «собери вот сюда», имея в виду живое место — корень рабочей
+  // области, флешку, — и внутри него появляется папка снимка.
+  //
+  // Умолчание так понимать нельзя: оно само и есть папка снимка. Занятое, оно
+  // давало `claudeHandoff/claudeHandoff`, и снимок уезжал на уровень глубже,
+  // чем его ищут. Прежний снимок при этом оставался лежать первым — то есть
+  // получатель забирал СТАРЫЙ. Найдено повторной сборкой подряд.
   const busy = existsSync(named) && readdirSync(named).length > 0;
-  const root = busy ? path.join(named, "claudeHandoff") : named;
+  const root =
+    busy && asked !== null ? path.join(named, "claudeHandoff") : named;
   const claudeAt = path.join(root, ".claude");
 
   // Цель осматривается ДО записи, и осматривается ЦЕЛИКОМ, а не только её
@@ -1609,6 +1619,13 @@ if (mode === "handoff") {
       mkdirSync(path.join(probe, d), { recursive: true });
     copyTree(claudeAt, path.join(probe, ".claude"));
     for (const one of seatMap.copy) {
+      // Пометки карты читаются и здесь. Семя, которое кладут НЕ на посадке,
+      // проба не кладёт — иначе она сажает не то, что сажает посадка, и
+      // собственная сверка снимка краснеет на его же правильной сборке.
+      // Найдено ровно так: пометка появилась данными, проба её не узнала, и
+      // снимок перестал собираться — молча для того, кто смотрит на первую
+      // строку вывода.
+      if (one.notAtSeating !== undefined) continue;
       const src = path.join(claudeAt, one.from);
       const dst = path.join(probe, one.to);
       if (!existsSync(src)) throw new Error("в снимке нет семени: " + one.from);
@@ -1646,7 +1663,13 @@ if (mode === "handoff") {
     const red = said.filter((l) => /^ {4}\S/.test(l) && !l.includes("<"));
     if (red.length) for (const r of red) console.log("  " + r.trim());
     else console.log("  " + String(e.message).split(NEWLINE)[0]);
-    console.log("  Отдавать нельзя: у получателя он не встанет.");
+    console.log("  Отдавать нельзя: у получателя он не встанет,");
+    console.log("  и потому папка снимка удалена: " + norm(root) + ".");
+    // Негодный снимок не остаётся лежать. Оставленный, он неотличим от
+    // годного: строка об отказе уходит в конец длинного вывода, а папка на
+    // месте — и её берут. Замерено на себе: снимок не собирался несколько
+    // кругов подряд, а посадки шли из него как ни в чём не бывало.
+    rmSync(root, { recursive: true, force: true });
     process.exitCode = 1;
   } finally {
     rmSync(probe, { recursive: true, force: true });
