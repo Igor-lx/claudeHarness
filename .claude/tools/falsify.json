@@ -129,7 +129,8 @@
       "section": "Заготовки обвязки не разбираются линтом проекта",
       "file": "eslint.config.js",
       "find": "      \".claude/seat/templates\",",
-      "replace": ""
+      "replace": "",
+      "own": true
     },
     {
       "section": "Звену цепочки есть на чём работать",

@@ -1300,7 +1300,32 @@ if (mode === "falsify") {
   // и это не порча рецепта, а его природа. Смешанный с настоящей порчей, он
   // давал посаженному проекту семнадцать строк «рецепт устарел» на первом же
   // прогоне — вид, в котором долг не читают вовсе.
+  // Какому полю настройки принадлежит предмет сверки. Список нужен дважды:
+  // сверке без рецепта — чтобы не числить её долгом там, где ломать нечего, —
+  // и рецепту, не нашедшему своего места: если поле пусто, это не устаревший
+  // рецепт, а отсутствующий предмет.
+  //
+  // Второе применение заведено по замеру: посадка в пустой проект дала
+  // «рецепт устарел» на сверке, чей предмет в том проекте не заводится вовсе.
+  // Долг, который проект не может закрыть, перестают читать целиком.
+  const NEEDS = {
+    "Константы настроек описаны": "configDocs",
+    "Точечные исключения линта": "lintExceptions",
+    "Решения адресуемы": "adr",
+    "Связи через DOM и CSS": "domTables",
+    "Находки закрыты": "findings",
+  };
+  /** Предмет сверки в этом проекте не заводится: поле настройки пусто. */
+  const subjectless = (section) => {
+    const field = NEEDS[section];
+    return field !== undefined && CONFIG[field] == null;
+  };
   const foreign = [];
+  // Рецепт написан, а предмета у сверки в ЭТОМ проекте не заводится вовсе:
+  // поле настройки пусто. Это не «перенацелить на свои файлы» — цели нет, и
+  // печатать такую строку вместе с проектными значило бы советовать работу,
+  // которой не существует.
+  const idle = [];
   try {
     const clean = sectionsOf(runVerify(tmp));
 
@@ -1355,7 +1380,12 @@ if (mode === "falsify") {
       if (Array.isArray(r.edits)) {
         const { failed, after } = runSteps(r);
         if (failed !== undefined) {
-          (r.own === true ? foreign : broken).push(r.section + " — " + failed);
+          (subjectless(r.section)
+            ? idle
+            : r.own === true
+              ? foreign
+              : broken
+          ).push(r.section + " — " + failed);
           continue;
         }
         const wasThere = clean.has(r.section);
@@ -1394,9 +1424,12 @@ if (mode === "falsify") {
       }
       const at = path.join(tmp, r.file);
       if (!existsSync(at)) {
-        (r.own === true ? foreign : broken).push(
-          r.section + " — файла нет: " + r.file,
-        );
+        (subjectless(r.section)
+          ? idle
+          : r.own === true
+            ? foreign
+            : broken
+        ).push(r.section + " — файла нет: " + r.file);
         continue;
       }
       const before = readFileSync(at, "utf8");
@@ -1423,9 +1456,12 @@ if (mode === "falsify") {
         rmSync(at);
       } else {
         if (!before.includes(r.find.split("\n").join(NEWLINE))) {
-          (r.own === true ? foreign : broken).push(
-            r.section + " — рецепт не находит своего места",
-          );
+          (subjectless(r.section)
+            ? idle
+            : r.own === true
+              ? foreign
+              : broken
+          ).push(r.section + " — рецепт не находит своего места");
           continue;
         }
         writeFileSync(
@@ -1484,12 +1520,6 @@ if (mode === "falsify") {
   //
   // Список закрытый и держится полем настройки: предмет появится — поле
   // заполнят, и сверка вернётся в долг сама.
-  const NEEDS = {
-    "Константы настроек описаны": "configDocs",
-    "Точечные исключения линта": "lintExceptions",
-    "Решения адресуемы": "adr",
-    "Связи через DOM и CSS": "domTables",
-  };
   const noSubject = [];
   const uncovered = [];
   for (const s of CHECK_SECTIONS) {
@@ -1538,6 +1568,16 @@ if (mode === "falsify") {
     "  Это долг, а не состояние: сверка без рецепта фальсифицирована один раз,",
   );
   console.log("  при заведении, и с тех пор её здоровье никем не проверено.");
+
+  if (idle.length) {
+    console.log("");
+    console.log("=== БЕЗ ПРЕДМЕТА: РЕЦЕПТ ЕСТЬ, ЛОМАТЬ НЕЧЕГО ===");
+    for (const n of idle)
+      console.log("  " + n.split(" — ")[0] + " — предмета в этом проекте нет");
+    console.log(
+      "  Рецепт приехал с обвязкой и здесь не на чем сработать. Заведётся предмет — сработает сам.",
+    );
+  }
 
   if (noSubject.length) {
     console.log("");
