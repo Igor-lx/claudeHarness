@@ -285,6 +285,27 @@
       ]
     },
     {
+      "section": "Каркас обвязки не лежит в живом проекте",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzOwn.tsx",
+            "text": "export const zzOwn = 1;"
+          }
+        },
+        {
+          "create": {
+            "path": "src/main.tsx",
+            "text": "export const zzNotSeed = 1;"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "append": "| `src/main.tsx` | монтирование приложения в разметку страницы | нет | читает `#root` из документа, создаёт корень React |"
+        }
+      ]
+    },
+    {
       "section": "Цепочка проверок объявлена данными",
       "file": ".claude/seat/map.json",
       "find": "\"typecheck\",",
