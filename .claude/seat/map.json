@@ -132,7 +132,8 @@
     {
       "from": "seat/templates/stryker.config.json",
       "to": "stryker.config.json",
-      "alsoKnownAs": ["stryker.conf.json", "stryker.conf.js"]
+      "alsoKnownAs": ["stryker.conf.json", "stryker.conf.js"],
+      "notAtSeating": "до первых тестов бесполезен: кладётся первой правкой, заведшей тесты"
     },
     {
       "from": "seat/templates/14-probes.md",
@@ -194,5 +195,9 @@
       "recognise": null,
       "needsFiles": null
     }
-  ]
+  ],
+  "platformPackages": {
+    "_": "Пакеты семени манифеста, не принадлежащие ни одному звену цепочки: сама платформа — фреймворк, сборщик и его плагин. Список нужен сверке «Пакеты семени разобраны по звеньям»: без него неназванный пакет неотличим от забытого, а забытый ровно так и нашёлся — звено покрытия писалось в каждый проект без своего инструмента.",
+    "packages": ["react", "react-dom", "vite", "@vitejs/plugin-react"]
+  }
 }

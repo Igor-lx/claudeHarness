@@ -61,6 +61,7 @@ const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
  * Список закрытый: сюда вписывают поле, когда оно заводится объектом. */
 const SHAPED = {
   transition: ["file", "heading"],
+  findings: ["file", "heading", "since"],
   checksTable: ["file", "heading"],
   docsIndex: ["dir", "table", "heading"],
   rulesManifest: ["rules"],
@@ -162,6 +163,48 @@ const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
  * ними ушло правило «поправил — скопируй на полку», из-за которого полка
  * после каждой посадки увозила состояние предыдущего проекта. */
 const TOOL_MANUAL = "graph.md";
+/** Строки ДАННЫХ таблицы, шапка которой стоит на строке `at`.
+ *
+ * Поле настройки, называющее шапку, естественно заполняют заголовком РАЗДЕЛА:
+ * над таблицей стоит именно он, и слово «шапка» на него ложится само. Прежде
+ * разбор просто отсчитывал две строки от найденной, и такое поле давало
+ * правдоподобно неверный ответ без единого признака: сама шапка и разделитель
+ * под ней шли в счёт как строки данных.
+ *
+ * Замерено на плане перехода: в таблице два шага, баннер печатал четыре — и
+ * печатал бы столько же на любом плане, потому что ошибались всегда ровно на
+ * две строки. Число правдоподобное, и потому непроверяемое на глаз.
+ *
+ * Форма требуется ОДНА и проверяется: строка шапки начинается с черты, под ней
+ * разделитель. Принять оба написания было бы хуже — двух интерфейсов у одного
+ * предмета не бывает, и следующее такое поле заполнили бы третьим способом.
+ *
+ * Тот же отсчёт стоял ещё в трёх местах — разделы планки, таблицы связей,
+ * таблица сверок, — и все три ловили бы ту же ошибку молча. Помощник один на
+ * всех: поправить его наполовину нельзя.
+ */
+const tableAfter = (lines, at) => {
+  const head = lines[at] ?? "";
+  const sep = lines[at + 1] ?? "";
+  if (!head.trimStart().startsWith("|"))
+    return {
+      rows: [],
+      problem:
+        "шапкой таблицы объявлена не строка таблицы: «" + head.trim() + "»",
+    };
+  if (!/^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/.test(sep))
+    return {
+      rows: [],
+      problem: "под шапкой таблицы нет разделителя: «" + sep.trim() + "»",
+    };
+  const rows = [];
+  for (let i = at + 2; i < lines.length; i += 1) {
+    if (!lines[i].trimStart().startsWith("|")) break;
+    rows.push(lines[i]);
+  }
+  return { rows, problem: null };
+};
+
 /** Объявление применимости разделов политики: карта «раздел → живой ли и почему».
  *
  * Разбор один на оба места — на сверку и на вопрос закрытия работы. Две копии
@@ -179,9 +222,10 @@ const qualityScopeDeclared = () => {
   );
   if (head < 0) return null;
   const out = new Map();
-  for (let i = head + 2; i < lines.length; i += 1) {
-    if (!lines[i].trimStart().startsWith("|")) break;
-    const cell = lines[i].split("|");
+  const { rows: scopeRows, problem: scopeProblem } = tableAfter(lines, head);
+  if (scopeProblem !== null) return null;
+  for (const row of scopeRows) {
+    const cell = row.split("|");
     const id = /^([K-U])\./.exec(cell[1].trim().replace(/`/g, ""));
     if (id === null) continue;
     // Сравнение словом, а не образцом с `\b`: граница слова в JS опирается на
@@ -931,6 +975,9 @@ const CHECK_SECTIONS = [
   "Цепочка проверок объявлена данными",
   "Звено цепочки не задвоено",
   "Одноранговая зависимость не продублирована",
+  "Пакеты семени разобраны по звеньям",
+  "Отложенное семя не положено посадкой",
+  "Находки закрыты",
   "План перехода не потерялся",
   "Вопросы разработчику без ответа",
 ];
@@ -3119,6 +3166,28 @@ if (mode === "verify") {
    * Объявлен в карте посадки — там же, откуда его берёт слияние манифеста.
    * Двух источников тут быть не должно: разойдясь, они дали бы разные ответы
    * на один вопрос «нужно ли этому проекту такое звено». */
+  // Имя, под которым звено живёт В ЭТОМ проекте. Ищется по тому, что скрипт
+  // ЗОВЁТ, а не по тому, как он назван: проект часто держит то же звено под
+  // своим словом — `types`, `tsc:check`, `lint:ts`. Образец опознания объявлен
+  // данными карты, теми же, по которым звено опознаёт слияние манифеста.
+  //
+  // Двух источников тут быть не должно. Пока их было два, сверка инструментов
+  // на проекте со своим именем звена докладывала ДВА ложных пробела разом:
+  // «команды typecheck нет» — при живом звене под именем `types`, — и «types
+  // цепочка зовёт, а в объявлении его нет». Оба про одно и то же звено, и оба
+  // неверны. Найдено посадкой в стороннюю библиотеку.
+  const linkOwnName = (script, scripts) => {
+    if (script == null) return null;
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt)) return null;
+    const one = (
+      JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? []
+    ).find((e) => e.name === script);
+    if (one === undefined || one.recognise == null) return null;
+    const re = new RegExp(one.recognise);
+    const hit = Object.entries(scripts).find(([, body]) => re.test(body));
+    return hit === undefined ? null : hit[0];
+  };
   const linkNeeds = new Map();
   {
     const mapAt = shelfAt("seat/map.json");
@@ -5590,7 +5659,9 @@ if (mode === "verify") {
     for (const link of CONFIG.toolchain) {
       // Звено без предмета пробелом не является: его не дописывают намеренно.
       if (!linkHasSubject(link.script)) continue;
-      const noScript = link.script != null && scripts[link.script] == null;
+      // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
+      const own = linkOwnName(link.script, scripts) ?? link.script;
+      const noScript = link.script != null && scripts[own] == null;
       const missing = (link.packages ?? []).filter((p) => !declared.has(p));
       if (!noScript && missing.length === 0) continue;
       const what = [
@@ -5621,9 +5692,16 @@ if (mode === "verify") {
         ...[...chain.matchAll(/npm run ([\w:-]+)/g)].map((m) => m[1]),
         ...(/(^|&&)\s*npm test\b/.test(chain) ? ["test"] : []),
       ];
-      const known = new Set(
-        CONFIG.toolchain.map((l) => l.script).filter((s) => s != null),
-      );
+      // Известными считаются и семенные имена звеньев, и те, под которыми
+      // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
+      // связку, докладывается как необъявленное звено.
+      const known = new Set();
+      for (const l of CONFIG.toolchain) {
+        if (l.script == null) continue;
+        known.add(l.script);
+        const mine = linkOwnName(l.script, scripts);
+        if (mine !== null) known.add(mine);
+      }
       for (const link of inChain)
         if (!known.has(link))
           gaps.push(
@@ -5776,8 +5854,13 @@ if (mode === "verify") {
           domDrift.push(`таблицы нет: «${heading}»`);
           continue;
         }
-        for (let i = from + 2; i < text.length && text[i].startsWith("|"); i++)
-          for (const hit of text[i]
+        const { rows: domRows, problem: domProblem } = tableAfter(text, from);
+        if (domProblem !== null) {
+          domDrift.push(`«${heading}»: ${domProblem}`);
+          continue;
+        }
+        for (const row of domRows)
+          for (const hit of row
             .split("|")[1]
             .matchAll(/`(--[a-z-]+|data-[a-z-]+)`/g))
             if (!liveDomNames.has(hit[1]))
@@ -6862,10 +6945,15 @@ if (mode === "verify") {
         );
       else {
         const named = [];
-        for (let i = head + 2; i < rows.length; i += 1) {
-          if (!rows[i].startsWith("|")) break;
-          named.push(rows[i].split("|")[1].trim());
-        }
+        const { rows: tableRows, problem: tableProblem } = tableAfter(
+          rows,
+          head,
+        );
+        if (tableProblem !== null)
+          checksTableDrift.push(
+            `${CONFIG.checksTable.heading}: ${tableProblem}`,
+          );
+        for (const row of tableRows) named.push(row.split("|")[1].trim());
         const seen = new Set();
         for (const one of named) {
           if (seen.has(one)) checksTableDrift.push(`строка задвоена: ${one}`);
@@ -7056,6 +7144,47 @@ if (mode === "verify") {
               own.length +
               " своих файлов",
           );
+
+      // Вторая сторона: не сам каркас, а ЗАПИСИ семян базы о нём.
+      //
+      // Каркас в живой проект не кладётся, а семена базы описывают его
+      // безусловно: карта несёт таблицу его файлов, реестр тестов — строку про
+      // тест корневого компонента, реестр решений — два решения с якорями в
+      // него. В живом проекте все они указывают в пустоту с первого прогона.
+      //
+      // Прежде список того, что снять, стоял в инструкции ПРОЗОЙ и был
+      // неполон: он называл два файла базы из трёх. Карту снимали руками три
+      // посадки подряд, и инструкция сама же предупреждала, что список
+      // закрытый и может отстать. Отстал. Теперь он не список, а замер:
+      // адреса каркаса известны карте посадки, и запись, называющая
+      // несуществующий адрес каркаса, находится пофайлово и построчно.
+      //
+      // Признак точный: адрес назван записью, он числится адресом каркаса, и
+      // на диске его нет. Свой `src/App.tsx` живого проекта под него не
+      // попадает — он существует.
+      if (own.length)
+        for (const e of frame) {
+          if (existsSync(path.join(REPO, e.to))) continue;
+          // База пишет адреса и полностью, и от корня исходников: тест
+          // каркаса назван в реестре как `tests/App.test.tsx`, а в карте
+          // посадки он `src/tests/App.test.tsx`. Ищутся обе формы.
+          const forms = [e.to, e.to.replace(/^src\//, "")];
+          for (const f of readdirSync(BASE)) {
+            if (!f.endsWith(".md")) continue;
+            const lines = readFileSync(path.join(BASE, f), "utf8").split(
+              NEWLINE,
+            );
+            for (let i = 0; i < lines.length; i += 1)
+              if (forms.some((one) => lines[i].includes(one)))
+                frameLitter.push(
+                  f +
+                    ":" +
+                    (i + 1) +
+                    " — запись семени о каркасе, которого в этом проекте нет: " +
+                    e.to,
+                );
+          }
+        }
     }
   }
   checkHead("Каркас обвязки не лежит в живом проекте");
@@ -7227,6 +7356,246 @@ if (mode === "verify") {
   console.log("  продублировано: " + peerDup.length);
   for (const g of peerDup) console.log("    " + g);
 
+  // 44-в. Каждый пакет семени манифеста принадлежит объявленному звену.
+  //
+  // Объявление `toolchain` называет, какие пакеты у какого звена, и на нём
+  // стоит целое правило: звено неприменимо — его пакеты не ставятся. Но список
+  // пакетов был НЕПОЛНЫМ, и неполный выглядел точно как полный: слияние
+  // манифеста, не найдя пакета в объявлении, брало его из семени целиком.
+  // Объявление было, и не работало.
+  //
+  // Цена замерена дважды одной посадкой. Конфиг линта столкнулся под другим
+  // именем и лёг `.seat`-ом — то есть не действует; четыре его пакета, не
+  // названные ни одним звеном, всё равно уехали в манифест и уронили установку
+  // неразрешимым деревом. И наоборот: звено покрытия было объявлено цепочкой,
+  // написано в манифест каждой посадкой — а пакета, без которого оно не
+  // запускается, не было нигде. Оно не работало ни разу и молчало об этом.
+  //
+  // Сверяется в обе стороны. Пакет семени, не названный ни звеном, ни списком
+  // платформы, — забытый. Пакет, названный звеном и отсутствующий в семени, —
+  // звено без инструмента.
+  const packDrift = [];
+  {
+    const seedAt = shelfAt("seat/templates/package.json");
+    const mapAt = shelfAt("seat/map.json");
+    if (
+      CONFIG.toolchain != null &&
+      seedAt !== null &&
+      existsSync(seedAt) &&
+      mapAt !== null &&
+      existsSync(mapAt)
+    ) {
+      const seed = JSON.parse(readFileSync(seedAt, "utf8"));
+      const seatMapNow = JSON.parse(readFileSync(mapAt, "utf8"));
+      const inSeed = new Set([
+        ...Object.keys(seed.dependencies ?? {}),
+        ...Object.keys(seed.devDependencies ?? {}),
+      ]);
+      const byLink = new Map();
+      for (const l of CONFIG.toolchain)
+        for (const p of l.packages ?? [])
+          byLink.set(p, (byLink.get(p) ?? []).concat(l.script ?? "звено"));
+      const platform = new Set(seatMapNow.platformPackages?.packages ?? []);
+      for (const p of inSeed)
+        if (!byLink.has(p) && !platform.has(p))
+          packDrift.push(
+            p + " — пакет семени не назван ни звеном, ни списком платформы",
+          );
+      for (const [p, links] of byLink)
+        if (!inSeed.has(p))
+          packDrift.push(
+            p +
+              " — назван звеном «" +
+              links.join(", ") +
+              "», а в семени манифеста его нет",
+          );
+    }
+  }
+  checkHead("Пакеты семени разобраны по звеньям");
+  console.log("  неразобранных: " + packDrift.length);
+  for (const d of packDrift) console.log("    " + d);
+
+  // 44-г. Семя, которое кладут НЕ на посадке, посадкой не положено.
+  //
+  // Одно семя кладут не при посадке — конфиг мутационного прогона: до первых
+  // тестов он бесполезен. Правило жило прозой, а карта посадки, которую
+  // инструкция объявляет единственным источником, о нём не говорила ничего — и
+  // посадка, работающая по карте, клала его первым же заходом. Правило без
+  // машинной формы перестаёт исполняться, не давая признака; здесь свод
+  // нарушал сам себя, и нарушал внутри одного файла.
+  //
+  // Помечено теперь данными, полем `notAtSeating`, и проверяется ПОБАЙТОВО:
+  // семя, лежащее ровно тем же, каким приехало, никто не заполнял, значит его
+  // положила посадка. Тронутое семя семенем быть перестало — тот же признак,
+  // что у сверки каркаса.
+  const earlySeed = [];
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt))
+      for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
+        if (e.notAtSeating === undefined) continue;
+        const there = path.join(REPO, e.to);
+        const seedFile = shelfAt(e.from);
+        if (!existsSync(there) || seedFile === null || !existsSync(seedFile))
+          continue;
+        if (readFileSync(there).equals(readFileSync(seedFile)))
+          earlySeed.push(e.to + " — " + e.notAtSeating);
+      }
+  }
+  checkHead("Отложенное семя не положено посадкой");
+  console.log("  положенных раньше срока: " + earlySeed.length);
+  for (const d of earlySeed) console.log("    " + d);
+  // 44-бис. Находка посадки закрыта — и закрыта доказуемо.
+  //
+  // Посадка существует затем, чтобы находить поломки обвязки; чинят их на
+  // полке. Пока это держалось перепиской, доказательства не было никакого:
+  // отчёт говорил «закоммичено и выложено», а закоммичено ли то самое и всё ли
+  // — проверить было нечем. Требование завёл разработчик прямой претензией:
+  // «раз что-то там закоммичено — ну значит наверное поправлено; все ли
+  // находки, вообще непонятно».
+  //
+  // Сверка держит реестр с двух сторон, и вторая сторона важнее первой.
+  //
+  // Прямая: у каждой строки обязан быть коммит, существующий в истории, и
+  // обязана быть названа опора — сверка, звено цепочки или прогон рецептов,
+  // то есть то, что покраснеет при возврате поломки. Починка без опоры
+  // держится вниманием и вернётся; «нечем» законно, но считается долгом и
+  // печатается отдельным числом.
+  //
+  // Обратная: каждый коммит с префиксом `fix:`, начиная с объявленного
+  // базового, обязан быть назван хотя бы одной строкой. Прямую сторону обойти
+  // легко — не записал строку, и сверять нечего. Обратную обойти можно только
+  // не чиня вовсе либо пряча починку под другим префиксом, а это уже не
+  // забывчивость.
+  //
+  // Роняет прогон расхождение, а не открытая находка: открытая — это работа, о
+  // которой знают, и счёт её печатается баннером.
+  const findingDrift = [];
+  let findingsOpen = 0;
+  let findingsClosed = 0;
+  let findingsUnheld = 0;
+  let findingsNote = null;
+  if (CONFIG.findings != null) {
+    const at = path.join(BASE, CONFIG.findings.file);
+    if (!existsSync(at))
+      findingDrift.push(
+        "реестр объявлен, а файла нет: " + CONFIG.findings.file,
+      );
+    else {
+      // Опорой считается имя сверки, имя звена цепочки или прогон рецептов.
+      // Словарь закрытый намеренно: открытый превратил бы графу в место, куда
+      // пишут что угодно, и сверка стала бы проверять наличие текста.
+      const guards = new Set(CHECK_SECTIONS);
+      guards.add("фальсификация");
+      guards.add("нечем");
+      {
+        const mapAt = shelfAt("seat/map.json");
+        if (mapAt !== null && existsSync(mapAt))
+          for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
+            .chainScripts ?? [])
+            guards.add(e.name);
+      }
+
+      const rows = readFileSync(at, "utf8").split(NEWLINE);
+      const head = rows.findIndex((l) => l.startsWith(CONFIG.findings.heading));
+      if (head < 0)
+        findingDrift.push(
+          "таблицы находок не нашли: " + CONFIG.findings.heading,
+        );
+      else {
+        // История читается один раз и целиком: спрашивать git на каждой строке
+        // значило бы звать его сотню раз за прогон, а спрашивать диапазоном —
+        // падать там, где базового коммита в этой копии нет.
+        //
+        // Копия, у которой истории нет (песочница фальсификации заводит свой
+        // репозиторий одним коммитом, и так же выглядит мелкий клон), сверить
+        // коммиты не может. Это НАЗЫВАЕТСЯ строкой вывода, а не молчится:
+        // пропуск половины сверки без признака — ровно тот случай, когда
+        // проверка зелена оттого, что ей нечего проверять. Расхождением он не
+        // считается: истории нет не по вине реестра.
+        let log;
+        try {
+          log = execFileSync("git", ["log", "--format=%h %s"], {
+            cwd: REPO,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          }).split(NEWLINE);
+        } catch {
+          log = [];
+        }
+        const base = log.findIndex((l) => l.startsWith(CONFIG.findings.since));
+        const range = base < 0 ? null : log.slice(0, base + 1);
+        if (range === null)
+          findingsNote =
+            "базового коммита " +
+            CONFIG.findings.since +
+            " в истории этой копии нет — коммиты и непойманные починки не сверены";
+        const named = new Set();
+        const { rows: findingRows, problem } = tableAfter(rows, head);
+        if (problem !== null) findingDrift.push(problem);
+        for (const row of findingRows) {
+          const cell = row.split("|").map((c) => c.trim());
+          const [, num, what, , fixedBy, heldBy, state] = cell;
+          if (num === undefined || num === "") continue;
+          const say = (t) => findingDrift.push("строка " + num + ": " + t);
+          if (!what) say("не сказано, что найдено");
+          if (state === "открыта") {
+            findingsOpen += 1;
+            continue;
+          }
+          if (state !== "закрыта") {
+            say("состояние не «открыта» и не «закрыта»: «" + state + "»");
+            continue;
+          }
+          findingsClosed += 1;
+          const hash = (/`([0-9a-f]{7,40})`/.exec(fixedBy ?? "") ?? [])[1];
+          if (hash === undefined) {
+            say("закрыта, а коммит не назван");
+          } else {
+            named.add(hash);
+            if (range !== null && !range.some((l) => l.startsWith(hash)))
+              say("коммит " + hash + " в истории не найден");
+          }
+          const opora = [...(heldBy ?? "").matchAll(/«([^»]+)»/g)].map(
+            (m) => m[1],
+          );
+          if (opora.length === 0) say("закрыта, а чем держится — не сказано");
+          for (const o of opora) {
+            if (!guards.has(o))
+              say("держится на «" + o + "» — такой опоры не существует");
+            if (o === "нечем") findingsUnheld += 1;
+          }
+        }
+        // Обратная сторона: починка, о которой реестр молчит.
+        for (const line of range ?? []) {
+          const m = /^([0-9a-f]{7,40}) fix(\([^)]*\))?: /.exec(line);
+          if (m === null) continue;
+          if (!named.has(m[1]))
+            findingDrift.push(
+              "коммит " +
+                line.trim() +
+                " — починка, не названная ни одной строкой",
+            );
+        }
+      }
+    }
+  }
+  checkHead("Находки закрыты");
+  console.log(
+    CONFIG.findings == null
+      ? "  реестр находок не ведётся: «всё найденное починено» держится памятью"
+      : "  закрыто: " +
+          findingsClosed +
+          ", открыто: " +
+          findingsOpen +
+          ", держится нечем: " +
+          findingsUnheld +
+          ", расхождений: " +
+          findingDrift.length,
+  );
+  if (findingsNote !== null) console.log("  " + findingsNote);
+  for (const d of findingDrift) console.log("    " + d);
+
   // 45. План перехода живого проекта не потерялся.
   //
   // Посадка в живой проект заканчивается раньше, чем заканчивается переход:
@@ -7260,11 +7629,11 @@ if (mode === "verify") {
         transitionDrift.push(
           "таблицы шагов не нашли: " + CONFIG.transition.heading,
         );
-      else
-        for (let i = head + 2; i < rows.length; i += 1) {
-          if (!rows[i].startsWith("|")) break;
-          transitionSteps += 1;
-        }
+      else {
+        const { rows: stepRows, problem } = tableAfter(rows, head);
+        if (problem !== null) transitionDrift.push(problem);
+        transitionSteps = stepRows.length;
+      }
     }
   }
   checkHead("План перехода не потерялся");
@@ -7284,6 +7653,18 @@ if (mode === "verify") {
   // Строка среди полусотни секций читается ровно до тех пор, пока её не
   // перестают замечать; баннер занимает место и называет адрес файла, чтобы
   // сессия, начавшаяся с чистого контекста, знала, куда смотреть.
+  // Открытые находки печатаются БАННЕРОМ по той же причине, что и переход:
+  // строка среди полусотни секций читается ровно до тех пор, пока её не
+  // перестают замечать.
+  if (findingsOpen > 0) {
+    console.log("");
+    console.log("=== НАХОДКИ ПОСАДКИ НЕ ЗАКРЫТЫ ===");
+    console.log("  Открытых находок: " + findingsOpen + ".");
+    console.log("  Реестр: " + CONFIG.findings.file + " — открыть и читать");
+    console.log("  оттуда, а не восстанавливать по памяти.");
+    console.log("  Закрыли — проставить коммит, опору и состояние.");
+  }
+
   if (CONFIG.transition != null && transitionSteps > 0) {
     console.log("");
     console.log("=== ПЕРЕХОД НЕ ЗАКОНЧЕН ===");
@@ -7368,6 +7749,9 @@ if (mode === "verify") {
     danglingPaths.length ||
     danglingLinks.length ||
     corpusGap.length ||
+    packDrift.length ||
+    earlySeed.length ||
+    findingDrift.length ||
     transitionDrift.length ||
     baseGap.length ||
     frameLitter.length ||

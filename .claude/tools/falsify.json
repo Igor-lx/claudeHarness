@@ -126,6 +126,23 @@
       "replace": "    dir: \"../docs-нет\","
     },
     {
+      "section": "Пакеты семени разобраны по звеньям",
+      "file": ".claude/seat/templates/package.json",
+      "find": "    \"prettier\": \"^3.9.6\",",
+      "replace": "    \"prettier\": \"^3.9.6\",\n    \"пакет-которого-никто-не-объявлял\": \"^1.0.0\","
+    },
+    {
+      "section": "Отложенное семя не положено посадкой",
+      "file": ".claude/seat/templates/stryker.config.json",
+      "copyTo": "stryker.config.json"
+    },
+    {
+      "section": "Находки закрыты",
+      "file": ".context/16-findings.md",
+      "find": "«Пометки CONSTRAINT»",
+      "replace": "«Пометки о наложенных ограничениях»"
+    },
+    {
       "section": "План перехода не потерялся",
       "file": ".context/graph.config.mjs",
       "find": "  transition: null,",
