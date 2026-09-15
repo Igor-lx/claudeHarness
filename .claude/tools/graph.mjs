@@ -84,7 +84,40 @@ const SHAPED = {
  * Список рядом с закрытым намеренно: без него «объявлен ли вид» пришлось бы
  * решать на глаз, а глаз этот класс уже пропустил четыре раза подряд.
  */
-const SHAPE_FREE = new Set(["toolchain", "minVersions"]);
+const SHAPE_FREE = new Set(["toolchain", "minVersions", "debt"]);
+
+/** Виды долга описания — закрытый список, и он же единственный.
+ *
+ * Проверяется отдельно от `SHAPED` по двум причинам. Первая: части долга
+ * пустыми БЫВАЮТ, и пусты они у всякого нового проекта — `SHAPED` требует
+ * непустых. Вторая важнее: здесь неверно не только «части нет», но и
+ * «часть названа не так». Опечатка в имени вида дала бы молчаливый ноль —
+ * сверка осталась бы красной, а настройка выглядела бы заполненной, и
+ * искать причину пришлось бы глазами.
+ */
+const DEBT_KINDS = ["map", "tests", "decisions", "invariants", "constants"];
+if (CONFIG.debt != null) {
+  const wrong = [];
+  for (const [kind, value] of Object.entries(CONFIG.debt)) {
+    if (!DEBT_KINDS.includes(kind))
+      wrong.push("вида долга `" + kind + "` не существует");
+    else if (value != null && (!Number.isInteger(value) || value < 0))
+      wrong.push(
+        "долг `" +
+          kind +
+          "` — не целое неотрицательное: " +
+          JSON.stringify(value),
+      );
+  }
+  if (wrong.length) {
+    console.log("=== НАСТРОЙКА ЗАДАНА НЕВЕРНО ===");
+    console.log("  поле:    debt");
+    for (const w of wrong) console.log("  " + w);
+    console.log("  виды:    " + DEBT_KINDS.join(", "));
+    console.log("  Править: .context/graph.config.mjs");
+    process.exit(2);
+  }
+}
 for (const [field, parts] of Object.entries(SHAPED)) {
   const v = CONFIG[field];
   if (v == null) continue;
@@ -1247,6 +1280,7 @@ const CHECK_SECTIONS = [
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
   "Находки закрыты",
+  "Объявленный долг назван планом перехода",
   "План перехода не потерялся",
   "Вопросы разработчику без ответа",
 ];
@@ -4126,6 +4160,7 @@ if (mode === "verify") {
   const markerKinds = [
     {
       title: "Пометки CONSTRAINT",
+      debtKind: "invariants",
       base: CONFIG.invariants,
       // В коде пометка пишется с тире: `CONSTRAINT — что нельзя`. Запись тире
       // не повторяет — она называет пометку одним словом.
@@ -4148,6 +4183,7 @@ if (mode === "verify") {
     },
     {
       title: "Пометки решений",
+      debtKind: "decisions",
       base: CONFIG.decisions,
       inCode: (line) => {
         const hit = DECISION_RE.exec(line);
@@ -4174,21 +4210,40 @@ if (mode === "verify") {
   // прогоном и **расти не может**: новый файл обязан быть описан сразу, старый
   // долг ждёт команды разработчика. Пустое поле — долга нет, карта обязана быть
   // полной.
-  const mapDebt = CONFIG.mapDebt ?? 0;
-  const overDebt = Math.max(0, missing.length - mapDebt);
+  /** Долг описания по видам. Читается в ОДНОМ месте: пока поле было одно —
+   * про карту, — остальные четыре сверки роняли живой проект навсегда, и
+   * рубеж завершения посадки, требующий зелёную сверку базы, был для него
+   * недостижим в принципе. Найдено посадкой в копию настоящего проекта.
+   *
+   * Долгом считается только НЕОПИСАННОЕ. Запись о том, чего в коде нет, и
+   * пометка не той формы — ошибки: они роняют прогон при любом долге. */
+  const DEBT = CONFIG.debt ?? {};
+  const debtOf = (kind) => DEBT[kind] ?? 0;
+  const overDebtOf = (kind, undescribed) =>
+    Math.max(0, undescribed - debtOf(kind));
+  /** Хвост счётной строки: сколько из неописанного объявлено долгом. */
+  const debtTail = (kind) =>
+    debtOf(kind) > 0 ? ", из них долг посадки: " + debtOf(kind) : "";
+  /** Строка под счётом: долг не вырос, и это не находка. Печатается в ДВА
+   * пробела — формой счёта, а не формой находки: всё, что читает вывод
+   * механически, иначе сочло бы её красной. */
+  const debtNote = (kind, undescribed) => {
+    if (debtOf(kind) > 0 && overDebtOf(kind, undescribed) === 0)
+      console.log(
+        "  Долг не вырос. Уменьшить его — работа по команде разработчика:" +
+          " описать записи и уменьшить поле долга в настройке.",
+      );
+  };
+  const overDebt = overDebtOf("map", missing.length);
   checkHead("Покрытие карты");
   console.log(
     `  файлов кода и стилей (без тестов): ${code.length}, не упомянуто: ${missing.length}` +
-      (mapDebt > 0 ? `, из них долг посадки: ${mapDebt}` : "") +
+      debtTail("map") +
       (goneMapped.length
         ? `, названо и не существует: ${goneMapped.length}`
         : ""),
   );
-  if (mapDebt > 0 && overDebt === 0)
-    console.log(
-      "  Долг не вырос. Уменьшить его — работа по команде разработчика:" +
-        " описать файлы и уменьшить поле долга в настройке.",
-    );
+  debtNote("map", missing.length);
   for (const f of missing) console.log("    " + rel(f));
   for (const m of goneMapped) console.log("    " + m);
 
@@ -4198,10 +4253,12 @@ if (mode === "verify") {
   checkHead("Покрытие тестов");
   console.log(
     `  тестовых файлов: ${testFiles.length}, не названо: ${unnamed.length}` +
+      debtTail("tests") +
       (goneTests.length
         ? `, названо и не существует: ${goneTests.length}`
         : ""),
   );
+  debtNote("tests", unnamed.length);
   for (const f of unnamed) console.log("    " + rel(f));
   for (const t of goneTests) console.log("    " + t);
 
@@ -4445,9 +4502,11 @@ if (mode === "verify") {
     checkHead(kind.title);
     console.log(
       `  в коде: ${kind.total}, без записи в ${kind.base}: ${kind.unlisted.length}` +
+        debtTail(kind.debtKind) +
         `, названо записью и снято из кода: ${kind.gone.length}` +
         (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
     );
+    debtNote(kind.debtKind, kind.unlisted.length);
     for (const m of kind.missed ?? []) console.log("    " + m);
     for (const u of kind.unlisted) console.log("    " + u);
     for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
@@ -4708,8 +4767,10 @@ if (mode === "verify") {
   }
   checkHead("Константы настроек описаны");
   console.log(
-    `  проверено: ${constantsChecked}, разошлось: ${undocumentedConst.length}`,
+    `  проверено: ${constantsChecked}, разошлось: ${undocumentedConst.length}` +
+      debtTail("constants"),
   );
+  debtNote("constants", undocumentedConst.length);
   for (const c of undocumentedConst) console.log("    " + c);
 
   checkHead("Точечные исключения линта");
@@ -8260,6 +8321,43 @@ if (mode === "verify") {
       }
     }
   }
+  // Долг описания — не кнопка «выключить сверку». Объявленное число
+  // обязано стоять шагом плана перехода: иначе поле настройки делает ровно
+  // то, ради ухода от чего обвязку и ставят — переводит невыполненное из
+  // «известно и записано» в «забыто молча», причём с виду законно.
+  //
+  // Проверяется наличие плана, а не упоминание вида долга в его прозе:
+  // искать слово «тесты» в тексте плана значило бы разбирать прозу и
+  // краснеть на законной переформулировке. План есть — долг записан там,
+  // где его читают; плана нет — долг держится только настройкой, которую
+  // не перечитывает никто.
+  const debtDeclared = DEBT_KINDS.filter((k) => debtOf(k) > 0);
+  const debtTotal = debtDeclared.reduce((n, k) => n + debtOf(k), 0);
+  const debtUnplanned =
+    debtDeclared.length > 0 &&
+    (CONFIG.transition == null || transitionSteps === 0);
+  checkHead("Объявленный долг назван планом перехода");
+  console.log(
+    debtDeclared.length === 0
+      ? "  долга не объявлено: записи обязаны быть полными"
+      : debtUnplanned
+        ? "  объявлено долга: " +
+          debtTotal +
+          " по видам " +
+          debtDeclared.join(", ") +
+          " — а плана перехода нет"
+        : "  объявлено долга: " +
+          debtTotal +
+          " по видам " +
+          debtDeclared.join(", ") +
+          " — все стоят шагами плана",
+  );
+  if (debtUnplanned)
+    console.log(
+      "    долг держится только настройкой: заполнить `transition` и" +
+        " завести план, либо описать записи и обнулить долг",
+    );
+
   checkHead("План перехода не потерялся");
   console.log(
     CONFIG.transition == null
@@ -8322,12 +8420,19 @@ if (mode === "verify") {
     // заведённым ради живого проекта, где описать всё за день нельзя, и с
     // рубежом завершения посадки, где красной вправе остаться только цепочка
     // проверок по чужому коду. Найдено исполнением плана перехода на полигоне.
+    debtUnplanned ||
     overDebt ||
-    unnamed.length ||
+    // Долг вычитается только из НЕОПИСАННОГО. Запись о том, чего в коде
+    // уже нет, и пометка не той формы роняют прогон при любом долге: это
+    // не «не успели описать», а расхождение записи с кодом.
+    overDebtOf("tests", unnamed.length) ||
     goneTests.length ||
     goneMapped.length ||
     markerKinds.some(
-      (k) => k.unlisted.length || k.gone.length || (k.missed?.length ?? 0),
+      (k) =>
+        overDebtOf(k.debtKind, k.unlisted.length) ||
+        k.gone.length ||
+        (k.missed?.length ?? 0),
     ) ||
     broken7.length ||
     brokenIso.length ||
@@ -8339,7 +8444,7 @@ if (mode === "verify") {
     wrong.length ||
     orphanAdr.length ||
     danglingAdr.length ||
-    undocumentedConst.length ||
+    overDebtOf("constants", undocumentedConst.length) ||
     lintDrift.length ||
     offDrift.length ||
     undocumented.length ||

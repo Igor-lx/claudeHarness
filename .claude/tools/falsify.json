@@ -157,6 +157,12 @@
       "replace": "«Пометки о наложенных ограничениях»"
     },
     {
+      "section": "Объявленный долг назван планом перехода",
+      "file": ".context/graph.config.mjs",
+      "find": "    map: null,",
+      "replace": "    map: 1,"
+    },
+    {
       "section": "План перехода не потерялся",
       "file": ".context/graph.config.mjs",
       "find": "  transition: null,",
