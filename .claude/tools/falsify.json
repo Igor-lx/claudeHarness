@@ -306,6 +306,45 @@
       ]
     },
     {
+      "section": "Каркас обвязки не лежит в живом проекте",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzOwn.tsx",
+            "text": "export const zzOwn = 1;"
+          }
+        },
+        {
+          "create": {
+            "path": "index.html",
+            "text": "zzNotSeed"
+          }
+        },
+        {
+          "create": {
+            "path": "src/main.tsx",
+            "text": "zzNotSeed"
+          }
+        },
+        {
+          "create": {
+            "path": "src/App.tsx",
+            "text": "zzNotSeed"
+          }
+        },
+        {
+          "create": {
+            "path": "src/tests/App.test.tsx",
+            "text": "zzNotSeed"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "append": "<!-- КАРКАС -->\nКаркас, приехавший семенами: точка монтирования и корневой компонент. Настоящий\nкод заменяет их собой и получает здесь свои строки — в той же правке, что и сам\nфайл.\n<!-- /КАРКАС -->"
+        }
+      ]
+    },
+    {
       "section": "Цепочка проверок объявлена данными",
       "file": ".claude/seat/map.json",
       "find": "\"typecheck\",",

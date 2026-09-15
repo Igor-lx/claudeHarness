@@ -7710,6 +7710,28 @@ if (mode === "verify") {
   // такой же, как семя, а рядом есть чужой код. Побайтово — потому что каркас,
   // который начали править, каркасом быть перестал: это уже корень проекта.
   const frameLitter = [];
+  const FRAME_OPEN = "<!-- КАРКАС -->";
+  const FRAME_SHUT = "<!-- /КАРКАС -->";
+  /** Номера строк файла базы, накрытых пометкой каркаса. Нужны дважды: чтобы
+   * назвать блок целиком и чтобы не называть его строки ВТОРОЙ раз адресом —
+   * снимут их всё равно вместе с блоком. */
+  const markedLines = (lines) => {
+    const out = new Set();
+    for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].trim() !== FRAME_OPEN) continue;
+      let shut = i + 1;
+      while (shut < lines.length && lines[shut].trim() !== FRAME_SHUT)
+        shut += 1;
+      for (let k = i; k <= Math.min(shut, lines.length - 1); k += 1) out.add(k);
+      i = shut;
+    }
+    return out;
+  };
+  // Сколько семян каркаса лежит положенными и сколько у проекта своих файлов:
+  // обе величины нужны и второй стороне сверки, и третьей, а считаются они
+  // внутри блока, читающего карту посадки.
+  let frameLaid = 0;
+  let frameOwn = 0;
   {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt !== null && existsSync(mapAt)) {
@@ -7733,6 +7755,8 @@ if (mode === "verify") {
         frame.map((e) => norm(path.join(REPO, e.to))),
       );
       const own = files.filter((f) => !frameTargets.has(f));
+      frameLaid = laid.length;
+      frameOwn = own.length;
       if (laid.length && own.length)
         for (const e of laid)
           frameLitter.push(
@@ -7806,7 +7830,9 @@ if (mode === "verify") {
             const lines = readFileSync(path.join(BASE, f), "utf8").split(
               NEWLINE,
             );
+            const covered = markedLines(lines);
             for (let i = 0; i < lines.length; i += 1) {
+              if (covered.has(i)) continue;
               // Адрес сверяется ЦЕЛИКОМ, а не вхождением: живой проект держит
               // свой `app/App.tsx`, и вхождением он читался бы как запись о
               // каркасном `src/App.tsx` — ложное срабатывание на здоровом
@@ -7841,6 +7867,45 @@ if (mode === "verify") {
           }
         }
     }
+  }
+  // Третья сторона: ПРОЗА семян о каркасе.
+  //
+  // Две стороны выше опознают запись по названному в ней АДРЕСУ каркаса.
+  // Абзац «Каркас, приехавший семенами: точка монтирования и корневой
+  // компонент» адресов не называет вовсе — и в живом проекте оставался
+  // стоять, утверждая заведомо ложное. Обоснования в таблице применимости
+  // ссылались на него же.
+  //
+  // Список такого текста жил прозой в инструкции посадки и в рукописных
+  // скриптах — и ровно так отставал: снимали руками, каждый раз заново, а
+  // сверка при этом называла одну запись из пяти и молчала о прозе. Свод
+  // требует обратного: список, обязанный догонять данные, данными и должен
+  // быть. Поэтому текст помечен В САМИХ СЕМЕНАХ парой комментариев разметки
+  // — пометка уезжает вместе с семенем и разойтись с текстом не может.
+  //
+  // Помеченное законно ровно тогда, когда каркас ПОЛОЖЕН. Не положен, а свой
+  // код есть — это мусор посадки, и снимает его шаг 4.
+  {
+    const OPEN = FRAME_OPEN;
+    const SHUT = FRAME_SHUT;
+    if (frameLaid === 0 && frameOwn > 0 && existsSync(BASE))
+      for (const f of readdirSync(BASE)) {
+        if (!f.endsWith(".md")) continue;
+        const lines = readFileSync(path.join(BASE, f), "utf8").split(NEWLINE);
+        for (let i = 0; i < lines.length; i += 1) {
+          if (lines[i].trim() !== OPEN) continue;
+          let shut = i + 1;
+          while (shut < lines.length && lines[shut].trim() !== SHUT) shut += 1;
+          frameLitter.push(
+            f +
+              ":" +
+              (i + 1) +
+              " — текст семени о каркасе, которого в этом проекте нет: строк " +
+              (shut - i - 1),
+          );
+          i = shut;
+        }
+      }
   }
   checkHead("Каркас обвязки не лежит в живом проекте");
   console.log("  семян каркаса при живом коде: " + frameLitter.length);
