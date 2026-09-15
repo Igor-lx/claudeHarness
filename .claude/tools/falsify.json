@@ -126,6 +126,12 @@
       "replace": "    dir: \"../docs-нет\","
     },
     {
+      "section": "Заготовки обвязки не разбираются линтом проекта",
+      "file": "eslint.config.js",
+      "find": "      \".claude/seat/templates\",",
+      "replace": ""
+    },
+    {
       "section": "Звену цепочки есть на чём работать",
       "file": "package.json",
       "find": "    \"lint\": \"eslint .\",",
