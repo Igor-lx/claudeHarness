@@ -166,6 +166,12 @@
       "subject": "timing"
     }
   ],
+  "onTransition": [
+    {
+      "from": "seat/templates/15-transition.md",
+      "to": ".context/15-transition.md"
+    }
+  ],
   "chainScripts": [
     {
       "name": "typecheck",
