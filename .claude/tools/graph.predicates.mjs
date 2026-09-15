@@ -155,6 +155,18 @@ export const PREDICATE_CASES = [
  */
 export const selfCheck = () => {
   const failed = [];
+  // Предикат БЕЗ ЕДИНОГО случая — не расхождение, а дыра: перебор ниже его
+  // просто не встретит, и словарь промолчит о том, что половину его никто
+  // не проверяет. Спрашивается это здесь, а не только набором тестов:
+  // набор приезжает в проект, но зовёт его раннер ПРОЕКТА, и в
+  // монорепозитории, где корневой скрипт тестов делегирует пакетам, тесты
+  // обвязки не запускаются вовсе. Гарантия обвязки не может зависеть от
+  // того, как устроен чужой раннер; инструмент зовут постоянно, и здесь
+  // она держится сама.
+  const covered = new Set(PREDICATE_CASES.map(([name]) => name));
+  for (const [name, value] of Object.entries(vocabulary))
+    if (typeof value === "function" && value.length === 1 && !covered.has(name))
+      failed.push(name + " — предикат области без единого случая");
   for (const [name, input, want] of PREDICATE_CASES) {
     const predicate = vocabulary[name];
     if (typeof predicate !== "function") {

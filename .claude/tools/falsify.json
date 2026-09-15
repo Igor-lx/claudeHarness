@@ -126,6 +126,13 @@
       "replace": "    dir: \"../docs-нет\","
     },
     {
+      "section": "Звену цепочки есть на чём работать",
+      "file": "package.json",
+      "find": "    \"lint\": \"eslint .\",",
+      "replace": "    \"lint\": \"npm run lint --workspaces --if-present\",",
+      "own": true
+    },
+    {
       "section": "Пакеты семени разобраны по звеньям",
       "file": ".claude/seat/templates/package.json",
       "find": "    \"prettier\": \"^3.9.6\",",

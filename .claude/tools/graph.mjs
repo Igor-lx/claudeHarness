@@ -975,6 +975,7 @@ const CHECK_SECTIONS = [
   "Цепочка проверок объявлена данными",
   "Звено цепочки не задвоено",
   "Одноранговая зависимость не продублирована",
+  "Звену цепочки есть на чём работать",
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
   "Находки закрыты",
@@ -7356,6 +7357,76 @@ if (mode === "verify") {
   console.log("  продублировано: " + peerDup.length);
   for (const g of peerDup) console.log("    " + g);
 
+  // 44-б. Звено, написанное в манифест, может делать свою работу.
+  //
+  // Два условия, и оба найдены одной посадкой в монорепозиторий.
+  //
+  // Порядок слияния манифеста опознаёт звено образцом — по тому, что скрипт
+  // зовёт, а не как назван, — но только в первом своём пункте. Третий пункт,
+  // «скрипт с тем же именем и другим телом: оставить проектный», по-прежнему
+  // смотрел на ИМЯ. Разница видна там, где скрипт с именем звена работы не
+  // делает, а делегирует её кому-то ещё.
+  //
+  // Замерено на монорепозитории. Корневой `lint` там — `npm run lint
+  // --workspaces`, а у пакетов под этим именем стоит `echo`. Образец линтера
+  // не совпал ни с чем: звена в проекте НЕТ. Но имя было занято, третий пункт
+  // сработал по имени, и посадка оставила проектный скрипт — при этом положив
+  // в корень привезённый конфиг линта и дописав шесть его пакетов. Итог:
+  // звено зелёное, разобрало ноль файлов, конфиг не читает никто, пакеты
+  // стоят вхолостую. Свод называет это худшим из возможных состояний.
+  //
+  // Сверка спрашивает ровно одно и спрашивает задним числом: конфиг звена
+  // лежит в проекте — значит, хоть один скрипт манифеста обязан звать его
+  // инструмент. Не лежит — звено проекта не касается, и спрашивать не с чего.
+  const idleConfig = [];
+  if (CONFIG.toolchain != null && CONFIG.manifest != null) {
+    const at = path.join(BASE, CONFIG.manifest);
+    const scripts = existsSync(at)
+      ? (JSON.parse(readFileSync(at, "utf8")).scripts ?? {})
+      : {};
+    const mapAt = shelfAt("seat/map.json");
+    const chain =
+      mapAt !== null && existsSync(mapAt)
+        ? (JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [])
+        : [];
+    for (const link of CONFIG.toolchain) {
+      if (link.config == null) continue;
+      if (!existsSync(path.join(REPO, link.config))) continue;
+      const one = chain.find((e) => e.name === link.script);
+      if (one === undefined || one.recognise == null) continue;
+      const re = new RegExp(one.recognise);
+      if (Object.values(scripts).some((body) => re.test(body))) continue;
+      idleConfig.push(
+        link.config +
+          " — конфиг звена «" +
+          link.script +
+          "» лежит, а инструмент его не зовёт ни один скрипт манифеста",
+      );
+    }
+
+    // Второе условие: ЗВЕНО-СПУТНИК. Оно работает тем же инструментом и той
+    // же настройкой, что и звено, за которым следует, и в одиночку ему
+    // работать не на чем. Покрытие уехало в корень монорепозитория
+    // самостоятельным скриптом — раннера там нет, конфига тоже, — собрало
+    // тесты без окружения и дало пять красных на здоровом коде.
+    for (const e of chain) {
+      if (e.follows == null) continue;
+      if (scripts[e.name] == null) continue;
+      const master = chain.find((c) => c.name === e.follows);
+      if (master === undefined || master.recognise == null) continue;
+      const re = new RegExp(master.recognise);
+      if (Object.values(scripts).some((body) => re.test(body))) continue;
+      idleConfig.push(
+        e.name +
+          " — звено-спутник написано, а звена «" +
+          e.follows +
+          "», за которым оно следует, в проекте нет",
+      );
+    }
+  }
+  checkHead("Звену цепочки есть на чём работать");
+  console.log("  звеньев без опоры: " + idleConfig.length);
+  for (const d of idleConfig) console.log("    " + d);
   // 44-в. Каждый пакет семени манифеста принадлежит объявленному звену.
   //
   // Объявление `toolchain` называет, какие пакеты у какого звена, и на нём
@@ -7749,6 +7820,7 @@ if (mode === "verify") {
     danglingPaths.length ||
     danglingLinks.length ||
     corpusGap.length ||
+    idleConfig.length ||
     packDrift.length ||
     earlySeed.length ||
     findingDrift.length ||
