@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import * as vocabulary from "./graph.predicates.mjs";
 
-const { PREDICATE_CASES, inComment, selfCheck } = vocabulary;
+const { PREDICATE_CASES, classifyRun, inComment, sectionsOf, selfCheck } =
+  vocabulary;
+
+/** Перевод строки — тот же, которым инструмент разбирает свой вывод. */
+const NEWLINE = String.fromCharCode(10);
 
 /** Предикаты области — выводятся из самого модуля, а не перечисляются здесь.
  * Признак: экспортированная функция от ОДНОГО аргумента. `selfCheck` берёт
@@ -89,5 +93,105 @@ describe("inComment", () => {
   it("не считает комментарием обычный код", () => {
     const line = 'export const NAME = "x";';
     expect(inComment(line, line.indexOf("NAME"))).toBe(false);
+  });
+});
+
+describe("sectionsOf", () => {
+  // Разбор вывода прогона. Находкой считается строка с отступом в четыре
+  // пробела — той же формой, какой их печатают все сверки; счётная строка в
+  // два пробела находкой не является и попасть в множество не должна.
+  const run = [
+    "=== Первая ===",
+    "  проверено: 3, ведут в никуда: 1",
+    "    файл.md: путь/в/никуда",
+    "=== Вторая ===",
+    "  расхождений: 0",
+    "",
+  ].join(NEWLINE);
+
+  it("собирает секции и их строки находок", () => {
+    const got = sectionsOf(run, NEWLINE);
+    expect([...got.keys()]).toEqual(["Первая", "Вторая"]);
+    expect([...got.get("Первая")]).toEqual(["    файл.md: путь/в/никуда"]);
+    expect(got.get("Вторая").size).toBe(0);
+  });
+
+  it("не считает находкой счётную строку в два пробела", () => {
+    const got = sectionsOf(run, NEWLINE);
+    for (const red of got.values())
+      for (const line of red) expect(line.startsWith("    ")).toBe(true);
+  });
+});
+
+describe("classifyRun", () => {
+  // Исход посаженной поломки. Сравниваются СТРОКИ находок, а не флаг
+  // «красная»: пока сравнивался флаг, сверка, красная ДО поломки, не могла
+  // быть засчитана ни при каком исходе — то есть в живом проекте, где
+  // красные сверки есть по определению, здоровая сверка выглядела сломанной.
+  const at = (pairs) =>
+    new Map(pairs.map(([name, lines]) => [name, new Set(lines)]));
+
+  it("прибавившаяся строка — поймала", () => {
+    const clean = at([["А", []]]);
+    const after = at([["А", ["    находка"]]]);
+    expect(classifyRun(clean, after, "А").how).toBe("caught");
+  });
+
+  it("сверка, КРАСНАЯ ДО ПОЛОМКИ, всё равно ловит прибавку", () => {
+    const clean = at([["А", ["    старая находка"]]]);
+    const after = at([["А", ["    старая находка", "    новая находка"]]]);
+    expect(classifyRun(clean, after, "А").how).toBe("caught");
+  });
+
+  it("появившаяся секция — поймала", () => {
+    const clean = at([]);
+    const after = at([["А", []]]);
+    expect(classifyRun(clean, after, "А").how).toBe("caught");
+  });
+
+  it("пропавшая секция — рецепт устарел", () => {
+    const clean = at([["А", []]]);
+    const after = at([]);
+    expect(classifyRun(clean, after, "А").how).toBe("broken");
+  });
+
+  it("прибавилось у ДРУГОЙ сверки — поломка ушла не туда, и та названа", () => {
+    const clean = at([
+      ["А", []],
+      ["Б", []],
+    ]);
+    const after = at([
+      ["А", []],
+      ["Б", ["    находка"]],
+    ]);
+    const got = classifyRun(clean, after, "А");
+    expect(got.how).toBe("astray");
+    expect(got.why).toContain("Б");
+  });
+
+  it("не изменилось нигде — не дошла ни до одной", () => {
+    const clean = at([
+      ["А", []],
+      ["Б", ["    старая"]],
+    ]);
+    const after = at([
+      ["А", []],
+      ["Б", ["    старая"]],
+    ]);
+    expect(classifyRun(clean, after, "А").how).toBe("nowhere");
+  });
+
+  it("исчезнувшая у соседа строка поломкой не считается", () => {
+    // Убыль — не прибавка. Иначе рецепт, случайно ПОЧИНИВШИЙ чужую находку,
+    // числился бы ушедшим не туда, и настоящая причина осталась бы скрытой.
+    const clean = at([
+      ["А", []],
+      ["Б", ["    старая"]],
+    ]);
+    const after = at([
+      ["А", []],
+      ["Б", []],
+    ]);
+    expect(classifyRun(clean, after, "А").how).toBe("nowhere");
   });
 });

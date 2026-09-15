@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -17,12 +18,14 @@ import { fileURLToPath } from "node:url";
 // Выводясь на месте, оно выводилось по-разному, и три дефекта подряд были
 // забытым слагаемым такой комбинации.
 import {
+  classifyRun,
   inComment,
   isCodePath,
   CODE_OR_STYLE,
   CODE_STYLE_ALT,
   isStylePath,
   isTestPath,
+  sectionsOf,
   selfCheck,
   touchesRuntime,
 } from "./graph.predicates.mjs";
@@ -374,6 +377,40 @@ const walkable = (dir) => existsSync(dir) && statSync(dir).isDirectory();
 const insideShelf = (full) =>
   SHELF !== null &&
   (full === norm(SHELF) || full.startsWith(norm(SHELF) + "/"));
+
+/** Текст без огороженных блоков: строки примера заменяются пустыми.
+ *
+ * Огороженный блок — ПРИМЕР, а не заявление о проекте. Сканеров прозы у
+ * инструмента четыре — адреса в обратных кавычках, ссылки markdown, номера
+ * пунктов отложенного и разбор таблиц базы, — и ни один из них про блоки не
+ * знал. Пока примеров в базе не было, это молчало; появились — и каждый стал
+ * заявлением: путь из примера потребовали найти на диске, номер из примера стал
+ * живым пунктом.
+ *
+ * Замерено на собственном семени: показать форму записи примером стало нельзя —
+ * снимок переставал собираться на СВОЁМ ЖЕ образце. А показывать надо: две
+ * находки подряд были ровно о том, что форму записи описали словами и её
+ * поняли не так.
+ *
+ * Строки заменяются пустыми, а не удаляются: номера строк называются в выводе,
+ * и сдвиг их сделал бы находку неадресуемой.
+ */
+const unfenced = (text) => {
+  // Перевод строки литералом: помощник объявлен выше общей константы, и
+  // обращение к ней здесь падало бы на загрузке модуля.
+  const EOL = String.fromCharCode(10);
+  let fenced = false;
+  return text
+    .split(EOL)
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        fenced = !fenced;
+        return "";
+      }
+      return fenced ? "" : line;
+    })
+    .join(EOL);
+};
 
 /** Строковые литералы исходника — разбором, а не парами кавычек по тексту.
  *
@@ -1282,19 +1319,9 @@ if (mode === "falsify") {
     }
   };
 
-  const sectionsOf = (out) => {
-    const found = new Map();
-    const lines = out.split(NEWLINE);
-    for (let i = 0; i < lines.length; i += 1) {
-      const head = /^=== (.+) ===$/.exec(lines[i]);
-      if (head === null) continue;
-      let red = false;
-      for (let j = i + 1; j < lines.length && !/^=== /.test(lines[j]); j += 1)
-        if (/^ {4}\S/.test(lines[j])) red = true;
-      found.set(head[1], red);
-    }
-    return found;
-  };
+  // Разбор вывода и разбор исхода живут в словаре области: это чистые
+  // функции, и держит их набор тестов, а не одноразовая фальсификация.
+  const readSections = (out) => sectionsOf(out, NEWLINE);
 
   const runVerify = (cwd) => {
     try {
@@ -1344,6 +1371,9 @@ if (mode === "falsify") {
 
   const caught = [];
   const silent = [];
+  /** Поломка легла — а её приняла ДРУГАЯ сверка, не та, ради которой
+   * рецепт написан. Значит рецепт мимо, а сверка ни при чём. */
+  const astray = [];
   const broken = [];
   // Рецепт, помеченный «под свой проект», ломает файлы КОНКРЕТНОГО проекта:
   // его код, его карту, его факты. В другом проекте своего места он не находит,
@@ -1377,7 +1407,15 @@ if (mode === "falsify") {
   // которой не существует.
   const idle = [];
   try {
-    const clean = sectionsOf(runVerify(tmp));
+    const clean = readSections(runVerify(tmp));
+
+    const record = (section, after) => {
+      const { how, why } = classifyRun(clean, after, section);
+      if (how === "caught") caught.push(section);
+      else if (how === "broken") broken.push(section + why);
+      else if (how === "astray") astray.push(section + why);
+      else silent.push(section);
+    };
 
     /** Шестая форма: НЕСКОЛЬКО правок разом.
      *
@@ -1391,6 +1429,26 @@ if (mode === "falsify") {
      */
     const runSteps = (r) => {
       const undo = [];
+      /** Откат. Вызывается на КАЖДОМ выходе, включая неудачный.
+       *
+       * Прежде ранние выходы стояли до цикла отката, и шаги, успевшие
+       * примениться, оставались в песочнице ДО КОНЦА ПРОГОНА. Рецепт,
+       * споткнувшийся на третьем шаге из шести, заводил файл вне карты — и
+       * все последующие сверки видели её уже красной. Красная до поломки
+       * сверка по правилу классификации попадает в «промолчала», то есть
+       * выглядит СЛОМАННОЙ.
+       *
+       * Замерено на посадке в живой проект: из трёх промолчавших две были
+       * отравлены соседом, а не больны. Проверено снятием составных
+       * рецептов — список промолчавших изменился.
+       */
+      const rollback = () => {
+        for (const back of undo.reverse()) back();
+      };
+      const give = (failed) => {
+        rollback();
+        return { failed };
+      };
       for (const step of r.edits) {
         if (step.create !== undefined) {
           const madeAt = path.join(tmp, step.create.path);
@@ -1403,7 +1461,18 @@ if (mode === "falsify") {
           continue;
         }
         const stepAt = path.join(tmp, step.file);
-        if (!existsSync(stepAt)) return { failed: "файла нет: " + step.file };
+        if (!existsSync(stepAt)) return give("файла нет: " + step.file);
+        // Прятание файла — та же форма, что у одиночного рецепта. Словарь
+        // шага был беднее словаря рецепта, и рецепт, написанный по одному
+        // словарю и исполняемый по другому, ронял ВЕСЬ режим стеком.
+        // Заведено рецептом на вторую ветку сверки каркаса: ей нужно и
+        // спрятать файл, и дописать запись о нём.
+        if (step.rename !== undefined) {
+          const hidden = path.join(path.dirname(stepAt), step.rename);
+          renameSync(stepAt, hidden);
+          undo.push(() => renameSync(hidden, stepAt));
+          continue;
+        }
         const was = readFileSync(stepAt, "utf8");
         undo.push(() => writeFileSync(stepAt, was));
         if (step.append !== undefined)
@@ -1411,18 +1480,27 @@ if (mode === "falsify") {
             stepAt,
             was + NEWLINE + step.append.split("\n").join(NEWLINE),
           );
+        else if (step.find === undefined)
+          // Форма шага не опознана. Прежде здесь читалось поле, которого нет,
+          // и режим падал стеком: рецепт с опечаткой в имени поля выглядел
+          // поломкой инструмента, а не негодным рецептом. Долг рецептов при
+          // этом не печатался вовсе — одна опечатка гасила ВЕСЬ отчёт.
+          return give(
+            "форма шага не опознана (ждали create, rename, append или find): " +
+              step.file,
+          );
         else {
           const needle = step.find.split("\n").join(NEWLINE);
           if (!was.includes(needle))
-            return { failed: "рецепт не находит своего места: " + step.file };
+            return give("рецепт не находит своего места: " + step.file);
           writeFileSync(
             stepAt,
             was.replace(needle, step.replace.split("\n").join(NEWLINE)),
           );
         }
       }
-      const after = sectionsOf(runVerify(tmp));
-      for (const back of undo.reverse()) back();
+      const after = readSections(runVerify(tmp));
+      rollback();
       return { after };
     };
 
@@ -1438,13 +1516,7 @@ if (mode === "falsify") {
           ).push(r.section + " — " + failed);
           continue;
         }
-        const wasThere = clean.has(r.section);
-        const nowThere = after.has(r.section);
-        if (!wasThere && nowThere) caught.push(r.section);
-        else if (!nowThere) broken.push(r.section + " — секции в выводе нет");
-        else if (after.get(r.section) === true && clean.get(r.section) !== true)
-          caught.push(r.section);
-        else silent.push(r.section);
+        record(r.section, after);
         continue;
       }
       // Пятая форма: ЗАВЕСТИ файл с заданным содержимым. Ни правка, ни копия
@@ -1458,17 +1530,7 @@ if (mode === "falsify") {
           madeAt,
           r.create.text.split("\n").join(NEWLINE) + NEWLINE,
         );
-        const after0 = sectionsOf(runVerify(tmp));
-        const wasThere0 = clean.has(r.section);
-        const nowThere0 = after0.has(r.section);
-        if (!wasThere0 && nowThere0) caught.push(r.section);
-        else if (!nowThere0) broken.push(r.section + " — секции в выводе нет");
-        else if (
-          after0.get(r.section) === true &&
-          clean.get(r.section) !== true
-        )
-          caught.push(r.section);
-        else silent.push(r.section);
+        record(r.section, readSections(runVerify(tmp)));
         rmSync(madeAt);
         continue;
       }
@@ -1522,31 +1584,7 @@ if (mode === "falsify") {
           ),
         );
       }
-      const after = sectionsOf(runVerify(tmp));
-      const wasRed = clean.get(r.section) === true;
-      const nowRed = after.get(r.section) === true;
-      // Часть сверок печатает секцию ТОЛЬКО когда есть что сказать: звенья
-      // цепочки без инструмента, версия среды, скрипты без описания. У здоровой
-      // такой сверки секции в выводе нет вовсе, и «нет секции» для неё —
-      // ЗДОРОВЬЕ, а не устаревший рецепт. Появление секции после поломки и есть
-      // её срабатывание.
-      //
-      // Прежде прогон считал отсутствие секции поломкой рецепта и требовал его
-      // переписать — то есть объявлял неисправимым то, что исправно. Найдено
-      // при выплате долга рецептов: две сверки-предупреждения нельзя было
-      // покрыть в принципе.
-      const wasThere = clean.has(r.section);
-      const nowThere = after.has(r.section);
-      if (!wasThere && nowThere) caught.push(r.section);
-      else if (!nowThere)
-        broken.push(
-          r.section +
-            (wasThere
-              ? " — секция пропала из вывода"
-              : " — секции в выводе нет ни до, ни после"),
-        );
-      else if (nowRed && !wasRed) caught.push(r.section);
-      else silent.push(r.section);
+      record(r.section, readSections(runVerify(tmp)));
       if (r.copyTo !== undefined) rmSync(path.join(tmp, r.copyTo));
       else if (r.rename !== undefined) {
         writeFileSync(at, before);
@@ -1584,9 +1622,16 @@ if (mode === "falsify") {
 
   console.log("=== СВЕРКИ ЕЩЁ ЛОВЯТ ===");
   console.log("  поймали поломку: " + caught.length + " из " + recipes.length);
+  if (astray.length) {
+    console.log("  ПОЛОМКА УШЛА НЕ ТУДА: " + astray.length);
+    for (const s of astray) console.log("    " + s);
+  }
   if (silent.length) {
-    console.log("  ПРОМОЛЧАЛИ: " + silent.length);
+    console.log("  ПОЛОМКА НЕ ДОШЛА НИ ДО ОДНОЙ СВЕРКИ: " + silent.length);
     for (const s of silent) console.log("    " + s);
+    console.log(
+      "    Либо рецепту здесь не за что зацепиться, либо сверка слепа.",
+    );
   }
   if (broken.length) {
     console.log("  рецепт устарел: " + broken.length);
@@ -1638,7 +1683,7 @@ if (mode === "falsify") {
     );
   }
 
-  if (silent.length || broken.length) process.exitCode = 1;
+  if (silent.length || astray.length || broken.length) process.exitCode = 1;
   process.exit(process.exitCode ?? 0);
 }
 // --- handoff: собрать обвязку для передачи -----------------------------------
@@ -4987,7 +5032,9 @@ if (mode === "verify") {
     const todoPath = path.join(BASE, CONFIG.todo);
     if (existsSync(todoPath)) {
       const numbers = new Set();
-      for (const line of readFileSync(todoPath, "utf8").split(NEWLINE)) {
+      for (const line of unfenced(readFileSync(todoPath, "utf8")).split(
+        NEWLINE,
+      )) {
         const head = /^#{2,}\s+(\d+)\./.exec(line);
         if (head !== null) numbers.add(head[1]);
       }
@@ -5014,7 +5061,7 @@ if (mode === "verify") {
       scan.push([CONFIG.todo, todoPath]);
       for (const [name, full] of scan) {
         const selfRef = full === todoPath;
-        readFileSync(full, "utf8")
+        unfenced(readFileSync(full, "utf8"))
           .split(NEWLINE)
           .forEach((line, i) => {
             if (!selfRef && !NAMES.test(line)) return;
@@ -6753,7 +6800,9 @@ if (mode === "verify") {
       }
     })(norm(REPO));
     for (const f of mdFiles) {
-      for (const m of readFileSync(f, "utf8").matchAll(/\]\(([^)\s]+)\)/g)) {
+      for (const m of unfenced(readFileSync(f, "utf8")).matchAll(
+        /\]\(([^)\s]+)\)/g,
+      )) {
         const spec = m[1];
         // Внешние адреса, якоря внутри страницы, плейсхолдеры и абсолютные
         // пути к делу не относятся: первое не наше, остальное не адрес файла.
@@ -6777,7 +6826,9 @@ if (mode === "verify") {
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
     const dir = norm(path.dirname(at));
-    for (const hit of readFileSync(at, "utf8").matchAll(/`([^`\n]+)`/g)) {
+    for (const hit of unfenced(readFileSync(at, "utf8")).matchAll(
+      /`([^`\n]+)`/g,
+    )) {
       let tok = hit[1].trim();
       if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
       tok = tok.replace(/[:#].*$/, "");
@@ -7531,7 +7582,14 @@ if (mode === "verify") {
               // проекте, поймано первым же таким проектом. Хвост `:строка`
               // снимается: реестр решений ссылается якорем с номером.
               const named = [...lines[i].matchAll(/`([^`]+)`/g)].map((m) =>
-                m[1].replace(/:d+(-d+)?$/, ""),
+                // Обратный слэш здесь несёт весь смысл: без него это образец из
+                // буквы «d», и хвост номера строки не снимался НИКОГДА. Сверка
+                // тогда не могла увидеть ни одной записи, адресующей каркас
+                // якорем, — то есть ровно реестр решений, который эта строка и
+                // названа обслуживать. Замерено посадкой в живой проект: из двух
+                // записей о несуществующем каркасе нашлась одна, голая, а запись
+                // с якорем `src/App.tsx:4` прошла молча.
+                m[1].replace(/:\d+(-\d+)?$/, ""),
               );
               if (named.some((one) => forms.includes(one)))
                 frameLitter.push(
