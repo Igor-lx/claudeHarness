@@ -3,24 +3,24 @@
   "recipes": [
     {
       "section": "Покрытие карты",
-      "file": ".context/00-map.md",
-      "find": "| `src/App.tsx` | корневой компонент | нет | нет |",
-      "replace": "",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.ts",
+        "text": "export const zzProbe = 1;"
+      }
     },
     {
       "section": "Покрытие тестов",
-      "file": ".context/08-tests.md",
-      "find": "| `tests/App.test.tsx` |",
-      "replace": "| `tests/НЕТУ.test.tsx` |",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.test.tsx",
+        "text": "export const zzProbe = 1;"
+      }
     },
     {
       "section": "Пометки решений",
-      "file": ".context/09-decisions.md",
-      "find": "Якорь с цитатой: `src/App.tsx:4` `Trivial on purpose`.",
-      "replace": "",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.ts",
+        "text": "// Оставлено намеренно: проба сверки.\nexport const zzProbe = 1;"
+      }
     },
     {
       "section": "Режимы инструмента описаны",
@@ -48,16 +48,12 @@
     {
       "section": "Шаблон правил заполнен",
       "file": "CLAUDE.md",
-      "find": "# claudeHarness — что это за репозиторий",
-      "replace": "# <ИМЯ ПРОЕКТА> — что это за репозиторий",
-      "own": true
+      "append": "<НЕЗАПОЛНЕННОЕ МЕСТО>"
     },
     {
       "section": "Отложенное без закрытых пунктов",
       "file": ".context/02-todo.md",
-      "find": "Отложенного нет.",
-      "replace": "## Прежний пункт — ЗАКРЫТО",
-      "own": true
+      "append": "## Проба — ЗАКРЫТО"
     },
     {
       "section": "У каждого семени есть адрес назначения",
@@ -214,23 +210,33 @@
     },
     {
       "section": "Файлы базы заведены под свой предмет",
-      "file": "src/App.tsx",
-      "find": "export function App()",
-      "replace": "export function App() { useState(0); }\nexport function AppOld()",
-      "own": true
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzProbe.ts",
+            "text": "import { useState } from \"react\";\nexport const zzProbe = () => useState(0);"
+          }
+        },
+        {
+          "file": ".claude/seat/map.json",
+          "find": "\"to\": \".context/04-state.md\"",
+          "replace": "\"to\": \".context/zzНЕТУ-state.md\""
+        }
+      ]
     },
     {
       "section": "Вопрос о планке задан на конечном виде правки",
-      "file": "src/App.tsx",
-      "find": "export function App()",
-      "replace": "export function App() /* проба */",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.ts",
+        "text": "export const zzProbe = 1;"
+      }
     },
     {
       "section": "Тесты лежат в `tests/`",
-      "file": "src/App.tsx",
-      "copyTo": "src/App.test.tsx",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.test.tsx",
+        "text": "export const zzProbe = 1;"
+      }
     },
     {
       "section": "Один предмет — один файл настройки",
@@ -245,41 +251,38 @@
     },
     {
       "section": "Каркас обвязки не лежит в живом проекте",
-      "file": "src/App.tsx",
-      "copyTo": "src/Own.tsx",
-      "own": true
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzOwn.tsx",
+            "text": "export const zzOwn = 1;"
+          }
+        },
+        {
+          "file": ".claude/seat/templates/index.html",
+          "copyTo": "index.html"
+        }
+      ]
     },
     {
       "section": "Каркас обвязки не лежит в живом проекте",
       "edits": [
         {
           "create": {
-            "path": "src/Own.tsx",
-            "text": "export const own = 1;"
+            "path": "src/zzOwn.tsx",
+            "text": "export const zzOwn = 1;"
           }
         },
         {
-          "file": "src/App.tsx",
-          "append": "export const zzTouched = 1;"
-        },
-        {
-          "file": "src/main.tsx",
-          "append": "export const zzTouched = 1;"
-        },
-        {
-          "file": "src/tests/App.test.tsx",
-          "append": "export const zzTouched = 1;"
-        },
-        {
-          "file": "index.html",
-          "rename": "index.html.hidden"
+          "file": ".claude/seat/map.json",
+          "find": "\"to\": \"src/tests/App.test.tsx\"",
+          "replace": "\"to\": \"src/tests/zzНЕТУ.test.tsx\""
         },
         {
           "file": ".context/09-decisions.md",
-          "append": "Якорь с цитатой: `index.html:1` `frame`."
+          "append": "Якорь с цитатой: `src/tests/zzНЕТУ.test.tsx:1` `проба`."
         }
-      ],
-      "own": true
+      ]
     },
     {
       "section": "Цепочка проверок объявлена данными",
@@ -309,17 +312,15 @@
     },
     {
       "section": "Пометки CONSTRAINT",
-      "file": "src/App.tsx",
-      "find": "export function App()",
-      "replace": "// CONSTRAINT: форма не та\nexport function App()",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.ts",
+        "text": "// CONSTRAINT: форма не та\nexport const zzProbe = 1;"
+      }
     },
     {
       "section": "Якоря",
-      "file": ".context/09-decisions.md",
-      "find": "`src/App.tsx:4` `Trivial on purpose`",
-      "replace": "`src/App.tsx:400` `Trivial on purpose`",
-      "own": true
+      "file": ".context/00-map.md",
+      "append": "Якорь с цитатой: `package.json:1` `нет такой строки`."
     },
     {
       "section": "Новые якоря — с цитатой",
@@ -387,21 +388,22 @@
     {
       "section": "Инструменты обвязки (предупреждение, прогон не роняет)",
       "file": "package.json",
-      "find": "npm test && node .claude/tools/graph.mjs verify",
-      "replace": "npm test && npm run unknown-link && node .claude/tools/graph.mjs verify",
-      "own": true
+      "find": "\"check\": \"npm run typecheck",
+      "replace": "\"check\": \"npm run unknown-link && npm run typecheck"
     },
     {
       "section": "Звёздные бочки",
-      "file": "src/App.tsx",
-      "append": "export * from \"./main\";",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.ts",
+        "text": "export * from \"./zzProbeSource\";\nexport const zzProbe = 1;"
+      }
     },
     {
       "section": "Якоря на документацию в коде",
-      "file": "src/App.tsx",
-      "append": "// See docs/NOTHERE.md",
-      "own": true
+      "create": {
+        "path": "src/zzProbe.ts",
+        "text": "// See docs/NOTHERE.md\nexport const zzProbe = 1;"
+      }
     },
     {
       "section": "Обещания без опоры собираются сводкой",
@@ -418,16 +420,14 @@
     {
       "section": "Объявленный состав папок и радиусы",
       "file": ".context/00-map.md",
-      "append": "Папка `src/tests/` (99 файлов).",
-      "own": true
+      "append": "Папка `src/` (999 файлов)."
     },
     {
       "section": "Разрешения, нажитые по ходу работы",
       "create": {
         "path": ".claude/settings.local.json",
         "text": "{\n  \"permissions\": {\n    \"allow\": [\"Bash(проба:*)\"]\n  }\n}"
-      },
-      "own": true
+      }
     },
     {
       "section": "Версии установленного (предупреждение, прогон не роняет)",

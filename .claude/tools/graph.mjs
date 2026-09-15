@@ -1569,11 +1569,14 @@ if (mode === "falsify") {
         if (step.create !== undefined) {
           const madeAt = path.join(tmp, step.create.path);
           mkdirSync(path.dirname(madeAt), { recursive: true });
+          const had = existsSync(madeAt) ? readFileSync(madeAt) : null;
           writeFileSync(
             madeAt,
             step.create.text.split("\n").join(NEWLINE) + NEWLINE,
           );
-          undo.push(() => rmSync(madeAt));
+          undo.push(() =>
+            had === null ? rmSync(madeAt) : writeFileSync(madeAt, had),
+          );
           continue;
         }
         const stepAt = path.join(tmp, step.file);
@@ -1583,6 +1586,19 @@ if (mode === "falsify") {
         // словарю и исполняемый по другому, ронял ВЕСЬ режим стеком.
         // Заведено рецептом на вторую ветку сверки каркаса: ей нужно и
         // спрятать файл, и дописать запись о нём.
+        // Форма «положить копию» — та же, что у одиночного рецепта. Нужна
+        // сверкам, которые ловят ПОЯВЛЕНИЕ файла вместе с записью о нём:
+        // одной правкой такую не разбудить.
+        if (step.copyTo !== undefined) {
+          const toAt = path.join(tmp, step.copyTo);
+          const had = existsSync(toAt) ? readFileSync(toAt) : null;
+          mkdirSync(path.dirname(toAt), { recursive: true });
+          writeFileSync(toAt, readFileSync(stepAt));
+          undo.push(() =>
+            had === null ? rmSync(toAt) : writeFileSync(toAt, had),
+          );
+          continue;
+        }
         if (step.rename !== undefined) {
           const hidden = path.join(path.dirname(stepAt), step.rename);
           renameSync(stepAt, hidden);
@@ -1602,7 +1618,7 @@ if (mode === "falsify") {
           // поломкой инструмента, а не негодным рецептом. Долг рецептов при
           // этом не печатался вовсе — одна опечатка гасила ВЕСЬ отчёт.
           return give(
-            "форма шага не опознана (ждали create, rename, append или find): " +
+            "форма шага не опознана (ждали create, copyTo, rename, append или find): " +
               step.file,
           );
         else {
@@ -1642,12 +1658,14 @@ if (mode === "falsify") {
       if (r.create !== undefined) {
         const madeAt = path.join(tmp, r.create.path);
         mkdirSync(path.dirname(madeAt), { recursive: true });
+        const had = existsSync(madeAt) ? readFileSync(madeAt) : null;
         writeFileSync(
           madeAt,
           r.create.text.split("\n").join(NEWLINE) + NEWLINE,
         );
         record(r.section, readSections(runVerify(tmp)));
-        rmSync(madeAt);
+        if (had === null) rmSync(madeAt);
+        else writeFileSync(madeAt, had);
         continue;
       }
       const at = path.join(tmp, r.file);
@@ -1667,8 +1685,12 @@ if (mode === "falsify") {
       // составом дерева. Заведена под сверку раскладки тестов, у которой с этой
       // посадки есть механизм исключений: непроверяемое исключение хуже
       // отсутствующего.
+      let copiedOver = null;
       if (r.copyTo !== undefined) {
-        writeFileSync(path.join(tmp, r.copyTo), before);
+        const toAt = path.join(tmp, r.copyTo);
+        copiedOver = existsSync(toAt) ? readFileSync(toAt) : null;
+        mkdirSync(path.dirname(toAt), { recursive: true });
+        writeFileSync(toAt, before);
       } else if (r.append !== undefined) {
         // Четвёртая форма: ДОПИСАТЬ в конец. Часть сверок ловит появление новой
         // записи — строки таблицы, нового заголовка, нового якоря, — и правка
@@ -1701,8 +1723,11 @@ if (mode === "falsify") {
         );
       }
       record(r.section, readSections(runVerify(tmp)));
-      if (r.copyTo !== undefined) rmSync(path.join(tmp, r.copyTo));
-      else if (r.rename !== undefined) {
+      if (r.copyTo !== undefined) {
+        const toAt = path.join(tmp, r.copyTo);
+        if (copiedOver === null) rmSync(toAt);
+        else writeFileSync(toAt, copiedOver);
+      } else if (r.rename !== undefined) {
         writeFileSync(at, before);
         rmSync(path.join(tmp, r.rename));
       } else writeFileSync(at, before);
