@@ -126,5 +126,28 @@
       "Bash(git *)",
       "Bash(node .claude/tools/graph.mjs *)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/tools/graph.mjs transition"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/tools/graph.mjs transition"
+          }
+        ]
+      }
+    ]
   }
 }

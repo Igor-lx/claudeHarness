@@ -163,6 +163,33 @@
       "replace": "    map: 1,"
     },
     {
+      "section": "Напоминание о переходе включено",
+      "edits": [
+        {
+          "create": {
+            "path": ".context/15-transition.md",
+            "text": "# План перехода\n\n| Шаг | Что делает | Цена | Чем проверяется |\n| --- | --- | --- | --- |\n| 1 | Проба: шаг, заведённый рецептом | `1` час | ничем |"
+          }
+        },
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  transition: null,",
+          "replace": "  transition: { file: \"15-transition.md\", heading: \"| Шаг | Что делает | Цена | Чем проверяется |\" },"
+        },
+        {
+          "file": ".claude/settings.json",
+          "find": "graph.mjs transition",
+          "replace": "graph.mjs verify"
+        },
+        {
+          "file": ".claude/settings.json",
+          "find": "graph.mjs transition",
+          "replace": "graph.mjs verify"
+        }
+      ],
+      "own": true
+    },
+    {
       "section": "План перехода не потерялся",
       "file": ".context/graph.config.mjs",
       "find": "  transition: null,",
