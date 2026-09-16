@@ -2125,6 +2125,30 @@ if (mode === "handoff") {
   // сделала бы обвязку не той же самой, и сверка состава краснела бы на файле,
   // которого в обвязке быть не должно.
   const stamp = new Date().toISOString().slice(0, 10);
+  // Требования к машине берутся из проверенной связки СЕМЕНИ настройки:
+  // написать их числом здесь значило бы завести второй список, и он разошёлся
+  // бы с первым при первом же обновлении связки.
+  const envNeeds = (() => {
+    const at = shelfAt("seat/templates/graph.config.mjs");
+    if (at === null || !existsSync(at)) return null;
+    const body = readFileSync(at, "utf8");
+    const block = body.slice(body.indexOf("verifiedVersions: {"));
+    const pick = (name) => {
+      const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(block);
+      return hit === null ? null : hit[1];
+    };
+    const named = [
+      ["node", pick("node")],
+      ["npm", pick("npm")],
+    ].filter(([, v]) => v !== null);
+    return named.length === 0
+      ? null
+      : named.map(([n, v]) => n + " " + v).join(", ");
+  })();
+  const envLine =
+    envNeeds === null
+      ? "Версии среды объявлены настройкой обвязки, полем проверенной связки."
+      : "**Не ниже проверенной связки: " + envNeeds + ".**";
   writeFileSync(
     path.join(root, "ЧИТАТЬ-ПЕРВЫМ.md"),
     [
@@ -2134,6 +2158,14 @@ if (mode === "handoff") {
       "устройство базы знаний, инструмент, который строит граф связей в коде",
       "и сверяет с ним записи о проекте, скиллы и заготовки всех",
       "файлов, которые нужны новому проекту.",
+      "",
+      "## Что нужно на машине",
+      "",
+      envLine,
+      "",
+      "Ниже этого установка пакетов падает СОБСТВЕННОЙ ошибкой менеджера, где",
+      "про версию нет ни слова, и посадка встаёт на ровном месте. Проверить:",
+      "`node --version`, `npm --version`.",
       "",
       "## Что сделать",
       "",
