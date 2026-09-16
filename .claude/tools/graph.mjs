@@ -9404,10 +9404,30 @@ if (mode === "verify") {
           existsSync(to) && from !== null && existsSync(from) && same(to, from)
         );
       });
-      const frameTargets = new Set(
-        frame.map((e) => norm(path.join(REPO, e.to))),
-      );
-      const own = files.filter((f) => !frameTargets.has(f));
+      // Свой код — всё, что НЕ равно своему семени побайтово.
+      //
+      // Прежде исключались адреса каркаса, и пока семенами кода был один
+      // каркас, это совпадало. Как только помощник слияния и файл подготовки
+      // тестов поехали в каждый проект, они стали считаться собственным
+      // кодом — и пустой проект, только что посаженный, объявлялся живым:
+      // сверка докладывала, что каркас лежит при чужом коде, хотя этим
+      // «чужим кодом» были её же семена.
+      //
+      // Признак верен в обе стороны: положенное посадкой семя своим кодом не
+      // является, а файл живого проекта по тому же адресу семени не равен и
+      // своим кодом остаётся.
+      const seedAt = new Map();
+      for (const e of seatMap.copy ?? []) {
+        const from0 = shelfAt(e.from);
+        if (from0 !== null) seedAt.set(norm(path.join(REPO, e.to)), from0);
+      }
+      const fromSeed = (f) => {
+        const src = seedAt.get(f);
+        return (
+          src !== undefined && existsSync(src) && existsSync(f) && same(f, src)
+        );
+      };
+      const own = files.filter((f) => !fromSeed(f));
       frameLaid = laid.length;
       frameOwn = own.length;
       if (laid.length && own.length)
