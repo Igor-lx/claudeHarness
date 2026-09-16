@@ -509,18 +509,9 @@
     },
     {
       "section": "Связи через DOM и CSS",
-      "edits": [
-        {
-          "file": ".context/graph.config.mjs",
-          "find": "  domTables: null,",
-          "replace": "  domTables: { file: \"00-map.md\", headings: [\"Проба связей\"] },\n  domTablesOff: null,"
-        },
-        {
-          "file": ".context/00-map.md",
-          "append": "## Проба связей\n\n| Имя | Кто ставит | Кто читает |\n| --- | --- | --- |\n| `zzNoSuchHook` | нет | нет |"
-        }
-      ],
-      "own": true
+      "file": ".context/graph.config.mjs",
+      "find": "    headings: [",
+      "replace": "    headings: [\n      \"| ТАКОЙ ТАБЛИЦЫ НЕТ |\","
     },
     {
       "section": "Не разобрано (проверкой не покрыто)",
