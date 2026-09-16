@@ -147,6 +147,13 @@
       "copyTo": "stryker.config.json"
     },
     {
+      "section": "Отложенное семя слито",
+      "create": {
+        "path": "zzProbe.md.seat",
+        "text": "проба"
+      }
+    },
+    {
       "section": "Находки закрыты",
       "file": ".context/16-findings.md",
       "find": "«Пометки CONSTRAINT»",

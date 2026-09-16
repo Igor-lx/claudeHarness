@@ -1850,6 +1850,7 @@ const CHECK_SECTIONS = [
   "Звену цепочки есть на чём работать",
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
+  "Отложенное семя слито",
   "Находки закрыты",
   "Шаги перехода закрывают измерение",
   "Напоминание о переходе включено",
@@ -9719,6 +9720,39 @@ if (mode === "verify") {
           earlySeed.push(e.to + " — " + e.notAtSeating);
       }
   }
+  // Семя, столкнувшееся с проектным файлом, лежит рядом как `<имя>.seat`, а
+  // слияние объявлено работой фазы 2 — и не проверялось ничем. Забыли —
+  // файл лежит вечно, проект остаётся при своём, содержимое обвязки не
+  // приезжает совсем, и признака у этого нет: отложенное выглядит сделанным.
+  //
+  // Пока стоит флаг посадки, лежащее семя законно: фаза 2 ещё не работала.
+  // Найдено вопросом разработчика о том, что дальше происходит с таким
+  // файлом, — ответа в проекте не было.
+  const unmerged = [];
+  if (CONFIG.seating == null || CONFIG.seating === 0) {
+    const look = (dir) => {
+      for (const e of readdirSync(dir)) {
+        if (OUT_OF_TREE.has(e)) continue;
+        const at = path.join(dir, e);
+        if (statSync(at).isDirectory()) look(at);
+        else if (e.endsWith(".seat"))
+          unmerged.push(
+            norm(path.relative(REPO, at)).split(path.sep).join("/"),
+          );
+      }
+    };
+    look(REPO);
+  }
+  checkHead("Отложенное семя слито");
+  console.log(
+    CONFIG.seating != null && CONFIG.seating !== 0
+      ? "  посадка не закончена: отложенное семя пока законно"
+      : "  не слито: " + unmerged.length,
+  );
+  for (const u of unmerged)
+    console.log(
+      "    " + u + " — перенести нужное в проектный файл и удалить это",
+    );
   checkHead("Отложенное семя не положено посадкой");
   console.log("  положенных раньше срока: " + earlySeed.length);
   for (const d of earlySeed) console.log("    " + d);
@@ -10312,6 +10346,7 @@ if (mode === "verify") {
     (headingMissed === null ? 0 : 1) ||
     (isoMissed === null ? 0 : 1) ||
     strayTests.length ||
+    unmerged.length ||
     unresolved.length
   )
     process.exitCode = 1;
