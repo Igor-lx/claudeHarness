@@ -641,6 +641,51 @@ const sandboxManifests = (from, to) => {
     writeFileSync(path.join(to, e, "package.json"), readFileSync(manifest));
   }
 };
+/** ЧУЖИЕ связи через разметку и стили: имена, у которых один конец внутри
+ * репозитория есть, а второго нет.
+ *
+ * Таблица связей объявлена веткой чужого, и только его (`quality.md`,
+ * критерий `C7-бис`): связь, оба конца которой твои, не объявляется, а
+ * сводится к одному источнику конструкцией. Прежде предмет искался ровно
+ * наоборот — по совпадению обоих концов внутри репозитория, — и посадка в
+ * проект с модулями стилей требовала объявить то, что доктрина запрещает.
+ *
+ * Сигналов два, и оба перечислимы честно:
+ *   переменная стиля читается нашими листами и не объявлена ни одним;
+ *   атрибут разметки есть в наших стилях и не встречается в нашем коде.
+ *
+ * Третий сигнал — имена классов — снят намеренно. Он находил СВОЁ
+ * дублирование, а обратить его нечем: «имя, названное кодом и не
+ * объявленное листом» — это любая строка и любое обращение к полю. Своё
+ * держит свод по планке тем же критерием.
+ */
+const foreignLinks = () => {
+  const declared = new Set();
+  const used = new Map();
+  for (const f of styleFiles) {
+    const body = codeOf(readFileSync(f, "utf8"));
+    for (const m of body.matchAll(CSS_VAR_DECL)) declared.add(m[1]);
+    for (const m of body.matchAll(CSS_VAR_USE))
+      if (!used.has(m[1])) used.set(m[1], f);
+  }
+  const namesIn = (list) => {
+    const found = new Map();
+    for (const f of list)
+      for (const m of codeOf(readFileSync(f, "utf8")).matchAll(DATA_ATTR))
+        if (!found.has(m[0])) found.set(m[0], f);
+    return found;
+  };
+  const inStyles = namesIn(styleFiles);
+  const inCode = namesIn(files.filter((f) => !isTest(f)));
+  return {
+    vars: [...used]
+      .filter(([name]) => !declared.has(name))
+      .map(([name, where]) => ({ name, where: rel(where) })),
+    attrs: [...inStyles]
+      .filter(([name]) => !inCode.has(name))
+      .map(([name, where]) => ({ name, where: rel(where) })),
+  };
+};
 const SHELF_RULES = SHELF === null ? null : SHELF.split(path.sep).join("/");
 /** Путь для сообщений: от папки базы, чтобы читалось как в `CONFIG`. Принимает
  * и относительный — тогда возвращает его как есть. */
@@ -3248,6 +3293,24 @@ if (mode === "tested") {
         console.log(
           "  Звать: node " + rel0(fileURLToPath(import.meta.url)) + " bar",
         );
+        // Связь через разметку и стили — второй по незаметности способ: она
+        // не видна ни компилятору, ни графу импортов, а новый компонент
+        // заводит её первой же строкой стиля. Спрашивается по факту правки
+        // кода или стилей, а не ждёт прогона: прогон бывает позже, а решение
+        // «объявлять или сводить конструкцией» принимают здесь.
+        {
+          const { vars, attrs } = foreignLinks();
+          if (vars.length || attrs.length)
+            console.log(
+              "  Чужих связей через разметку и стили: " +
+                (vars.length + attrs.length) +
+                ". Каждая обязана быть названа таблицей связей.",
+            );
+          console.log(
+            "  Своё дублирование через границу языков таблицей НЕ" +
+              " объявляют — его сводят к одному источнику (критерий C7-бис).",
+          );
+        }
         // Зависимость — самый частый способ втащить в проект новый предмет и
         // самый незаметный: признак по коду его не увидит, потому что вызовов
         // ещё нет, а библиотека уже стоит. Поэтому вопрос задаётся по факту
@@ -6965,69 +7028,29 @@ if (mode === "verify") {
       );
   }
   if (CONFIG.domTables == null) {
-    // Имя, которое ОДИН файл пишет, а ДРУГОЙ читает, и ребра импорта между ними
-    // нет: переименование не роняет ни сборку, ни типы, ни тесты.
-    const declared = new Map();
-    const used = new Map();
-    for (const f of styleFiles) {
-      const body = readFileSync(f, "utf8");
-      for (const m of body.matchAll(CSS_VAR_DECL))
-        if (!declared.has(m[1])) declared.set(m[1], f);
-      for (const m of body.matchAll(CSS_VAR_USE))
-        if (!used.has(m[1])) used.set(m[1], f);
-    }
-    const crossVar = [...used].find(
-      ([name, where]) => declared.has(name) && declared.get(name) !== where,
-    );
-    const dataIn = (list) => {
-      const found = new Set();
-      for (const f of list)
-        for (const m of readFileSync(f, "utf8").matchAll(DATA_ATTR))
-          found.add(m[0]);
-      return found;
-    };
-    const inStyles = dataIn(styleFiles);
-    const inCode = dataIn(files.filter((f) => !isTestPath(f)));
-    const crossData = [...inStyles].find((n) => inCode.has(n));
-    // Третий сигнал, и он же тот, на котором дыра держалась: класс, объявленный
-    // листом стилей и названный кодом. Ребро импорта тут есть, а имена по нему
-    // не проходят — модуль передают целиком, как данные.
-    const styleClasses = new Set();
-    for (const f of styleFiles)
-      for (const m of readFileSync(f, "utf8").matchAll(CSS_CLASS_DECL))
-        styleClasses.add(m[1]);
-    const codeNames = new Set();
-    for (const f of files.filter((one) => !isTestPath(one)))
-      for (const m of readFileSync(f, "utf8").matchAll(CODE_NAME))
-        codeNames.add(m[1] ?? m[2] ?? m[3]);
-    const crossClass = [...styleClasses].filter((n) => codeNames.has(n));
-    // Сигналы называются ВСЕ, а не первый попавшийся. Цепочкой «иначе» проект
-    // узнавал про переменные, закрывал таблицей их одних — и связь через имена
-    // классов оставалась необъявленной, то есть дыра сохранялась при зелёном
+    // Предмет таблицы — ЧУЖАЯ связь: имя, второго конца которого в
+    // репозитории нет. Своё дублирование предметом этого поля не является и
+    // объявлению не подлежит — его сводят к одному источнику конструкцией, а
+    // ловит его свод по планке.
+    const { vars, attrs } = foreignLinks();
+    // Сигналы называются ВСЕ, а не первый попавшийся: закрыв таблицей одни
+    // переменные, проект оставлял бы атрибуты необъявленными при зелёном
     // прогоне и выполненном требовании.
-    if (crossVar !== undefined)
+    if (vars.length)
       disarmed.push(
         "переменная стиля " +
-          crossVar[0] +
-          " объявлена в " +
-          rel(declared.get(crossVar[0])) +
-          ", а читается в " +
-          rel(crossVar[1]) +
-          " — связь есть, а CONFIG.domTables пуст",
+          vars[0].name +
+          " читается в " +
+          vars[0].where +
+          " и не объявлена ни одним листом проекта — её ставит кто-то снаружи, а CONFIG.domTables пуст",
       );
-    if (crossData !== undefined)
+    if (attrs.length)
       disarmed.push(
         "атрибут " +
-          crossData +
-          " встречается и в стилях, и в коде — связь есть, а CONFIG.domTables пуст",
-      );
-    if (crossClass.length)
-      disarmed.push(
-        "классов листа стилей, названных кодом: " +
-          crossClass.length +
-          " (" +
-          crossClass.slice(0, 3).join(", ") +
-          "…) — связь есть, а CONFIG.domTables пуст",
+          attrs[0].name +
+          " есть в " +
+          attrs[0].where +
+          " и не встречается в коде проекта — его пишет кто-то снаружи, а CONFIG.domTables пуст",
       );
   }
   if (CONFIG.skills == null) {
@@ -7597,13 +7620,35 @@ if (mode === "verify") {
       }
     }
   }
+  // Обратная сторона: ЧУЖАЯ связь, найденная на диске, обязана быть
+  // названа таблицей. Прежде её не было вовсе, и новое имя, заведённое
+  // завтра, не видел никто: предмет спрашивался ровно один раз — пока поле
+  // пусто. Объявили таблицу — и связь, приехавшая с новым компонентом,
+  // проходила молча.
+  //
+  // Заводится только на УЗКИХ признаках. Довод «список врал бы» верен для
+  // имён классов: там это любая строка кода. Переменная, не объявленная ни
+  // одним нашим листом, и атрибут, которого нет в нашем коде, перечислимы
+  // полностью.
+  const domMissed = [];
+  if (CONFIG.domTables != null) {
+    const at = path.join(BASE, CONFIG.domTables.file);
+    const body = existsSync(at) ? readFileSync(at, "utf8") : "";
+    const { vars, attrs } = foreignLinks();
+    for (const one of [...vars, ...attrs])
+      if (!body.includes(one.name))
+        domMissed.push(
+          one.name + " — чужая связь в " + one.where + ", таблицей не названа",
+        );
+  }
   checkHead("Связи через DOM и CSS");
   console.log(
     CONFIG.domTables == null
       ? "  таблицы не заявлены"
-      : `  названо и не найдено: ${domDrift.length}`,
+      : `  названо и не найдено: ${domDrift.length}, чужого не названо: ${domMissed.length}`,
   );
   for (const d of domDrift) console.log("    " + d);
+  for (const d of domMissed) console.log("    " + d);
 
   // Инструкция посадки называет каждый файл полки.
   //
@@ -9940,13 +9985,17 @@ if (mode === "verify") {
             [...proof.matchAll(/`([^`]+)`/g)].some((m) =>
               words(m[1]).some((w) => measures.has(w)),
             );
+          // Сообщение называет и ФОРМУ. Прежде оно называло одну проблему,
+          // и заполняющий подбирал форму перебором: имя сверки пишется
+          // ёлочками, имя звена или режима — обратными кавычками, и ни семя
+          // плана, ни эта строка об этом не говорили.
           if (!named)
             stepsAdrift.push(
               "шаг " +
                 cells[0] +
                 " не называет измерения обвязки: «" +
                 proof +
-                "»",
+                "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
             );
         }
       }
@@ -10212,6 +10261,7 @@ if (mode === "verify") {
     checksTableDrift.length ||
     indexDrift.length ||
     domDrift.length ||
+    domMissed.length ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
