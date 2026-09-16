@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
 // «к какому файлу относится этот вопрос» должно быть записано ОДИН раз.
@@ -19,6 +20,7 @@ import { fileURLToPath } from "node:url";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  barRowFault,
   codeOf,
   inComment,
   isCodePath,
@@ -418,6 +420,54 @@ const qualityScopeDeclared = () => {
   }
   return out;
 };
+/** Критерии планки поимённо: раздел, обозначение, название. Читаются из
+ * самих файлов политики, а не объявляются рядом: объявленный список стал
+ * бы вторым источником и соврал бы при первом переименовании раздела.
+ *
+ * Раздел и число критериев в нём давали проход по списку из десяти строк, а
+ * критериев в этих строках сто восемьдесят. По числу проход не перечислить:
+ * пропуск отдельного критерия не виден ни сессии, ни читателю отчёта, и
+ * держался он тем, что сессия вспомнит про каждый. Найдено разработчиком.
+ *
+ * Название нужно затем, чтобы исход ставился против слов, а не против голого
+ * обозначения. Полный текст критерия сюда не едет намеренно: это была бы
+ * вторая редакция политики, и разошлась бы она с первой же правкой.
+ */
+const barCriteria = (file) => {
+  if (file === null || !existsSync(file)) return [];
+  const rows = readFileSync(file, "utf8").split(/\r?\n/);
+  const out = [];
+  let section = null;
+  for (let i = 0; i < rows.length; i += 1) {
+    const head = /^## ([A-ZА-Я])[.]\s+(.+)$/.exec(rows[i]);
+    if (head !== null) {
+      section = head[1];
+      continue;
+    }
+    const one = /^[*][*]([A-ZА-Я][0-9]+(?:-[а-яё]+)?)[.]\s*(.*)$/.exec(rows[i]);
+    if (one === null || section === null) continue;
+    // Название критерия бывает в две строки: жирное открывается здесь, а
+    // закрывается ниже. Обрыв по строке резал бы название посередине.
+    let title = one[2];
+    let j = i;
+    while (!title.includes("**") && j + 1 < rows.length) {
+      j += 1;
+      title += " " + rows[j];
+    }
+    const end = title.indexOf("**");
+    out.push({
+      section,
+      id: one[1],
+      title: (end < 0 ? title : title.slice(0, end))
+        .split(/\s+/)
+        .join(" ")
+        .trim()
+        .replace(/[.]$/, ""),
+    });
+  }
+  return out;
+};
+
 /** Живые разделы политики — с различением ТРЁХ состояний, а не двух.
  *
  * «Деления нет» и «деление есть, но прочитать не смог» — разные ответы, и
@@ -426,31 +476,6 @@ const qualityScopeDeclared = () => {
  * при переименованном заголовке таблицы: сессия прочла бы одно ядро и сочла
  * это правильным. `verify` такую таблицу ловит, но его гоняют ПОЗЖЕ — между
  * ними помощник врал уверенно. Найдено пробой. */
-/** Разделы планки и счёт критериев в каждом — считываются из самих файлов
- * политики, а не объявляются рядом. Объявленный список был бы вторым
- * источником и соврал бы при первом переименовании раздела; записанное число
- * критериев застыло бы при первом добавленном.
- *
- * Нужно это затем, чтобы «сверься с планкой» перестало быть указанием без
- * адреса: перечень разделов поимённо превращает проход в список, по которому
- * видно, что пройдено. Судить о самих критериях машина не может и не пытается —
- * планка тем и определена, что её признаки прогоном не ловятся. */
-const barSections = (file) => {
-  if (file === null || !existsSync(file)) return [];
-  const out = [];
-  const LF = String.fromCharCode(10);
-  const body = readFileSync(file, "utf8")
-    .split(String.fromCharCode(13))
-    .join("");
-  for (const line of body.split(LF)) {
-    const head = /^## ([A-ZА-Я])[.]\s+(.+)$/.exec(line);
-    if (head !== null) out.push({ id: head[1], title: head[2].trim(), n: 0 });
-    else if (out.length && /^[*][*][A-ZА-Я][0-9]/.test(line))
-      out[out.length - 1].n += 1;
-  }
-  return out;
-};
-
 const liveQualityScopes = () => {
   if (CONFIG.qualityScope == null) return { state: "нет деления" };
   const declared = qualityScopeDeclared();
@@ -460,6 +485,161 @@ const liveQualityScopes = () => {
     state: "прочитано",
     live: [...declared].filter(([, v]) => v.live).map(([k]) => k),
   };
+};
+/** Живой набор критериев: ядро целиком плюс разделы по применимости,
+ * объявленные живыми таблицей применимости.
+ *
+ * Слепота таблицы возвращается отдельным полем, а не молча суженным набором:
+ * свод по одному ядру выглядел бы как полный проход и был бы им объявлен.
+ */
+const liveBarCriteria = () => {
+  if (CONFIG.qualityScope == null) return null;
+  const policy = path.join(BASE, CONFIG.qualityScope.policy);
+  const core = barCriteria(policy.replace(/quality-scoped.md$/, "quality.md"));
+  const scope = liveQualityScopes();
+  const blind = scope.state !== "прочитано";
+  const live = new Set(blind ? [] : scope.live);
+  const scoped = barCriteria(policy).filter((c) => live.has(c.section));
+  return { core, scoped, all: [...core, ...scoped], blind };
+};
+
+/** Формат протокола свода по планке — в одном месте.
+ *
+ * Пишет протокол режим `bar`, читает его сверка цепочки, и формат у них обязан
+ * быть один. Объявленный дважды, он разошёлся бы первой же правкой: режим
+ * ставил бы печать, которую сверка не признаёт, либо наоборот — и второе хуже,
+ * потому что выглядит зелёным.
+ */
+const BAR_TICK = String.fromCharCode(96);
+const BAR_NOSEAL = "- печать: " + BAR_TICK + "нет" + BAR_TICK;
+/** Строка печати гасится с ЛЮБЫМ содержимым: иначе отпечаток включал бы сам
+ * себя и сойтись не мог бы никогда. */
+const BAR_NOSEAL_RE = new RegExp(
+  "^- печать: " + BAR_TICK + ".*" + BAR_TICK + "$",
+  "m",
+);
+const barQuoted = (x) => BAR_TICK + x + BAR_TICK;
+const barDigest = (text) =>
+  createHash("sha1")
+    .update(
+      text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10)),
+    )
+    .digest("hex")
+    .slice(0, 12);
+/** Печать — отпечаток ВСЕГО протокола при погашенной строке печати.
+ *
+ * Не одного предмета: отпечаток предмета гасился правкой кода, но не правкой
+ * самого протокола, и исход «нашлось» переписывался в «чисто» уже под печатью.
+ * Правка одного файла из пяти обязана гасить свод целиком, и правка одной
+ * строки исхода — тоже. */
+const barSealOf = (text) =>
+  barDigest(text.split(BAR_NOSEAL_RE).join(BAR_NOSEAL));
+/** Отпечатки предмета. Путь держится АБСОЛЮТНЫМ: короткая форма считается от
+ * корня исходников, и обратная склейка от корня репозитория била мимо — все
+ * отпечатки выходили меткой «нет файла». */
+const barMarks = (abs) =>
+  abs.map((f) => ({
+    file: rel(f),
+    mark: existsSync(f) ? barDigest(readFileSync(f, "utf8")) : "нет файла",
+  }));
+/** Предмет свода на задаче ИЗМЕНЕНИЯ: правленый код и стили.
+ *
+ * Возвращает `null`, когда состояние репозитория прочитать не удалось. Это не
+ * «правленого нет»: сверке нечего смотреть, и молчать об этом нельзя — зелёное
+ * от слепоты неотличимо от зелёного от здоровья. */
+const barChangedSubject = async (repoRoot) => {
+  const changed = await changedPaths(repoRoot);
+  if (changed === null) return null;
+  const all = changed.map((f) => norm(path.join(repoRoot, f)));
+  return all
+    .filter(
+      (f) =>
+        (files.includes(f) || styleFiles.includes(f)) && !f.endsWith(".d.ts"),
+    )
+    .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+};
+/** Шапка протокола, разобранная: род, отпечатки предмета, печать. */
+const barHeader = (at) => {
+  if (at === null || !existsSync(at)) return null;
+  const body = readFileSync(at, "utf8");
+  const kind = new RegExp(
+    "^- род: " + BAR_TICK + "(.+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
+  const seal = new RegExp(
+    "^- печать: " + BAR_TICK + "(.+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
+  const rowOf = new RegExp(
+    "^\\| " +
+      BAR_TICK +
+      "([^" +
+      BAR_TICK +
+      "]+)" +
+      BAR_TICK +
+      " \\| " +
+      BAR_TICK +
+      "([^" +
+      BAR_TICK +
+      "]+)" +
+      BAR_TICK +
+      " \\|$",
+    "gm",
+  );
+  return {
+    body,
+    kind: kind === null ? null : kind[1],
+    seal: seal === null ? null : seal[1],
+    marks: [...body.matchAll(rowOf)].map((h) => ({ file: h[1], mark: h[2] })),
+  };
+};
+const barSameMarks = (was, now) =>
+  was.length === now.length &&
+  now.every((m, i) => was[i].file === m.file && was[i].mark === m.mark);
+
+/** Песочная копия дерева проекта: снимок, на котором можно ломать.
+ *
+ * Жила внутри фальсификации. Вторая копия стала бы вторым источником и
+ * разошлась бы с первой ровно тогда, когда в исключения добавят папку, —
+ * то есть в тот единственный момент, когда расхождение опасно.
+ *
+ * Папки самих песочниц исключены: копия копии смысла не имеет, а весит
+ * столько же. */
+const SANDBOX_DIRS = new Set([".проба-сверок"]);
+const sandboxTree = (from, to) => {
+  mkdirSync(to, { recursive: true });
+  for (const e of readdirSync(from)) {
+    if (OUT_OF_TREE.has(e) || SANDBOX_DIRS.has(e)) continue;
+    const src = path.join(from, e);
+    if (statSync(src).isDirectory()) sandboxTree(src, path.join(to, e));
+    else writeFileSync(path.join(to, e), readFileSync(src));
+  }
+};
+
+/** Манифесты установленных пакетов — и только они.
+ *
+ * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и
+ * к содержимому сверок отношения не имеет. Но сверка версий читает именно
+ * её — номер версии лежит в манифесте каждого пакета, — и в песочнице ей
+ * нечего было читать: она не краснела НИКОГДА, то есть рецепта под неё не
+ * существовало в принципе. Манифесты весят килобайты, и этого довольно.
+ *
+ * Найдено при выплате долга рецептов: поломка, работающая на самом проекте,
+ * в песочнице молчала. */
+const sandboxManifests = (from, to) => {
+  if (!existsSync(from)) return;
+  for (const e of readdirSync(from)) {
+    const dir = path.join(from, e);
+    if (!statSync(dir).isDirectory()) continue;
+    if (e.startsWith("@")) {
+      sandboxManifests(dir, path.join(to, e));
+      continue;
+    }
+    const manifest = path.join(dir, "package.json");
+    if (!existsSync(manifest)) continue;
+    mkdirSync(path.join(to, e), { recursive: true });
+    writeFileSync(path.join(to, e, "package.json"), readFileSync(manifest));
+  }
 };
 const SHELF_RULES = SHELF === null ? null : SHELF.split(path.sep).join("/");
 /** Путь для сообщений: от папки базы, чтобы читалось как в `CONFIG`. Принимает
@@ -1263,7 +1443,7 @@ const toolModes = () => {
   const own = readFileSync(fileURLToPath(import.meta.url), "utf8");
   const found = [];
   for (const line of own.split(/\r?\n/))
-    for (const hit of line.matchAll(/mode === "([a-z]+)"/g))
+    for (const hit of line.matchAll(/mode === "([a-z-]+)"/g))
       if (!inComment(line, hit.index)) found.push(hit[1]);
   modesCache = Object.freeze([...new Set(found)]);
   return modesCache;
@@ -1614,6 +1794,7 @@ const CHECK_SECTIONS = [
   "Конфиг звена цепочки на месте",
   "Таблица сверок описывает существующие сверки",
   "Вопрос о планке задан на конечном виде правки",
+  "Планка пройдена покритериально",
   "Файлы базы заведены под свой предмет",
   "Каркас обвязки не лежит в живом проекте",
   "Один предмет — один файл настройки",
@@ -1687,42 +1868,6 @@ if (mode === "falsify") {
   const REPO_ROOT = path.join(BASE, "..");
   const tmp = path.join(REPO_ROOT, ".проба-сверок");
 
-  const copyTree = (from, to) => {
-    mkdirSync(to, { recursive: true });
-    for (const e of readdirSync(from)) {
-      if (OUT_OF_TREE.has(e) || e === ".проба-сверок") continue;
-      const src = path.join(from, e);
-      if (statSync(src).isDirectory()) copyTree(src, path.join(to, e));
-      else writeFileSync(path.join(to, e), readFileSync(src));
-    }
-  };
-
-  /** Манифесты установленных пакетов — и только они.
-   *
-   * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и к
-   * содержимому сверок отношения не имеет. Но сверка версий читает именно её —
-   * номер версии лежит в манифесте каждого пакета, — и в песочнице ей нечего
-   * было читать: она не краснела НИКОГДА, то есть рецепта под неё не
-   * существовало в принципе. Манифесты весят килобайты, и этого довольно.
-   *
-   * Найдено при выплате долга рецептов: поломка, работающая на самом проекте,
-   * в песочнице молчала. */
-  const copyManifests = (from, to) => {
-    if (!existsSync(from)) return;
-    for (const e of readdirSync(from)) {
-      const dir = path.join(from, e);
-      if (!statSync(dir).isDirectory()) continue;
-      if (e.startsWith("@")) {
-        copyManifests(dir, path.join(to, e));
-        continue;
-      }
-      const manifest = path.join(dir, "package.json");
-      if (!existsSync(manifest)) continue;
-      mkdirSync(path.join(to, e), { recursive: true });
-      writeFileSync(path.join(to, e, "package.json"), readFileSync(manifest));
-    }
-  };
-
   // Разбор вывода и разбор исхода живут в словаре области: это чистые
   // функции, и держит их набор тестов, а не одноразовая фальсификация.
   const readSections = (out) => sectionsOf(out, NEWLINE);
@@ -1740,8 +1885,8 @@ if (mode === "falsify") {
   };
 
   rmSync(tmp, { recursive: true, force: true });
-  copyTree(REPO_ROOT, tmp);
-  copyManifests(
+  sandboxTree(REPO_ROOT, tmp);
+  sandboxManifests(
     path.join(REPO_ROOT, "node_modules"),
     path.join(tmp, "node_modules"),
   );
@@ -3089,41 +3234,20 @@ if (mode === "tested") {
               " применимости прочитать не удалось — какие разделы живые," +
               " сейчас неизвестно. Чинится до сверки, а не после.",
           );
-        // Перечень разделов поимённо, считанный из самих файлов политики.
-        // «Сверься с планкой» без перечня — указание без адреса: проход по нему
-        // не перечислим, и пропуск раздела не виден ни тебе, ни читателю
-        // отчёта. Счёт критериев печатается тут же и нигде не записан: он едет
-        // от каждой правки политики.
-        const core = barSections(
-          CONFIG.qualityScope == null
-            ? null
-            : path
-                .join(BASE, CONFIG.qualityScope.policy)
-                .replace(/quality-scoped.md$/, "quality.md"),
+        // Проход по планке ведёт свой режим: он печатает строку на каждый
+        // живой критерий и ставит печать, сверив форму. Перечень разделов
+        // печатался здесь и переехал туда, где по нему ставят исход, — тут
+        // он был бы вторым списком тех же имён и разошёлся бы с политикой
+        // первой же её правкой. Указание «сверься с планкой» без адреса
+        // бесполезно, и адрес теперь есть: это команда, а не раздел правил,
+        // в который надо вспомнить заглянуть.
+        console.log(
+          "  Проход ведёт режим `bar`: строка на каждый живой критерий," +
+            " исход в каждой строке, печать по сверенной форме.",
         );
-        const scoped = barSections(
-          CONFIG.qualityScope == null
-            ? null
-            : path.join(BASE, CONFIG.qualityScope.policy),
+        console.log(
+          "  Звать: node " + rel0(fileURLToPath(import.meta.url)) + " bar",
         );
-        const live = new Set(scope.state === "прочитано" ? scope.live : []);
-        const rows = [
-          ...core.map((s) => ({ ...s, must: true })),
-          ...scoped.map((s) => ({ ...s, must: live.has(s.id) })),
-        ].filter((s) => s.must);
-        if (rows.length) {
-          console.log(
-            "  Пройти по разделам: " +
-              rows.length +
-              ", критериев в них " +
-              rows.reduce((n, s) => n + s.n, 0) +
-              ". По каждому в отчёте — исход.",
-          );
-          for (const s of rows)
-            console.log(
-              "    " + (s.id + ".").padEnd(3) + " " + s.title + " — " + s.n,
-            );
-        }
         // Зависимость — самый частый способ втащить в проект новый предмет и
         // самый незаметный: признак по коду его не увидит, потому что вызовов
         // ещё нет, а библиотека уже стоит. Поэтому вопрос задаётся по факту
@@ -3765,6 +3889,519 @@ if (mode === "mutated") {
     const rest = unseen.length + drifted.length - 15;
     if (rest > 0) console.log(`    …и ещё ${rest}`);
   }
+}
+
+// Фальсификация самого ПРОХОДА по планке.
+//
+// Печать протокола говорит: по каждому критерию дан ответ, и дан на этом виде
+// предмета. О верности ответа она не говорит ничего — и это была последняя
+// опора, державшаяся одним вниманием. Приём, которому обвязка уже доверяет,
+// сюда просто не наводили: сверки фальсифицируются рецептом, звенья цепочки —
+// посаженной поломкой, а человеческий шаг не фальсифицировался никогда.
+//
+// Режим сажает в песочную копию известное нарушение известного критерия и
+// молчит о том, какое. Свод делается в песочнице обычным порядком. Второй
+// вызов судит: назван ли посаженный критерий с посаженным адресом. Вердикт
+// машинный целиком — отчёт читать не нужно, читается протокол.
+//
+// Чего замер не доказывает: нарушение посажено в файле, заведённом ради пробы,
+// и оттого заметнее настоящего. Доля выходит оптимистичной и читается как
+// верхняя граница. Критерии-суждения не сажаются вовсе.
+if (mode === "bar-probe") {
+  const NEWLINE = String.fromCharCode(10);
+  const at = path.join(TOOL_DIR, "bar-probes.json");
+  if (!existsSync(at)) {
+    console.log("=== Сажаемых нарушений нет ===");
+    console.log("  Ожидался файл: " + norm(at));
+    process.exit(1);
+  }
+  const plants = JSON.parse(readFileSync(at, "utf8")).plants;
+  const ledgerAt =
+    CONFIG.barProbeLedger == null
+      ? null
+      : path.join(BASE, CONFIG.barProbeLedger);
+  const judged = process.argv[3];
+
+  if (judged === undefined) {
+    // Посадка. Песочница живёт ВНЕ репозитория: свод на задаче изменения
+    // читает состояние репозитория, и песочница внутри рабочего дерева
+    // попадала бы в предмет свода самого проекта.
+    const id = String(Date.now()).slice(-8);
+    const box = path.join(tmpdir(), "bar-probe-" + id);
+    const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
+    const plant = plants[Math.floor(Math.random() * plants.length)];
+    rmSync(box, { recursive: true, force: true });
+    sandboxTree(path.join(BASE, ".."), box);
+    sandboxManifests(
+      path.join(BASE, "..", "node_modules"),
+      path.join(box, "node_modules"),
+    );
+    // Протокол прошлой работы в песочницу не едет: свод обязан начаться с
+    // чистого листа, иначе проба мерит вчерашний проход.
+    if (CONFIG.barProtocol != null)
+      rmSync(
+        path.join(
+          box,
+          path.relative(path.join(BASE, ".."), BASE),
+          CONFIG.barProtocol,
+        ),
+        {
+          force: true,
+        },
+      );
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: box, stdio: "ignore" });
+      execFileSync("git", ["add", "-A"], { cwd: box, stdio: "ignore" });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=probe",
+          "-c",
+          "user.email=probe@local",
+          "commit",
+          "-qm",
+          "base",
+        ],
+        { cwd: box, stdio: "ignore" },
+      );
+    } catch {
+      console.log("=== Проба не посажена ===");
+      console.log(
+        "  git в песочнице недоступен, а предмет свода на задаче изменения —",
+      );
+      console.log("  это правленое. Судить было бы не о чем.");
+      rmSync(box, { recursive: true, force: true });
+      process.exit(1);
+    }
+    // Адрес посадки считается от корня ИСХОДНИКОВ: у чужого проекта он зовётся
+    // не `src`, и адрес, записанный от корня репозитория, лёг бы мимо.
+    const where = path.join(
+      box,
+      path.relative(path.join(BASE, ".."), ROOT),
+      plant.create.path,
+    );
+    mkdirSync(path.dirname(where), { recursive: true });
+    writeFileSync(where, plant.create.text.split("\n").join(NEWLINE));
+    writeFileSync(
+      mark,
+      JSON.stringify(
+        { criterion: plant.criterion, why: plant.why, file: norm(where), box },
+        null,
+        2,
+      ) + NEWLINE,
+    );
+    console.log("=== Проба планки посажена ===");
+    console.log("  песочница: " + norm(box));
+    console.log("");
+    console.log("  Что делать: сделать свод в песочнице обычным порядком —");
+    console.log("    cd " + norm(box));
+    console.log("    node .claude/tools/graph.mjs bar");
+    console.log("  прочитать правленое, поставить исход по каждому критерию,");
+    console.log("  позвать режим снова и получить печать.");
+    console.log("");
+    console.log("  Затем судить: node .claude/tools/graph.mjs bar-probe " + id);
+    console.log("");
+    console.log("  Что посажено — не говорится намеренно. Запись лежит ВНЕ");
+    console.log("  песочницы, чтобы не попасться своду на глаза случайно;");
+    console.log("  от умышленного подглядывания она не защищает и не может.");
+    process.exit(0);
+  }
+
+  // Суд. Принимается и короткий номер, и полный путь песочницы.
+  const id =
+    judged.includes(path.sep) || judged.includes("/")
+      ? path.basename(norm(judged)).replace(/^bar-probe-/, "")
+      : judged;
+  const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
+  if (!existsSync(mark)) {
+    console.log("=== Пробы с таким номером нет ===");
+    console.log("  Ожидалась запись: " + norm(mark));
+    process.exit(1);
+  }
+  const plant = JSON.parse(readFileSync(mark, "utf8"));
+  const protocolAt =
+    CONFIG.barProtocol == null
+      ? null
+      : path.join(
+          plant.box,
+          path.relative(path.join(BASE, ".."), BASE),
+          CONFIG.barProtocol,
+        );
+  const was = barHeader(protocolAt);
+  console.log("=== Суд по пробе планки ===");
+  console.log("  посажено: " + plant.criterion + " — " + plant.why);
+  console.log("  где: " + norm(path.relative(plant.box, plant.file)));
+  let verdict;
+  if (was === null) verdict = "свода нет";
+  else if (was.seal === null || was.seal === "нет") verdict = "свод без печати";
+  else if (was.seal !== barSealOf(was.body))
+    verdict = "печать не сходится: протокол правлен после неё";
+  else {
+    const said = new Map();
+    for (const line of was.body.split(/\r?\n/)) {
+      if (!line.startsWith("| ")) continue;
+      const cells = line
+        .split("|")
+        .slice(1, -1)
+        .map((c) => c.trim());
+      if (cells.length !== 6 || /^-+$/.test(cells[0])) continue;
+      said.set(cells[0], { outcome: cells[2], addr: cells[3], what: cells[4] });
+    }
+    const planted = path.basename(plant.file);
+    const hitsPlanted = (one) =>
+      one !== undefined &&
+      one.outcome === "нашлось" &&
+      one.addr.includes(planted);
+    const mine = said.get(plant.criterion);
+    if (hitsPlanted(mine)) verdict = "поймано";
+    else if (mine !== undefined && mine.outcome === "нашлось")
+      verdict = "критерий назван, адрес другой: " + mine.addr;
+    else {
+      const byOther = [...said.entries()].filter(([, one]) => hitsPlanted(one));
+      verdict =
+        byOther.length > 0
+          ? "названо другим критерием: " + byOther.map(([k]) => k).join(", ")
+          : "мимо";
+    }
+  }
+  console.log("  исход: " + verdict);
+
+  if (ledgerAt !== null) {
+    const book = existsSync(ledgerAt)
+      ? JSON.parse(readFileSync(ledgerAt, "utf8"))
+      : { runs: [] };
+    book.runs.push({
+      criterion: plant.criterion,
+      verdict,
+      when: new Date().toISOString().slice(0, 10),
+    });
+    writeFileSync(ledgerAt, JSON.stringify(book, null, 2) + NEWLINE);
+    const caught = book.runs.filter((r) => r.verdict === "поймано").length;
+    console.log("  всего проб: " + book.runs.length + ", поймано: " + caught);
+    console.log(
+      "  Доля оптимистична: нарушение посажено в файле, заведённом ради пробы,",
+    );
+    console.log("  и оттого заметнее настоящего. Это верхняя граница.");
+  }
+  rmSync(plant.box, { recursive: true, force: true });
+  rmSync(mark, { force: true });
+  process.exit(verdict === "поймано" ? 0 : 1);
+}
+
+// Свод по планке — покритериальный протокол.
+//
+// Шаг, у которого машинного крючка не было вовсе. Режим «правка против её
+// тестов» печатал разделы планки и ЧИСЛО критериев в них, а проход по этому
+// числу не перечислим: пропуск отдельного критерия не виден ни сессии, ни
+// читателю отчёта. Держалось тем, что сессия вспомнит про каждый из ста
+// восьмидесяти. Требование завёл разработчик: проход обязан держаться не
+// памятью, а записью, которую видно и можно сверить.
+//
+// Что сверяется: по каждому живому критерию дан исход; словарь исходов
+// закрыт; у находки есть адрес, существующий на диске, слова и судьба; судьба
+// согласна роду задачи; протокол сделан на ТОМ ЖЕ виде предмета, что лежит
+// сейчас. Верность самого исхода машине недоступна и здесь не изображается.
+if (mode === "bar") {
+  const NEWLINE = String.fromCharCode(10);
+  const at =
+    CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
+  const live = liveBarCriteria();
+  if (at === null || live === null) {
+    console.log("=== Свод по планке не заведён ===");
+    console.log(
+      at === null
+        ? "  Поле `barProtocol` не объявлено: протоколу негде лежать."
+        : "  Поле `qualityScope` не объявлено: набор критериев неоткуда взять.",
+    );
+    process.exit(1);
+  }
+  if (live.blind) {
+    console.log("=== Свод по планке невозможен ===");
+    console.log(
+      "  Таблицу применимости прочитать не удалось: какие разделы живые,",
+    );
+    console.log(
+      "  сейчас неизвестно. Свод по одному ядру выглядел бы полным проходом,",
+    );
+    console.log("  не будучи им. Чинится до свода, а не после.");
+    process.exit(1);
+  }
+
+  // Предмет свода считает ИНСТРУМЕНТ, а не сессия: предмет, выбираемый тем,
+  // кого проверяют, сужается до удобного незаметно для всех.
+  const arg = argPath(process.argv[3]);
+  const repoRoot = path.join(BASE, "..");
+  let kind;
+  let subject;
+  if (arg) {
+    const hits = [...files, ...styleFiles]
+      .filter((f) => rel(f).includes(arg))
+      .sort((x, y) => Number(isTest(x)) - Number(isTest(y)));
+    if (hits.length === 0) {
+      console.log(outOfScope(arg));
+      process.exit(1);
+    }
+    const target = hits[0];
+    // Область чтения — та же, что очерчивает досье: сам узел, то, что он
+    // берёт, то, что берёт его, и листы стилей, которых граф не видит.
+    const near = isStylePath(rel(target))
+      ? { own: [], viaUsers: [] }
+      : stylesNear(target);
+    kind = "на чтение";
+    subject = [
+      target,
+      ...(importsOf.get(target) ?? []),
+      ...(importedBy.get(target) ?? []),
+      ...near.own,
+      ...near.viaUsers,
+    ]
+      .map(norm)
+      .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+  } else {
+    subject = await barChangedSubject(repoRoot);
+    if (subject === null) {
+      console.log("=== Предмет свода не определить ===");
+      console.log(
+        "  git недоступен, а на задаче изменения предмет — это правленое.",
+      );
+      console.log(
+        "  Свод по задаче чтения зовут с путём: graph.mjs bar <путь>.",
+      );
+      process.exit(1);
+    }
+    kind = "на изменение";
+  }
+  subject = [...new Set(subject)];
+
+  if (subject.length === 0) {
+    console.log("=== Свод по планке: предмета нет ===");
+    console.log(
+      kind === "на изменение"
+        ? "  Правленого кода и стилей нет — сводить не по чему."
+        : "  Область пуста.",
+    );
+    process.exit(0);
+  }
+
+  const marks = barMarks(subject);
+  const HEAD = "| критерий | о чём | исход | адрес | что | судьба |";
+  const skeleton = () => {
+    const rows = [
+      "# Свод по планке — протокол текущей работы",
+      "",
+      "Скелет печатает режим " +
+        barQuoted("bar") +
+        ", исход ставит сессия, печать ставит режим.",
+      "Шапку руками не правят: она описывает предмет, на котором свод сделан,",
+      "и правка предмета гасит печать целиком. Правка самого протокола после",
+      "печати гасит её тоже: печать — отпечаток всего, что ниже.",
+      "",
+      "## Предмет",
+      "",
+      "- род: " + barQuoted(kind),
+      BAR_NOSEAL,
+      "",
+      "| файл | отпечаток |",
+      "| --- | --- |",
+      ...marks.map(
+        (m) => "| " + barQuoted(m.file) + " | " + barQuoted(m.mark) + " |",
+      ),
+      "",
+      "## Исходы",
+      "",
+      "Исход: " +
+        barQuoted("чисто") +
+        " — нарушения нет; " +
+        barQuoted("нет предмета") +
+        " — с причиной",
+      "в колонке «что»; " +
+        barQuoted("нашлось") +
+        " — с адресом «путь:строка», словами и судьбой.",
+      "Судьба: " +
+        barQuoted("починено") +
+        " — адрес обязан быть в правленом; " +
+        barQuoted("предложено"),
+      "— только на задаче чтения; " +
+        barQuoted("отложено") +
+        " — с названным решением.",
+      "",
+      HEAD,
+      "| --- | --- | --- | --- | --- | --- |",
+      ...live.all.map((c) => "| " + c.id + " | " + c.title + " |  |  |  |  |"),
+      "",
+    ];
+    writeFileSync(at, rows.join(NEWLINE));
+  };
+
+  const was = barHeader(at);
+  const sameSubject =
+    was !== null && was.kind === kind && barSameMarks(was.marks, marks);
+
+  if (!sameSubject) {
+    skeleton();
+    console.log("=== Свод по планке: протокол напечатан ===");
+    console.log("  " + rel0(at));
+    console.log(
+      "  род: " +
+        kind +
+        ", файлов в предмете: " +
+        marks.length +
+        ", критериев: " +
+        live.all.length,
+    );
+    console.log("");
+    console.log("  По КАЖДОМУ критерию поставить исход, читая политику, а не");
+    console.log("  название в строке: название — указатель, а не критерий.");
+    console.log(
+      "  Затем позвать режим снова — он сверит форму и поставит печать.",
+    );
+    process.exit(1);
+  }
+
+  // Разбор исходов. Строка таблицы — шесть колонок, и всё прочее пропускается
+  // молча: полупонятая строка хуже непонятой.
+  const body = was.body;
+  const said = new Map();
+  const twice = [];
+  for (const line of body.split(/\r?\n/)) {
+    if (!line.startsWith("| ") || line === HEAD) continue;
+    const cells = line
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (cells.length !== 6 || /^-+$/.test(cells[0])) continue;
+    const [id, , outcome, addr, what, fate] = cells;
+    if (said.has(id)) twice.push(id);
+    said.set(id, { outcome, addr, what, fate });
+  }
+
+  // Адрес находки принимается в обеих ходовых формах: от корня репозитория
+  // (так печатают git, редактор и отчёт) и от корня исходников (так печатает
+  // база). Отказ по одной из них звучал бы как «файла нет» про существующий
+  // файл — тот самый класс, что уже записан у разбора путей-аргументов.
+  const spotFile = (p) => {
+    for (const one of [path.join(repoRoot, p), path.join(ROOT, p)]) {
+      const abs = norm(one);
+      if (existsSync(abs)) return abs;
+    }
+    return null;
+  };
+
+  const holes = [];
+  const changedNow = new Set(
+    kind === "на изменение"
+      ? subject
+      : ((await barChangedSubject(repoRoot)) ?? []),
+  );
+  for (const c of live.all) {
+    const one = said.get(c.id) ?? { outcome: "", addr: "", what: "", fate: "" };
+    // Чистая часть разбора живёт в словаре области: закрытые словари,
+    // законность судьбы при роде задачи, вид адреса. Второй её разбор здесь
+    // разошёлся бы с первым при первой же правке словаря исходов.
+    const fault = barRowFault(
+      [kind, one.outcome, one.addr, one.what, one.fate].join("|"),
+    );
+    if (fault !== "") {
+      // Неверное значение называется тут же: сообщение, после которого надо
+      // идти искать строку глазами, перестают читать.
+      const shown = {
+        "исход не из словаря": one.outcome,
+        "судьба не из словаря": one.fate,
+        "адрес не вида путь:строка": one.addr,
+      }[fault];
+      holes.push(
+        c.id + ": " + fault + (shown === undefined ? "" : ": «" + shown + "»"),
+      );
+      continue;
+    }
+    if (one.outcome !== "нашлось") continue;
+    const spot = new RegExp(
+      "^" + BAR_TICK + "?(.+?):([0-9]+)" + BAR_TICK + "?$",
+    ).exec(one.addr);
+    if (spot === null) continue;
+    const abs = spotFile(spot[1]);
+    if (abs === null) {
+      holes.push(c.id + ": файла " + barQuoted(spot[1]) + " нет");
+      continue;
+    }
+    const lines = readFileSync(abs, "utf8").split(/\r?\n/).length;
+    if (Number(spot[2]) < 1 || Number(spot[2]) > lines)
+      holes.push(
+        c.id +
+          ": строки " +
+          spot[2] +
+          " в " +
+          barQuoted(spot[1]) +
+          " нет, всего " +
+          lines,
+      );
+    if (one.fate === "починено" && !changedNow.has(abs))
+      holes.push(
+        c.id +
+          ": «починено», а " +
+          barQuoted(spot[1]) +
+          " в правленом не числится",
+      );
+  }
+  const extra = [...said.keys()].filter(
+    (id) => !live.all.some((c) => c.id === id),
+  );
+
+  console.log("=== Свод по планке ===");
+  console.log("  " + rel0(at));
+  console.log(
+    "  род: " +
+      kind +
+      ", критериев: " +
+      live.all.length +
+      ", файлов: " +
+      marks.length,
+  );
+  if (twice.length)
+    console.log("  критерий назван дважды: " + twice.join(", "));
+  if (extra.length)
+    console.log("  критерий, которого в политике нет: " + extra.join(", "));
+  if (holes.length === 0 && twice.length === 0 && extra.length === 0) {
+    const found = live.all.filter(
+      (c) => (said.get(c.id) ?? {}).outcome === "нашлось",
+    );
+    const seal = barSealOf(body);
+    writeFileSync(
+      at,
+      body.split(BAR_NOSEAL).join("- печать: " + barQuoted(seal)),
+    );
+    console.log("  печать поставлена: " + seal);
+    console.log("  находок: " + found.length);
+    for (const c of found) {
+      const one = said.get(c.id);
+      console.log(
+        "    " +
+          c.id +
+          " " +
+          one.addr +
+          " — " +
+          one.what +
+          " (" +
+          one.fate +
+          ")",
+      );
+    }
+    console.log("");
+    console.log(
+      "  Печать говорит: по каждому критерию дан ответ, и дан на этом",
+    );
+    console.log("  виде предмета. О ВЕРНОСТИ ответа она не говорит ничего —");
+    console.log(
+      "  признаки планки прогоном не ловятся, и это не изображается.",
+    );
+    process.exit(0);
+  }
+  console.log("  дыр: " + holes.length);
+  for (const h of holes) console.log("    " + h);
+  console.log("");
+  console.log("  Печать не поставлена. Свод с дырами — не свод.");
+  process.exit(1);
 }
 
 if (mode === "brief") {
@@ -5051,7 +5688,7 @@ if (mode === "verify") {
     // команду, которой не существует, — это хуже отсутствия раздела, потому что
     // ему верят. Найдено пробой: раздел про выдуманный режим прошёл зелёным.
     if (manual !== null)
-      for (const hit of manual.matchAll(/^### `([a-z]+)\b/gm))
+      for (const hit of manual.matchAll(/^### `([a-z-]+)\b/gm))
         if (!implemented.has(hit[1]))
           undocumented.push(`раздел есть, режима нет: ${hit[1]}`);
   }
@@ -8198,6 +8835,100 @@ if (mode === "verify") {
   );
   for (const u of unasked) console.log("    " + u);
 
+  // 44c. Планка пройдена ПОКРИТЕРИАЛЬНО.
+  //
+  // Соседняя сверка выше закрывает, что вопрос ПРЕДЪЯВЛЕН. Предъявленный
+  // вопрос и отвеченный — разное: режим печатал разделы планки и число
+  // критериев в них, уходил, и проход по этим ста восьмидесяти держался
+  // тем, что сессия вспомнит про каждый. Требование завёл разработчик:
+  // проход обязан держаться записью, а не памятью о том, заглядывали ли в
+  // политику.
+  //
+  // Печать пересчитывается на месте: протокол, правленный ПОСЛЕ печати, от
+  // неё расходится, и «нашлось», переписанное в «чисто», всплывает здесь.
+  //
+  // Сверка защищает от забывчивости, а не от подлога, и о верности исхода
+  // не говорит ничего: признаки планки прогоном не ловятся. Ловчесть самого
+  // прохода меряет режим `bar-probe`, а не эта строка.
+  const barGaps = [];
+  let barSaid = null;
+  {
+    const at =
+      CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
+    const subject = at === null ? [] : await barChangedSubject(REPO);
+    if (at === null)
+      barSaid =
+        "протокол не ведётся — проход по планке держится памятью целиком";
+    else if (subject === null)
+      barSaid =
+        "состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет";
+    else if (subject.length === 0) barSaid = "правленого кода и стилей нет";
+    else {
+      const was = barHeader(at);
+      const live = liveBarCriteria();
+      const marks = barMarks(subject);
+      if (was === null) barGaps.push("протокола нет: свод не делался");
+      else if (was.kind !== "на изменение")
+        barGaps.push(
+          "протокол сделан на задаче чтения, а правленое есть: свод не о нём",
+        );
+      else if (!barSameMarks(was.marks, marks))
+        barGaps.push(
+          "протокол сделан на другом виде предмета: файлов в нём " +
+            was.marks.length +
+            ", правленых " +
+            marks.length,
+        );
+      else if (was.seal === null || was.seal === "нет")
+        barGaps.push("печати нет: свод начат и не закончен");
+      else if (was.seal !== barSealOf(was.body))
+        barGaps.push(
+          "печать не сходится: протокол правлен после того, как закрыт",
+        );
+      else if (live !== null && !live.blind) {
+        // Счёт — дешёвая вторая опора к печати: полноту сверяет режим при
+        // печати, но протокол, собранный мимо режима, печать бы унаследовал
+        // вместе с недостающими строками.
+        const answered = was.body
+          .split(/\r?\n/)
+          .filter((l) => l.startsWith("| "))
+          .map((l) =>
+            l
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim()),
+          )
+          .filter(
+            (c) => c.length === 6 && c[2] !== "" && !/^-+$/.test(c[0]),
+          ).length;
+        if (answered !== live.all.length)
+          barGaps.push(
+            "исходов в протоколе " +
+              answered +
+              ", живых критериев " +
+              live.all.length,
+          );
+        else
+          barSaid =
+            "свод закрыт печатью: критериев " +
+            live.all.length +
+            ", файлов " +
+            marks.length;
+      } else barSaid = "свод закрыт печатью, живой набор критериев не прочитан";
+    }
+  }
+  checkHead("Планка пройдена покритериально");
+  if (barSaid !== null) console.log("  " + barSaid);
+  // Находка печатается отступом в ЧЕТЫРЕ пробела: именно по нему её узнаёт
+  // разбор вывода, которым фальсификация отличает выросшую секцию от
+  // прежней. Напечатанная мельче, она видна глазу и не видна прогону.
+  if (barGaps.length) console.log("  дыр: " + barGaps.length);
+  for (const g of barGaps) console.log("    " + g);
+  if (barGaps.length)
+    console.log(
+      "  Позвать режим `bar` и пройти по критериям: свод без печати не свод.",
+    );
+
   // 44a. Файл базы заведён под свой предмет.
   //
   // Часть файлов базы приезжает не на посадке, а когда в коде появляется их
@@ -9505,6 +10236,7 @@ if (mode === "verify") {
     chainTwins.length ||
     peerDup.length ||
     unasked.length ||
+    barGaps.length ||
     goneNames.length ||
     frozenNumbers.length ||
     goneCamel.length ||

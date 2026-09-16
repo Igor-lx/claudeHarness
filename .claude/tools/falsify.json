@@ -218,6 +218,13 @@
       }
     },
     {
+      "section": "Планка пройдена покритериально",
+      "create": {
+        "path": "src/zzBarProbe.ts",
+        "text": "export const zzBarProbe = 1;"
+      }
+    },
+    {
       "section": "Тесты лежат в `tests/`",
       "create": {
         "path": "src/zzProbe.test.tsx",

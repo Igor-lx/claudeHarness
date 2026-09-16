@@ -1,0 +1,85 @@
+{
+  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с этим адресом. Вердикт машинный целиком. Чего замер НЕ доказывает: нарушение посажено в файле, заведённом ради пробы, и оттого заметнее настоящего — доля выходит оптимистичной, и читать её надо как верхнюю границу, а не как ловчесть на живом коде. Критерии-суждения — честно ли назван узел, та ли здесь граница — не сажаются вовсе и в долю не входят.",
+  "plants": [
+    {
+      "criterion": "B1",
+      "why": "булев аргумент, и он же делит тело функции пополам",
+      "create": {
+        "path": "zzPlantRow.ts",
+        "text": "/** Строка списка: заголовок или обычная. */\nexport const listRow = (text: string, asTitle: boolean): string =>\n  asTitle ? text.toUpperCase() : text;\n\nexport const rowsOf = (items: string[]): string[] =>\n  items.map((one, at) => listRow(one, at === 0));\n"
+      }
+    },
+    {
+      "criterion": "H4",
+      "why": "хвост после возврата не достижим никогда",
+      "create": {
+        "path": "zzPlantLabel.ts",
+        "text": "/** Подпись к числу. */\nexport const pickLabel = (count: number): string => {\n  if (count === 0) return \"пусто\";\n  return String(count);\n  const suffix = count > 10 ? \"+\" : \"\";\n  return String(count) + suffix;\n};\n"
+      }
+    },
+    {
+      "criterion": "H7",
+      "why": "величины стоят голыми числами прямо в выражении",
+      "create": {
+        "path": "zzPlantWidth.ts",
+        "text": "export const isWide = (width: number): boolean => width > 768;\n\nexport const delayed = (run: () => void): void => {\n  setTimeout(run, 400);\n};\n"
+      }
+    },
+    {
+      "criterion": "E1",
+      "why": "отказ проглочен: ни обработан, ни виден",
+      "create": {
+        "path": "zzPlantStore.ts",
+        "text": "/** Запомнить значение между заходами. */\nexport const store = (key: string, value: string): void => {\n  try {\n    window.localStorage.setItem(key, value);\n  } catch {\n    // ничего\n  }\n};\n"
+      }
+    },
+    {
+      "criterion": "D2",
+      "why": "приведение к «любому» глушит компилятор на границе",
+      "create": {
+        "path": "zzPlantMeasure.ts",
+        "text": "/** Ширина узла разметки. */\nexport const widthOf = (node: unknown): number =>\n  (node as any).offsetWidth;\n"
+      }
+    },
+    {
+      "criterion": "A6",
+      "why": "число колонок живёт в двух местах и разойдётся",
+      "create": {
+        "path": "zzPlantGrid.ts",
+        "text": "export const columns = 12;\n\nexport const columnWidth = (total: number): number => total / 12;\n"
+      }
+    },
+    {
+      "criterion": "H6-тер",
+      "why": "имена сокращены до нечитаемого",
+      "create": {
+        "path": "zzPlantShort.ts",
+        "text": "export const btnLbl = (cnt: number): string => \"Показать \" + cnt;\n\nexport const chkVis = (cnt: number): boolean => cnt > 0;\n"
+      }
+    },
+    {
+      "criterion": "B4",
+      "why": "возвращается кортеж из трёх значений на всякий случай",
+      "create": {
+        "path": "zzPlantSize.ts",
+        "text": "/** Разбор записи размера. */\nexport const parseSize = (raw: string): [number, string, boolean] => {\n  const value = Number.parseFloat(raw);\n  const unit = raw.replace(String(value), \"\");\n  return [value, unit, Number.isNaN(value)];\n};\n"
+      }
+    },
+    {
+      "criterion": "B3",
+      "why": "на вход идёт целая запись, а нужно одно её поле",
+      "create": {
+        "path": "zzPlantGreeting.ts",
+        "text": "type Profile = {\n  id: string;\n  name: string;\n  email: string;\n  avatar: string;\n};\n\nexport const greeting = (profile: Profile): string =>\n  \"Привет, \" + profile.name;\n"
+      }
+    },
+    {
+      "criterion": "H1",
+      "why": "первая половина условия истинна всегда и не объяснима",
+      "create": {
+        "path": "zzPlantVisible.ts",
+        "text": "export const visible = (items: string[]): boolean =>\n  items.length >= 0 && items.length > 0;\n"
+      }
+    }
+  ]
+}
