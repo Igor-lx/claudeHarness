@@ -143,13 +143,13 @@
     },
     {
       "section": "Отложенное семя положено, когда предмет появился",
-      "create": {
-        "path": "src/zzOwn.test.tsx",
-        "text": "import { it } from \"vitest\";\n\nit(\"проба\", () => {});"
-      }
+      "own": true,
+      "file": "stryker.config.json",
+      "rename": "stryker.config.json.hidden"
     },
     {
       "section": "Отложенное семя не положено посадкой",
+      "own": true,
       "edits": [
         {
           "file": ".context/graph.config.mjs",
