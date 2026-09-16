@@ -1110,6 +1110,12 @@ const CSS_VAR_USE = /var\(\s*(--[A-Za-z][\w-]*)/g;
 const DATA_ATTR = /data-[a-z][a-z0-9-]*/g;
 /** Класс, ОБЪЯВЛЕННЫЙ листом стилей: с начала строки, чтобы не собрать
  * вложенные состояния и сочетания вроде `.button:hover` вторым именем. */
+/** Импорт листа модуля стилей: привязка и адрес. Нужен двум сверкам —
+ * именам классов и отступлению от схемы стилизации, — поэтому объявлен
+ * здесь, а не внутри одной из них. */
+const STYLE_IMPORT =
+  /import\s+(\w+)\s+from\s+["']([^"']*\.module\.(?:s?css|less))["']/g;
+
 /** Классы, ОБЪЯВЛЕННЫЕ листом стилей.
  *
  * Ищутся в строках-селекторах, а не в начале строки. Прежний образец был
@@ -1836,6 +1842,7 @@ const CHECK_SECTIONS = [
   "Обещания без опоры собираются сводкой",
   "Связи через DOM и CSS",
   "Имена классов из кода есть в листе стилей",
+  "Отступление от схемы стилизации объявлено решением",
   "У каждого семени есть адрес назначения",
   "Доктрина названа в порядке чтения",
   "Документы названы в указателе",
@@ -1873,6 +1880,7 @@ const CHECK_SECTIONS = [
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
   "Отложенное семя слито",
+  "Семена приезжают отформатированными",
   "Находки закрыты",
   "Шаги перехода закрывают измерение",
   "Напоминание о переходе включено",
@@ -2137,7 +2145,25 @@ if (mode === "falsify") {
         }
         const was = readFileSync(stepAt, "utf8");
         undo.push(() => writeFileSync(stepAt, was));
-        if (step.append !== undefined)
+        // Строка, которая обязана быть ДОСЛОВНО равной строке семени,
+        // берётся из семени на прогоне. Копия в рецепте устаревала молча:
+        // семя правили, совпадение пропадало, ветка сверки не срабатывала,
+        // и прогон докладывал «поломка ушла не туда» — то есть указывал на
+        // соседнюю сверку. Замерено дважды за один день.
+        if (step.appendFrom !== undefined) {
+          const seedAt = path.join(tmp, step.appendFrom.seed);
+          if (!existsSync(seedAt))
+            return give("семени нет: " + step.appendFrom.seed);
+          const line = readFileSync(seedAt, "utf8")
+            .split(NEWLINE)
+            .find((l) => l.startsWith(step.appendFrom.startsWith));
+          if (line === undefined)
+            return give(
+              "в семени нет строки, начинающейся с: " +
+                step.appendFrom.startsWith,
+            );
+          writeFileSync(stepAt, was + NEWLINE + line);
+        } else if (step.append !== undefined)
           writeFileSync(
             stepAt,
             was + NEWLINE + step.append.split("\n").join(NEWLINE),
@@ -2148,7 +2174,7 @@ if (mode === "falsify") {
           // поломкой инструмента, а не негодным рецептом. Долг рецептов при
           // этом не печатался вовсе — одна опечатка гасила ВЕСЬ отчёт.
           return give(
-            "форма шага не опознана (ждали create, copyTo, rename, append или find): " +
+            "форма шага не опознана (ждали create, copyTo, rename, append, appendFrom или find): " +
               step.file,
           );
         else {
@@ -7749,8 +7775,7 @@ if (mode === "verify") {
         for (const m of readFileSync(at, "utf8").matchAll(/`([^`]+)`/g))
           foreignNamed.add(m[1]);
     }
-    const STYLE_IMPORT =
-      /import\s+(\w+)\s+from\s+["']([^"']*\.module\.(?:s?css|less))["']/g;
+
     // Ключ карты классов: строка вида `имя?: string`. Индексная подпись сюда не
     // попадает — у неё в позиции имени скобка.
     const MAP_KEY = /^\s{2,}(\w+)\??:\s*string/gm;
@@ -7841,6 +7866,91 @@ if (mode === "verify") {
   checkHead("Имена классов из кода есть в листе стилей");
   console.log("  расхождений: " + classDrift.length);
   for (const d of classDrift) console.log("    " + d);
+
+  // 13j. Отступление от схемы стилизации объявлено решением.
+  //
+  // Схема — умолчание обвязки: компонент импортирует СВОЙ лист модулем, а карта
+  // классов вызывающего подмешивается поверх. Живой проект, написанный до
+  // посадки, часто устроен иначе — компонент своего листа не имеет и получает
+  // весь свой вид пропом.
+  //
+  // Это законное устройство, и переводить его никто не вправе. Но у него есть
+  // цена, и молчаливой она быть не должна: связь кода с листом проходит через
+  // границу модуля, импорта между ними нет, и инструмент разбирает её хуже —
+  // очерченная область узла листа не содержит, радиус правки листа не
+  // вычисляется, а сверка имён классов видит только ключи типа карты.
+  //
+  // Поэтому спрашивается не перевод, а ЗАПИСЬ: отступление от умолчания — решение
+  // с причиной в реестре, иначе следующая сессия примет его за недосмотр и
+  // «починит» обратно. Записали — зелено навсегда, и перевод идёт отложенным, по
+  // одному компоненту, когда до него дойдут руки. Шагом перехода он не является:
+  // переход меняет обвязку, а перевод меняет код проекта.
+  //
+  // Признак отступления: файл объявляет карту классов ИЛИ принимает проп с
+  // классами — и при этом не импортирует ни одного листа модуля. Файл без карты
+  // и без пропа схемы не касается вовсе.
+  const schemeStray = [];
+  // Реестр решений адресуется полем `decisions` — он есть у каждого
+  // посаженного проекта. Поле `adr` — про адресуемость отдельных решений
+  // якорями, и его пустота не значит, что решений негде записать: привязка к
+  // нему оставляла сверку немой ровно там, где отступление и живёт.
+  const decidedAt =
+    CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+  if (decidedAt !== null) {
+    const decided = existsSync(decidedAt)
+      ? readFileSync(decidedAt, "utf8")
+      : "";
+    // Единица — ПАПКА компонента: в ней и он сам, и его тип, и его лист.
+    // Пофайловый разбор называл файл типов — адрес, по которому чинить
+    // нечего, потому что лист импортирует не тип, а компонент рядом.
+    const byDir = new Map();
+    for (const f of files) {
+      if (isTest(f) || f.endsWith(".d.ts")) continue;
+      const dir = path.dirname(f);
+      if (!byDir.has(dir)) byDir.set(dir, []);
+      byDir.get(dir).push(f);
+    }
+    for (const [dir, kin] of byDir) {
+      let ownSheet = false;
+      let takesMap = false;
+      for (const f of kin) {
+        const body = codeOf(readFileSync(f, "utf8"));
+        STYLE_IMPORT.lastIndex = 0;
+        if (STYLE_IMPORT.test(body)) ownSheet = true;
+        STYLE_IMPORT.lastIndex = 0;
+        // Карта классов узнаётся так же, как в соседней сверке: по строению
+        // с индексной подписью либо по соглашению об имени.
+        if (
+          /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(body) ||
+          /(?:interface|type)\s+\w*(?:ClassMap|ClassNames?|ClassNameKeys|ClassNameMap)\w*\b/.test(
+            body,
+          )
+        )
+          takesMap = true;
+      }
+      // Папка без КОМПОНЕНТА схемы не касается: набор объявлений публичного
+      // контракта тоже называет карту классов, но не рисует ничего и листа
+      // иметь не должен. Замерено на эталонном проекте: единственным ложным
+      // срабатыванием была ровно такая папка.
+      const hasComponent = kin.some((f) => /[.](tsx|jsx)$/.test(f));
+      if (ownSheet || !takesMap || !hasComponent) continue;
+      const at = rel(dir);
+      if (decided.includes(at)) continue;
+      schemeStray.push(at);
+    }
+  }
+  checkHead("Отступление от схемы стилизации объявлено решением");
+  console.log(
+    decidedAt === null
+      ? "  реестр решений не объявлен — спрашивать негде"
+      : "  без записи: " + schemeStray.length,
+  );
+  for (const one of schemeStray)
+    console.log(
+      "    " +
+        one +
+        " — компонент стилизуется не по умолчанию: своего листа не импортирует, весь вид приходит пропом. Записать решением с ценой либо привести к схеме",
+    );
 
   checkHead("Связи через DOM и CSS");
   console.log(
@@ -9929,6 +10039,64 @@ if (mode === "verify") {
     };
     look(REPO);
   }
+  // Семена кода носят суффикс отложенного, чтобы их не собрал ни раннер
+  // тестов, ни разбор кода. Ценой этого форматтер их тоже не видит:
+  // расширение ему незнакомо. Семя приезжало неотформатированным, и звено
+  // формата краснело в НОВОМ проекте — до единой собственной строки, то есть
+  // встречало разработчика на посадке и выглядело дефектом обвязки.
+  //
+  // Разбор называется явно: по расширению его не вывести, на то и суффикс.
+  const roughSeeds = [];
+  let seedFmtSaid = null;
+  {
+    const seedDir = shelfAt("seat/templates");
+    if (seedDir === null || !existsSync(seedDir))
+      seedFmtSaid = "семян рядом нет: полка не раздаётся из этого проекта";
+    else {
+      const found = [];
+      const look = (dir) => {
+        for (const e of readdirSync(dir)) {
+          const at = path.join(dir, e);
+          if (statSync(at).isDirectory()) look(at);
+          else if (e.endsWith(".seed")) found.push(at);
+        }
+      };
+      look(seedDir);
+      if (found.length === 0) seedFmtSaid = "семян с суффиксом нет";
+      else
+        try {
+          execFileSync(
+            "npx",
+            ["prettier", "--check", "--parser", "typescript", ...found],
+            {
+              cwd: path.join(BASE, ".."),
+              encoding: "utf8",
+              shell: true,
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+          seedFmtSaid = "семян проверено: " + found.length + ", расходится: 0";
+        } catch (e) {
+          const out = String(e.stdout ?? "") + String(e.stderr ?? "");
+          if (/not (found|recognized)|ENOENT|Cannot find/i.test(out))
+            seedFmtSaid =
+              "форматтера нет — сверить нечем, и это не поломка: звено формата в проекте может быть неприменимо";
+          else
+            for (const line of out.split(NEWLINE))
+              if (/\.seed\s*$/.test(line))
+                roughSeeds.push(line.replace(/^\[[^\]]*\]\s*/, "").trim());
+        }
+    }
+  }
+  checkHead("Семена приезжают отформатированными");
+  if (seedFmtSaid !== null) console.log("  " + seedFmtSaid);
+  if (roughSeeds.length) console.log("  расходится: " + roughSeeds.length);
+  for (const one of roughSeeds)
+    console.log(
+      "    " +
+        one +
+        " — в проекте суффикс снимается, и звено формата краснеет в первый же день",
+    );
   checkHead("Отложенное семя слито");
   console.log("  не слито: " + unmerged.length);
   for (const u of unmerged)
@@ -10502,6 +10670,7 @@ if (mode === "verify") {
     domDrift.length ||
     domMissed.length ||
     classDrift.length ||
+    schemeStray.length ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
@@ -10534,6 +10703,7 @@ if (mode === "verify") {
     (isoMissed === null ? 0 : 1) ||
     strayTests.length ||
     (seatingUp ? 0 : unmerged.length) ||
+    roughSeeds.length ||
     unresolved.length
   )
     process.exitCode = 1;

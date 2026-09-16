@@ -147,6 +147,13 @@
       "copyTo": "stryker.config.json"
     },
     {
+      "section": "Семена приезжают отформатированными",
+      "create": {
+        "path": ".claude/seat/templates/zzRough.ts.seed",
+        "text": "export const zzRough   =    1"
+      }
+    },
+    {
       "section": "Отложенное семя слито",
       "create": {
         "path": "zzProbe.md.seat",
@@ -301,7 +308,10 @@
         },
         {
           "file": ".context/00-map.md",
-          "append": "| `src/main.tsx` | монтирование приложения в разметку страницы | нет | читает `#root` из документа, создаёт корень React, подключает порядок слоёв каскада |"
+          "appendFrom": {
+            "seed": ".claude/seat/templates/00-map.md",
+            "startsWith": "| `src/main.tsx` |"
+          }
         }
       ]
     },
@@ -527,6 +537,13 @@
       "create": {
         "path": "src/zzPlantStyles.tsx",
         "text": "import styles from \"./zzPlantStyles.module.scss\";\n\nexport const ZzPlant = () => styles.zzNoSuchClass;\n"
+      }
+    },
+    {
+      "section": "Отступление от схемы стилизации объявлено решением",
+      "create": {
+        "path": "src/zzStray/zzStray.tsx",
+        "text": "export interface ZzStrayClassMap {\n  [key: string]: string | undefined;\n  root?: string;\n}\n\nexport const ZzStray = ({ className }: { className: ZzStrayClassMap }) =>\n  className.root;"
       }
     },
     {

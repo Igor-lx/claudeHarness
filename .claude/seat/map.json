@@ -117,11 +117,6 @@
       "onlyWhenEmpty": true
     },
     {
-      "from": "seat/templates/src/vite-env.d.ts",
-      "to": "src/vite-env.d.ts",
-      "onlyWhenEmpty": true
-    },
-    {
       "from": "seat/templates/src/main.tsx",
       "to": "src/main.tsx",
       "onlyWhenEmpty": true
@@ -144,21 +139,6 @@
     {
       "from": "seat/templates/src/shared/styles/mergeStyleMaps.ts",
       "to": "src/shared/styles/mergeStyleMaps.ts",
-      "onlyWhenEmpty": true
-    },
-    {
-      "from": "seat/templates/src/types.ts",
-      "to": "src/types.ts",
-      "onlyWhenEmpty": true
-    },
-    {
-      "from": "seat/templates/src/App.module.scss",
-      "to": "src/App.module.scss",
-      "onlyWhenEmpty": true
-    },
-    {
-      "from": "seat/templates/src/globals.scss",
-      "to": "src/globals.scss",
       "onlyWhenEmpty": true
     },
     {
