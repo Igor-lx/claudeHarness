@@ -147,6 +147,12 @@
       "copyTo": "stryker.config.json"
     },
     {
+      "section": "Запись о семени помечена каркасом вместе с ним",
+      "file": ".claude/seat/templates/08-tests.md",
+      "find": "<!-- /КАРКАС -->",
+      "replace": "| `tests/setup.ts` | проба |\n<!-- /КАРКАС -->"
+    },
+    {
       "section": "Настройка семени не ссылается на непривезённое",
       "file": ".claude/seat/templates/vite.config.ts",
       "find": "    globals: false,",

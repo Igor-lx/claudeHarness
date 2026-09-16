@@ -1882,6 +1882,7 @@ const CHECK_SECTIONS = [
   "Отложенное семя слито",
   "Семена приезжают отформатированными",
   "Настройка семени не ссылается на непривезённое",
+  "Запись о семени помечена каркасом вместе с ним",
   "Находки закрыты",
   "Шаги перехода закрывают измерение",
   "Напоминание о переходе включено",
@@ -10151,6 +10152,67 @@ if (mode === "verify") {
       if (seedRefs.length === 0) seedRefSaid = "ссылок мимо карты: 0";
     }
   }
+  // Запись о семени, которое НЕ каркас, не лежит внутри пометок каркаса.
+  //
+  // Пометка стоит на ЗАПИСИ, условие приезда — на СЕМЕНИ, и разъезжаются
+  // они молча: семя перестало быть каркасом, запись осталась внутри пометки
+  // и снимается вместе с ним. Проект получает файл, о котором посадка сама
+  // же не написала. Замерено посадкой в живой проект.
+  const wrapped = [];
+  let wrapSaid = null;
+  {
+    const seedDir = shelfAt("seat/templates");
+    const mapAt = shelfAt("seat/map.json");
+    if (seedDir === null || mapAt === null || !existsSync(mapAt))
+      wrapSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+    else {
+      const travels = (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+        .filter((c) => c.onlyWhenEmpty !== true)
+        .map((c) => c.to);
+      for (const name of readdirSync(seedDir)) {
+        if (!name.endsWith(".md")) continue;
+        const rows = readFileSync(path.join(seedDir, name), "utf8").split(
+          /\r?\n/,
+        );
+        let inside = false;
+        for (let i = 0; i < rows.length; i += 1) {
+          if (rows[i].trim() === "<!-- КАРКАС -->") {
+            inside = true;
+            continue;
+          }
+          if (rows[i].trim() === "<!-- /КАРКАС -->") {
+            inside = false;
+            continue;
+          }
+          if (!inside) continue;
+          for (const to of travels)
+            if (
+              rows[i].includes(to) ||
+              rows[i].includes(to.replace(/^src\//, ""))
+            )
+              wrapped.push(
+                name +
+                  ":" +
+                  (i + 1) +
+                  " — запись о `" +
+                  to +
+                  "`, а это не каркас",
+              );
+        }
+      }
+      if (wrapped.length === 0) wrapSaid = "записей не по своей пометке: 0";
+    }
+  }
+  checkHead("Запись о семени помечена каркасом вместе с ним");
+  if (wrapSaid !== null) console.log("  " + wrapSaid);
+  if (wrapped.length)
+    console.log("  записей не по своей пометке: " + wrapped.length);
+  for (const one of wrapped)
+    console.log(
+      "    " +
+        one +
+        " — живой проект снимет пометку вместе с записью и получит файл, о котором посадка не написала",
+    );
   checkHead("Настройка семени не ссылается на непривезённое");
   if (seedRefSaid !== null) console.log("  " + seedRefSaid);
   if (seedRefs.length) console.log("  ссылок мимо карты: " + seedRefs.length);
@@ -10777,6 +10839,7 @@ if (mode === "verify") {
     (seatingUp ? 0 : unmerged.length) ||
     roughSeeds.length ||
     seedRefs.length ||
+    wrapped.length ||
     unresolved.length
   )
     process.exitCode = 1;
