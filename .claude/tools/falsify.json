@@ -150,8 +150,17 @@
     },
     {
       "section": "Отложенное семя не положено посадкой",
-      "file": ".claude/seat/templates/stryker.config.json",
-      "copyTo": "stryker.config.json"
+      "edits": [
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  seating: null,",
+          "replace": "  seating: 1,"
+        },
+        {
+          "file": ".claude/seat/templates/stryker.config.json",
+          "copyTo": "stryker.config.json"
+        }
+      ]
     },
     {
       "section": "Запись о семени помечена каркасом вместе с ним",
