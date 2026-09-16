@@ -128,23 +128,19 @@
     },
     {
       "from": "seat/templates/src/shared/styles/tests/mergeStyleMaps.test.ts.seed",
-      "to": "src/shared/styles/tests/mergeStyleMaps.test.ts",
-      "onlyWhenEmpty": true
+      "to": "src/shared/styles/tests/mergeStyleMaps.test.ts"
     },
     {
       "from": "seat/templates/src/shared/styles/README.md",
-      "to": "src/shared/styles/README.md",
-      "onlyWhenEmpty": true
+      "to": "src/shared/styles/README.md"
     },
     {
       "from": "seat/templates/src/shared/styles/mergeStyleMaps.ts",
-      "to": "src/shared/styles/mergeStyleMaps.ts",
-      "onlyWhenEmpty": true
+      "to": "src/shared/styles/mergeStyleMaps.ts"
     },
     {
       "from": "seat/templates/src/tests/setup.ts",
-      "to": "src/tests/setup.ts",
-      "onlyWhenEmpty": true
+      "to": "src/tests/setup.ts"
     },
     {
       "from": "seat/templates/src/tests/App.test.tsx.seed",

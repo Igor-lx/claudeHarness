@@ -147,6 +147,12 @@
       "copyTo": "stryker.config.json"
     },
     {
+      "section": "Настройка семени не ссылается на непривезённое",
+      "file": ".claude/seat/templates/vite.config.ts",
+      "find": "    globals: false,",
+      "replace": "    globals: false,\n    setupFiles: [\"./src/zzНетТакого.ts\"],"
+    },
+    {
       "section": "Семена приезжают отформатированными",
       "create": {
         "path": ".claude/seat/templates/zzRough.ts.seed",

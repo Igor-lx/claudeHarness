@@ -1881,6 +1881,7 @@ const CHECK_SECTIONS = [
   "Отложенное семя не положено посадкой",
   "Отложенное семя слито",
   "Семена приезжают отформатированными",
+  "Настройка семени не ссылается на непривезённое",
   "Находки закрыты",
   "Шаги перехода закрывают измерение",
   "Напоминание о переходе включено",
@@ -10088,6 +10089,77 @@ if (mode === "verify") {
         }
     }
   }
+  // Семя настройки не должно называть файл, которого посадка не кладёт.
+  //
+  // Замерено посадкой в живой проект: слияние конфига сборщика внесло
+  // строку с адресом файла подготовки тестов, а сам файл был помечен
+  // каркасом и в живой проект не поехал. Раннер упал на запуске — звено
+  // тестов оказалось сломано ПОСАДКОЙ, в первый же день.
+  //
+  // Класс тот же, что у звена и его спутника: две половины одной вещи,
+  // разложенные по разным местам, обязаны ехать вместе.
+  const seedRefs = [];
+  let seedRefSaid = null;
+  {
+    const seedDir = shelfAt("seat/templates");
+    const mapAt = shelfAt("seat/map.json");
+    if (seedDir === null || mapAt === null || !existsSync(mapAt))
+      seedRefSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+    else {
+      // Считается не «есть ли адрес в карте», а «ПОЕДЕТ ли он в живой
+      // проект». Настройки сливаются в живой проект всегда, а семя с пометкой
+      // каркаса туда не кладётся вовсе — и ровно на этом расхождении звено
+      // тестов и сломалось: адрес в карте был, файла в проекте не было.
+      const addressed = new Set(
+        (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+          .filter(
+            (c) =>
+              c.onlyWhenEmpty !== true &&
+              c.onSubject === undefined &&
+              c.onTransition === undefined,
+          )
+          .map((c) => c.to),
+      );
+      // Смотрятся семена НАСТРОЕК: они и есть то, что сливается в проект.
+      // Семена кода ссылаются друг на друга импортами, и их держит
+      // компилятор.
+      const configs = [];
+      const look = (dir) => {
+        for (const e of readdirSync(dir)) {
+          const at = path.join(dir, e);
+          if (statSync(at).isDirectory()) {
+            if (e !== "src" && e !== "docs") look(at);
+            continue;
+          }
+          if (/[.](ts|js|mjs|cjs|json)$/.test(e)) configs.push(at);
+        }
+      };
+      look(seedDir);
+      for (const f of configs) {
+        const body = readFileSync(f, "utf8");
+        for (const m of body.matchAll(/["'](\.\/(?:src|docs)\/[^"']+)["']/g)) {
+          const to = m[1].replace(/^\.\//, "");
+          if (addressed.has(to)) continue;
+          seedRefs.push(
+            norm(path.relative(SHELF, f)).split(path.sep).join("/") +
+              " называет " +
+              m[1] +
+              " — такого адреса назначения в карте нет",
+          );
+        }
+      }
+      if (seedRefs.length === 0) seedRefSaid = "ссылок мимо карты: 0";
+    }
+  }
+  checkHead("Настройка семени не ссылается на непривезённое");
+  if (seedRefSaid !== null) console.log("  " + seedRefSaid);
+  if (seedRefs.length) console.log("  ссылок мимо карты: " + seedRefs.length);
+  for (const one of seedRefs)
+    console.log(
+      "    " +
+        one +
+        " — в проекте настройка будет указывать в пустоту, и звено сломается посадкой",
+    );
   checkHead("Семена приезжают отформатированными");
   if (seedFmtSaid !== null) console.log("  " + seedFmtSaid);
   if (roughSeeds.length) console.log("  расходится: " + roughSeeds.length);
@@ -10704,6 +10776,7 @@ if (mode === "verify") {
     strayTests.length ||
     (seatingUp ? 0 : unmerged.length) ||
     roughSeeds.length ||
+    seedRefs.length ||
     unresolved.length
   )
     process.exitCode = 1;
