@@ -9428,15 +9428,26 @@ if (mode === "verify") {
         );
       };
       const own = files.filter((f) => !fromSeed(f));
+      // Законный выход: запись решения, называющая адрес. Проект, выросший
+      // из пустого, вправе оставить файл каркаса как есть — менять в нём
+      // могло быть нечего, — и тогда это решение с причиной, а не мусор.
+      // Без выхода сверка краснела бы навсегда, а красное навсегда
+      // перестают читать.
+      const decidedAt =
+        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+      const decided =
+        decidedAt !== null && existsSync(decidedAt)
+          ? readFileSync(decidedAt, "utf8")
+          : "";
       frameLaid = laid.length;
       frameOwn = own.length;
       if (laid.length && own.length)
-        for (const e of laid)
+        for (const e of laid.filter((e) => !decided.includes(e.to)))
           frameLitter.push(
             e.to +
-              " — семя каркаса, а в проекте " +
+              " — приехал семенем каркаса и своим не стал, а в проекте уже " +
               own.length +
-              " своих файлов",
+              " своих файлов. Переписать под проект либо назвать решением",
           );
 
       // Вторая сторона: не сам каркас, а ЗАПИСИ семян базы о нём.
