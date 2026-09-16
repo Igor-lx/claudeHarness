@@ -10040,8 +10040,39 @@ if (mode === "verify") {
   // семя, лежащее ровно тем же, каким приехало, никто не заполнял, значит его
   // положила посадка. Тронутое семя семенем быть перестало — тот же признак,
   // что у сверки каркаса.
+  /** Свои тесты проекта — не те, что привезены каркасом.
+   *
+   * Предмет отложенных семян: до первого СВОЕГО теста конфиг мутационного
+   * прогона бесполезен. Считается он двумя сверками сразу — той, что
+   * запрещает класть семя раньше срока, и той, что требует положить его,
+   * когда срок настал, — и счёт у них обязан быть один: разойдясь, они
+   * начали бы противоречить друг другу на одном и том же файле.
+   */
+  const ownTestExists = (() => {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt)) return false;
+    const seedOf = new Map();
+    for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
+      const from0 = shelfAt(e.from);
+      if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
+    }
+    const eol = String.fromCharCode(13) + NEWLINE;
+    return files.some((f) => {
+      if (!isTest(f)) return false;
+      const src = seedOf.get(f);
+      if (src === undefined || !existsSync(src)) return true;
+      return (
+        readFileSync(f, "utf8").split(eol).join(NEWLINE) !==
+        readFileSync(src, "utf8").split(eol).join(NEWLINE)
+      );
+    });
+  })();
+
   const earlySeed = [];
-  {
+  // Раньше срока — значит СВОИХ ТЕСТОВ ЕЩЁ НЕТ. Прежде признак был «файл
+  // лежит и равен семени», без вопроса когда, и запрещал законно лежащее
+  // семя сразу после того, как соседняя сверка потребовала его положить.
+  if (!ownTestExists) {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt !== null && existsSync(mapAt))
       for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
@@ -10303,21 +10334,7 @@ if (mode === "verify") {
     else {
       const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
       const deferred = copy.filter((e) => e.notAtSeating !== undefined);
-      const seedOf = new Map();
-      for (const e of copy) {
-        const from0 = shelfAt(e.from);
-        if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
-      }
-      const eol = String.fromCharCode(13) + NEWLINE;
-      const ownTest = files.some((f) => {
-        if (!isTest(f)) return false;
-        const src = seedOf.get(f);
-        if (src === undefined || !existsSync(src)) return true;
-        return (
-          readFileSync(f, "utf8").split(eol).join(NEWLINE) !==
-          readFileSync(src, "utf8").split(eol).join(NEWLINE)
-        );
-      });
+      const ownTest = ownTestExists;
       if (!ownTest)
         lateSaid =
           "своих тестов у проекта нет: предмета у отложенных семян нет";
