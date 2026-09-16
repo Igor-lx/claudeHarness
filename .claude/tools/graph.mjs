@@ -1110,7 +1110,28 @@ const CSS_VAR_USE = /var\(\s*(--[A-Za-z][\w-]*)/g;
 const DATA_ATTR = /data-[a-z][a-z0-9-]*/g;
 /** Класс, ОБЪЯВЛЕННЫЙ листом стилей: с начала строки, чтобы не собрать
  * вложенные состояния и сочетания вроде `.button:hover` вторым именем. */
-const CSS_CLASS_DECL = /^\.([A-Za-z][\w-]*)/gm;
+/** Классы, ОБЪЯВЛЕННЫЕ листом стилей.
+ *
+ * Ищутся в строках-селекторах, а не в начале строки. Прежний образец был
+ * привязан к первому символу строки и в листе, завёрнутом в слой каскада,
+ * видел НОЛЬ классов: там каждый класс с отступом. Замерено на эталонном
+ * проекте — все пять его листов читались как пустые.
+ *
+ * Строка свойства кончается точкой с запятой, строка селектора — фигурной
+ * скобкой или запятой. Этого различения довольно, чтобы в набор не попали
+ * значения свойств, и оно не требует разбора CSS.
+ *
+ * Составной селектор отдаёт ВСЕ свои классы: `.a .b` — это объявление
+ * обоих, и прежний образец брал только первый. */
+const cssClasses = (text) => {
+  const out = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    const body = line.split("//")[0];
+    if (!/[{,]\s*$/.test(body)) continue;
+    for (const m of body.matchAll(/[.&]([A-Za-z][\w-]*)/g)) out.add(m[1]);
+  }
+  return out;
+};
 /** Имя, НАЗВАННОЕ кодом: строкой в кавычках либо обращением к полю. Модуль
  * стилей часто передают целиком, как данные, и обращения к нему в коде нет
  * вовсе — тогда имя живёт строкой в контракте. */
@@ -1814,6 +1835,7 @@ const CHECK_SECTIONS = [
   "Объявленные области существуют",
   "Обещания без опоры собираются сводкой",
   "Связи через DOM и CSS",
+  "Имена классов из кода есть в листе стилей",
   "У каждого семени есть адрес назначения",
   "Доктрина названа в порядке чтения",
   "Документы названы в указателе",
@@ -7566,8 +7588,8 @@ if (mode === "verify") {
       // Класс живёт в двух формах: в листе стилей он с точкой, в контракте —
       // строкой в кавычках. Обе засчитываются как одно имя.
       for (const f of styleFiles)
-        for (const m of readFileSync(f, "utf8").matchAll(CSS_CLASS_DECL))
-          liveDomNames.add("." + m[1]);
+        for (const one of cssClasses(readFileSync(f, "utf8")))
+          liveDomNames.add("." + one);
       for (const f of files.filter((one) => !isTestPath(one)))
         for (const line of readFileSync(f, "utf8").split(NEWLINE))
           for (const hit of line.matchAll(CODE_NAME))
@@ -7661,6 +7683,165 @@ if (mode === "verify") {
           one.name + " — чужая связь в " + one.where + ", таблицей не названа",
         );
   }
+  // 13i. Имена классов, названные кодом, существуют в листе стилей.
+  //
+  // Связь кода с листом модуля стилей НЕ ВИДИТ НИКТО. Объявление, которое
+  // привозит сборщик, — индексная подпись:
+  //
+  //   declare module "*.module.scss" {
+  //     const classes: { readonly [key: string]: string };
+  //   }
+  //
+  // то есть `styles.track`, `styles.trrack` и `styles.чегоТоНет` проходят
+  // компилятор все три. Удалили класс из листа — обращение вернёт `undefined`,
+  // элемент отрисуется без стилей, и не шелохнётся ни одна проверка: ни типы,
+  // ни линт, ни тесты, ни сборка.
+  //
+  // Это СВОЁ дублирование через границу языков (`quality.md`, критерий
+  // `C7-бис`), и свести его к одному источнику конструкцией нельзя: CSS не
+  // умеет импортировать типы, а объявление сборщика набора имён не содержит.
+  // Генератор слепков это чинит, но он сторонний пакет, обвязкой не меренный, и
+  // умолчанием не объявляется. Значит остаётся третий исход критерия — держать
+  // сверкой, и вот она.
+  //
+  // Сторон у сверки две, потому что имена доходят до разметки двумя путями.
+  //
+  // ПЕРВАЯ — обращения в файле, который лист импортирует. Берётся привязка
+  // импорта и её местные псевдонимы: эталонная раскладка подмешивает внешнюю
+  // карту (`const classNames = merge(styles, className)`), и обращения идут уже
+  // к псевдониму. Дальше одного уровня разбор не идёт намеренно: за пределами
+  // файла имя едет пропом, и проследить его текстом нельзя — этот путь
+  // закрывает вторая сторона.
+  //
+  // ВТОРАЯ — именованные ключи КАРТЫ КЛАССОВ, объявленной рядом с листом. В
+  // эталонной раскладке это она и есть: публичная поверхность перекраски,
+  // через которую имена уходят в соседние файлы и к потребителю. Ключи её
+  // написаны руками и обязаны существовать в листе.
+  //
+  // Имя, названное таблицей связей, законно: это объявленная ЧУЖАЯ сторона, и
+  // сводить её не с чем.
+  const classDrift = [];
+  {
+    const classesOf = (sheets) => {
+      const out = new Set();
+      for (const f of sheets)
+        for (const one of cssClasses(readFileSync(f, "utf8"))) out.add(one);
+      return out;
+    };
+    // Для ключей карты классов набор берётся по ПАПКЕ: карта объявлена
+    // рядом с листом, а импортирует лист соседний файл той же папки.
+    const nearDir = (dir) => {
+      const sheets = styleFiles.filter((f) => path.dirname(f) === dir);
+      for (const f of files)
+        if (path.dirname(f) === dir)
+          for (const m of codeOf(readFileSync(f, "utf8")).matchAll(
+            STYLE_IMPORT,
+          )) {
+            const at = norm(path.resolve(dir, m[2]));
+            if (existsSync(at) && !sheets.includes(at)) sheets.push(at);
+          }
+      return classesOf(sheets);
+    };
+    const foreignNamed = new Set();
+    if (CONFIG.domTables != null) {
+      const at = path.join(BASE, CONFIG.domTables.file);
+      if (existsSync(at))
+        for (const m of readFileSync(at, "utf8").matchAll(/`([^`]+)`/g))
+          foreignNamed.add(m[1]);
+    }
+    const STYLE_IMPORT =
+      /import\s+(\w+)\s+from\s+["']([^"']*\.module\.(?:s?css|less))["']/g;
+    // Ключ карты классов: строка вида `имя?: string`. Индексная подпись сюда не
+    // попадает — у неё в позиции имени скобка.
+    const MAP_KEY = /^\s{2,}(\w+)\??:\s*string/gm;
+    const LITERAL = /"(\w+)"/g;
+
+    for (const f of files) {
+      if (isTest(f) || f.endsWith(".d.ts")) continue;
+      const body = codeOf(readFileSync(f, "utf8"));
+      const dir = path.dirname(f);
+
+      // --- сторона первая: обращения к привязке импорта и её псевдонимам ---
+      const bindings = [];
+      const sheets = [];
+      for (const m of body.matchAll(STYLE_IMPORT)) {
+        bindings.push(m[1]);
+        const at = norm(path.resolve(dir, m[2]));
+        if (existsSync(at)) sheets.push(at);
+      }
+      if (bindings.length) {
+        // Псевдоним — местная константа, в объявлении которой стоит
+        // ИСХОДНАЯ привязка. Цепочкой они не собираются: найденный
+        // псевдоним, ставший зацепкой для следующего, за два шага утаскивал
+        // в список кэш и ссылку на него, и обращения к методам словаря
+        // объявлялись расхождением. Замерено на эталонном проекте.
+        const seeds = [...bindings];
+        for (const chunk of body.split(";")) {
+          if (chunk.length > 400) continue;
+          const named = /const\s+(\w+)\s*=/.exec(chunk);
+          if (named === null) continue;
+          // Смотрим ТОЛЬКО часть от самого объявления: кусок, нарезанный
+          // по точке с запятой, начинается хвостом предыдущего оператора,
+          // и упомянутая там привязка утаскивала в псевдонимы соседнюю
+          // ссылку. Замерено на эталонном проекте.
+          const tail = chunk.slice(named.index);
+          if (seeds.some((b) => new RegExp("\\b" + b + "\\b").test(tail)))
+            bindings.push(named[1]);
+        }
+        const allowed = new Set([...classesOf(sheets), ...foreignNamed]);
+        for (const b of new Set(bindings))
+          for (const m of body.matchAll(
+            new RegExp("\\b" + b + "\\.(\\w+)", "g"),
+          ))
+            if (!allowed.has(m[1]))
+              classDrift.push(
+                rel(f) +
+                  ": `" +
+                  b +
+                  "." +
+                  m[1] +
+                  "` — класса нет в листе, который этот файл импортирует",
+              );
+      }
+
+      // --- сторона вторая: именованные ключи карты классов ---
+      const own = nearDir(dir);
+      if (own.size === 0) continue;
+      // Тело в фигурных скобках читается ДО ЗАКРЫВАЮЩЕЙ СКОБКИ в начале
+      // строки. Прежде захват кончался «на скобке ИЛИ на точке с запятой», и
+      // нежадный разбор останавливался на первой же — на индексной подписи,
+      // которая в эталонной карте стоит первой строкой. Именованные ключи шли
+      // после неё и не читались ни разу.
+      const blocks = [
+        ...body.matchAll(/(?:interface|type)\s+(\w+)[^{;]*\{([\s\S]*?)^\}/gm),
+      ].map((m) => ({ name: m[1], body: m[2] }));
+      // Псевдоним-объединение скобок не имеет и кончается точкой с запятой.
+      const unions = [...body.matchAll(/type\s+(\w+)\s*=\s*([^;{]*);/g)].map(
+        (m) => ({ name: m[1], body: m[2] }),
+      );
+      // Признак карты классов двойной. Соглашение об имени покрывает
+      // объединение литералов, у которого строения нет. Строение — индексная
+      // подпись строки на строку — переживает переименование типа, а имя
+      // нет: переименовали бы, и покрытие пропало бы молча.
+      const isMap = (one) =>
+        /ClassMap|ClassNames?|ClassNameKeys|ClassNameMap/.test(one.name) ||
+        /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(one.body);
+      for (const one of [...blocks, ...unions].filter(isMap)) {
+        const keys = new Set();
+        for (const m of one.body.matchAll(MAP_KEY)) keys.add(m[1]);
+        for (const m of one.body.matchAll(LITERAL)) keys.add(m[1]);
+        for (const k of keys)
+          if (!own.has(k) && !foreignNamed.has(k))
+            classDrift.push(
+              rel(f) + ": ключ карты классов `" + k + "` в листе не объявлен",
+            );
+      }
+    }
+  }
+  checkHead("Имена классов из кода есть в листе стилей");
+  console.log("  расхождений: " + classDrift.length);
+  for (const d of classDrift) console.log("    " + d);
+
   checkHead("Связи через DOM и CSS");
   console.log(
     CONFIG.domTables == null
@@ -9729,7 +9910,12 @@ if (mode === "verify") {
   // Найдено вопросом разработчика о том, что дальше происходит с таким
   // файлом, — ответа в проекте не было.
   const unmerged = [];
-  if (CONFIG.seating == null || CONFIG.seating === 0) {
+  // Смотрится ВСЕГДА, краснеет только при снятом флаге. Прежде при
+  // поднятом флаге сверка не смотрела вовсе: отчёт посадки не называл, что
+  // ещё предстоит слить, — ровно тогда, когда это нужнее всего, — а прогон
+  // рецепта докладывал промолчавшую сверку как слепую.
+  const seatingUp = CONFIG.seating != null && CONFIG.seating !== 0;
+  {
     const look = (dir) => {
       for (const e of readdirSync(dir)) {
         if (OUT_OF_TREE.has(e)) continue;
@@ -9744,14 +9930,14 @@ if (mode === "verify") {
     look(REPO);
   }
   checkHead("Отложенное семя слито");
-  console.log(
-    CONFIG.seating != null && CONFIG.seating !== 0
-      ? "  посадка не закончена: отложенное семя пока законно"
-      : "  не слито: " + unmerged.length,
-  );
+  console.log("  не слито: " + unmerged.length);
   for (const u of unmerged)
     console.log(
       "    " + u + " — перенести нужное в проектный файл и удалить это",
+    );
+  if (unmerged.length && seatingUp)
+    console.log(
+      "  Посадка не закончена — пока это не поломка, а список работы фазы 2.",
     );
   checkHead("Отложенное семя не положено посадкой");
   console.log("  положенных раньше срока: " + earlySeed.length);
@@ -10315,6 +10501,7 @@ if (mode === "verify") {
     indexDrift.length ||
     domDrift.length ||
     domMissed.length ||
+    classDrift.length ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
@@ -10346,7 +10533,7 @@ if (mode === "verify") {
     (headingMissed === null ? 0 : 1) ||
     (isoMissed === null ? 0 : 1) ||
     strayTests.length ||
-    unmerged.length ||
+    (seatingUp ? 0 : unmerged.length) ||
     unresolved.length
   )
     process.exitCode = 1;

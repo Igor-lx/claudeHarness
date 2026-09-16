@@ -1,0 +1,17 @@
+// Every rule of a component sheet lives inside a layer. See `globals.scss` for
+// why: a caller's `className` arrives unlayered and beats the layer without
+// having to out-specify it. Drop the wrapper and that becomes a specificity
+// race decided by bundle order.
+@layer components {
+  .app {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+  }
+
+  .heading {
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+}

@@ -301,7 +301,7 @@
         },
         {
           "file": ".context/00-map.md",
-          "append": "| `src/main.tsx` | монтирование приложения в разметку страницы | нет | читает `#root` из документа, создаёт корень React |"
+          "append": "| `src/main.tsx` | монтирование приложения в разметку страницы | нет | читает `#root` из документа, создаёт корень React, подключает порядок слоёв каскада |"
         }
       ]
     },
@@ -521,6 +521,13 @@
         }
       ],
       "own": true
+    },
+    {
+      "section": "Имена классов из кода есть в листе стилей",
+      "create": {
+        "path": "src/zzPlantStyles.tsx",
+        "text": "import styles from \"./zzPlantStyles.module.scss\";\n\nexport const ZzPlant = () => styles.zzNoSuchClass;\n"
+      }
     },
     {
       "section": "Связи через DOM и CSS",

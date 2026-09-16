@@ -8,4 +8,25 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "It works" })).toBeDefined();
   });
+
+  // The styling scheme of this project, asserted rather than described.
+  //
+  // A caller hands in class names and the component keeps its own as well:
+  // dropping its own would take the layout with it, dropping the caller's
+  // would make the prop a lie. Which rule finally wins is the cascade's job -
+  // see the layer order in `globals.scss` - and is not asserted here, because
+  // jsdom does not apply stylesheets at all.
+  it("keeps its own classes when a caller supplies its own", () => {
+    render(<App className={{ heading: "caller_heading" }} />);
+    const heading = screen.getByRole("heading", { name: "It works" });
+    expect(heading.className).toContain("caller_heading");
+    expect(heading.className.split(" ").length).toBeGreaterThan(1);
+  });
+
+  it("works without a class map at all", () => {
+    render(<App />);
+    expect(
+      screen.getByRole("heading", { name: "It works" }).className,
+    ).not.toBe("");
+  });
 });

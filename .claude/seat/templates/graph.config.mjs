@@ -481,6 +481,7 @@ export const CONFIG = {
     react: "19.3.0",
     "react-dom": "19.3.0",
     jsdom: "30.0.1",
+    "sass-embedded": "1.89.2",
     "@testing-library/react": "16.3.3",
   },
   // Пакеты названы ПОЛНОСТЬЮ, а не выборочно, и это требование сверки «Пакеты
