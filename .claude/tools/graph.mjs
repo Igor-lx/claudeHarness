@@ -770,6 +770,13 @@ const CSS_VAR_DECL = /(--[A-Za-z][\w-]*)\s*:/g;
 const CSS_VAR_USE = /var\(\s*(--[A-Za-z][\w-]*)/g;
 /** Атрибут данных: та же связь, но между кодом и стилем. */
 const DATA_ATTR = /data-[a-z][a-z0-9-]*/g;
+/** Класс, ОБЪЯВЛЕННЫЙ листом стилей: с начала строки, чтобы не собрать
+ * вложенные состояния и сочетания вроде `.button:hover` вторым именем. */
+const CSS_CLASS_DECL = /^\.([A-Za-z][\w-]*)/gm;
+/** Имя, НАЗВАННОЕ кодом: строкой в кавычках либо обращением к полю. Модуль
+ * стилей часто передают целиком, как данные, и обращения к нему в коде нет
+ * вовсе — тогда имя живёт строкой в контракте. */
+const CODE_NAME = /"([A-Za-z][\w-]*)"|'([A-Za-z][\w-]*)'|\.([A-Za-z][\w-]*)\b/g;
 
 for (const f of files) {
   // Комментарии снимаются ДО разбора: ребро графа из комментария — не
@@ -6125,6 +6132,18 @@ if (mode === "verify") {
     const inStyles = dataIn(styleFiles);
     const inCode = dataIn(files.filter((f) => !isTestPath(f)));
     const crossData = [...inStyles].find((n) => inCode.has(n));
+    // Третий сигнал, и он же тот, на котором дыра держалась: класс, объявленный
+    // листом стилей и названный кодом. Ребро импорта тут есть, а имена по нему
+    // не проходят — модуль передают целиком, как данные.
+    const styleClasses = new Set();
+    for (const f of styleFiles)
+      for (const m of readFileSync(f, "utf8").matchAll(CSS_CLASS_DECL))
+        styleClasses.add(m[1]);
+    const codeNames = new Set();
+    for (const f of files.filter((one) => !isTestPath(one)))
+      for (const m of readFileSync(f, "utf8").matchAll(CODE_NAME))
+        codeNames.add(m[1] ?? m[2] ?? m[3]);
+    const crossClass = [...styleClasses].filter((n) => codeNames.has(n));
     if (crossVar !== undefined)
       disarmed.push(
         "переменная стиля " +
@@ -6140,6 +6159,14 @@ if (mode === "verify") {
         "атрибут " +
           crossData +
           " встречается и в стилях, и в коде — связь есть, а CONFIG.domTables пуст",
+      );
+    else if (crossClass.length)
+      disarmed.push(
+        "классов листа стилей, названных кодом: " +
+          crossClass.length +
+          " (" +
+          crossClass.slice(0, 3).join(", ") +
+          "…) — связь есть, а CONFIG.domTables пуст",
       );
   }
   if (CONFIG.skills == null) {
@@ -6632,6 +6659,16 @@ if (mode === "verify") {
         for (const line of readFileSync(f, "utf8").split(NEWLINE))
           for (const hit of line.matchAll(/--[a-z-]+|data-[a-z-]+/g))
             if (!inComment(line, hit.index)) liveDomNames.add(hit[0]);
+      // Класс живёт в двух формах: в листе стилей он с точкой, в контракте —
+      // строкой в кавычках. Обе засчитываются как одно имя.
+      for (const f of styleFiles)
+        for (const m of readFileSync(f, "utf8").matchAll(CSS_CLASS_DECL))
+          liveDomNames.add("." + m[1]);
+      for (const f of files.filter((one) => !isTestPath(one)))
+        for (const line of readFileSync(f, "utf8").split(NEWLINE))
+          for (const hit of line.matchAll(CODE_NAME))
+            if (!inComment(line, hit.index))
+              liveDomNames.add("." + (hit[1] ?? hit[2] ?? hit[3]));
       for (const heading of CONFIG.domTables.headings) {
         const from = text.indexOf(heading);
         if (from < 0) {
@@ -6645,7 +6682,9 @@ if (mode === "verify") {
         }
         for (const row of domRows) {
           const named = [
-            ...row.split("|")[1].matchAll(/`(--[a-z-]+|data-[a-z-]+)`/g),
+            ...row
+              .split("|")[1]
+              .matchAll(/`(--[a-z-]+|data-[a-z-]+|\.[A-Za-z][\w-]*)`/g),
           ].map((hit) => hit[1]);
           // Адреса, названные ТОЙ ЖЕ строкой: кто объявляет, кто читает.
           // Строка, не называющая файлов, проверяется как прежде.
@@ -6664,10 +6703,18 @@ if (mode === "verify") {
             // рвётся при зелёном прогоне.
             for (const at of where) {
               const body = readFileSync(at, "utf8").split(NEWLINE);
-              const here = body.some((line) => {
-                const hit = line.indexOf(name);
-                return hit >= 0 && !inComment(line, hit);
-              });
+              // Класс в листе стилей пишется с точкой, а в контракте — без
+              // неё, строкой в кавычках. Ищутся обе формы: иначе строка
+              // таблицы краснела бы на законной записи контракта.
+              const forms = name.startsWith(".")
+                ? [name, name.slice(1)]
+                : [name];
+              const here = body.some((line) =>
+                forms.some((one) => {
+                  const hit = line.indexOf(one);
+                  return hit >= 0 && !inComment(line, hit);
+                }),
+              );
               if (!here)
                 domDrift.push(
                   `${name} — названо строкой таблицы, но в ${rel(at)} его нет`,
