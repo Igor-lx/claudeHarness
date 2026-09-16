@@ -2018,6 +2018,82 @@ if (mode === "falsify") {
 // Режим дешёвый намеренно: его зовёт хук среды при правке файлов проекта, а
 // сверка базы для этого слишком долгая. Читает один файл и выходит нулём
 // всегда — напоминание не может ронять чужую работу.
+// Среда: годится ли машина для посадки. ПЕРВЫЙ шаг, до единой правки в
+// проекте — иначе менеджер пакетов ниже объявленного роняет установку своей
+// ошибкой на шестом шаге, и проект остаётся наполовину тронутым.
+//
+// Связка читается из СЕМЕНИ настройки: режим работает и до копирования, из
+// папки снимка. Спрашивается только то, что относится к машине, — остальное
+// живёт в папке зависимостей, которой на этом шаге ещё нет.
+if (mode === "env") {
+  const at = shelfAt("seat/templates/graph.config.mjs");
+  if (at === null || !existsSync(at)) {
+    console.log("=== Среда: связка не объявлена ===");
+    console.log("  Семя настройки не найдено, сверять не с чем.");
+    process.exit(0);
+  }
+  const block = readFileSync(at, "utf8");
+  const declared = block.slice(block.indexOf("verifiedVersions: {"));
+  const pick = (name) => {
+    const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(declared);
+    return hit === null ? null : hit[1];
+  };
+  const older = (have, need) => {
+    const a = String(have)
+      .replace(/^[^0-9]*/, "")
+      .split(".")
+      .map(Number);
+    const b = String(need).split(".").map(Number);
+    for (let i = 0; i < 3; i += 1) {
+      const x = a[i] ?? 0;
+      const y = b[i] ?? 0;
+      if (x !== y) return x < y;
+    }
+    return false;
+  };
+  const ask = (name) => {
+    if (name === "node") return process.versions.node;
+    try {
+      return execFileSync(name, ["--version"], {
+        encoding: "utf8",
+        shell: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return null;
+    }
+  };
+  const low = [];
+  const seen = [];
+  for (const name of ["node", "npm"]) {
+    const need = pick(name);
+    if (need === null) continue;
+    const have = ask(name);
+    if (have === null) {
+      low.push(name + " — не отвечает на запрос версии, нужно " + need);
+      continue;
+    }
+    seen.push(name + " " + have + " (нужно " + need + ")");
+    if (older(have, need)) low.push(name + " " + have + " — НИЖЕ " + need);
+  }
+  console.log("=== Среда посадки ===");
+  for (const one of seen) console.log("  " + one);
+  if (low.length === 0) {
+    console.log("  годится: сажать можно");
+    process.exit(0);
+  }
+  console.log("");
+  console.log("ПОСАДКА НЕ НАЧАТА: среда ниже проверенной связки.");
+  for (const one of low) console.log("  " + one);
+  console.log("");
+  console.log("  Это остановка, а не предупреждение. Ниже объявленного");
+  console.log("  установка пакетов падает СОБСТВЕННОЙ ошибкой менеджера, где");
+  console.log("  про версию нет ни слова, — и падает на шестом шаге, когда");
+  console.log("  проект уже тронут: обвязка скопирована, семена разложены,");
+  console.log("  настройки слиты. Поднимите названное и позовите снова.");
+  process.exit(1);
+}
+
 if (mode === "transition") {
   if (!printTransition())
     console.log(
