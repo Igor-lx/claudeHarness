@@ -6144,6 +6144,10 @@ if (mode === "verify") {
       for (const m of readFileSync(f, "utf8").matchAll(CODE_NAME))
         codeNames.add(m[1] ?? m[2] ?? m[3]);
     const crossClass = [...styleClasses].filter((n) => codeNames.has(n));
+    // Сигналы называются ВСЕ, а не первый попавшийся. Цепочкой «иначе» проект
+    // узнавал про переменные, закрывал таблицей их одних — и связь через имена
+    // классов оставалась необъявленной, то есть дыра сохранялась при зелёном
+    // прогоне и выполненном требовании.
     if (crossVar !== undefined)
       disarmed.push(
         "переменная стиля " +
@@ -6154,13 +6158,13 @@ if (mode === "verify") {
           rel(crossVar[1]) +
           " — связь есть, а CONFIG.domTables пуст",
       );
-    else if (crossData !== undefined)
+    if (crossData !== undefined)
       disarmed.push(
         "атрибут " +
           crossData +
           " встречается и в стилях, и в коде — связь есть, а CONFIG.domTables пуст",
       );
-    else if (crossClass.length)
+    if (crossClass.length)
       disarmed.push(
         "классов листа стилей, названных кодом: " +
           crossClass.length +
