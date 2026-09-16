@@ -39,7 +39,120 @@ import {
 // обе соседями в корне проекта. Инструмент поэтому поднимается на два уровня и
 // спускается в базу. Менять адрес — значит менять раскладку, а она объявлена в
 // инструкции посадки.
-import { BASE, CONFIG } from "../../.context/graph.config.mjs";
+// Режим среды идёт ДО настройки проекта и потому объявлен здесь, а не среди
+// прочих: он отвечает на вопрос «годится ли машина», который задают в папке
+// снимка, когда проекта ещё нет. Адреса он считает от самого себя.
+const mode = process.argv[2];
+
+if (mode === "env") {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const seed = path.join(here, "..", "seat", "templates", "graph.config.mjs");
+  if (!existsSync(seed)) {
+    console.log("=== Среда: связка не объявлена ===");
+    console.log("  Семя настройки не найдено, сверять не с чем.");
+    process.exit(0);
+  }
+  const block = readFileSync(seed, "utf8");
+  const declared = block.slice(block.indexOf("verifiedVersions: {"));
+  const pick = (name) => {
+    const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(declared);
+    return hit === null ? null : hit[1];
+  };
+  const older = (have, need) => {
+    const a = String(have)
+      .replace(/^[^0-9]*/, "")
+      .split(".")
+      .map(Number);
+    const b = String(need).split(".").map(Number);
+    for (let i = 0; i < 3; i += 1) {
+      const x = a[i] ?? 0;
+      const y = b[i] ?? 0;
+      if (x !== y) return x < y;
+    }
+    return false;
+  };
+  const ask = (name) => {
+    if (name === "node") return process.versions.node;
+    try {
+      return execFileSync(name, ["--version"], {
+        encoding: "utf8",
+        shell: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return null;
+    }
+  };
+  const low = [];
+  const seen = [];
+  for (const name of ["node", "npm"]) {
+    const need = pick(name);
+    if (need === null) continue;
+    const have = ask(name);
+    if (have === null) {
+      low.push({ name, have: "не отвечает", need, how: "поставить" });
+      continue;
+    }
+    seen.push(name + " " + have + " (нужно " + need + ")");
+    if (older(have, need))
+      low.push({
+        name,
+        have,
+        need,
+        // Команда подъёма печатается ГОТОВОЙ: «поднимите менеджер» заставляет
+        // получателя гадать, а гадание кончается установкой не той версии.
+        how:
+          name === "npm"
+            ? "npm i -g npm@" + need.split(".")[0]
+            : "поставить отдельно: менеджером версий среды либо установщиком",
+      });
+  }
+  console.log("=== Среда посадки ===");
+  for (const one of seen) console.log("  " + one);
+  if (low.length === 0) {
+    console.log("  годится: сажать можно");
+    process.exit(0);
+  }
+  console.log("");
+  console.log("ПОСАДКА НЕ НАЧАТА: среда ниже проверенной связки.");
+  for (const one of low)
+    console.log("  " + one.name + " " + one.have + " — нужно " + one.need);
+  console.log("");
+  console.log("  Чем поднять:");
+  for (const one of low) console.log("    " + one.how);
+  console.log("");
+  console.log("  СПРОСИТЬ РАЗРАБОТЧИКА: поднимать? Ответ «да» — поднять и");
+  console.log("  продолжить с шага 1; заново начинать не с чего, проект ещё");
+  console.log("  не тронут. Ответ «нет» — посадка не начата, и это законно:");
+  console.log("  обвязка на этой связке не мерена и за неё не отвечает.");
+  console.log("");
+  console.log("  Почему остановка, а не предупреждение: ниже объявленного");
+  console.log("  установка пакетов падает СОБСТВЕННОЙ ошибкой менеджера, где");
+  console.log("  про версию нет ни слова, — и падает на шестом шаге, когда");
+  console.log("  проект уже тронут: обвязка скопирована, семена разложены,");
+  console.log("  настройки слиты.");
+  process.exit(1);
+}
+
+// Настройка проекта грузится ДИНАМИЧЕСКИ — ради режима выше, который обязан
+// работать там, где проекта ещё нет. Её отсутствие при этом перестало быть
+// стеком: сообщение говорит, где инструмент искал и почему не нашёл.
+let BASE;
+let CONFIG;
+try {
+  ({ BASE, CONFIG } = await import("../../.context/graph.config.mjs"));
+} catch {
+  console.log("=== Настройки проекта нет ===");
+  console.log(
+    "  Ожидался файл: .context/graph.config.mjs рядом с папкой обвязки.",
+  );
+  console.log(
+    "  Так выглядит папка снимка либо проект до посадки: инструменту",
+  );
+  console.log("  нечего сверять. Годность машины спрашивают режимом env — он");
+  console.log("  работает и здесь.");
+  process.exit(1);
+}
 
 /** Папка самого инструмента. Нужна ровно там, где речь о его собственных
  * соседях — справочнике режимов и словаре области. Всё остальное считается от
@@ -1183,8 +1296,6 @@ if (predicateFailures.length > 0) {
   process.exit(1);
 }
 
-const mode = process.argv[2];
-
 // Неизвестный или пропущенный режим — отказ, а не молчание.
 //
 // До этого инструмент на `graph.mjs verfiy` печатал пусто и отдавал `0`. В
@@ -2018,103 +2129,6 @@ if (mode === "falsify") {
 // Режим дешёвый намеренно: его зовёт хук среды при правке файлов проекта, а
 // сверка базы для этого слишком долгая. Читает один файл и выходит нулём
 // всегда — напоминание не может ронять чужую работу.
-// Среда: годится ли машина для посадки. ПЕРВЫЙ шаг, до единой правки в
-// проекте — иначе менеджер пакетов ниже объявленного роняет установку своей
-// ошибкой на шестом шаге, и проект остаётся наполовину тронутым.
-//
-// Связка читается из СЕМЕНИ настройки: режим работает и до копирования, из
-// папки снимка. Спрашивается только то, что относится к машине, — остальное
-// живёт в папке зависимостей, которой на этом шаге ещё нет.
-if (mode === "env") {
-  const at = shelfAt("seat/templates/graph.config.mjs");
-  if (at === null || !existsSync(at)) {
-    console.log("=== Среда: связка не объявлена ===");
-    console.log("  Семя настройки не найдено, сверять не с чем.");
-    process.exit(0);
-  }
-  const block = readFileSync(at, "utf8");
-  const declared = block.slice(block.indexOf("verifiedVersions: {"));
-  const pick = (name) => {
-    const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(declared);
-    return hit === null ? null : hit[1];
-  };
-  const older = (have, need) => {
-    const a = String(have)
-      .replace(/^[^0-9]*/, "")
-      .split(".")
-      .map(Number);
-    const b = String(need).split(".").map(Number);
-    for (let i = 0; i < 3; i += 1) {
-      const x = a[i] ?? 0;
-      const y = b[i] ?? 0;
-      if (x !== y) return x < y;
-    }
-    return false;
-  };
-  const ask = (name) => {
-    if (name === "node") return process.versions.node;
-    try {
-      return execFileSync(name, ["--version"], {
-        encoding: "utf8",
-        shell: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-    } catch {
-      return null;
-    }
-  };
-  const low = [];
-  const seen = [];
-  for (const name of ["node", "npm"]) {
-    const need = pick(name);
-    if (need === null) continue;
-    const have = ask(name);
-    if (have === null) {
-      low.push(name + " — не отвечает на запрос версии, нужно " + need);
-      continue;
-    }
-    seen.push(name + " " + have + " (нужно " + need + ")");
-    if (older(have, need))
-      low.push({
-        name,
-        have,
-        need,
-        // Команда подъёма печатается ГОТОВОЙ: «поднимите менеджер» заставляет
-        // получателя гадать, а гадание кончается установкой не той версии.
-        // Среду командой не поднять — об этом говорится прямо.
-        how:
-          name === "npm"
-            ? "npm i -g npm@" + need.split(".")[0]
-            : "поставить отдельно: менеджером версий среды либо установщиком",
-      });
-  }
-  console.log("=== Среда посадки ===");
-  for (const one of seen) console.log("  " + one);
-  if (low.length === 0) {
-    console.log("  годится: сажать можно");
-    process.exit(0);
-  }
-  console.log("");
-  console.log("ПОСАДКА НЕ НАЧАТА: среда ниже проверенной связки.");
-  for (const one of low)
-    console.log("  " + one.name + " " + one.have + " — нужно " + one.need);
-  console.log("");
-  console.log("  Чем поднять:");
-  for (const one of low) console.log("    " + one.how);
-  console.log("");
-  console.log("  СПРОСИТЬ РАЗРАБОТЧИКА: поднимать? Ответ «да» — поднять и");
-  console.log("  продолжить с шага 1; заново начинать не с чего, проект ещё");
-  console.log("  не тронут. Ответ «нет» — посадка не начата, и это законно:");
-  console.log("  обвязка на этой связке не мерена и за неё не отвечает.");
-  console.log("");
-  console.log("  Почему остановка, а не предупреждение: ниже объявленного");
-  console.log("  установка пакетов падает СОБСТВЕННОЙ ошибкой менеджера, где");
-  console.log("  про версию нет ни слова, — и падает на шестом шаге, когда");
-  console.log("  проект уже тронут: обвязка скопирована, семена разложены,");
-  console.log("  настройки слиты.");
-  process.exit(1);
-}
-
 if (mode === "transition") {
   if (!printTransition())
     console.log(
