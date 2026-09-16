@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  codeOf,
   inComment,
   isCodePath,
   CODE_OR_STYLE,
@@ -763,7 +764,10 @@ const namesPulledBy = new Map(); // файл -> имена, которые он 
 const NAME_RE = /^[A-Za-z_$][\w$]*$/;
 
 for (const f of files) {
-  const src = readFileSync(f, "utf8");
+  // Комментарии снимаются ДО разбора: ребро графа из комментария — не
+  // косметика. Закомментированный импорт числился живым потребителем, и
+  // мёртвый экспорт выглядел используемым.
+  const src = codeOf(readFileSync(f, "utf8"));
   importsOf.set(f, new Set());
 
   // разбираемые формы: import { a, b as c } from "x" | import x from "y" | export {...} from "z"
