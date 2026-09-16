@@ -85,7 +85,7 @@ const SHAPED = {
  * Список рядом с закрытым намеренно: без него «объявлен ли вид» пришлось бы
  * решать на глаз, а глаз этот класс уже пропустил четыре раза подряд.
  */
-const SHAPE_FREE = new Set(["toolchain", "minVersions", "debt"]);
+const SHAPE_FREE = new Set(["toolchain", "verifiedVersions", "debt"]);
 
 /** Виды долга описания — закрытый список, и он же единственный.
  *
@@ -5070,7 +5070,7 @@ if (mode === "verify") {
   // прогон, останавливающий работу из-за минорной версии, начнут гонять реже, и
   // тогда он перестанет ловить то, ради чего заведён.
   const oldVersions = [];
-  if (CONFIG.minVersions != null) {
+  if (CONFIG.verifiedVersions != null) {
     const older = (have, need) => {
       const a = String(have)
         .replace(/^[^0-9]*/, "")
@@ -5084,32 +5084,44 @@ if (mode === "verify") {
       }
       return false;
     };
-    for (const [name, need] of Object.entries(CONFIG.minVersions)) {
-      if (name === "node") {
-        if (older(process.versions.node, need))
-          oldVersions.push(
-            `node ${process.versions.node} — нужно не ниже ${need}`,
-          );
-        continue;
-      }
+    // Версия установленного: у `node` она своя, у пакета — из его манифеста.
+    const installed = (name) => {
+      if (name === "node") return process.versions.node;
       const at = path.join(BASE, "..", "node_modules", name, "package.json");
-      if (!existsSync(at)) continue;
-      const have = JSON.parse(readFileSync(at, "utf8")).version;
-      if (older(have, need))
-        oldVersions.push(`${name} ${have} — нужно не ниже ${need}`);
+      if (!existsSync(at)) return null;
+      return JSON.parse(readFileSync(at, "utf8")).version;
+    };
+    // Стороны называются ПОРОЗНЬ, потому что означают разное. Ниже связки
+    // поведение неизвестно, и обвязка за него не отвечает. Выше — каждый пакет
+    // сам по себе, вероятно, исправен, но связка как целое не мерена: ровно так
+    // мутационное звено и перестало читать результаты тестов, когда их раннер
+    // ушёл на мажор вперёд.
+    for (const [name, want] of Object.entries(CONFIG.verifiedVersions)) {
+      const have = installed(name);
+      if (have === null) continue;
+      if (older(have, want))
+        oldVersions.push(
+          `${name} ${have} — НИЖЕ проверенной связки (${want}): поведение неизвестно`,
+        );
+      else if (older(want, have))
+        oldVersions.push(
+          `${name} ${have} — ВЫШЕ проверенной связки (${want}): сам по себе исправен, совместимость связки не мерена`,
+        );
     }
   }
 
   checkHead("Версии установленного (предупреждение, прогон не роняет)");
   console.log(
-    CONFIG.minVersions == null
-      ? "  минимумы не объявлены"
+    CONFIG.verifiedVersions == null
+      ? "  проверенная связка не объявлена"
       : oldVersions.length === 0
-        ? "  всё не ниже объявленных минимумов"
-        : `  ниже объявленного: ${oldVersions.length}.` +
-          " Объявленное — версии, на которых обвязка проверялась, а не" +
-          " измеренный порог совместимости: ниже них поведение не сломано," +
-          " а неизвестно. Обновить — решение разработчика",
+        ? "  связка совпадает с проверенной"
+        : `  расходится с проверенной связкой: ${oldVersions.length}.` +
+          " Объявлен НАБОР версий, на котором обвязку мерили как целое, а не" +
+          " порог. Ниже него обвязка не отвечает ни за что; выше каждый пакет" +
+          " сам по себе, вероятно, исправен, но совместимость связки надо" +
+          " перемерить — прогнать цепочку и мутационное звено, и обновить" +
+          " объявление. Решение разработчика",
   );
   for (const o of oldVersions) console.log("    " + o);
 

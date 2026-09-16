@@ -469,9 +469,8 @@
     {
       "section": "Версии установленного (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
-      "find": "    prettier: \"3.0.0\",",
-      "replace": "    prettier: \"99.0.0\",",
-      "own": true
+      "find": "  verifiedVersions: {",
+      "replace": "  verifiedVersions: {\n    \"@testing-library/jest-dom\": \"0.0.1\","
     },
     {
       "section": "Состав бочки в записи карты",
