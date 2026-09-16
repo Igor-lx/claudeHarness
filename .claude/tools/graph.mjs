@@ -5215,9 +5215,26 @@ if (mode === "verify") {
       }
       return false;
     };
-    // Версия установленного: у `node` она своя, у пакета — из его манифеста.
+    // Версия установленного: у `node` она своя, у МЕНЕДЖЕРА ПАКЕТОВ —
+    // спрашивается у него самого, у пакета — из его манифеста.
+    //
+    // Менеджер добавлен по замеру: его версия объявлена полем среды манифеста,
+    // сам он это поле не соблюдает, и на версии ниже объявленной установка
+    // падает собственной ошибкой, где про версию нет ни слова. Посадка при этом
+    // встаёт, а причина выглядит дефектом проекта.
     const installed = (name) => {
       if (name === "node") return process.versions.node;
+      if (name === "npm") {
+        try {
+          return execFileSync("npm", ["--version"], {
+            encoding: "utf8",
+            shell: true,
+            stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+        } catch {
+          return null;
+        }
+      }
       const at = path.join(BASE, "..", "node_modules", name, "package.json");
       if (!existsSync(at)) return null;
       return JSON.parse(readFileSync(at, "utf8")).version;
