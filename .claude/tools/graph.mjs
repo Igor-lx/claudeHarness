@@ -2214,15 +2214,34 @@ if (mode === "falsify") {
         mkdirSync(path.dirname(toAt), { recursive: true });
         writeFileSync(toAt, before);
       } else if (r.append !== undefined) {
-        // Четвёртая форма: ДОПИСАТЬ в конец. Часть сверок ловит появление новой
+        // Четвёртая форма: ДОПИСАТЬ. Часть сверок ловит появление новой
         // записи — строки таблицы, нового заголовка, нового якоря, — и правка
         // существующего текста тут не годится: ломать надо тем, что добавили.
         // Заведена под долг рецептов: без неё половина сверок базы остаётся
         // непроверяемой, а непроверенная сверка неотличима от здоровой.
-        writeFileSync(
-          at,
-          before + NEWLINE + r.append.split("\n").join(NEWLINE),
-        );
+        //
+        // ЯКОРЬ обязателен там, где сверка читает не весь файл, а свой
+        // раздел. Дописывание в конец совпадает с разделом, только пока
+        // раздел последний; проект завёл ниже свой — и поломка легла за
+        // границей чтения, а прогон объявил здоровую сверку слепой.
+        // Замерено посадкой начисто.
+        const text = r.append.split("\n").join(NEWLINE);
+        if (r.after === undefined) writeFileSync(at, before + NEWLINE + text);
+        else {
+          const lines = before.split(NEWLINE);
+          const at0 = lines.findIndex((l) => l.trim() === r.after);
+          if (at0 < 0) {
+            (subjectless(r.section)
+              ? idle
+              : r.own === true
+                ? foreign
+                : broken
+            ).push(r.section + " — якорь дописывания не найден: " + r.after);
+            continue;
+          }
+          lines.splice(at0 + 1, 0, text);
+          writeFileSync(at, lines.join(NEWLINE));
+        }
       } else if (r.rename !== undefined) {
         writeFileSync(path.join(tmp, r.rename), before);
         rmSync(at);
