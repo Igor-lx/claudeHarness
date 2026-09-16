@@ -1879,6 +1879,7 @@ const CHECK_SECTIONS = [
   "Звену цепочки есть на чём работать",
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
+  "Отложенное семя положено, когда предмет появился",
   "Отложенное семя слито",
   "Семена приезжают отформатированными",
   "Настройка семени не ссылается на непривезённое",
@@ -10281,6 +10282,61 @@ if (mode === "verify") {
     console.log(
       "  Посадка не закончена — пока это не поломка, а список работы фазы 2.",
     );
+  // Обратная сторона соседней сверки: семя, кладущееся НЕ на посадке, обязано
+  // лечь, когда его предмет появился.
+  //
+  // Прежде сторожилась одна сторона — чтобы посадка его не положила, — и на
+  // этом всё: момента «предмет появился» не сторожило ничто, и семя не
+  // ложилось никогда. Замерено на приложении, написанном с нуля: свои тесты
+  // есть, режим долга мутаций печатает готовую команду, а конфига, которым
+  // она работает, в проекте нет.
+  //
+  // Предмет — СВОИ тесты проекта, а не привезённые каркасом: до первого
+  // своего теста конфиг и правда бесполезен. Признак свой у файла уже есть —
+  // он не равен своему семени побайтово.
+  const lateSeeds = [];
+  let lateSaid = null;
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt))
+      lateSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+    else {
+      const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+      const deferred = copy.filter((e) => e.notAtSeating !== undefined);
+      const seedOf = new Map();
+      for (const e of copy) {
+        const from0 = shelfAt(e.from);
+        if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
+      }
+      const eol = String.fromCharCode(13) + NEWLINE;
+      const ownTest = files.some((f) => {
+        if (!isTest(f)) return false;
+        const src = seedOf.get(f);
+        if (src === undefined || !existsSync(src)) return true;
+        return (
+          readFileSync(f, "utf8").split(eol).join(NEWLINE) !==
+          readFileSync(src, "utf8").split(eol).join(NEWLINE)
+        );
+      });
+      if (!ownTest)
+        lateSaid =
+          "своих тестов у проекта нет: предмета у отложенных семян нет";
+      else {
+        for (const e of deferred)
+          if (!existsSync(path.join(REPO, e.to)))
+            lateSeeds.push(e.to + " — " + e.notAtSeating);
+        if (lateSeeds.length === 0)
+          lateSaid = "отложенных семян без предмета: 0";
+      }
+    }
+  }
+  checkHead("Отложенное семя положено, когда предмет появился");
+  if (lateSaid !== null) console.log("  " + lateSaid);
+  if (lateSeeds.length) console.log("  не положено: " + lateSeeds.length);
+  for (const one of lateSeeds)
+    console.log(
+      "    " + one + ". Предмет появился — положить семя из `seat/templates/`",
+    );
   checkHead("Отложенное семя не положено посадкой");
   console.log("  положенных раньше срока: " + earlySeed.length);
   for (const d of earlySeed) console.log("    " + d);
@@ -10877,6 +10933,7 @@ if (mode === "verify") {
     (isoMissed === null ? 0 : 1) ||
     strayTests.length ||
     (seatingUp ? 0 : unmerged.length) ||
+    lateSeeds.length ||
     roughSeeds.length ||
     seedRefs.length ||
     wrapped.length ||

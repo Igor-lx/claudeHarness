@@ -142,6 +142,13 @@
       "replace": "    \"prettier\": \"^3.9.6\",\n    \"пакет-которого-никто-не-объявлял\": \"^1.0.0\","
     },
     {
+      "section": "Отложенное семя положено, когда предмет появился",
+      "create": {
+        "path": "src/zzOwn.test.tsx",
+        "text": "import { it } from \"vitest\";\n\nit(\"проба\", () => {});"
+      }
+    },
+    {
       "section": "Отложенное семя не положено посадкой",
       "file": ".claude/seat/templates/stryker.config.json",
       "copyTo": "stryker.config.json"
