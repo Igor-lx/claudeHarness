@@ -1083,6 +1083,32 @@ const testsFor = (target) => {
 // него у `importedBy` значит получить ноль и прочитать это как «никому не
 // нужен». Оба режима, `brief` и `plan`, обязаны отвечать про стиль одинаково —
 // отсюда общий разбор.
+/** Листы стилей, связанные с УЗЛОМ. Обратная сторона `styleUsers`.
+ *
+ * Графу импортов такая связь не видна ни в одном из двух видов: узел
+ * подключает лист сам, либо лист подключает тот, кто зовёт узел, и передаёт
+ * его пропом — так устроен модуль стилей, отдаваемый компоненту как данные.
+ *
+ * Без этого очерченная область исключала стиль, и критерий про границу языков
+ * (C7-бис планки) оказывался неисполнимым: дублирование срока перехода между
+ * кодом и стилем проходило мимо разбора. Найдено на вопросе о функции.
+ */
+const stylesNear = (target) => {
+  // Читается КОД, а не текст: закомментированный хвост файла нёс подключение
+  // листа, и досье объявляло его подключённым самим узлом. Тот же предикат,
+  // что у графа импортов, — иначе два разбора одного и того же разойдутся.
+  const mentions = (f, style) =>
+    codeOf(readFileSync(f, "utf8")).includes(
+      "/" + rel(style).slice(rel(style).lastIndexOf("/") + 1),
+    );
+  const own = styleFiles.filter((one) => mentions(target, one));
+  const users = [...(importedBy.get(target) ?? [])].filter((u) => !isTest(u));
+  const viaUsers = styleFiles.filter(
+    (one) => !own.includes(one) && users.some((u) => mentions(u, one)),
+  );
+  return { own, viaUsers };
+};
+
 const styleUsers = (target) => {
   const base = rel(target).slice(rel(target).lastIndexOf("/") + 1);
   const needle = "/" + base;
@@ -3910,6 +3936,22 @@ if (mode === "brief") {
         // документ у useOrientationSwapVeil, потому что тот пишет ссылку в
         // середине фразы, а не отдельной строкой.
         const anchors = [...new Set(docRefsIn(readFileSync(target, "utf8")))];
+        // Листы стилей — часть области, и без них критерий про границу языков не
+        // применить: половины написаны на разных языках, и графу импортов эта связь
+        // не видна.
+        if (!isStylePath(r)) {
+          const near = stylesNear(target);
+          if (near.own.length || near.viaUsers.length) {
+            console.log("--- листы стилей области (граф их не видит) ---");
+            for (const one of near.own)
+              console.log("  подключает сам: " + rel(one));
+            for (const one of near.viaUsers)
+              console.log("  приходит от зовущего: " + rel(one));
+            console.log(
+              "  значение, живущее и там и тут, — дублирование через границу языков",
+            );
+          }
+        }
         console.log("--- документация: на что ссылается сам файл ---");
         console.log(
           anchors.length
