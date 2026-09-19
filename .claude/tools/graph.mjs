@@ -8283,7 +8283,17 @@ if (mode === "verify") {
     for (const f of [...files, ...styleFiles]) {
       const rows = readFileSync(f, "utf8").split(NEWLINE);
       for (let i = 0; i < rows.length; i++) {
-        if (!CYR.test(rows[i])) continue;
+        const line = rows[i].trim();
+        // Спрашивается ТОЛЬКО комментарий. Строковый литерал не спрашивается:
+        // текст для пользователя и текст диагностики машине неотличимы, а
+        // первый — предмет раздела об интернационализации, а не языковой
+        // границы. Замерено задачей от разработчика: он попросил кнопку с
+        // русской подписью, и сверка объявила нарушением выполненную просьбу.
+        const isComment =
+          line.startsWith("//") ||
+          line.startsWith("/*") ||
+          line.startsWith("*");
+        if (!isComment || !CYR.test(line)) continue;
         wrongTongue.push(rel(f) + ":" + (i + 1));
       }
     }
@@ -10037,6 +10047,21 @@ if (mode === "verify") {
           if (lines[i].trim() !== OPEN) continue;
           let shut = i + 1;
           while (shut < lines.length && lines[shut].trim() !== SHUT) shut += 1;
+          // Блок из одних СТРОК ТАБЛИЦЫ не спрашивается прозой: строки карты
+          // и реестров разбираются поадресно веткой выше, а помеченный блок
+          // растёт вместе с проектом — новая строка приписывается в конец
+          // таблицы и попадает внутрь него. Замерено задачей от разработчика:
+          // снять помеченное значило снести собственную карту проекта.
+          const inside = lines
+            .slice(i + 1, shut)
+            .filter((l) => l.trim() !== "");
+          if (
+            inside.length > 0 &&
+            inside.every((l) => l.trim().startsWith("|"))
+          ) {
+            i = shut;
+            continue;
+          }
           frameLitter.push(
             f +
               ":" +
