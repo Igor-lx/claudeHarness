@@ -1923,6 +1923,7 @@ const CHECK_SECTIONS = [
   "Имена классов из кода есть в листе стилей",
   "Отступление от схемы стилизации объявлено решением",
   "Новый узел лежит по раскладке",
+  "Правила проекта не утверждают чужую раскладку",
   "У компонента есть README",
   "Документы компонента лежат в его `docs/`",
   "Язык внутри корня исходников",
@@ -8340,6 +8341,51 @@ if (mode === "verify") {
         one +
         ". Зачем папка, что берут, что тянется следом, чего нельзя",
     );
+  // 13k-бис. Правила проекта не утверждают чужую раскладку.
+  //
+  // Семя правил приезжает с таблицей раскладки УМОЛЧАНИЯ и говорит прозой:
+  // разложенный иначе проект переписывает её под себя. Проза держится
+  // вниманием, и на первой же посадке после того, как таблицу в семя
+  // положили, живой проект получил оба утверждения сразу — умолчание и
+  // фактическую раскладку, — при зелёном прогоне.
+  //
+  // Признак точный и дешёвый: отступление объявлено решением, а правила
+  // проекта дословно несут фразу семени про умолчание. Одно из двух лжёт.
+  const layoutLie = [];
+  if (layoutSaid !== null && layoutStray.length === 0) {
+    const seedAt = shelfAt("seat/templates/CLAUDE.md");
+    const mine = (CONFIG.rulesManifest?.rules ?? []).map((r) =>
+      path.join(BASE, r),
+    );
+    if (seedAt !== null && existsSync(seedAt)) {
+      const seed = readFileSync(seedAt, "utf8");
+      const claim = (
+        seed
+          .split(NEWLINE)
+          .find((l) => l.includes("Раскладка умолчания обвязки")) ?? ""
+      ).trim();
+      const declared = layoutSaid.includes("отступление объявлено");
+      if (declared && claim !== "")
+        for (const at of mine) {
+          if (!existsSync(at)) continue;
+          if (!readFileSync(at, "utf8").includes(claim)) continue;
+          layoutLie.push(
+            rel0(at) +
+              " — утверждает раскладку умолчания, а отступление от неё объявлено решением",
+          );
+        }
+    }
+  }
+  checkHead("Правила проекта не утверждают чужую раскладку");
+  console.log(
+    layoutLie.length === 0
+      ? "  расхождений: 0"
+      : "  расхождений: " + layoutLie.length,
+  );
+  for (const one of layoutLie)
+    console.log(
+      "    " + one + ". Переписать таблицу под фактическую раскладку проекта",
+    );
   checkHead("Новый узел лежит по раскладке");
   if (layoutSaid !== null) console.log("  " + layoutSaid);
   if (layoutStray.length)
@@ -11600,6 +11646,7 @@ if (mode === "verify") {
     classDrift.length ||
     schemeStray.length ||
     layoutStray.length ||
+    layoutLie.length ||
     noReadme.length ||
     looseDocs.length ||
     overDebtOf("tongue", wrongTongue.length) ||
