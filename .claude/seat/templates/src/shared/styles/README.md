@@ -9,6 +9,11 @@ Style-map helpers, application-wide. Pure, dependency-free.
   caller-supplied class overrides on top of its own module map without losing
   the originals. Null and undefined maps, and empty values, are skipped.
 
+  Both sets of names are kept rather than one chosen: dropping the component's
+  own would take the layout with it, and dropping the caller's would make the
+  class-name prop a lie. Whether the caller's rule then wins is decided by the
+  cascade, not by this function — see below.
+
 ## Why it lives here and not next to a component
 
 Every component styles itself the same way, so the helper belongs to the

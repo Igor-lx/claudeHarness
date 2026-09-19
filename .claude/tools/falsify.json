@@ -590,6 +590,25 @@
       "file": ".claude/seat/seat.md",
       "find": "ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.",
       "replace": "ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.\n  Проба: каркас положен, манифест слит."
+    },
+    {
+      "section": "Комментарий не перерос в прозу",
+      "create": {
+        "path": "src/zzPoem.ts",
+        "text": "// This run of words is deliberately far longer than the ceiling the rules\n// name, so that the check has something real to catch when the recipe plants\n// it here, and it keeps going well past fifteen words by any count at all.\nexport const zzPoem = 1;"
+      }
+    },
+    {
+      "section": "Доля комментариев в файле",
+      "create": {
+        "path": "src/zzChatty.ts",
+        "text": "// one\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\nexport const zz0 = 0;\nexport const zz1 = 1;\nexport const zz2 = 2;\nexport const zz3 = 3;\nexport const zz4 = 4;\nexport const zz5 = 5;\nexport const zz6 = 6;\nexport const zz7 = 7;\nexport const zz8 = 8;\nexport const zz9 = 9;\nexport const zz10 = 10;\nexport const zz11 = 11;\nexport const zz12 = 12;\nexport const zz13 = 13;\nexport const zz14 = 14;\nexport const zz15 = 15;\nexport const zz16 = 16;\nexport const zz17 = 17;\nexport const zz18 = 18;\nexport const zz19 = 19;"
+      }
+    },
+    {
+      "section": "Каркас не отстал от семени",
+      "file": "src/App.tsx",
+      "append": "// drift"
     }
   ]
 }

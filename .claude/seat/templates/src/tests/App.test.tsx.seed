@@ -9,13 +9,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "It works" })).toBeDefined();
   });
 
-  // A second test that renders, on purpose.
-  //
-  // It is what makes `setup.ts` load-bearing rather than decorative: without
-  // the cleanup registered there, this render finds the previous test's copy
-  // still in the document and the query fails with "found multiple elements".
-  // A single-test file never shows that, and the failure, when it finally
-  // arrives, points at the query rather than at the leftover.
+  // Second render on purpose: without the cleanup in `setup.ts` it finds the previous copy.
   it("renders the same heading again, with nothing left over from before", () => {
     render(<App />);
     expect(screen.getAllByRole("heading", { name: "It works" })).toHaveLength(
