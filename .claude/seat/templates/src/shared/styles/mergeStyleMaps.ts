@@ -1,6 +1,6 @@
 type StyleMap = Record<string, string>;
 
-/** Overlay caller class names on a component's own map, per key. See ./README.md */
+// See ./README.md
 export function mergeStyleMaps<T extends StyleMap>(
   ...maps: (Partial<T> | null | undefined)[]
 ): T {
