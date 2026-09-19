@@ -609,6 +609,12 @@
       "section": "Каркас не отстал от семени",
       "file": "src/App.tsx",
       "append": "// drift"
+    },
+    {
+      "section": "Якоря семени ведут в семя",
+      "file": ".claude/seat/templates/09-decisions.md",
+      "find": "`src/App.tsx:1`",
+      "replace": "`src/App.tsx:4`"
     }
   ]
 }

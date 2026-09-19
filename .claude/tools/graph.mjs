@@ -1918,6 +1918,7 @@ const CHECK_SECTIONS = [
   "Файлы базы заведены под свой предмет",
   "Каркас обвязки не лежит в живом проекте",
   "Каркас не отстал от семени",
+  "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
   "Цепочка проверок объявлена данными",
   "Звено цепочки не задвоено",
@@ -9785,6 +9786,70 @@ if (mode === "verify") {
   );
   for (const one of staleFrame) console.log("    " + one);
 
+  // Якорь семени базы обязан попадать в семя кода.
+  //
+  // Семя реестра решений несёт якоря в каркас: путь, номер строки, цитата
+  // пометки. Каркас правится, семя записи — нет, и якорь показывает мимо.
+  // Цена платится не полкой: свежепосаженный проект получает базу, у которой
+  // сверка пометок решений красная с первого прогона.
+  //
+  // Обе половины лежат на полке и правятся руками — сверять их может только
+  // прогон. Проверяется попадание: цитата обязана стоять на названной строке
+  // названного семени.
+  const seedAnchors = [];
+  let seedAnchorSaid = null;
+  let seedAnchorCount = 0;
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt))
+      seedAnchorSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+    else {
+      const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+      const seedOf = new Map();
+      for (const e of copy) {
+        const from0 = shelfAt(e.from);
+        if (from0 !== null) seedOf.set(e.to, from0);
+      }
+      for (const e of copy) {
+        const from0 = shelfAt(e.from);
+        if (from0 === null || !existsSync(from0)) continue;
+        if (!e.to.endsWith(".md")) continue;
+        for (const line of readFileSync(from0, "utf8").split(NEWLINE)) {
+          const m = /`([^`]+):([0-9]+)`\s+`([^`]+)`/.exec(line);
+          if (m === null) continue;
+          const [, at, no, quote] = m;
+          const target = seedOf.get(at);
+          seedAnchorCount += 1;
+          if (target === undefined || !existsSync(target)) {
+            seedAnchors.push(
+              e.from + " → " + at + ": такого семени карта не везёт",
+            );
+            continue;
+          }
+          const rows = readFileSync(target, "utf8").split(NEWLINE);
+          const row = rows[Number(no) - 1] ?? "";
+          if (row.includes(quote)) continue;
+          seedAnchors.push(
+            e.from +
+              " → " +
+              at +
+              ":" +
+              no +
+              " — цитаты " +
+              barQuoted(quote) +
+              " на этой строке нет",
+          );
+        }
+      }
+      if (seedAnchors.length === 0 && seedAnchorSaid === null)
+        seedAnchorSaid = "якорей проверено: " + seedAnchorCount;
+    }
+  }
+  checkHead("Якоря семени ведут в семя");
+  if (seedAnchorSaid !== null) console.log("  " + seedAnchorSaid);
+  if (seedAnchors.length) console.log("  мимо семени: " + seedAnchors.length);
+  for (const one of seedAnchors)
+    console.log("    " + one + ". Править семя записи вместе с семенем кода");
   checkHead("Один предмет — один файл настройки");
   console.log("  предметов с двумя файлами: " + twinConfigs.length);
   for (const g of twinConfigs) console.log("    " + g);
@@ -11111,6 +11176,7 @@ if (mode === "verify") {
     baseGap.length ||
     frameLitter.length ||
     staleFrame.length ||
+    seedAnchors.length ||
     twinConfigs.length ||
     chainDrift.length ||
     chainTwins.length ||
