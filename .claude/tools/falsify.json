@@ -690,6 +690,39 @@
       "section": "Язык внутри корня исходников",
       "file": "src/app/App.tsx",
       "append": "// комментарий не на том языке"
+    },
+    {
+      "section": "Документы компонента лежат в его `docs/`",
+      "edits": [
+        {
+          "create": {
+            "path": "src/components/ZzProbe/ZzProbe.tsx",
+            "text": "export const ZzProbe = () => null;"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
+          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
+        },
+        {
+          "create": {
+            "path": "src/components/ZzProbe/README.md",
+            "text": "# ZzProbe"
+          }
+        },
+        {
+          "create": {
+            "path": "src/components/ZzProbe/ARCHITECTURE.md",
+            "text": "# посаженная поломка"
+          }
+        }
+      ]
+    },
+    {
+      "section": "Синоним термина словаря не заведён",
+      "file": ".claude/rules/loop.md",
+      "append": "Правило без ловца не держится."
     }
   ]
 }

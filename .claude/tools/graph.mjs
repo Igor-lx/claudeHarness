@@ -1924,9 +1924,11 @@ const CHECK_SECTIONS = [
   "Отступление от схемы стилизации объявлено решением",
   "Новый узел лежит по раскладке",
   "У компонента есть README",
+  "Документы компонента лежат в его `docs/`",
   "Язык внутри корня исходников",
   "У каждого семени есть адрес назначения",
   "Доктрина названа в порядке чтения",
+  "Синоним термина словаря не заведён",
   "Документы названы в указателе",
   "Применимость разделов планки",
   "Сверки, выключенные при живом предмете",
@@ -8304,6 +8306,32 @@ if (mode === "verify") {
     console.log("    " + one + ". Внутри корня исходников — английский");
   if (wrongTongue.length > 20)
     console.log("    …и ещё " + (wrongTongue.length - 20));
+  // 13l-бис. Документы компонента лежат в его `docs/`.
+  //
+  // В папке компонента из прозы лежит ОДИН файл — README, дверь снаружи.
+  // Всё прочее внутри `docs/`: витрина, устройство, решения, настройки.
+  // Иначе проза перемешивается с кодом, и папка тяжёлого компонента
+  // превращается в свалку, где не видно ни кода, ни документов.
+  //
+  // Спрашивается со всего поддерева компонента, а не с его корня: у крупного
+  // компонента README есть в каждой значимой подпапке, и это правильно — а
+  // вот документ рядом с ними правильным не становится.
+  const looseDocs = [];
+  for (const f of docFiles) {
+    const r = rel(f);
+    if (!/^components\//.test(r)) continue;
+    if (r.endsWith("/README.md")) continue;
+    if (r.includes("/docs/")) continue;
+    looseDocs.push(r);
+  }
+  checkHead("Документы компонента лежат в его `docs/`");
+  console.log("  документов мимо `docs/`: " + looseDocs.length);
+  for (const one of looseDocs)
+    console.log(
+      "    " +
+        one +
+        ". В корне папки компонента только README; остальное — в его `docs/`",
+    );
   checkHead("У компонента есть README");
   console.log("  папок компонентов без README: " + noReadme.length);
   for (const one of noReadme)
@@ -8539,6 +8567,72 @@ if (mode === "verify") {
       }
     }
   }
+  // Синоним термина словаря.
+  //
+  // Второе слово для одного понятия запрещено критерием `H6`, и правило это
+  // держалось вниманием — пока рядом с объявленным КРЮЧКОМ не завёлся
+  // «ловец» и не расползся по четырём местам доктрины.
+  //
+  // Чего сверка НЕ умеет: поймать синоним, которого ещё никто не назвал.
+  // Список нельзя перечислить заранее — синоним придумывают на ходу. Что она
+  // умеет: не дать вернуться тому, что однажды нашли. Тот же приём, что у
+  // точечных исключений линта: список растёт находками, а не воображением.
+  const bannedWords = [];
+  let bannedSaid = null;
+  {
+    const at = shelfAt("rules/glossary.banned.json");
+    if (at === null || !existsSync(at))
+      bannedSaid = "списка отвергнутых слов рядом нет";
+    else {
+      const book = JSON.parse(readFileSync(at, "utf8"));
+      // Корпус — проза обвязки и проза проекта: доктрина, скиллы, посадка и
+      // файлы базы. Именно там термин и живёт; исходники сюда не идут — в них
+      // говорят на языке кода.
+      const walkMd = (dir) => {
+        if (dir === null || !existsSync(dir)) return [];
+        return readdirSync(dir).flatMap((e) => {
+          const full = norm(path.join(dir, e));
+          if (statSync(full).isDirectory()) return walkMd(full);
+          return /.md$/.test(e) ? [full] : [];
+        });
+      };
+      const corpus = [
+        ...walkMd(shelfAt("rules")),
+        ...walkMd(shelfAt("skills")),
+        ...walkMd(shelfAt("seat")),
+        ...walkMd(BASE),
+      ];
+      for (const f of corpus) {
+        const rows = readFileSync(f, "utf8").split(NEWLINE);
+        for (let i = 0; i < rows.length; i += 1) {
+          const low = rows[i].toLowerCase();
+          for (const one of book.banned ?? []) {
+            if (!one.forms.some((w) => low.includes(w))) continue;
+            bannedWords.push(
+              rel0(f) +
+                ":" +
+                (i + 1) +
+                " — " +
+                one.forms[0] +
+                ", а в словаре это " +
+                one.instead,
+            );
+          }
+        }
+      }
+      if (bannedWords.length === 0)
+        bannedSaid =
+          "отвергнутых слов в корпусе: 0 (список: " +
+          (book.banned ?? []).length +
+          ")";
+    }
+  }
+  checkHead("Синоним термина словаря не заведён");
+  if (bannedSaid !== null) console.log("  " + bannedSaid);
+  if (bannedWords.length)
+    console.log("  синонимов в корпусе: " + bannedWords.length);
+  for (const one of bannedWords)
+    console.log("    " + one + ". Один термин — одна концепция");
   checkHead("Доктрина названа в порядке чтения");
   console.log(
     CONFIG.doctrineReading == null || SHELF === null
@@ -11489,6 +11583,7 @@ if (mode === "verify") {
     // ждёт решения человека, а красный прогон на этом приучил бы гасить список.
     malformedQuestions.length ||
     doctrineDrift.length ||
+    bannedWords.length ||
     uncitedNew.length ||
     parked.length ||
     // Проверка, не влияющая на код возврата, печатает, но не держит. Здесь
@@ -11506,6 +11601,7 @@ if (mode === "verify") {
     schemeStray.length ||
     layoutStray.length ||
     noReadme.length ||
+    looseDocs.length ||
     overDebtOf("tongue", wrongTongue.length) ||
     mutePromises.length ||
     unexplained.length ||
