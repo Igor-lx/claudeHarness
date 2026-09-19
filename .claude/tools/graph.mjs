@@ -219,6 +219,7 @@ const DEBT_KINDS = [
   "decisions",
   "invariants",
   "constants",
+  "subjects",
   "comments",
   "tongue",
 ];
@@ -7046,7 +7047,11 @@ if (mode === "verify") {
       // Маркеры обвязки — не подсказки заготовки: они приезжают в семенах и
       // в правильно посаженном проекте обязаны стоять. Образец один на все:
       // второй рядом с первым разошёлся бы при заведении третьего.
-      const FRAME_MARK = /^\s*<!--\s*\/?(?:КАРКАС|ПУСТО)\b[^>]*-->\s*$/;
+      // Границы слова здесь нет и быть не может: она считается по латинице,
+      // а имена маркеров кириллические — после них `\b` не срабатывает
+      // никогда. Замерено вторым прогоном начисто: починка соседней запинки
+      // сломала опознание маркеров каркаса, и число подсказок втрое выросло.
+      const FRAME_MARK = /^\s*<!--\s*\/?(?:КАРКАС|ПУСТО)[^>]*-->\s*$/;
       const prose = body
         .split(NEWLINE)
         .filter(
@@ -11495,7 +11500,7 @@ if (mode === "verify") {
     findingDrift.length ||
     transitionDrift.length ||
     baseGap.length ||
-    baseMute.length ||
+    overDebtOf("subjects", baseMute.length) ||
     frameLitter.length ||
     staleFrame.length ||
     emptyClaims.length ||
