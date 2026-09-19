@@ -213,7 +213,15 @@ const SHAPE_FREE = new Set(["toolchain", "verifiedVersions", "debt"]);
  * сверка осталась бы красной, а настройка выглядела бы заполненной, и
  * искать причину пришлось бы глазами.
  */
-const DEBT_KINDS = ["map", "tests", "decisions", "invariants", "constants"];
+const DEBT_KINDS = [
+  "map",
+  "tests",
+  "decisions",
+  "invariants",
+  "constants",
+  "comments",
+  "tongue",
+];
 if (CONFIG.debt != null) {
   const wrong = [];
   for (const [kind, value] of Object.entries(CONFIG.debt)) {
@@ -914,6 +922,14 @@ if (CONFIG.docsIndex != null) {
 })(ROOT);
 
 const isTest = isTestPath;
+
+/** Идёт ли посадка. ЕДИНСТВЕННОЕ чтение флага на весь инструмент.
+ *
+ * Флаг принимает `null`, `0` и `1`, и прежде его читали двумя разными
+ * способами: баннер — «не null», сверки — «не ноль». Посадка, снявшая его в
+ * ноль, получала вечный баннер «посадка не завершена» при зелёном прогоне.
+ */
+const seatingIsUp = () => CONFIG.seating != null && CONFIG.seating !== 0;
 
 /** Потолок слитного ряда двух косых, В СЛОВАХ.
  *
@@ -7027,7 +7043,10 @@ if (mode === "verify") {
       // верно посаженный пустой проект не мог пройти эту сверку в принципе,
       // а рубеж завершения посадки у него как раз нулевой код возврата.
       // Найдено посадкой в проект без кода.
-      const FRAME_MARK = /^\s*<!--\s*\/?КАРКАС\s*-->\s*$/;
+      // Маркеры обвязки — не подсказки заготовки: они приезжают в семенах и
+      // в правильно посаженном проекте обязаны стоять. Образец один на все:
+      // второй рядом с первым разошёлся бы при заведении третьего.
+      const FRAME_MARK = /^\s*<!--\s*\/?(?:КАРКАС|ПУСТО)\b[^>]*-->\s*$/;
       const prose = body
         .split(NEWLINE)
         .filter(
@@ -7044,11 +7063,16 @@ if (mode === "verify") {
       //
       // Корпус узкий по построению: спрашиваются только объявленные засеянными
       // файлы, а в них угловая скобка означает ровно одно.
-      const inRow = body
-        .split(NEWLINE)
-        .filter(
-          (l) => l.trimStart().startsWith("|") && /<[^>]+>/.test(l),
-        ).length;
+      const inRow = body.split(NEWLINE).filter(
+        (l) =>
+          l.trimStart().startsWith("|") &&
+          // Обратные кавычки снимаются до поиска: угловая скобка внутри них
+          // — нотация пути (`components/<Имя>/`), а не место под заполнение.
+          // Место под заполнение в кавычках не пишут никогда. Замерено
+          // посадкой начисто: проект, описавший раскладку доктринальной
+          // нотацией, закрыться не мог.
+          /<[^>]+>/.test(l.replace(/`[^`]*`/g, "")),
+      ).length;
       if (inRow > 0)
         unfilledTemplate.push(
           one + ": мест под заполнение в таблицах: " + inRow,
@@ -8191,7 +8215,10 @@ if (mode === "verify") {
       decidedAt2 !== null && existsSync(decidedAt2)
         ? readFileSync(decidedAt2, "utf8")
         : "";
-    if (decided2.includes("раскладка проекта"))
+    // Регистр не спрашивается: слова пишут в начале предложения с заглавной,
+    // и посадка начисто на этом и споткнулась — решение записано, сверка его
+    // не увидела.
+    if (decided2.toLowerCase().includes("раскладка проекта"))
       layoutSaid = "отступление объявлено решением: раскладка проекта своя";
     else {
       const LAYERS = [
@@ -9457,7 +9484,13 @@ if (mode === "verify") {
   );
   for (const d of checksTableDrift) console.log("    " + d);
 
-  if (CONFIG.seating != null) {
+  // Флаг посадки читается ОДНИМ способом на весь инструмент.
+  //
+  // Значений в ходу три, и прежде баннер смотрел «не null», а две сверки —
+  // «не ноль». Посадка, снявшая флаг в ноль (естественное прочтение слов
+  // «снять флаг»), получала вечный баннер при зелёном прогоне. Замерено
+  // посадкой начисто.
+  if (seatingIsUp()) {
     console.log("");
     banner("ПОСАДКА НЕ ЗАВЕРШЕНА");
     console.log("  Фаза 1 пройдена, фаза 2 — нет. Пока флаг стоит, три сверки");
@@ -10588,7 +10621,7 @@ if (mode === "verify") {
   // потребовала его положить. Первая попытка дала обеим сверкам один
   // предмет — свои тесты, — и противоречие ушло, а фальсификация осталась
   // без зацепки: в проекте со своими тестами эту сверку не разбудить ничем.
-  if (CONFIG.seating != null && CONFIG.seating !== 0) {
+  if (seatingIsUp()) {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt !== null && existsSync(mapAt))
       for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
@@ -10614,7 +10647,7 @@ if (mode === "verify") {
   // поднятом флаге сверка не смотрела вовсе: отчёт посадки не называл, что
   // ещё предстоит слить, — ровно тогда, когда это нужнее всего, — а прогон
   // рецепта докладывал промолчавшую сверку как слепую.
-  const seatingUp = CONFIG.seating != null && CONFIG.seating !== 0;
+  const seatingUp = seatingIsUp();
   {
     const look = (dir) => {
       for (const e of readdirSync(dir)) {
@@ -11419,8 +11452,7 @@ if (mode === "verify") {
     offDrift.length ||
     undocumented.length ||
     deadAnchors.length ||
-    wordyComments.length ||
-    chattyFiles.length ||
+    overDebtOf("comments", wordyComments.length + chattyFiles.length) ||
     closedTodos.length ||
     danglingTodo.length ||
     // Только сломанная форма записи. Сам открытый вопрос прогон не роняет: он
@@ -11444,12 +11476,12 @@ if (mode === "verify") {
     schemeStray.length ||
     layoutStray.length ||
     noReadme.length ||
-    wrongTongue.length ||
+    overDebtOf("tongue", wrongTongue.length) ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
     unclassified.length ||
-    (CONFIG.seating == null ? unfilledTemplate.length : 0) ||
+    (seatingIsUp() ? 0 : unfilledTemplate.length) ||
     scopeDrift.length ||
     danglingRefs.length ||
     deadExceptions.length ||
