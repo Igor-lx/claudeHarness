@@ -310,12 +310,12 @@
         },
         {
           "file": ".claude/seat/map.json",
-          "find": "\"to\": \"src/tests/App.test.tsx\"",
-          "replace": "\"to\": \"src/tests/zzНЕТУ.test.tsx\""
+          "find": "\"to\": \"src/app/tests/App.test.tsx\"",
+          "replace": "\"to\": \"src/app/tests/zzНЕТУ.test.tsx\""
         },
         {
           "file": ".context/09-decisions.md",
-          "append": "Якорь с цитатой: `src/tests/zzНЕТУ.test.tsx:1` `проба`."
+          "append": "Якорь с цитатой: `src/app/tests/zzНЕТУ.test.tsx:1` `проба`."
         }
       ]
     },
@@ -330,7 +330,7 @@
         },
         {
           "create": {
-            "path": "src/main.tsx",
+            "path": "src/app/main.tsx",
             "text": "export const zzNotSeed = 1;"
           }
         },
@@ -338,7 +338,7 @@
           "file": ".context/00-map.md",
           "appendFrom": {
             "seed": ".claude/seat/templates/00-map.md",
-            "startsWith": "| `src/main.tsx` |"
+            "startsWith": "| `src/app/main.tsx` |"
           }
         }
       ]
@@ -360,13 +360,13 @@
         },
         {
           "create": {
-            "path": "src/main.tsx",
+            "path": "src/app/main.tsx",
             "text": "zzNotSeed"
           }
         },
         {
           "create": {
-            "path": "src/App.tsx",
+            "path": "src/app/App.tsx",
             "text": "zzNotSeed"
           }
         },
@@ -423,7 +423,7 @@
     {
       "section": "Новые якоря — с цитатой",
       "file": ".context/09-decisions.md",
-      "append": "Якорь: `src/App.tsx:5`."
+      "append": "Якорь: `src/app/App.tsx:5`."
     },
     {
       "section": "Найденное — исправлено, а не отложено",
@@ -544,7 +544,7 @@
         },
         {
           "file": ".context/00-map.md",
-          "append": "## Проба направления\n\n| Слой | Что запрещено | Разрешено исключением |\n| --- | --- | --- |\n| `src/такого-слоя-нет` | `src/main.tsx` | нет |"
+          "append": "## Проба направления\n\n| Слой | Что запрещено | Разрешено исключением |\n| --- | --- | --- |\n| `src/такого-слоя-нет` | `src/app/main.tsx` | нет |"
         }
       ],
       "own": true
@@ -607,14 +607,89 @@
     },
     {
       "section": "Каркас не отстал от семени",
-      "file": "src/App.tsx",
+      "file": "src/app/App.tsx",
       "append": "// drift"
     },
     {
       "section": "Якоря семени ведут в семя",
       "file": ".claude/seat/templates/09-decisions.md",
-      "find": "`src/App.tsx:1`",
-      "replace": "`src/App.tsx:4`"
+      "find": "`src/app/App.tsx:1`",
+      "replace": "`src/app/App.tsx:4`"
+    },
+    {
+      "section": "Предмет из кода назван в своём файле базы",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzStateful.ts",
+            "text": "import { useState } from \"react\";\nexport const useZz = () => useState(0);"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
+          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/zzStateful.ts` | посаженная поломка | `zz` | нет |"
+        },
+        {
+          "create": {
+            "path": ".context/04-state.md",
+            "text": "# Состояние\n\n| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n"
+          }
+        }
+      ]
+    },
+    {
+      "section": "Запись о пустоте не пережила появление кода",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzOwn.ts",
+            "text": "export const zzOwn = 1;"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
+          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/zzOwn.ts` | посаженная поломка | нет | нет |\n\n<!-- ПУСТО -->"
+        }
+      ]
+    },
+    {
+      "section": "Новый узел лежит по раскладке",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzStray.ts",
+            "text": "export const zzStray = 1;"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
+          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/zzStray.ts` | посаженная поломка | нет | нет |"
+        }
+      ]
+    },
+    {
+      "section": "У компонента есть README",
+      "edits": [
+        {
+          "create": {
+            "path": "src/components/ZzProbe/ZzProbe.tsx",
+            "text": "export const ZzProbe = () => null;"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
+          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
+        }
+      ]
+    },
+    {
+      "section": "Язык внутри корня исходников",
+      "file": "src/app/App.tsx",
+      "append": "// комментарий не на том языке"
     }
   ]
 }

@@ -117,13 +117,13 @@
       "onlyWhenEmpty": true
     },
     {
-      "from": "seat/templates/src/main.tsx",
-      "to": "src/main.tsx",
+      "from": "seat/templates/src/app/main.tsx",
+      "to": "src/app/main.tsx",
       "onlyWhenEmpty": true
     },
     {
-      "from": "seat/templates/src/App.tsx",
-      "to": "src/App.tsx",
+      "from": "seat/templates/src/app/App.tsx",
+      "to": "src/app/App.tsx",
       "onlyWhenEmpty": true
     },
     {
@@ -143,8 +143,8 @@
       "to": "src/tests/setup.ts"
     },
     {
-      "from": "seat/templates/src/tests/App.test.tsx.seed",
-      "to": "src/tests/App.test.tsx",
+      "from": "seat/templates/src/app/tests/App.test.tsx.seed",
+      "to": "src/app/tests/App.test.tsx",
       "onlyWhenEmpty": true
     },
     {
@@ -156,6 +156,10 @@
     {
       "from": "seat/templates/14-probes.md",
       "to": ".context/14-probes.md"
+    },
+    {
+      "from": "seat/templates/17-conversion.md",
+      "to": ".context/17-conversion.md"
     },
     {
       "from": "seat/templates/.gitignore",

@@ -897,6 +897,22 @@ if (CONFIG.docsIndex != null) {
   })(norm(path.join(BASE, CONFIG.docsIndex.dir)));
 }
 
+// Документы, лежащие РЯДОМ С КОДОМ, — тот же корпус.
+//
+// Свод описывает пять видов документов, и три из них живут у компонента:
+// README папки, устройство слоя, решение. Корпус же собирался по одной
+// папке, названной настройкой, и покомпонентный документ не проверялся
+// ничем — ни якоря в нём, ни имена из кода, ни ссылки. Это ровно тот класс,
+// которым когда-то нашлась и сама папка документации.
+(function walkNear(dir) {
+  if (!walkable(dir)) return;
+  for (const e of readdirSync(dir)) {
+    const full = norm(path.join(dir, e));
+    if (statSync(full).isDirectory()) walkNear(full);
+    else if (/\.md$/.test(e) && !docFiles.includes(full)) docFiles.push(full);
+  }
+})(ROOT);
+
 const isTest = isTestPath;
 
 /** Потолок слитного ряда двух косых, В СЛОВАХ.
@@ -1889,6 +1905,9 @@ const CHECK_SECTIONS = [
   "Связи через DOM и CSS",
   "Имена классов из кода есть в листе стилей",
   "Отступление от схемы стилизации объявлено решением",
+  "Новый узел лежит по раскладке",
+  "У компонента есть README",
+  "Язык внутри корня исходников",
   "У каждого семени есть адрес назначения",
   "Доктрина названа в порядке чтения",
   "Документы названы в указателе",
@@ -1916,8 +1935,10 @@ const CHECK_SECTIONS = [
   "Вопрос о планке задан на конечном виде правки",
   "Планка пройдена покритериально",
   "Файлы базы заведены под свой предмет",
+  "Предмет из кода назван в своём файле базы",
   "Каркас обвязки не лежит в живом проекте",
   "Каркас не отстал от семени",
+  "Запись о пустоте не пережила появление кода",
   "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
   "Цепочка проверок объявлена данными",
@@ -3458,6 +3479,10 @@ if (mode === "tested") {
       // — «почему» человеку, и закрываются они порознь. Базу ведут по ходу
       // правки, от этого пара кажется закрытой — а документация остаётся
       // описывать код, которого больше нет.
+      // Вопрос был прозой и ответ держался памятью: замерено на приложении с
+      // нуля, где заполнены оказались ровно те записи базы, у которых есть
+      // сверка. Теперь у него есть адрес, словарь и печать — таблица «База и
+      // документация» в протоколе свода.
       console.log(NEWLINE + "=== БД и документация — порознь ===");
       console.log(
         "  БД: описывает ли она новое состояние кода — включая тесты и стили?",
@@ -3469,7 +3494,13 @@ if (mode === "tested") {
         "  возможность, видная снаружи, — строка в витрине, словами продукта.",
       );
       console.log("  Правила того и другого — docs/CONVENTIONS.md.");
-      console.log("  В отчёте это две строки, а не одна.");
+      console.log(
+        "  Ответ ставится ПОФАЙЛОВО и порознь в протоколе свода, таблица",
+      );
+      console.log(
+        "  «База и документация»: `правлено` с адресом либо `не требуется`",
+      );
+      console.log("  с причиной. Пустая клетка не даёт печати.");
 
       // Второй: единственная форма откладывания, которую машина не видит
       // вовсе, — молчание. Находку, которую не записали, не поймает ни одна
@@ -4368,6 +4399,7 @@ if (mode === "bar") {
 
   const marks = barMarks(subject);
   const HEAD = "| критерий | о чём | исход | адрес | что | судьба |";
+  const BASE_HEAD = "| файл | база | документация | чем это объяснено |";
   const skeleton = () => {
     const rows = [
       "# Свод по планке — протокол текущей работы",
@@ -4411,6 +4443,22 @@ if (mode === "bar") {
       HEAD,
       "| --- | --- | --- | --- | --- | --- |",
       ...live.all.map((c) => "| " + c.id + " | " + c.title + " |  |  |  |  |"),
+      "",
+      "## База и документация",
+      "",
+      "Ответ на каждый файл предмета ПОРОЗНЬ: правлена ли запись базы",
+      "о нём, правлен ли документ. Один ответ на оба вопроса сливает их,",
+      "а слитый ответ всегда положителен.",
+      "",
+      "Исход: " +
+        barQuoted("правлено") +
+        " — с адресом правленого; " +
+        barQuoted("не требуется") +
+        " — с причиной.",
+      "",
+      BASE_HEAD,
+      "| --- | --- | --- | --- |",
+      ...marks.map((m) => "| " + barQuoted(m.file) + " |  |  |  |"),
       "",
     ];
     writeFileSync(at, rows.join(NEWLINE));
@@ -4529,6 +4577,60 @@ if (mode === "bar") {
   const extra = [...said.keys()].filter(
     (id) => !live.all.some((c) => c.id === id),
   );
+
+  // Вторая таблица: база и документация, по файлу предмета и порознь.
+  //
+  // Прежде это был вопрос прозой в другом режиме, и ответ на него держался
+  // памятью. Замерено на приложении с нуля: карта заполнена, реестр тестов
+  // заполнен — у обоих есть сверка, — а запись о состоянии, назначение и
+  // витрина остались от посадки. База заполняется по форме своего ловца.
+  {
+    const want = new Set(marks.map((m) => m.file));
+    const rows = new Map();
+    for (const line of body.split(/\r?\n/)) {
+      if (!line.startsWith("| ")) continue;
+      const c = line
+        .split("|")
+        .slice(1, -1)
+        .map((x) => x.trim());
+      if (c.length !== 4) continue;
+      const file = c[0].replace(new RegExp(BAR_TICK, "g"), "");
+      if (!want.has(file)) continue;
+      rows.set(file, c);
+    }
+    for (const file of want) {
+      const c = rows.get(file);
+      if (c === undefined) {
+        holes.push("база: строки про " + barQuoted(file) + " нет");
+        continue;
+      }
+      for (const [i, what] of [
+        [1, "база"],
+        [2, "документация"],
+      ]) {
+        const one = c[i];
+        if (one === "") {
+          holes.push(file + ", " + what + ": исход не поставлен");
+          continue;
+        }
+        if (!["правлено", "не требуется"].includes(one)) {
+          holes.push(
+            file + ", " + what + ": исход не из словаря: " + barQuoted(one),
+          );
+          continue;
+        }
+        if (c[3] === "")
+          holes.push(
+            file +
+              ", " +
+              what +
+              ": " +
+              one +
+              (one === "правлено" ? " без адреса" : " без причины"),
+          );
+      }
+    }
+  }
 
   console.log("=== Свод по планке ===");
   console.log("  " + rel0(at));
@@ -8064,6 +8166,124 @@ if (mode === "verify") {
       schemeStray.push(at);
     }
   }
+  // 13k. Новый узел лежит по раскладке.
+  //
+  // Умолчание обвязки: `app` — корень композиции, `components/<Имя>` — папка
+  // на компонент, `shared/<область>` — общее областями. Прежде про раскладку
+  // не было ни правила, ни сверки, и сессия выбирала её вкусом задачи:
+  // приложение из одной кнопки получило папку компонента рядом с корневым
+  // компонентом, потому что задача была маленькая.
+  //
+  // Сверка одна на оба случая. Совпадающий с умолчанием проект держит ноль
+  // файлов вне слоёв — положили один мимо, стало красным. Разложенный иначе
+  // держит их сотни, и спрашивается с него не перевод, а ЗАПИСЬ: отступление
+  // от умолчания — решение с ценой, иначе следующая сессия примет чужую
+  // раскладку за недосмотр и начнёт «чинить».
+  //
+  // Тесты не считаются: их место держит своя сверка, и два правила об одном
+  // предмете разошлись бы.
+  const layoutStray = [];
+  let layoutSaid = null;
+  {
+    const decidedAt2 =
+      CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+    const decided2 =
+      decidedAt2 !== null && existsSync(decidedAt2)
+        ? readFileSync(decidedAt2, "utf8")
+        : "";
+    if (decided2.includes("раскладка проекта"))
+      layoutSaid = "отступление объявлено решением: раскладка проекта своя";
+    else {
+      const LAYERS = [
+        new RegExp("^app/"),
+        new RegExp("^components/[^/]+/"),
+        new RegExp("^shared/[^/]+/"),
+      ];
+      for (const f of [...files, ...styleFiles]) {
+        // Объявления типов принадлежат проекту, а не слою: их кладут в
+        // корень исходников, и сборщик ищет их там.
+        if (isTest(f) || f.endsWith(".d.ts")) continue;
+        const r = rel(f);
+        if (LAYERS.some((re) => re.test(r))) continue;
+        layoutStray.push(r);
+      }
+      if (layoutStray.length === 0) layoutSaid = "вне объявленных слоёв: 0";
+    }
+  }
+  // 13l. У папки компонента есть README.
+  //
+  // Компонент переносят копированием папки, и первое, что открывает пришедший
+  // к ней снаружи, — README: зачем она, что берут, что тянется следом, чего
+  // делать нельзя. Свод описывал этот вид документа и не требовал его нигде.
+  //
+  // Спрашивается только с папок компонентов: у слоя приложения читатель
+  // снаружи один — сам проект, — а общие области описывает их собственный
+  // README, и требовать его с каждой подпапки значит плодить пустые файлы.
+  const noReadme = [];
+  {
+    const seen = new Set();
+    for (const f of [...files, ...styleFiles]) {
+      const m = /^components\/([^/]+)\//.exec(rel(f));
+      if (m === null) continue;
+      seen.add(m[1]);
+    }
+    for (const name of seen) {
+      const at = norm(path.join(ROOT, "components", name, "README.md"));
+      if (!docFiles.includes(at)) noReadme.push(rel(at));
+    }
+  }
+  // 13m. Язык внутри корня исходников.
+  //
+  // Правило механическое и давно записано: внутри корня исходников —
+  // английский, вне — русский. Ловца у него не было ни одного, и нарушено оно
+  // оказалось во всех файлах приложения, написанного под этой обвязкой, —
+  // сразу и целиком, при восьмидесяти зелёных сверках.
+  //
+  // Признак грубый и потому надёжный: буква кириллицы в строке комментария
+  // либо в строковом литерале. Имена не ловятся — имя с кириллицей не
+  // собирается, и сверка дублировала бы компилятор.
+  //
+  // Вложенные файлы правил под это не подпадают: они разговор о коде, а не
+  // код, и корпус сверки — исходники и листы стилей, а не проза рядом с ними.
+  const wrongTongue = [];
+  {
+    const CYR = /[\u0400-\u04FF]/;
+    for (const f of [...files, ...styleFiles]) {
+      const rows = readFileSync(f, "utf8").split(NEWLINE);
+      for (let i = 0; i < rows.length; i++) {
+        if (!CYR.test(rows[i])) continue;
+        wrongTongue.push(rel(f) + ":" + (i + 1));
+      }
+    }
+  }
+  checkHead("Язык внутри корня исходников");
+  console.log("  строк не на языке кода: " + wrongTongue.length);
+  for (const one of wrongTongue.slice(0, 20))
+    console.log("    " + one + ". Внутри корня исходников — английский");
+  if (wrongTongue.length > 20)
+    console.log("    …и ещё " + (wrongTongue.length - 20));
+  checkHead("У компонента есть README");
+  console.log("  папок компонентов без README: " + noReadme.length);
+  for (const one of noReadme)
+    console.log(
+      "    " +
+        one +
+        ". Зачем папка, что берут, что тянется следом, чего нельзя",
+    );
+  checkHead("Новый узел лежит по раскладке");
+  if (layoutSaid !== null) console.log("  " + layoutSaid);
+  if (layoutStray.length)
+    console.log("  вне объявленных слоёв: " + layoutStray.length);
+  for (const one of layoutStray)
+    console.log(
+      "    " +
+        one +
+        ". Место по умолчанию: app — корень композиции, components/<Имя> — компонент, shared/<область> — общее",
+    );
+  if (layoutStray.length)
+    console.log(
+      "  Раскладка проекта своя — объявить решением со словами «раскладка проекта» и завести план в 17-conversion.md",
+    );
   checkHead("Отступление от схемы стилизации объявлено решением");
   console.log(
     decidedAt === null
@@ -9441,6 +9661,7 @@ if (mode === "verify") {
     ),
   };
   const baseGap = [];
+  const baseMute = [];
   {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt !== null && existsSync(mapAt)) {
@@ -9456,10 +9677,29 @@ if (mode === "verify") {
           continue;
         }
         if (!re.test(body)) continue;
-        if (!existsSync(path.join(REPO, one.to)))
+        const at = path.join(REPO, one.to);
+        if (!existsSync(at)) {
           baseGap.push(
             one.to + " — предмет в коде есть, а файла базы нет: " + one.subject,
           );
+          continue;
+        }
+        // Вторая сторона: файл заведён и молчит. Спрашивается НАЗВАН ЛИ
+        // АДРЕС — самое слабое, что вообще проверяемо, и этого довольно:
+        // пустая таблица не называет ни одного.
+        const said = readFileSync(at, "utf8");
+        for (const f of files) {
+          if (isTest(f)) continue;
+          if (!re.test(readFileSync(f, "utf8"))) continue;
+          if (said.includes(rel(f))) continue;
+          baseMute.push(
+            one.to +
+              " — не назван " +
+              rel(f) +
+              ", а предмет в нём есть: " +
+              one.subject,
+          );
+        }
       }
     }
   }
@@ -9504,6 +9744,7 @@ if (mode === "verify") {
   // обе величины нужны и второй стороне сверки, и третьей, а считаются они
   // внутри блока, читающего карту посадки.
   const staleFrame = [];
+  const emptyClaims = [];
   let frameLaid = 0;
   let frameOwn = 0;
   let frameLives = true;
@@ -9565,6 +9806,33 @@ if (mode === "verify") {
       const frameTo = new Set(frame.map((e) => norm(path.join(REPO, e.to))));
       const ownOutsideFrame = own.filter((f) => !frameTo.has(f));
       frameLives = ownOutsideFrame.length === 0;
+      // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
+      // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
+      // с текстом. Признак тот же, что у каркаса: свой код вне каркаса.
+      if (!frameLives) {
+        const docsAt =
+          CONFIG.docsIndex == null
+            ? null
+            : path.join(BASE, CONFIG.docsIndex.dir);
+        for (const dir of [BASE, docsAt]) {
+          if (dir === null || !existsSync(dir)) continue;
+          for (const name of readdirSync(dir)) {
+            if (!name.endsWith(".md")) continue;
+            const at = path.join(dir, name);
+            const text = readFileSync(at, "utf8");
+            const rows = text.split(NEWLINE);
+            for (let i = 0; i < rows.length; i++) {
+              if (!rows[i].includes("<!-- ПУСТО")) continue;
+              emptyClaims.push(
+                norm(at).slice(norm(REPO).length + 1) +
+                  ":" +
+                  (i + 1) +
+                  " — утверждает пустоту, а свой код уже есть",
+              );
+            }
+          }
+        }
+      }
       if (frameLives)
         for (const e of seatMap.copy ?? []) {
           const from0 = shelfAt(e.from);
@@ -9742,6 +10010,13 @@ if (mode === "verify") {
         }
       }
   }
+  checkHead("Предмет из кода назван в своём файле базы");
+  console.log("  файлов с предметом без записи: " + baseMute.length);
+  for (const g of baseMute)
+    console.log(
+      "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
+    );
+
   checkHead("Каркас обвязки не лежит в живом проекте");
   console.log("  семян каркаса при живом коде: " + frameLitter.length);
   for (const g of frameLitter) console.log("    " + g);
@@ -9778,6 +10053,17 @@ if (mode === "verify") {
       }
     }
   }
+  checkHead("Запись о пустоте не пережила появление кода");
+  console.log(
+    frameLives
+      ? "  своего кода нет: записи о пустоте верны"
+      : "  переживших: " + emptyClaims.length,
+  );
+  for (const one of emptyClaims)
+    console.log(
+      "    " + one + ". Снять маркер вместе с текстом и написать, что есть",
+    );
+
   checkHead("Каркас не отстал от семени");
   console.log(
     frameLives
@@ -11156,6 +11442,9 @@ if (mode === "verify") {
     domMissed.length ||
     classDrift.length ||
     schemeStray.length ||
+    layoutStray.length ||
+    noReadme.length ||
+    wrongTongue.length ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
@@ -11174,8 +11463,10 @@ if (mode === "verify") {
     findingDrift.length ||
     transitionDrift.length ||
     baseGap.length ||
+    baseMute.length ||
     frameLitter.length ||
     staleFrame.length ||
+    emptyClaims.length ||
     seedAnchors.length ||
     twinConfigs.length ||
     chainDrift.length ||
