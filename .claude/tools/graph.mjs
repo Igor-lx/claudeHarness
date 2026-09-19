@@ -8262,7 +8262,7 @@ if (mode === "verify") {
       seen.add(m[1]);
     }
     for (const name of seen) {
-      const at = norm(path.join(ROOT, "components", name, "README.md"));
+      const at = norm(path.join(ROOT, "components", name, "docs", "README.md"));
       if (!docFiles.includes(at)) noReadme.push(rel(at));
     }
   }
@@ -8320,7 +8320,9 @@ if (mode === "verify") {
   for (const f of docFiles) {
     const r = rel(f);
     if (!/^components\//.test(r)) continue;
-    if (r.endsWith("/README.md")) continue;
+    // README не исключается по имени: он тоже проза, и место у него то же
+    // самое. Прежде он лежал в корне папки, и проза компонента жила в двух
+    // местах — правило приходилось объяснять исключением.
     if (r.includes("/docs/")) continue;
     looseDocs.push(r);
   }
@@ -8328,9 +8330,7 @@ if (mode === "verify") {
   console.log("  документов мимо `docs/`: " + looseDocs.length);
   for (const one of looseDocs)
     console.log(
-      "    " +
-        one +
-        ". В корне папки компонента только README; остальное — в его `docs/`",
+      "    " + one + ". Вся проза компонента внутри `docs/`, включая README",
     );
   checkHead("У компонента есть README");
   console.log("  папок компонентов без README: " + noReadme.length);

@@ -707,13 +707,13 @@
         },
         {
           "create": {
-            "path": "src/components/ZzProbe/README.md",
+            "path": "src/components/ZzProbe/docs/README.md",
             "text": "# ZzProbe"
           }
         },
         {
           "create": {
-            "path": "src/components/ZzProbe/ARCHITECTURE.md",
+            "path": "src/components/ZzProbe/README.md",
             "text": "# посаженная поломка"
           }
         }
