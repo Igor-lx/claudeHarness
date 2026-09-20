@@ -6151,8 +6151,25 @@ if (mode === "verify") {
   // свежей таблице изоляции; у таблицы направлений дыра та же. Имена пакетов
   // (без косой черты) сюда не идут: они и не пути.
   const emptyRules = [];
+  /** Имя пакета — не путь, и спрашивать с него существования на диске нельзя.
+   * Отличается оно от имени СЛОЯ не косой чертой, а тем, что объявлено
+   * зависимостью: слои в обеих таблицах пишутся без косой ровно так же, и
+   * прежняя оговорка «без косой — значит пакет» уводила из-под сверки весь её
+   * главный случай. */
+  const declaredPackages = (() => {
+    const out = new Set();
+    if (CONFIG.manifest == null) return out;
+    const at = path.join(BASE, CONFIG.manifest);
+    if (!existsSync(at)) return out;
+    const j = JSON.parse(readFileSync(at, "utf8"));
+    for (const kind of ["dependencies", "devDependencies", "peerDependencies"])
+      for (const name of Object.keys(j[kind] ?? {})) out.add(name);
+    return out;
+  })();
   const resolves = (q) =>
-    !q.includes("/") || (inside(q, null)?.hits ?? []).length > 0;
+    declaredPackages.has(q) ||
+    q.startsWith("@") ||
+    (inside(q, null)?.hits ?? []).length > 0;
   for (const [what, rule] of [
     ...rules.map((r) => ["правила направления", r]),
     ...isolation.map((r) => ["правила изоляции", r]),
