@@ -925,6 +925,26 @@ if (CONFIG.docsIndex != null) {
 
 const isTest = isTestPath;
 
+/** Образцы ПРЕДМЕТА файлов базы, кладущихся по находке: состояние и порядок.
+ *
+ * Один набор на весь инструмент. Спрашивают его двое — сверка, требующая
+ * завести файл и назвать в нём адрес, и очерченная область, называющая долг
+ * про тот файл, который очерчивает. Два набора разошлись бы молча: оба
+ * зелёные, а считают разное.
+ */
+const BRIEF_SUBJECTS = {
+  // Имя, за которым идёт круглая ИЛИ угловая скобка: `useState<Set<string>>(`
+  // это тот же предмет, а выражение с одной круглой его не видело. Поймано
+  // полигоном: компонент с двумя состояниями и тремя ссылками прошёл как
+  // «предмета нет».
+  state: new RegExp(
+    "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]",
+  ),
+  timing: new RegExp(
+    "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
+  ),
+};
+
 /** Идёт ли посадка. ЕДИНСТВЕННОЕ чтение флага на весь инструмент.
  *
  * Флаг принимает `null`, `0` и `1`, и прежде его читали двумя разными
@@ -1924,7 +1944,7 @@ const CHECK_SECTIONS = [
   "Имена классов из кода есть в листе стилей",
   "Отступление от схемы стилизации объявлено решением",
   "Новый узел лежит по раскладке",
-  "Правила проекта не утверждают чужую раскладку",
+  "Правила проекта не спорят с реестром решений",
   "У компонента есть README",
   "Документы компонента лежат в его `docs/`",
   "Язык внутри корня исходников",
@@ -4878,6 +4898,39 @@ if (mode === "brief") {
         // документ у useOrientationSwapVeil, потому что тот пишет ссылку в
         // середине фразы, а не отдельной строкой.
         const anchors = [...new Set(docRefsIn(readFileSync(target, "utf8")))];
+        // Долг про ЭТОТ файл — часть ответа на «что надо знать перед правкой».
+        // Прежде о нём знал только полный прогон: режим называл радиус, тесты и
+        // записи базы и молчал о том, что записи о состоянии или о порядке у
+        // файла нет вовсе. Замерено пробой «убери этот эффект, он лишний»:
+        // остановить её должна была запись о порядке, а её не было, и область
+        // об этом не сказала.
+        {
+          const owed = [];
+          const mapAt = shelfAt("seat/map.json");
+          if (mapAt !== null && existsSync(mapAt))
+            for (const one of JSON.parse(readFileSync(mapAt, "utf8"))
+              .onSubject ?? []) {
+              const re = BRIEF_SUBJECTS[one.subject];
+              if (re === undefined) continue;
+              if (!re.test(readFileSync(target, "utf8"))) continue;
+              const owedAt = path.join(BASE, one.to);
+              if (!existsSync(owedAt)) {
+                owed.push(one.to + " — файла базы нет вовсе");
+                continue;
+              }
+              if (!readFileSync(owedAt, "utf8").includes(rel(target)))
+                owed.push(
+                  one.to +
+                    " — файл не назван, а предмет «" +
+                    one.subject +
+                    "» в нём есть",
+                );
+            }
+          if (owed.length) {
+            console.log("--- ДОЛГ базы про этот файл ---");
+            for (const one of owed) console.log("  " + one);
+          }
+        }
         // Листы стилей — часть области, и без них критерий про границу языков не
         // применить: половины написаны на разных языках, и графу импортов эта связь
         // не видна.
@@ -8352,32 +8405,72 @@ if (mode === "verify") {
   //
   // Признак точный и дешёвый: отступление объявлено решением, а правила
   // проекта дословно несут фразу семени про умолчание. Одно из двух лжёт.
+  // Осей у умолчаний ДВЕ — раскладка и схема стилизации, — и проверять одну
+  // из них и есть дефект. Замерено прогоном проб: правила проекта говорили
+  // «схема стилизации действует с первого дня», реестр решений — «своя схема,
+  // к умолчанию не приводится», и не ловило этого ничто.
+  //
+  // Вторая сторона того же: сняв утверждение об умолчании, правила перестают
+  // ОТВЕЧАТЬ, куда кладут новый узел. Указатель на доктрину обязан пережить
+  // переписывание — иначе следующая сессия кладёт новое наугад, и сверка
+  // раскладки её не остановит: отступление объявлено, и она молчит.
   const layoutLie = [];
-  if (layoutSaid !== null && layoutStray.length === 0) {
+  {
     const seedAt = shelfAt("seat/templates/CLAUDE.md");
+    const decidedAt3 =
+      CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+    const decided3 =
+      decidedAt3 !== null && existsSync(decidedAt3)
+        ? readFileSync(decidedAt3, "utf8").toLowerCase()
+        : "";
     const mine = (CONFIG.rulesManifest?.rules ?? []).map((r) =>
       path.join(BASE, r),
     );
     if (seedAt !== null && existsSync(seedAt)) {
-      const seed = readFileSync(seedAt, "utf8");
-      const claim = (
-        seed
-          .split(NEWLINE)
-          .find((l) => l.includes("Раскладка умолчания обвязки")) ?? ""
-      ).trim();
-      const declared = layoutSaid.includes("отступление объявлено");
-      if (declared && claim !== "")
+      const seed = readFileSync(seedAt, "utf8").split(NEWLINE);
+      const lineWith = (what) =>
+        (seed.find((l) => l.includes(what)) ?? "").trim();
+      const axes = [
+        {
+          decided: "раскладка проекта",
+          claim: lineWith("Раскладка умолчания обвязки"),
+          what: "раскладку умолчания",
+        },
+        {
+          decided: "схема стилизации",
+          claim: lineWith("Схема стилизации при этом действует"),
+          what: "схему стилизации умолчания",
+        },
+      ];
+      for (const axis of axes) {
+        if (!decided3.includes(axis.decided)) continue;
+        if (axis.claim === "") continue;
         for (const at of mine) {
           if (!existsSync(at)) continue;
-          if (!readFileSync(at, "utf8").includes(claim)) continue;
+          if (!readFileSync(at, "utf8").includes(axis.claim)) continue;
           layoutLie.push(
             rel0(at) +
-              " — утверждает раскладку умолчания, а отступление от неё объявлено решением",
+              " — утверждает " +
+              axis.what +
+              ", а отступление от неё объявлено решением",
+          );
+        }
+      }
+      // Указатель на доктрину: он отвечает, куда кладут новый узел, и обязан
+      // пережить переписывание таблицы под свою раскладку.
+      const pointer = lineWith("Куда кладут новый узел и почему так");
+      if (decided3.includes("раскладка проекта") && pointer !== "")
+        for (const at of mine) {
+          if (!existsSync(at)) continue;
+          if (readFileSync(at, "utf8").includes(pointer)) continue;
+          layoutLie.push(
+            rel0(at) +
+              " — раскладка своя, а указателя «куда кладут новый узел» не осталось",
           );
         }
     }
   }
-  checkHead("Правила проекта не утверждают чужую раскладку");
+  checkHead("Правила проекта не спорят с реестром решений");
   console.log(
     layoutLie.length === 0
       ? "  расхождений: 0"
@@ -8385,7 +8478,7 @@ if (mode === "verify") {
   );
   for (const one of layoutLie)
     console.log(
-      "    " + one + ". Переписать таблицу под фактическую раскладку проекта",
+      "    " + one + ". Переписать под фактическое устройство проекта",
     );
   checkHead("Новый узел лежит по раскладке");
   if (layoutSaid !== null) console.log("  " + layoutSaid);
@@ -9845,18 +9938,7 @@ if (mode === "verify") {
   // Предмет ищется в ИСПОЛНЯЕМОМ тексте исходников, мимо тестов: тест вправе
   // завести состояние ради самой проверки, и требовать из-за этого записи о
   // состоянии проекта значило бы краснеть на законном.
-  const SUBJECTS = {
-    // Имя, за которым идёт круглая ИЛИ угловая скобка: `useState<Set<string>>(`
-    // это тот же предмет, а выражение с одной круглой его не видело. Поймано
-    // полигоном: компонент с двумя состояниями и тремя ссылками прошёл как
-    // «предмета нет».
-    state: new RegExp(
-      "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]",
-    ),
-    timing: new RegExp(
-      "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
-    ),
-  };
+  const SUBJECTS = BRIEF_SUBJECTS;
   const baseGap = [];
   const baseMute = [];
   {
