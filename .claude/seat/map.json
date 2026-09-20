@@ -158,6 +158,10 @@
       "to": ".context/14-probes.md"
     },
     {
+      "from": "seat/templates/16-findings.md",
+      "to": ".context/16-findings.md"
+    },
+    {
       "from": "seat/templates/17-conversion.md",
       "to": ".context/17-conversion.md"
     },

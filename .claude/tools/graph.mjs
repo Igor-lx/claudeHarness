@@ -69,6 +69,32 @@ import {
  * слияние оставило маркеры, редактор сохранил половину. Читается это
  * защищённо, а порча копится списком и НАЗЫВАЕТСЯ в конце прогона — иначе
  * сырой стек обрывает прогон на середине, и треть сверок не выполняется. */
+/** Сколько ОТКРЫТЫХ строк реестра находок называют эту сверку.
+ *
+ * Находка на коде не бывает долгом: долгом объявляют неописанное, а код не
+ * по правилам — это находка. Закрыть её нельзя, не правя код, а правка кода
+ * переходом не является. Держится она открытой строкой реестра, которая
+ * мозолит глаза каждым прогоном; закрыли — удалили строку. */
+let OPEN_CACHE = null;
+const openFindings = () => {
+  if (OPEN_CACHE !== null) return OPEN_CACHE;
+  const out = new Map();
+  if (CONFIG.findings == null) return out;
+  const at = path.join(BASE, CONFIG.findings.file);
+  if (!existsSync(at)) return out;
+  for (const line of readFileSync(at, "utf8").split(String.fromCharCode(10))) {
+    const cell = line.split("|").map((c) => c.trim());
+    if (cell.length < 7) continue;
+    if (cell[6] !== "открыта") continue;
+    for (const m of (cell[2] + cell[5]).matchAll(/«([^»]+)»/g))
+      out.set(m[1], (out.get(m[1]) ?? 0) + 1);
+  }
+  OPEN_CACHE = out;
+  return out;
+};
+/** Находок этой сверки, не покрытых открытой строкой реестра. */
+const overOpen = (name, n) => Math.max(0, n - (openFindings().get(name) ?? 0));
+
 const SPOILED = [];
 /** Диапазон среды не объявлен вовсе: опоры нет, и это роняет прогон. */
 let envUndeclared = false;
@@ -235,7 +261,9 @@ const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
  * Список закрытый: сюда вписывают поле, когда оно заводится объектом. */
 const SHAPED = {
   transition: ["file", "heading"],
-  findings: ["file", "heading", "since"],
+  // `since` необязателен: у свежей посадки коммита-основания нет, и реестр
+  // при пустом поле просто копит находки, не сверяя починок с историей.
+  findings: ["file", "heading"],
   checksTable: ["file", "heading"],
   docsIndex: ["dir", "table", "heading"],
   rulesManifest: ["rules"],
@@ -274,8 +302,6 @@ const DEBT_KINDS = [
   "constants",
   "subjects",
   "readme",
-  "comments",
-  "tongue",
 ];
 if (CONFIG.debt != null) {
   const wrong = [];
@@ -1766,6 +1792,34 @@ const transitionOpen = () => {
  * перестают замечать, и не говорит, что именно осталось. Требование
  * разработчика: «чтобы переход ни разу никогда не выпадал из поля зрения».
  */
+/** Открытые находки: то, с чем проект пришёл и чего ещё не починили.
+ *
+ * Печатается баннером рядом с планом перехода и по той же причине: замер,
+ * сделанный один раз и не доложенный больше никогда, забывается в тот же
+ * день. Закрыли находку — удалили строку. */
+const printFindings = () => {
+  if (CONFIG.findings == null) return false;
+  const at = path.join(BASE, CONFIG.findings.file);
+  if (!existsSync(at)) return false;
+  const open = [];
+  for (const line of readFileSync(at, "utf8").split(String.fromCharCode(10))) {
+    const cell = line.split("|").map((c) => c.trim());
+    if (cell.length < 7) continue;
+    if (cell[6] !== "открыта") continue;
+    open.push(cell[1] + ". " + cell[2].slice(0, 90));
+  }
+  if (open.length === 0) return false;
+  banner("ПРОЕКТ ПРИШЁЛ С НАХОДКАМИ, ОНИ НЕ ЗАКРЫТЫ");
+  console.log(
+    "  Открытых находок: " + open.length + ". Реестр: " + CONFIG.findings.file,
+  );
+  for (const one of open) console.log("  " + one);
+  console.log("  Починили — закрыли строку коммитом и опорой. Это работа над");
+  console.log("  проектом, а не переход: переход кода не трогает.");
+  console.log("");
+  return true;
+};
+
 const printTransition = () => {
   const steps = transitionOpen();
   if (steps === null) return false;
@@ -2714,7 +2768,9 @@ if (mode === "transition") {
       ? 1
       : 0,
   );
-  if (!printTransition())
+  const said = printTransition();
+  const alsoSaid = printFindings();
+  if (!said && !alsoSaid)
     console.log(
       "Перехода нет: проект родился под обвязкой либо переход закончен.",
     );
@@ -5906,6 +5962,7 @@ if (mode === "verify") {
   // читался ровно до тех пор, пока его переставали замечать: полсотни секций
   // выше, а внизу счёт открытых шагов без единого их имени.
   printTransition();
+  printFindings();
 
   const DEBT = CONFIG.debt ?? {};
   const debtOf = (kind) => DEBT[kind] ?? 0;
@@ -12031,13 +12088,19 @@ if (mode === "verify") {
         } catch {
           log = [];
         }
-        const base = log.findIndex((l) => l.startsWith(CONFIG.findings.since));
+        const base =
+          CONFIG.findings.since == null
+            ? -1
+            : log.findIndex((l) => l.startsWith(CONFIG.findings.since));
         const range = base < 0 ? null : log.slice(0, base + 1);
         if (range === null)
           findingsNote =
-            "базового коммита " +
-            CONFIG.findings.since +
-            " в истории этой копии нет — коммиты и непойманные починки не сверены";
+            CONFIG.findings.since == null
+              ? "коммит-основание не объявлен — реестр копит находки, починки с историей не сверяются"
+              : "базового коммита " +
+                "базового коммита " +
+                CONFIG.findings.since +
+                " в истории этой копии нет — коммиты и непойманные починки не сверены";
         const named = new Set();
         const { rows: findingRows, problem } = tableAfter(rows, head);
         if (problem !== null) findingDrift.push(problem);
@@ -12553,7 +12616,8 @@ if (mode === "verify") {
     offDrift.length ||
     undocumented.length ||
     deadAnchors.length ||
-    overDebtOf("comments", wordyComments.length + chattyFiles.length) ||
+    overOpen("Комментарий не перерос в прозу", wordyComments.length) ||
+    overOpen("Доля комментариев в файле", chattyFiles.length) ||
     closedTodos.length ||
     danglingTodo.length ||
     // Только сломанная форма записи. Сам открытый вопрос прогон не роняет: он
@@ -12583,7 +12647,7 @@ if (mode === "verify") {
     overDebtOf("readme", noReadme.length) ||
     readmeBlind !== null ||
     looseDocs.length ||
-    overDebtOf("tongue", wrongTongue.length) ||
+    overOpen("Язык внутри корня исходников", wrongTongue.length) ||
     mutePromises.length ||
     unexplained.length ||
     goneScope.length ||
