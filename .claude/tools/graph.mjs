@@ -7130,6 +7130,36 @@ if (mode === "verify") {
         ).length;
       if (prose > 0)
         unfilledTemplate.push(`${one}: подсказок заготовки прозой: ${prose}`);
+      // Четвёртая форма: ОБОРВАННАЯ подсказка. Три формы выше ищут
+      // открывающую скобку, и место, заполненное наполовину, ни одной из них
+      // не видно: ответ пишут поверх первых строк подсказки, а хвост её
+      // остаётся вместе с закрывающей скобкой. Замерено третьим кругом проб:
+      // в правилах стенда лежал абзац подсказки, кончающийся `>`, при ответе
+      // сверки «незаполненных мест: 0».
+      //
+      // Признак — строка, кончающаяся одинокой `>`, при том что открывающей
+      // скобки выше по файлу не осталось. Стрелка сравнения, закрывающая
+      // скобка разметки и цитата markdown под него не подходят: первая не
+      // стоит в конце строки, вторая кончается `-->`, третья начинается с
+      // `>`, а не кончается ею.
+      {
+        const rows = body.split(NEWLINE);
+        let opened = false;
+        let orphan = 0;
+        for (const l of rows) {
+          if (/^\s*(?:\/\/|#|\*|<!--)?\s*</.test(l)) opened = true;
+          if (!/[^-\s]>\s*$/.test(l)) continue;
+          if (opened) {
+            opened = false;
+            continue;
+          }
+          orphan += 1;
+        }
+        if (orphan > 0)
+          unfilledTemplate.push(
+            `${one}: оборванных подсказок заготовки: ${orphan}`,
+          );
+      }
       // Третья форма: место под заполнение ВНУТРИ строки таблицы. Две формы выше
       // требуют, чтобы скобка стояла в начале строки либо чтобы подсказка была
       // набрана заглавными, — и обе слепы на строку таблицы с угловыми скобками.
@@ -8374,18 +8404,40 @@ if (mode === "verify") {
   // Спрашивается только с папок компонентов: у слоя приложения читатель
   // снаружи один — сам проект, — а общие области описывает их собственный
   // README, и требовать его с каждой подпапки значит плодить пустые файлы.
+  //
+  // Слой компонентов брался по образцу `components/<Имя>/` — по раскладке
+  // УМОЛЧАНИЯ. Проект, разложенный иначе, ни одной такой папки не имеет, и
+  // сверка печатала «без README: 0»: зелено при том, что проверено ничего.
+  // Замерено третьим кругом проб — новый компонент заведён по своей
+  // раскладке, без документации, и сверка его не увидела; пять стендов из
+  // семи разложены не по умолчанию, и во всех пяти она молчала с первого дня.
+  //
+  // Поэтому слой объявляется полем настройки, как объявляются папки тестов
+  // вне корня и проза вне корпуса. Необъявленный при своей раскладке слой
+  // сверка называет СВОЕЙ СЛЕПОТОЙ и роняет прогон: зелёное «я ничего не
+  // проверила» и есть тот дефект, который она обязана ловить.
   const noReadme = [];
+  let readmeBlind = null;
   {
+    const layers = CONFIG.componentsAt ?? ["components"];
     const seen = new Set();
-    for (const f of [...files, ...styleFiles]) {
-      const m = /^components\/([^/]+)\//.exec(rel(f));
-      if (m === null) continue;
-      seen.add(m[1]);
-    }
-    for (const name of seen) {
-      const at = norm(path.join(ROOT, "components", name, "docs", "README.md"));
+    for (const f of [...files, ...styleFiles])
+      for (const layer of layers) {
+        const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
+        if (m === null) continue;
+        seen.add(layer + "/" + m[1]);
+      }
+    for (const one of seen) {
+      const at = norm(path.join(ROOT, one, "docs", "README.md"));
       if (!docFiles.includes(at)) noReadme.push(rel(at));
     }
+    // Своя раскладка, а не просто «слоёв нет»: проект умолчания без
+    // компонентов не слеп — ему нечего смотреть, и это разные состояния.
+    const ownLayout =
+      layoutSaid !== null && layoutSaid.includes("раскладка проекта своя");
+    if (seen.size === 0 && ownLayout && CONFIG.componentsAt == null)
+      readmeBlind =
+        "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — сверка не смотрит никуда";
   }
   // 13m. Язык внутри корня исходников.
   //
@@ -8454,6 +8506,7 @@ if (mode === "verify") {
       "    " + one + ". Вся проза компонента внутри `docs/`, включая README",
     );
   checkHead("У компонента есть README");
+  if (readmeBlind !== null) console.log("  " + readmeBlind);
   console.log("  папок компонентов без README: " + noReadme.length);
   for (const one of noReadme)
     console.log(
@@ -11874,6 +11927,7 @@ if (mode === "verify") {
     hollow.length ||
     layoutLie.length ||
     overDebtOf("readme", noReadme.length) ||
+    readmeBlind !== null ||
     looseDocs.length ||
     overDebtOf("tongue", wrongTongue.length) ||
     mutePromises.length ||

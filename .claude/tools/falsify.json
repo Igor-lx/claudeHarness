@@ -755,6 +755,22 @@
           "mkdir": "src/zzHollow"
         }
       ]
+    },
+    {
+      "section": "Шаблон правил заполнен",
+      "file": "CLAUDE.md",
+      "append": "хвост подсказки, оставшийся от заполнения слота.>"
+    },
+    {
+      "section": "У компонента есть README",
+      "edits": [
+        {
+          "create": {
+            "path": "src/components/ZzProbe/zzProbe.tsx",
+            "text": "function ZzProbe() {\n  return null;\n}\n\nexport default ZzProbe;"
+          }
+        }
+      ]
     }
   ]
 }
