@@ -64,6 +64,26 @@ import {
  *
  * `unit` — родительный падеж множественного числа: «файлов», «листов»,
  * «папок». Предмет один — называют честно: осмотрено `1` настройка. */
+/** Файлы, которые обвязка пишет сама и потом читает: след прогона, отчёт
+ * мутаций, реестры. Порча такого файла — не выдумка: запись оборвана,
+ * слияние оставило маркеры, редактор сохранил половину. Читается это
+ * защищённо, а порча копится списком и НАЗЫВАЕТСЯ в конце прогона — иначе
+ * сырой стек обрывает прогон на середине, и треть сверок не выполняется. */
+const SPOILED = [];
+const readJson = (at, fallback) => {
+  if (!existsSync(at)) return fallback;
+  try {
+    return JSON.parse(readFileSync(at, "utf8"));
+  } catch (e) {
+    SPOILED.push(
+      at +
+        " — не разбирается как JSON: " +
+        String(e.message).split(String.fromCharCode(10))[0],
+    );
+    return fallback;
+  }
+};
+
 const sayLooked = (unit, n) => {
   console.log("  осмотрено " + unit + ": " + n);
 };
@@ -2086,6 +2106,7 @@ const CHECK_SECTIONS = [
   "Форма отчёта посадки без слов обвязки",
   "Вопросы разработчику без ответа",
   "Каждая сверка называет свой корпус",
+  "Файл, написанный обвязкой, читается",
 ];
 
 /** Заголовок БАННЕРА — и он НЕ заголовок сверки.
@@ -3580,7 +3601,7 @@ if (mode === "tested") {
     // Содержимое, а не время: клон ставит всем файлам одну свежую метку.
     if (CONFIG.testedLedger != null) {
       const at = path.join(BASE, CONFIG.testedLedger);
-      const seen = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : {};
+      const seen = readJson(at, {});
       for (const f of [...touchedCode, ...touchedStyles])
         seen[rel(f)] = createHash("sha1")
           .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
@@ -4069,9 +4090,7 @@ if (mode === "mutated") {
       .digest("hex")
       .slice(0, 12);
 
-  const ledger = existsSync(ledgerPath)
-    ? JSON.parse(readFileSync(ledgerPath, "utf8"))
-    : {};
+  const ledger = existsSync(ledgerPath) ? readJson(ledgerPath, {}) : {};
 
   // Область прогона берётся из конфига самого инструмента. Считать долг по
   // всему `src` значило бы врать: часть файлов исключена намеренно и с
@@ -4485,9 +4504,7 @@ if (mode === "bar-probe") {
   console.log("  исход: " + verdict);
 
   if (ledgerAt !== null) {
-    const book = existsSync(ledgerAt)
-      ? JSON.parse(readFileSync(ledgerAt, "utf8"))
-      : { runs: [] };
+    const book = existsSync(ledgerAt) ? readJson(ledgerAt, {}) : { runs: [] };
     book.runs.push({
       criterion: plant.criterion,
       verdict,
@@ -10458,7 +10475,7 @@ if (mode === "verify") {
   let ledgerBlind = false;
   if (CONFIG.testedLedger != null) {
     const at = path.join(BASE, CONFIG.testedLedger);
-    const seen = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : {};
+    const seen = readJson(at, {});
     ledgerSeen = Object.keys(seen).length;
     // Правка берётся у состояния репозитория тем же способом, что и в режиме
     // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
@@ -12454,6 +12471,21 @@ if (mode === "verify") {
   //
   // Стоит ПОСЛЕДНЕЙ: спрашивается с того, что уже напечатано. Новая сверка,
   // заведённая без довода о корпусе, роняет прогон на первом же запуске.
+  // Порча файла, который обвязка пишет сама, прежде роняла прогон сырым
+  // стеком, и оставшаяся треть сверок не выполнялась. Теперь чтение
+  // защищено, а порча называется — и роняет прогон осмысленно.
+  checkHead("Файл, написанный обвязкой, читается", {
+    n: SPOILED.length,
+    unit: "испорченных файлов",
+  });
+  console.log("  испорчено: " + SPOILED.length);
+  for (const one of SPOILED)
+    console.log(
+      "    " +
+        rel0(one) +
+        ". Переписать заново либо удалить: обвязка заведёт его сама",
+    );
+
   const mute = [...PRINTED].filter((one) => !LOOKED.has(one));
   checkHead("Каждая сверка называет свой корпус", {
     n: PRINTED.size,
@@ -12578,6 +12610,7 @@ if (mode === "verify") {
     seedRefs.length ||
     wrapped.length ||
     unresolved.length ||
+    SPOILED.length ||
     mute.length
   )
     process.exitCode = 1;

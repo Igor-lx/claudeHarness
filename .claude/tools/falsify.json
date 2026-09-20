@@ -767,6 +767,13 @@
       "file": ".claude/tools/graph.mjs",
       "find": "checkHead(\"Разрешения среды\", {\n    n: settingsLooked,\n    unit: \"разрешений в общем файле\",\n  });",
       "replace": "checkHead(\"Разрешения среды\");"
+    },
+    {
+      "section": "Файл, написанный обвязкой, читается",
+      "own": true,
+      "file": ".context/tested-ledger.json",
+      "find": "{",
+      "replace": "{ это не json"
     }
   ]
 }
