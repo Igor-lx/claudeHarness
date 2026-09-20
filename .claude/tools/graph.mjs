@@ -220,6 +220,7 @@ const DEBT_KINDS = [
   "invariants",
   "constants",
   "subjects",
+  "readme",
   "comments",
   "tongue",
 ];
@@ -11655,7 +11656,7 @@ if (mode === "verify") {
     schemeStray.length ||
     layoutStray.length ||
     layoutLie.length ||
-    noReadme.length ||
+    overDebtOf("readme", noReadme.length) ||
     looseDocs.length ||
     overDebtOf("tongue", wrongTongue.length) ||
     mutePromises.length ||
