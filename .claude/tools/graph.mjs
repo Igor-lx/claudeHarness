@@ -397,6 +397,34 @@ const tableAfter = (lines, at) => {
   return { rows, problem: null };
 };
 
+/** Звенья цепочки, объявленные картой посадки. Корпус сразу нескольких
+ * сверок: все они про этот список и ни про что другое. */
+/** Семена, объявленные картой посадки, и отдельно — ОТЛОЖЕННЫЕ: те, что
+ * посадка не кладёт, а кладёт первая правка, заведшая им предмет. Корпус
+ * сразу нескольких сверок про семена. */
+/** Предметы, за которыми карта посадки закрепляет свой файл базы: состояние,
+ * порядок и прочие. Корпус сверок про то, что предмет из кода назван там,
+ * где ему положено. */
+const subjectsDeclared = (() => {
+  const mapAt = shelfAt("seat/map.json");
+  if (mapAt === null || !existsSync(mapAt)) return [];
+  return JSON.parse(readFileSync(mapAt, "utf8")).onSubject ?? [];
+})();
+
+const seedsDeclared = (() => {
+  const mapAt = shelfAt("seat/map.json");
+  if (mapAt === null || !existsSync(mapAt)) return [];
+  const m = JSON.parse(readFileSync(mapAt, "utf8"));
+  return [...(m.copy ?? []), ...(m.onTransition ?? [])];
+})();
+const seedsDeferred = seedsDeclared.filter((c) => c.notAtSeating != null);
+
+const chainDeclared = (() => {
+  const mapAt = shelfAt("seat/map.json");
+  if (mapAt === null || !existsSync(mapAt)) return [];
+  return JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
+})();
+
 /** Объявление применимости разделов политики: карта «раздел → живой ли и почему».
  *
  * Разбор один на оба места — на сверку и на вопрос закрытия работы. Две копии
@@ -2003,6 +2031,7 @@ const CHECK_SECTIONS = [
   "План перехода не потерялся",
   "Форма отчёта посадки без слов обвязки",
   "Вопросы разработчику без ответа",
+  "Каждая сверка называет свой корпус",
 ];
 
 /** Заголовок БАННЕРА — и он НЕ заголовок сверки.
@@ -2029,6 +2058,8 @@ const banner = (title) => {
 
 /** Сверки, назвавшие размер своего корпуса. Ключ — имя сверки. */
 const LOOKED = new Map();
+/** Сверки, напечатавшие заголовок в этом прогоне. */
+const PRINTED = new Set();
 
 /** Заголовок сверки. Единственный способ его напечатать.
  *
@@ -2046,6 +2077,7 @@ const checkHead = (title, looked) => {
   if (!CHECK_SECTIONS.includes(title))
     throw new Error("секция не объявлена в CHECK_SECTIONS: " + title);
   console.log("=== " + title + " ===");
+  PRINTED.add(title);
   if (looked === undefined) return;
   LOOKED.set(title, looked);
   console.log("  осмотрено " + looked.unit + ": " + looked.n);
@@ -3483,6 +3515,7 @@ if (mode === "tested") {
     if (CONFIG.testedLedger != null) {
       const at = path.join(BASE, CONFIG.testedLedger);
       const seen = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : {};
+      ledgerSeen = Object.keys(seen).length;
       for (const f of [...touchedCode, ...touchedStyles])
         seen[rel(f)] = createHash("sha1")
           .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
@@ -4421,6 +4454,7 @@ if (mode === "bar") {
   const at =
     CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
   const live = liveBarCriteria();
+  barCriteriaLive = live.length;
   if (at === null || live === null) {
     console.log("=== Свод по планке не заведён ===");
     console.log(
@@ -5924,6 +5958,7 @@ if (mode === "verify") {
   }
   // 7b. звёздные бочки — только объявленные.
   const starDrift = [];
+  let starLooked = 0;
   if (CONFIG.starBarrels != null) {
     const declared = new Set(CONFIG.starBarrels);
     const onDisk = new Set(
@@ -5933,6 +5968,7 @@ if (mode === "verify") {
         )
         .map(rel),
     );
+    starLooked = new Set([...declared, ...onDisk]).size;
     for (const f of onDisk)
       if (!declared.has(f))
         starDrift.push(
@@ -5941,7 +5977,10 @@ if (mode === "verify") {
     for (const f of declared)
       if (!onDisk.has(f)) starDrift.push(`объявлена, но звёздочки нет: ${f}`);
   }
-  checkHead("Звёздные бочки");
+  checkHead("Звёздные бочки", {
+    n: starLooked,
+    unit: "звёздных бочек объявленных и на диске",
+  });
   console.log(
     CONFIG.starBarrels == null
       ? "  список не заявлен"
@@ -5999,7 +6038,10 @@ if (mode === "verify") {
     }
     close();
   }
-  checkHead("Состав бочки в записи карты");
+  checkHead("Состав бочки в записи карты", {
+    n: dossierLines().length,
+    unit: "строк прозы базы",
+  });
   console.log(`  имён названо неверно: ${barrelDrift.length}`);
   for (const b of barrelDrift) console.log("    " + b);
 
@@ -6064,7 +6106,10 @@ if (mode === "verify") {
       `таблица не найдена или пуста: «${CONFIG.isolationHeading}» — сверка изоляции выключена`,
     );
 
-  checkHead("Правила про существующее");
+  checkHead("Правила про существующее", {
+    n: rules.length + isolation.length,
+    unit: "правил направления и изоляции",
+  });
   console.log(
     `  правил ни о чём: ${emptyRules.length}, заявленных таблиц не найдено: ${missingTables.length}`,
   );
@@ -6072,9 +6117,9 @@ if (mode === "verify") {
   for (const m of missingTables) console.log("    " + m);
 
   for (const kind of markerKinds) {
-    checkHead(kind.title);
+    checkHead(kind.title, { n: kind.total, unit: "пометок в коде" });
     console.log(
-      `  в коде: ${kind.total}, без записи в ${kind.base}: ${kind.unlisted.length}` +
+      `  без записи в ${kind.base}: ${kind.unlisted.length}` +
         debtTail(kind.debtKind) +
         `, названо записью и снято из кода: ${kind.gone.length}` +
         (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
@@ -6180,6 +6225,7 @@ if (mode === "verify") {
   // достовернее пустого места, потому что обещает записанное решение. Сверка
   // была односторонней и на выдуманном номере молчала — найдено пробой.
   const orphanAdr = [];
+  let adrLooked = 0;
   const danglingAdr = [];
   if (CONFIG.adr != null) {
     const dir = norm(path.join(BASE, CONFIG.adr.dir));
@@ -6190,6 +6236,7 @@ if (mode === "verify") {
       /* решений пока нет */
     } else {
       const decisions = readdirSync(dir).filter((n) => /\.md$/.test(n));
+      adrLooked = decisions.length;
       // Ссылкой считается номер решения (`ADR-004`) или имя его файла. Сам
       // документ себя не адресует, поэтому из корпуса исключается он один.
       for (const file of decisions) {
@@ -6346,7 +6393,10 @@ if (mode === "verify") {
   debtNote("constants", undocumentedConst.length);
   for (const c of undocumentedConst) console.log("    " + c);
 
-  checkHead("Точечные исключения линта");
+  checkHead("Точечные исключения линта", {
+    n: files.length,
+    unit: "файлов кода",
+  });
   console.log(`  расхождений: ${lintDrift.length}`);
   for (const l of lintDrift) console.log("    " + l);
 
@@ -6399,7 +6449,10 @@ if (mode === "verify") {
           offDrift.push(`объявлено, но не выключено: ${one}`);
     }
   }
-  checkHead("Выключения правил линта");
+  checkHead("Выключения правил линта", {
+    n: (CONFIG.lintConfigOff?.allowed ?? []).length,
+    unit: "объявленных выключений",
+  });
   console.log(
     CONFIG.lintConfigOff == null
       ? "  конфиг линта не заявлен"
@@ -6407,12 +6460,16 @@ if (mode === "verify") {
   );
   for (const o of offDrift) console.log("    " + o);
 
-  checkHead("Режимы инструмента описаны");
+  checkHead("Режимы инструмента описаны", {
+    n: toolModes().length,
+    unit: "режимов инструмента",
+  });
   console.log(`  без описания: ${undocumented.length}`);
   for (const u of undocumented) console.log("    " + u);
 
   // 9b. список разрешений среды не потерял того, что обещает полка
   const settingsDrift = [];
+  let settingsLooked = 0;
   const settingsEarned = [];
   {
     // Правило записывается двумя равными формами: `Bash(ls *)` и `Bash(ls:*)`
@@ -6435,6 +6492,10 @@ if (mode === "verify") {
       );
     };
     const shared = readAt(path.join(BASE, CONFIG.settingsProject));
+    settingsLooked =
+      shared === null
+        ? 0
+        : kinds.reduce((n, k) => n + (shared[k] ?? []).length, 0);
     const local = readAt(
       path
         .join(BASE, CONFIG.settingsProject)
@@ -6528,7 +6589,10 @@ if (mode === "verify") {
     }
   }
 
-  checkHead("Версии установленного (предупреждение, прогон не роняет)");
+  checkHead("Версии установленного (предупреждение, прогон не роняет)", {
+    n: Object.keys(CONFIG.verifiedVersions ?? {}).length,
+    unit: "объявленных версий",
+  });
   console.log(
     CONFIG.verifiedVersions == null
       ? "  проверенная связка не объявлена"
@@ -6543,7 +6607,10 @@ if (mode === "verify") {
   );
   for (const o of oldVersions) console.log("    " + o);
 
-  checkHead("Разрешения, нажитые по ходу работы");
+  checkHead("Разрешения, нажитые по ходу работы", {
+    n: settingsLooked,
+    unit: "разрешений в общем файле",
+  });
   console.log(
     settingsEarned.length === 0
       ? "  нет: местный файл разрешений ничего не добавляет к общему"
@@ -6552,7 +6619,10 @@ if (mode === "verify") {
   );
   for (const e of settingsEarned) console.log("    " + e);
 
-  checkHead("Разрешения среды");
+  checkHead("Разрешения среды", {
+    n: settingsLooked,
+    unit: "разрешений в общем файле",
+  });
   console.log(`  расхождений: ${settingsDrift.length}`);
   for (const s of settingsDrift) console.log("    " + s);
 
@@ -6601,6 +6671,7 @@ if (mode === "verify") {
   // соседняя сверка.
   const wordyComments = [];
   const chattyFiles = [];
+  let shareLooked = 0;
   let commentRuns = 0;
   for (const f of files) {
     const body = readFileSync(f, "utf8");
@@ -6628,6 +6699,7 @@ if (mode === "verify") {
     }
     const total = body.split(NEWLINE).length;
     if (total < COMMENT_SHARE_FLOOR) continue;
+    shareLooked += 1;
     if (commentLines / total <= COMMENT_SHARE) continue;
     chattyFiles.push(
       rel(f) +
@@ -6652,7 +6724,10 @@ if (mode === "verify") {
       "    " + c + ". Оставить суть; остальное — в документ слоя или решение",
     );
 
-  checkHead("Доля комментариев в файле");
+  checkHead("Доля комментариев в файле", {
+    n: shareLooked,
+    unit: "файлов от потолка строк и выше",
+  });
   console.log("  файлов сверх потолка: " + chattyFiles.length);
   for (const c of chattyFiles)
     console.log("    " + c + ". Объяснения переносят в документ слоя");
@@ -6670,10 +6745,14 @@ if (mode === "verify") {
   // или в скобках. «Закрыть доступность» — законный открытый пункт, и он не
   // должен ловиться.
   const closedTodos = [];
+  let todoLooked = 0;
   if (CONFIG.todo != null) {
     const todoPath = path.join(BASE, CONFIG.todo);
     if (!existsSync(todoPath)) closedTodos.push(`файла нет: ${CONFIG.todo}`);
     else {
+      todoLooked = readFileSync(todoPath, "utf8")
+        .split(NEWLINE)
+        .filter((l) => /^##s/.test(l)).length;
       const shouting = /(ЗАКРЫТО|СДЕЛАНО|ГОТОВО|ВЫПОЛНЕНО|DONE|CLOSED)/;
       const trailing = /[—\-(]\s*(закрыт|сделан|готов|выполнен)\S*\s*\)?\s*$/i;
       const struck = /^~~.*~~$/;
@@ -6693,6 +6772,7 @@ if (mode === "verify") {
   // вопрос без последствия отсутствия ответа не даёт решить, срочно это или нет, и висит как
   // шум, пока список не перестают читать целиком.
   const openQuestions = [];
+  let questionsSeen = 0;
   const malformedQuestions = [];
   // Списков два, и читаются они одинаково: проектный — про этот репозиторий,
   // доктринальный — про саму обвязку, и он едет с ней дальше. Второй не
@@ -6725,6 +6805,7 @@ if (mode === "verify") {
       // Та же сеть, что у отложенного: закрытое удаляют, а не отмечают.
       const shouting = /(ЗАКРЫТО|ОТВЕЧЕНО|CLOSED|ANSWERED)/;
       const trailing = /[—\-(]\s*(закрыт|отвечен)\S*\s*\)?\s*$/i;
+      questionsSeen += heads.length;
       for (const [k, h] of heads.entries()) {
         if (shouting.test(h.title) || trailing.test(h.title)) {
           malformedQuestions.push(`помечен закрытым, а не удалён: ${h.title}`);
@@ -6849,7 +6930,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Новые якоря — с цитатой");
+  checkHead("Новые якоря — с цитатой", {
+    n: files.length,
+    unit: "файлов кода",
+  });
   console.log(
     newAnchorsChecked
       ? `  добавлено якорей без цитаты: ${uncitedNew.length}`
@@ -7017,7 +7101,10 @@ if (mode === "verify") {
       flushBlock();
     }
   }
-  checkHead("Найденное — исправлено, а не отложено");
+  checkHead("Найденное — исправлено, а не отложено", {
+    n: files.length,
+    unit: "файлов кода",
+  });
   console.log(`  отложенного без решения: ${parked.length}`);
   for (const p of parked) console.log("    " + p);
 
@@ -7356,11 +7443,11 @@ if (mode === "verify") {
       if (!skipUsed.has(one))
         deadExceptions.push(`ссылки на разделы: «${one}» — ничего не гасит`);
   }
-  checkHead("Ссылки на разделы");
+  checkHead("Ссылки на разделы", { n: refTokens, unit: "ссылок на разделы" });
   console.log(
     CONFIG.rulesManifest == null
       ? "  реестр правил не заявлен"
-      : `  проверено: ${refTokens}, ведут в никуда: ${danglingRefs.length}`,
+      : `  ведут в никуда: ${danglingRefs.length}`,
   );
   for (const d of danglingRefs) console.log("    " + d);
   // 13c. Скиллы проекта: объявлены, лежат на месте, совпадают с полкой.
@@ -7626,6 +7713,7 @@ if (mode === "verify") {
   // одном репозитории заполняет таблицу, но не сужает признак — иначе в
   // следующем проекте предмет появится, а сверка промолчит.
   const scopeDrift = [];
+  let barScopes = 0;
   const liveScopes = [];
   if (CONFIG.qualityScope != null) {
     const policyAt = path.join(BASE, CONFIG.qualityScope.policy);
@@ -7634,6 +7722,7 @@ if (mode === "verify") {
     else if (!existsSync(tableAt)) scopeDrift.push("файла таблицы нет");
     else {
       const sections = new Map();
+      barScopes = sections.size;
       for (const line of readFileSync(policyAt, "utf8").split(NEWLINE)) {
         const h = /^## ([K-U])\.\s+(.+)$/.exec(line);
         if (h !== null) sections.set(h[1], h[2].trim());
@@ -7823,7 +7912,10 @@ if (mode === "verify") {
               ? `  версия ВЫШЕ объявленной: ${now} при «${want}»`
               : null;
     if (say !== null) {
-      checkHead("Версия среды (предупреждение, прогон не роняет)");
+      checkHead("Версия среды (предупреждение, прогон не роняет)", {
+        n: 1,
+        unit: "объявленный диапазон среды",
+      });
       console.log(say);
       console.log(
         "  Числа базовой линии снимались на объявленной версии; решение, что",
@@ -7928,6 +8020,7 @@ if (mode === "verify") {
   // Прямая сторона у этой формы уже есть (`open` собирает по слову); здесь
   // обратная: запись, написанная мимо словаря, из сводки выпадает молча.
   const mutePromises = [];
+  let promiseRows = 0;
   if (CONFIG.promises != null) {
     const at = path.join(BASE, CONFIG.promises.file);
     if (!existsSync(at))
@@ -7935,6 +8028,7 @@ if (mode === "verify") {
     else {
       const lines = readFileSync(at, "utf8").split(NEWLINE);
       const from = lines.findIndex((l) => l.trim() === CONFIG.promises.heading);
+      promiseRows = lines.filter((l) => l.trim().startsWith("|")).length;
       if (from < 0)
         mutePromises.push(
           `раздел объявлен и не найден: «${CONFIG.promises.heading}»`,
@@ -8025,12 +8119,16 @@ if (mode === "verify") {
   console.log(`  ведут в никуда: ${goneScope.length}`);
   for (const g of goneScope) console.log("    " + g);
 
-  checkHead("Обещания без опоры собираются сводкой");
+  checkHead("Обещания без опоры собираются сводкой", {
+    n: promiseRows,
+    unit: "записей сводки обещаний",
+  });
   console.log(`  записей мимо словаря: ${mutePromises.length}`);
   for (const m of mutePromises) console.log("    " + m);
 
   // 13h. имена связей через DOM и CSS существуют в коде.
   const domDrift = [];
+  let domNames = 0;
   if (CONFIG.domTables != null) {
     const at = path.join(BASE, CONFIG.domTables.file);
     if (existsSync(at)) {
@@ -8044,6 +8142,7 @@ if (mode === "verify") {
       // camelCase-имён, поэтому здесь не заводится третий фильтр, а берётся
       // тот же предикат.
       const liveDomNames = new Set();
+      domNames = text.filter((l) => /^\|/.test(l.trim())).length;
       for (const f of [...files, ...styleFiles])
         for (const line of readFileSync(f, "utf8").split(NEWLINE))
           for (const hit of line.matchAll(/--[a-z-]+|data-[a-z-]+/g))
@@ -8300,7 +8399,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Имена классов из кода есть в листе стилей");
+  checkHead("Имена классов из кода есть в листе стилей", {
+    n: files.length,
+    unit: "файлов кода",
+  });
   console.log("  расхождений: " + classDrift.length);
   for (const d of classDrift) console.log("    " + d);
 
@@ -8560,7 +8662,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Язык внутри корня исходников");
+  checkHead("Язык внутри корня исходников", {
+    n: files.length + styleFiles.length,
+    unit: "файлов кода и стилей",
+  });
   console.log("  строк не на языке кода: " + wrongTongue.length);
   for (const one of wrongTongue.slice(0, 20))
     console.log("    " + one + ". Внутри корня исходников — английский");
@@ -8756,7 +8861,10 @@ if (mode === "verify") {
         ". Убрать: папка без файлов утверждает раскладку, которой нет",
     );
 
-  checkHead("Правила проекта не спорят с реестром решений");
+  checkHead("Правила проекта не спорят с реестром решений", {
+    n: (CONFIG.rulesManifest?.rules ?? []).length,
+    unit: "файлов правил",
+  });
   console.log(
     layoutLie.length === 0
       ? "  расхождений: 0"
@@ -8766,7 +8874,10 @@ if (mode === "verify") {
     console.log(
       "    " + one + ". Переписать под фактическое устройство проекта",
     );
-  checkHead("Новый узел лежит по раскладке");
+  checkHead("Новый узел лежит по раскладке", {
+    n: files.length + styleFiles.length,
+    unit: "файлов кода и стилей",
+  });
   if (layoutSaid !== null) console.log("  " + layoutSaid);
   if (layoutStray.length)
     console.log("  вне объявленных слоёв: " + layoutStray.length);
@@ -8780,7 +8891,10 @@ if (mode === "verify") {
     console.log(
       "  Раскладка проекта своя — объявить решением со словами «раскладка проекта» и завести план в 17-conversion.md",
     );
-  checkHead("Отступление от схемы стилизации объявлено решением");
+  checkHead("Отступление от схемы стилизации объявлено решением", {
+    n: files.length,
+    unit: "файлов кода",
+  });
   console.log(
     decidedAt === null
       ? "  реестр решений не объявлен — спрашивать негде"
@@ -8793,7 +8907,10 @@ if (mode === "verify") {
         " — компонент стилизуется не по умолчанию: своего листа не импортирует, весь вид приходит пропом. Записать решением с ценой либо привести к схеме",
     );
 
-  checkHead("Связи через DOM и CSS");
+  checkHead("Связи через DOM и CSS", {
+    n: domNames,
+    unit: "строк таблицы связей",
+  });
   console.log(
     CONFIG.domTables == null
       ? "  таблицы не заявлены"
@@ -8896,7 +9013,10 @@ if (mode === "verify") {
           unexplained.push(one + " — назван в карте посадки, а файла нет");
     }
   }
-  checkHead("У каждого семени есть адрес назначения");
+  checkHead("У каждого семени есть адрес назначения", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   console.log(`  расхождений: ${unexplained.length}`);
   for (const u of unexplained) console.log("    " + u);
 
@@ -9006,6 +9126,7 @@ if (mode === "verify") {
   // умеет: не дать вернуться тому, что однажды нашли. Тот же приём, что у
   // точечных исключений линта: список растёт находками, а не воображением.
   const bannedWords = [];
+  let bannedTerms = 0;
   let bannedSaid = null;
   {
     const at = shelfAt("rules/glossary.banned.json");
@@ -9013,6 +9134,7 @@ if (mode === "verify") {
       bannedSaid = "списка отвергнутых слов рядом нет";
     else {
       const book = JSON.parse(readFileSync(at, "utf8"));
+      bannedTerms = Object.keys(book).length;
       // Корпус — проза обвязки и проза проекта: доктрина, скиллы, посадка и
       // файлы базы. Именно там термин и живёт; исходники сюда не идут — в них
       // говорят на языке кода.
@@ -9055,7 +9177,10 @@ if (mode === "verify") {
           ")";
     }
   }
-  checkHead("Синоним термина словаря не заведён");
+  checkHead("Синоним термина словаря не заведён", {
+    n: bannedTerms,
+    unit: "терминов словаря под запретом",
+  });
   if (bannedSaid !== null) console.log("  " + bannedSaid);
   if (bannedWords.length)
     console.log("  синонимов в корпусе: " + bannedWords.length);
@@ -9083,7 +9208,10 @@ if (mode === "verify") {
   );
   for (const d of indexDrift) console.log("    " + d);
 
-  checkHead("Применимость разделов планки");
+  checkHead("Применимость разделов планки", {
+    n: barScopes,
+    unit: "разделов планки",
+  });
   console.log(
     CONFIG.qualityScope == null
       ? "  деление на ядро и применимые не заявлено"
@@ -9112,7 +9240,10 @@ if (mode === "verify") {
   );
   for (const s of skillDrift) console.log("    " + s);
 
-  checkHead("Разделы правил классифицированы");
+  checkHead("Разделы правил классифицированы", {
+    n: (CONFIG.rulesManifest?.rules ?? []).length,
+    unit: "файлов правил",
+  });
   console.log(
     CONFIG.rulesManifest == null
       ? "  файлы правил не заявлены"
@@ -9120,7 +9251,11 @@ if (mode === "verify") {
   );
   for (const u of unclassified) console.log("    " + u);
 
-  checkHead("Шаблон правил заполнен");
+  checkHead("Шаблон правил заполнен", {
+    n:
+      (CONFIG.rulesManifest?.rules ?? []).length + (CONFIG.seeded ?? []).length,
+    unit: "засеянных файлов",
+  });
   console.log(
     CONFIG.rulesManifest == null
       ? "  файлы правил не заявлены"
@@ -9128,7 +9263,10 @@ if (mode === "verify") {
   );
   for (const u of unfilledTemplate) console.log("    " + u);
 
-  checkHead("Отложенное без закрытых пунктов");
+  checkHead("Отложенное без закрытых пунктов", {
+    n: todoLooked,
+    unit: "пунктов отложенного",
+  });
   console.log(
     CONFIG.todo == null
       ? "  файл отложенного не заявлен"
@@ -9350,7 +9488,7 @@ if (mode === "verify") {
     for (const g of gone) danglingAdr.push(g);
   }
 
-  checkHead("Решения адресуемы");
+  checkHead("Решения адресуемы", { n: adrLooked, unit: "записей решений" });
   console.log(
     `  без единой ссылки: ${orphanAdr.length}, ссылок на несуществующее решение: ${danglingAdr.length}`,
   );
@@ -9432,6 +9570,7 @@ if (mode === "verify") {
   // ссылок 253, битых 0, и ни одной не относительной — то есть шума сверка не
   // даёт по построению.
   const danglingLinks = [];
+  let linkFiles = 0;
   {
     const skipDirs = new Set([
       "node_modules",
@@ -9449,6 +9588,7 @@ if (mode === "verify") {
         else if (e.endsWith(".md")) mdFiles.push(norm(full));
       }
     })(norm(REPO));
+    linkFiles = mdFiles.length;
     for (const f of mdFiles) {
       for (const m of unfenced(readFileSync(f, "utf8")).matchAll(
         /\]\(([^)\s]+)\)/g,
@@ -9546,7 +9686,7 @@ if (mode === "verify") {
   console.log(`  ведут в никуда: ${danglingPaths.length}`);
   for (const d of danglingPaths) console.log("    " + d);
 
-  checkHead("Ссылки markdown");
+  checkHead("Ссылки markdown", { n: linkFiles, unit: "файлов прозы" });
   console.log(`  ведут в никуда: ${danglingLinks.length}`);
   for (const d of danglingLinks) console.log("    " + d);
 
@@ -9622,7 +9762,10 @@ if (mode === "verify") {
           " — ничего не исключает",
       );
 
-  checkHead("Исключения сверок используются");
+  checkHead("Исключения сверок используются", {
+    n: (CONFIG.testsOutside ?? []).length + (CONFIG.corpusOutside ?? []).length,
+    unit: "объявленных исключений",
+  });
   console.log(`  мёртвых исключений: ${deadExceptions.length}`);
   for (const d of deadExceptions) console.log("    " + d);
 
@@ -9674,7 +9817,10 @@ if (mode === "verify") {
   const excTotal = excLists.reduce((n, one) => n + one[1], 0);
   const overgrown =
     excLimit === 0 ? [] : excLists.filter((one) => one[1] > excLimit);
-  checkHead("Списки исключений не разрослись");
+  checkHead("Списки исключений не разрослись", {
+    n: excLists.length,
+    unit: "списков исключений",
+  });
   console.log(
     excLimit === 0
       ? "  порог не объявлен"
@@ -9921,7 +10067,10 @@ if (mode === "verify") {
         frozenNumbers.push(`${name}:${i + 1} — ${hit.join(" | ")}`);
     }
   }
-  checkHead("Числа в прозе базы");
+  checkHead("Числа в прозе базы", {
+    n: dossierLines().length,
+    unit: "строк прозы базы",
+  });
   console.log(`  счётов вне формы: ${frozenNumbers.length}`);
   for (const f of frozenNumbers) console.log("    " + f);
 
@@ -9960,7 +10109,10 @@ if (mode === "verify") {
   const strayTests = files.filter(
     (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutside.has(f),
   );
-  checkHead("Тесты лежат в `tests/`");
+  checkHead("Тесты лежат в `tests/`", {
+    n: files.filter(isTest).length,
+    unit: "тестовых файлов",
+  });
   console.log(
     `  вне своей папки: ${strayTests.length}` +
       (testsOutsideUsed.size
@@ -9976,13 +10128,19 @@ if (mode === "verify") {
   console.log(`  разошлось: ${wrong.length}`);
   for (const w of wrong) console.log("    " + w);
   if (unresolved.length) {
-    checkHead("Не разобрано (проверкой не покрыто)");
+    checkHead("Не разобрано (проверкой не покрыто)", {
+      n: unresolved.length,
+      unit: "нерасшифрованных адресов",
+    });
     for (const u of unresolved) console.log("    " + u);
   }
   // Печатается заголовками, а не числом: число рядом с сорока другими числами
   // проглядывают, а вопрос, названный своими словами, — нет. Ради того же он
   // стоит последней секцией: последнее прочитанное и есть прочитанное.
-  checkHead("Конфиг звена цепочки на месте");
+  checkHead("Конфиг звена цепочки на месте", {
+    n: chainDeclared.length,
+    unit: "звеньев цепочки",
+  });
   console.log(`  расхождений: ${toolchainDrift.length}`);
   for (const d of toolchainDrift) console.log("    " + d);
 
@@ -10043,7 +10201,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Таблица сверок описывает существующие сверки");
+  checkHead("Таблица сверок описывает существующие сверки", {
+    n: CHECK_SECTIONS.length,
+    unit: "сверок прогона",
+  });
   console.log(
     CONFIG.checksTable == null
       ? "  таблица сверок не заявлена"
@@ -10082,6 +10243,7 @@ if (mode === "verify") {
   // Сравнивается содержимое, а не время: клон ставит всем файлам одну свежую
   // метку, и по времени всё выглядело бы устаревшим.
   const unasked = [];
+  let ledgerSeen = 0;
   // Слепота сверки — отдельное состояние, и держит его своя переменная:
   // «правленого нет» и «смотреть нечем» печатаются разными строками.
   let ledgerBlind = false;
@@ -10122,7 +10284,10 @@ if (mode === "verify") {
       if (seen[rel(f)] !== now) unasked.push(rel(f));
     }
   }
-  checkHead("Вопрос о планке задан на конечном виде правки");
+  checkHead("Вопрос о планке задан на конечном виде правки", {
+    n: ledgerSeen,
+    unit: "записей следа прогона",
+  });
   console.log(
     CONFIG.testedLedger == null
       ? "  след прогона не ведётся — вопрос держится памятью целиком"
@@ -10152,6 +10317,7 @@ if (mode === "verify") {
   // не говорит ничего: признаки планки прогоном не ловятся. Ловчесть самого
   // прохода меряет режим `bar-probe`, а не эта строка.
   const barGaps = [];
+  let barCriteriaLive = 0;
   let barSaid = null;
   {
     const at =
@@ -10224,7 +10390,10 @@ if (mode === "verify") {
       } else barSaid = "свод закрыт печатью, живой набор критериев не прочитан";
     }
   }
-  checkHead("Планка пройдена покритериально");
+  checkHead("Планка пройдена покритериально", {
+    n: barCriteriaLive,
+    unit: "живых критериев планки",
+  });
   if (barSaid !== null) console.log("  " + barSaid);
   // Находка печатается отступом в ЧЕТЫРЕ пробела: именно по нему её узнаёт
   // разбор вывода, которым фальсификация отличает выросшую секцию от
@@ -10292,7 +10461,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Файлы базы заведены под свой предмет");
+  checkHead("Файлы базы заведены под свой предмет", {
+    n: subjectsDeclared.length,
+    unit: "предметов базы",
+  });
   console.log("  предмет есть, файла нет: " + baseGap.length);
   for (const g of baseGap) console.log("    " + g);
 
@@ -10614,14 +10786,20 @@ if (mode === "verify") {
         }
       }
   }
-  checkHead("Предмет из кода назван в своём файле базы");
+  checkHead("Предмет из кода назван в своём файле базы", {
+    n: subjectsDeclared.length,
+    unit: "предметов базы",
+  });
   console.log("  файлов с предметом без записи: " + baseMute.length);
   for (const g of baseMute)
     console.log(
       "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
     );
 
-  checkHead("Каркас обвязки не лежит в живом проекте");
+  checkHead("Каркас обвязки не лежит в живом проекте", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   console.log("  семян каркаса при живом коде: " + frameLitter.length);
   for (const g of frameLitter) console.log("    " + g);
 
@@ -10657,7 +10835,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Запись о пустоте не пережила появление кода");
+  checkHead("Запись о пустоте не пережила появление кода", {
+    n: seedsDeclared.filter((e) => e.onlyWhenEmpty).length,
+    unit: "семян каркаса",
+  });
   console.log(
     frameLives
       ? "  своего кода нет: записи о пустоте верны"
@@ -10668,7 +10849,10 @@ if (mode === "verify") {
       "    " + one + ". Снять маркер вместе с текстом и написать, что есть",
     );
 
-  checkHead("Каркас не отстал от семени");
+  checkHead("Каркас не отстал от семени", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   console.log(
     frameLives
       ? "  расходится с семенем: " + staleFrame.length
@@ -10735,12 +10919,18 @@ if (mode === "verify") {
         seedAnchorSaid = "якорей проверено: " + seedAnchorCount;
     }
   }
-  checkHead("Якоря семени ведут в семя");
+  checkHead("Якоря семени ведут в семя", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   if (seedAnchorSaid !== null) console.log("  " + seedAnchorSaid);
   if (seedAnchors.length) console.log("  мимо семени: " + seedAnchors.length);
   for (const one of seedAnchors)
     console.log("    " + one + ". Править семя записи вместе с семенем кода");
-  checkHead("Один предмет — один файл настройки");
+  checkHead("Один предмет — один файл настройки", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   console.log("  предметов с двумя файлами: " + twinConfigs.length);
   for (const g of twinConfigs) console.log("    " + g);
 
@@ -10870,7 +11060,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Цепочка проверок объявлена данными");
+  checkHead("Цепочка проверок объявлена данными", {
+    n: chainDeclared.length,
+    unit: "звеньев цепочки",
+  });
   console.log("  расхождений списка и семени: " + chainDrift.length);
   for (const g of chainDrift) console.log("    " + g);
 
@@ -10909,11 +11102,17 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Звено цепочки не задвоено");
+  checkHead("Звено цепочки не задвоено", {
+    n: chainDeclared.length,
+    unit: "звеньев цепочки",
+  });
   console.log("  задвоенных звеньев: " + chainTwins.length);
   for (const g of chainTwins) console.log("    " + g);
 
-  checkHead("Одноранговая зависимость не продублирована");
+  checkHead("Одноранговая зависимость не продублирована", {
+    n: chainDeclared.length,
+    unit: "звеньев цепочки",
+  });
   console.log("  продублировано: " + peerDup.length);
   for (const g of peerDup) console.log("    " + g);
 
@@ -11007,7 +11206,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Заготовки обвязки не разбираются линтом проекта");
+  checkHead("Заготовки обвязки не разбираются линтом проекта", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   console.log("  расхождений: " + seedLint.length);
   for (const d of seedLint) console.log("    " + d);
   // 44-б. Звено, написанное в манифест, может делать свою работу.
@@ -11077,7 +11279,10 @@ if (mode === "verify") {
       );
     }
   }
-  checkHead("Звену цепочки есть на чём работать");
+  checkHead("Звену цепочки есть на чём работать", {
+    n: chainDeclared.length,
+    unit: "звеньев цепочки",
+  });
   console.log("  звеньев без опоры: " + idleConfig.length);
   for (const d of idleConfig) console.log("    " + d);
   // 44-в. Каждый пакет семени манифеста принадлежит объявленному звену.
@@ -11135,7 +11340,10 @@ if (mode === "verify") {
           );
     }
   }
-  checkHead("Пакеты семени разобраны по звеньям");
+  checkHead("Пакеты семени разобраны по звеньям", {
+    n: chainDeclared.length,
+    unit: "звеньев цепочки",
+  });
   console.log("  неразобранных: " + packDrift.length);
   for (const d of packDrift) console.log("    " + d);
 
@@ -11395,7 +11603,10 @@ if (mode === "verify") {
       if (wrapped.length === 0) wrapSaid = "записей не по своей пометке: 0";
     }
   }
-  checkHead("Запись о семени помечена каркасом вместе с ним");
+  checkHead("Запись о семени помечена каркасом вместе с ним", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   if (wrapSaid !== null) console.log("  " + wrapSaid);
   if (wrapped.length)
     console.log("  записей не по своей пометке: " + wrapped.length);
@@ -11405,7 +11616,10 @@ if (mode === "verify") {
         one +
         " — живой проект снимет пометку вместе с записью и получит файл, о котором посадка не написала",
     );
-  checkHead("Настройка семени не ссылается на непривезённое");
+  checkHead("Настройка семени не ссылается на непривезённое", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   if (seedRefSaid !== null) console.log("  " + seedRefSaid);
   if (seedRefs.length) console.log("  ссылок мимо карты: " + seedRefs.length);
   for (const one of seedRefs)
@@ -11414,7 +11628,10 @@ if (mode === "verify") {
         one +
         " — в проекте настройка будет указывать в пустоту, и звено сломается посадкой",
     );
-  checkHead("Семена приезжают отформатированными");
+  checkHead("Семена приезжают отформатированными", {
+    n: seedsDeclared.length,
+    unit: "семян в карте посадки",
+  });
   if (seedFmtSaid !== null) console.log("  " + seedFmtSaid);
   if (roughSeeds.length) console.log("  расходится: " + roughSeeds.length);
   for (const one of roughSeeds)
@@ -11423,7 +11640,10 @@ if (mode === "verify") {
         one +
         " — в проекте суффикс снимается, и звено формата краснеет в первый же день",
     );
-  checkHead("Отложенное семя слито");
+  checkHead("Отложенное семя слито", {
+    n: seedsDeferred.length,
+    unit: "отложенных семян",
+  });
   console.log("  не слито: " + unmerged.length);
   for (const u of unmerged)
     console.log(
@@ -11467,14 +11687,20 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Отложенное семя положено, когда предмет появился");
+  checkHead("Отложенное семя положено, когда предмет появился", {
+    n: seedsDeferred.length,
+    unit: "отложенных семян",
+  });
   if (lateSaid !== null) console.log("  " + lateSaid);
   if (lateSeeds.length) console.log("  не положено: " + lateSeeds.length);
   for (const one of lateSeeds)
     console.log(
       "    " + one + ". Предмет появился — положить семя из `seat/templates/`",
     );
-  checkHead("Отложенное семя не положено посадкой");
+  checkHead("Отложенное семя не положено посадкой", {
+    n: seedsDeferred.length,
+    unit: "отложенных семян",
+  });
   console.log("  положенных раньше срока: " + earlySeed.length);
   for (const d of earlySeed) console.log("    " + d);
   // 44-бис. Находка посадки закрыта — и закрыта доказуемо.
@@ -11622,7 +11848,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Находки закрыты");
+  checkHead("Находки закрыты", {
+    n: findingsClosed + findingsOpen,
+    unit: "строк реестра находок",
+  });
   console.log(
     CONFIG.findings == null
       ? "  реестр находок не ведётся: «всё найденное починено» держится памятью"
@@ -11781,7 +12010,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Шаги перехода закрывают измерение");
+  checkHead("Шаги перехода закрывают измерение", {
+    n: transitionSteps,
+    unit: "шагов плана перехода",
+  });
   console.log(
     CONFIG.transition == null
       ? "  перехода нет: проверять нечего"
@@ -11822,7 +12054,10 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Напоминание о переходе включено");
+  checkHead("Напоминание о переходе включено", {
+    n: 1,
+    unit: "настройка хука среды",
+  });
   console.log(
     CONFIG.transition == null
       ? "  перехода нет: напоминать не о чем"
@@ -11832,7 +12067,10 @@ if (mode === "verify") {
   );
   for (const h of hookOff) console.log("    " + h);
 
-  checkHead("Объявленный долг назван планом перехода");
+  checkHead("Объявленный долг назван планом перехода", {
+    n: Object.keys(CONFIG.debt ?? {}).length,
+    unit: "видов долга",
+  });
   console.log(
     debtDeclared.length === 0
       ? "  долга не объявлено: записи обязаны быть полными"
@@ -11854,7 +12092,10 @@ if (mode === "verify") {
         " завести план, либо описать записи и обнулить долг",
     );
 
-  checkHead("План перехода не потерялся");
+  checkHead("План перехода не потерялся", {
+    n: transitionSteps,
+    unit: "шагов плана перехода",
+  });
   console.log(
     CONFIG.transition == null
       ? "  перехода нет: проект родился под обвязкой либо переход закончен"
@@ -11967,11 +12208,17 @@ if (mode === "verify") {
       }
     }
   }
-  checkHead("Форма отчёта посадки без слов обвязки");
+  checkHead("Форма отчёта посадки без слов обвязки", {
+    n: 1,
+    unit: "форма отчёта посадки",
+  });
   console.log("  слов обвязки в форме: " + reportJargon.length);
   for (const r of reportJargon) console.log("    " + r);
 
-  checkHead("Вопросы разработчику без ответа");
+  checkHead("Вопросы разработчику без ответа", {
+    n: questionsSeen,
+    unit: "вопросов в списках",
+  });
   console.log(
     CONFIG.questions == null
       ? "  список вопросов не заявлен"
@@ -11981,6 +12228,28 @@ if (mode === "verify") {
             : ""),
   );
   for (const q of openQuestions) console.log("    " + q);
+
+  // Ни одна сверка не молчит о размере своего корпуса.
+  //
+  // Правило записано рукой обвязки и относилось к одной сверке: она печатает,
+  // СКОЛЬКО проверила, и никогда — сколько должна была; разница между этими
+  // двумя числами и есть слепое пятно. Вниманием оно не удержалось дважды:
+  // сверка про README и сверка про документы компонента сужали корпус зашитым
+  // путём раскладки, в проекте с иной раскладкой не смотрели никуда и печатали
+  // ноль. Отличить такой ноль от здоровья было нельзя.
+  //
+  // Стоит ПОСЛЕДНЕЙ: спрашивается с того, что уже напечатано. Новая сверка,
+  // заведённая без довода о корпусе, роняет прогон на первом же запуске.
+  const mute = [...PRINTED].filter((one) => !LOOKED.has(one));
+  checkHead("Каждая сверка называет свой корпус", {
+    n: PRINTED.size,
+    unit: "сверок в этом прогоне",
+  });
+  console.log("  молчат о корпусе: " + mute.length);
+  for (const one of mute)
+    console.log(
+      "    " + one + ". Назвать вторым доводом `checkHead`, сколько осмотрено",
+    );
   for (const q of malformedQuestions) console.log("    сломана форма: " + q);
 
   if (
@@ -12094,7 +12363,8 @@ if (mode === "verify") {
     roughSeeds.length ||
     seedRefs.length ||
     wrapped.length ||
-    unresolved.length
+    unresolved.length ||
+    mute.length
   )
     process.exitCode = 1;
 }

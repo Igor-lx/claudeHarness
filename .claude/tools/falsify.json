@@ -760,6 +760,13 @@
       "section": "Шаблон правил заполнен",
       "file": "CLAUDE.md",
       "append": "хвост подсказки, оставшийся от заполнения слота.>"
+    },
+    {
+      "section": "Каждая сверка называет свой корпус",
+      "own": true,
+      "file": ".claude/tools/graph.mjs",
+      "find": "checkHead(\"Разрешения среды\", {\n    n: settingsLooked,\n    unit: \"разрешений в общем файле\",\n  });",
+      "replace": "checkHead(\"Разрешения среды\");"
     }
   ]
 }
