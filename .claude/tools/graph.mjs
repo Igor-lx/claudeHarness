@@ -3515,7 +3515,6 @@ if (mode === "tested") {
     if (CONFIG.testedLedger != null) {
       const at = path.join(BASE, CONFIG.testedLedger);
       const seen = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : {};
-      ledgerSeen = Object.keys(seen).length;
       for (const f of [...touchedCode, ...touchedStyles])
         seen[rel(f)] = createHash("sha1")
           .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
@@ -4454,7 +4453,6 @@ if (mode === "bar") {
   const at =
     CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
   const live = liveBarCriteria();
-  barCriteriaLive = live.length;
   if (at === null || live === null) {
     console.log("=== Свод по планке не заведён ===");
     console.log(
@@ -6752,7 +6750,7 @@ if (mode === "verify") {
     else {
       todoLooked = readFileSync(todoPath, "utf8")
         .split(NEWLINE)
-        .filter((l) => /^##s/.test(l)).length;
+        .filter((l) => /^##\s/.test(l)).length;
       const shouting = /(ЗАКРЫТО|СДЕЛАНО|ГОТОВО|ВЫПОЛНЕНО|DONE|CLOSED)/;
       const trailing = /[—\-(]\s*(закрыт|сделан|готов|выполнен)\S*\s*\)?\s*$/i;
       const struck = /^~~.*~~$/;
@@ -7595,6 +7593,100 @@ if (mode === "verify") {
           "), а CONFIG.configDocs пуст",
       );
   }
+  // Направление зависимостей: правила проекта называют его ПРОЗОЙ, а таблицу,
+  // по которой оно проверяется, не объявляют. Сверка направления осматривала
+  // ноль правил во всех восьми замеренных прогонах — то есть доктрина
+  // утверждает направление, а держит его ничто.
+  if (CONFIG.rulesHeading == null && CONFIG.isolationHeading == null) {
+    disarmedLooked += 1;
+    const said = (CONFIG.rulesManifest?.rules ?? [])
+      .map((r) => path.join(BASE, r))
+      .filter((at) => existsSync(at))
+      .map((at) => readFileSync(at, "utf8"))
+      .join(NEWLINE);
+    if (/Направление\s+(зависимостей|одно)/.test(said))
+      disarmed.push(
+        "правила проекта называют направление зависимостей прозой, а " +
+          "ни CONFIG.rulesHeading, ни CONFIG.isolationHeading не объявлены — держит это ничто",
+      );
+  }
+  // Реестр находок: поле пусто, а история полна починок. Обратная сторона
+  // сверки «Находки закрыты» — коммит `fix:`, не названный ни одной строкой,
+  // — при пустом поле молчит обо всех сразу.
+  if (CONFIG.findings == null) {
+    disarmedLooked += 1;
+    let fixes = 0;
+    try {
+      fixes = execFileSync(
+        "git",
+        ["log", "--oneline", "--format=%s", "-n", "200"],
+        {
+          cwd: path.join(BASE, ".."),
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      )
+        .split(NEWLINE)
+        .filter((l) => /^fix(\([^)]*\))?: /.test(l)).length;
+    } catch {
+      fixes = 0;
+    }
+    if (fixes > 0)
+      disarmed.push(
+        "починок в истории: " +
+          fixes +
+          ", а CONFIG.findings пуст — «всё найденное починено» держится памятью",
+      );
+  }
+  // Звёздная бочка выключает разбор мёртвых экспортов внутри себя, и пустое
+  // поле выключает сверку целиком: `export *` появится — не скажет никто.
+  if (CONFIG.starBarrels == null) {
+    disarmedLooked += 1;
+    const found = files.filter(
+      (f) => !isTest(f) && /^\s*export\s+\*/m.test(readFileSync(f, "utf8")),
+    );
+    if (found.length)
+      disarmed.push(
+        "звёздные бочки уже есть (" +
+          rel(found[0]) +
+          "), а CONFIG.starBarrels пуст",
+      );
+  }
+  // Планка: политика качества лежит на диске, а протокол или набор критериев
+  // не объявлены — свод по планке держится памятью целиком.
+  for (const [field, why] of [
+    ["barProtocol", "протоколу негде лежать"],
+    ["qualityScope", "набор критериев неоткуда взять"],
+  ]) {
+    if (CONFIG[field] != null) continue;
+    disarmedLooked += 1;
+    const policy = path.join(BASE, "..", ".claude/rules/quality.md");
+    if (existsSync(policy))
+      disarmed.push(
+        "политика качества на диске есть, а CONFIG." + field + " пуст — " + why,
+      );
+  }
+  // След прогона: протокол планки ведётся, а следа нет — вопрос о планке
+  // держится памятью на каждой правке.
+  if (CONFIG.testedLedger == null) {
+    disarmedLooked += 1;
+    if (CONFIG.barProtocol != null)
+      disarmed.push(
+        "протокол планки ведётся, а CONFIG.testedLedger пуст — вопрос о планке держится памятью",
+      );
+  }
+  // Сводка обещаний: раздел в базе заведён, а поле пусто — обещания без опоры
+  // никто не собирает.
+  if (CONFIG.promises == null) {
+    disarmedLooked += 1;
+    const found = readdirSync(BASE)
+      .filter((n) => n.endsWith(".md"))
+      .find((n) => /Держится:/.test(readFileSync(path.join(BASE, n), "utf8")));
+    if (found !== undefined)
+      disarmed.push(
+        "записи обещаний уже есть (" + found + "), а CONFIG.promises пуст",
+      );
+  }
   if (CONFIG.lintConfigOff == null) {
     disarmedLooked += 1;
     const at = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"]
@@ -7722,11 +7814,11 @@ if (mode === "verify") {
     else if (!existsSync(tableAt)) scopeDrift.push("файла таблицы нет");
     else {
       const sections = new Map();
-      barScopes = sections.size;
       for (const line of readFileSync(policyAt, "utf8").split(NEWLINE)) {
         const h = /^## ([K-U])\.\s+(.+)$/.exec(line);
         if (h !== null) sections.set(h[1], h[2].trim());
       }
+      barScopes = sections.size;
       // Предмет ищется в исполняемом тексте прод-кода: `fetch` в комментарии и
       // адрес пространства имён в разметке значка предметом не являются, и на
       // них сверка кричала бы — а крикливой проверке перестают верить (J4).
@@ -8028,7 +8120,7 @@ if (mode === "verify") {
     else {
       const lines = readFileSync(at, "utf8").split(NEWLINE);
       const from = lines.findIndex((l) => l.trim() === CONFIG.promises.heading);
-      promiseRows = lines.filter((l) => l.trim().startsWith("|")).length;
+      promiseRows = lines.filter((l) => /^s*Держится:/.test(l)).length;
       if (from < 0)
         mutePromises.push(
           `раздел объявлен и не найден: «${CONFIG.promises.heading}»`,
@@ -10250,6 +10342,7 @@ if (mode === "verify") {
   if (CONFIG.testedLedger != null) {
     const at = path.join(BASE, CONFIG.testedLedger);
     const seen = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : {};
+    ledgerSeen = Object.keys(seen).length;
     // Правка берётся у состояния репозитория тем же способом, что и в режиме
     // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
     // не про то, что тронуто сейчас.
@@ -10323,6 +10416,10 @@ if (mode === "verify") {
     const at =
       CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
     const subject = at === null ? [] : await barChangedSubject(REPO);
+    {
+      const all = liveBarCriteria();
+      barCriteriaLive = all === null ? 0 : all.all.length;
+    }
     if (at === null)
       barSaid =
         "протокол не ведётся — проход по планке держится памятью целиком";
