@@ -419,6 +419,29 @@ const seedsDeclared = (() => {
 })();
 const seedsDeferred = seedsDeclared.filter((c) => c.notAtSeating != null);
 
+/** Вся проза ПОЛКИ парами «короткий адрес — полный путь»: доктрина,
+ * инструкция посадки, справочник инструмента, памятки. Читают её чаще
+ * всего остального, а в корпус текстовых сверок она входила не везде. */
+const shelfProse = () => {
+  if (SHELF === null) return [];
+  const out = [];
+  (function walk(dir) {
+    for (const e of readdirSync(dir)) {
+      const full = norm(path.join(dir, e));
+      if (statSync(full).isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!e.endsWith(".md")) continue;
+      out.push([
+        path.relative(path.join(BASE, ".."), full).split(path.sep).join("/"),
+        full,
+      ]);
+    }
+  })(SHELF);
+  return out;
+};
+
 const chainDeclared = (() => {
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return [];
@@ -2914,10 +2937,12 @@ if (mode === "dead") {
     "=== Экспорты, которые нигде не импортируют (тесты включены) ===\n",
   );
   const rows = [];
+  let withExports = 0;
   for (const f of files) {
     if (isTest(f)) continue;
     const pulled = importedNames.get(f) ?? new Set();
     if (pulled.has("*")) continue; // утащено через export * — разобрать нельзя
+    if (exportsOf.get(f).size) withExports += 1;
     const dead = [...exportsOf.get(f)].filter((n) => !pulled.has(n));
     if (dead.length) rows.push([rel(f), dead]);
   }
@@ -2925,7 +2950,7 @@ if (mode === "dead") {
     console.log(`${f}\n    ${dead.join(", ")}`);
   }
   console.log(
-    `\nФайлов хотя бы с одним неимпортируемым экспортом: ${rows.length}.`,
+    `\nОсмотрено файлов с экспортами: ${withExports}. Из них с неимпортируемым экспортом: ${rows.length}.`,
   );
 }
 
@@ -3113,7 +3138,9 @@ if (mode === "cycles") {
     console.log(c.map(rel).join("\n  -> "));
     console.log("");
   }
-  console.log(`Различных циклов: ${seen.size}.`);
+  console.log(
+    `Осмотрено файлов: ${files.length}. Различных циклов: ${seen.size}.`,
+  );
 }
 
 // --- open: что в проекте открыто --------------------------------------------
@@ -7403,8 +7430,15 @@ if (mode === "verify") {
         norm(path.relative(path.join(BASE, ".."), at)),
         at,
       ]),
+      // Собственная проза ПОЛКИ: доктрина, инструкция посадки, справочник
+      // инструмента, памятки. В корпус этой сверки не входила, и ссылка на
+      // несуществующий раздел из доктрины проходила молча. Замерено: из
+      // `25` ссылок на разделы во всей прозе репозитория сверка читала `5`.
+      ...shelfProse(),
     ];
-    for (const at of docFiles)
+    // Заголовки берутся из ТОГО ЖЕ корпуса, что и ссылки: иначе живая ссылка
+    // внутрь доктрины объявляется висячей.
+    for (const [, at] of sources)
       for (const line of readFileSync(at, "utf8").split(NEWLINE))
         if (/^#{2,}\s/.test(line))
           allHeads.add(line.replace(/^#+\s*/, "").trim());
@@ -7417,6 +7451,9 @@ if (mode === "verify") {
         // не вёрстку, иначе живой заголовок читается как висячий.
         const title = m[1].replace(/\s+/g, " ").trim();
         refTokens++;
+        // Место под заполнение ссылкой не бывает: `«<ось>»` в форме отчёта —
+        // слот, который заполняют, а не адрес, по которому ходят.
+        if (title.includes("<")) continue;
         if (skip.has(title)) {
           skipUsed.add(title);
           continue;
@@ -7431,9 +7468,22 @@ if (mode === "verify") {
         if (/глобальн[а-яё]*\s+правил/i.test(around)) continue;
         // Заголовок могли назвать началом: «раздел «Планка качества»» против
         // «## Планка качества — сверяется, а не подразумевается».
-        const found = [...allHeads].some(
-          (h) => h === title || h.startsWith(title),
-        );
+        //
+        // Сравнение без регистра и без НУМЕРАТОРА: разделы доктрины идут
+        // буквой или числом («## B. Форма контракта: …»), а ссылаются на них
+        // строчными и без номера. Буквальное сравнение объявляло висячей
+        // живую ссылку — ложное срабатывание, а крикливой сверке перестают
+        // верить. Замерено на первом же расширении корпуса.
+        const bare = (one) =>
+          one
+            .toLowerCase()
+            .replace(/^[a-zа-яё0-9]{1,3}[.)]s*/i, "")
+            .trim();
+        const want = bare(title);
+        const found = [...allHeads].some((h) => {
+          const has = bare(h);
+          return has === want || has.startsWith(want);
+        });
         if (!found) danglingRefs.push(`${name}: «${title}»`);
       }
     }
