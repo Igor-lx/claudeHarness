@@ -1063,12 +1063,18 @@ const isTest = isTestPath;
  * зелёные, а считают разное.
  */
 const BRIEF_SUBJECTS = {
+  // Имён СТОЛЬКО ЖЕ, сколько их в определении состояния из файла базы:
+  // «всё, что переживает отрисовку». Идентификатор, значение контекста и
+  // подписка на внешнее хранилище переживают её наравне с хуком состояния и
+  // ссылкой. Замерено чтением стенда кнопки: всё её состояние — один `useId`,
+  // файла базы под предмет не завелось, и сверка промолчала — предмета для
+  // неё не было вовсе.
   // Имя, за которым идёт круглая ИЛИ угловая скобка: `useState<Set<string>>(`
   // это тот же предмет, а выражение с одной круглой его не видело. Поймано
   // полигоном: компонент с двумя состояниями и тремя ссылками прошёл как
   // «предмета нет».
   state: new RegExp(
-    "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]",
+    "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]|\\buseId\\s*[\\(<]|\\buseContext\\s*[\\(<]|\\buseSyncExternalStore\\s*[\\(<]",
   ),
   timing: new RegExp(
     "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
@@ -2165,6 +2171,7 @@ const CHECK_SECTIONS = [
   "Файл, написанный обвязкой, читается",
   "Диапазон среды объявлен",
   "Красное звено названо находкой",
+  "Незамеренное названо находкой",
 ];
 
 /** Заголовок БАННЕРА — и он НЕ заголовок сверки.
@@ -6843,7 +6850,10 @@ if (mode === "verify") {
   const chattyFiles = [];
   let shareLooked = 0;
   let commentRuns = 0;
-  for (const f of files) {
+  // Листы стилей входят в корпус наравне с кодом: проза в них стареет так же,
+  // а мёртвый блок объявлений лежит там столь же охотно. Прежде корпус был
+  // только кодом, и лист не видела ни одна из двух сверок.
+  for (const f of [...files, ...styleFiles]) {
     const body = readFileSync(f, "utf8");
     const runs = commentRunsOf(body);
     if (runs === "") continue;
@@ -10810,6 +10820,7 @@ if (mode === "verify") {
   // внутри блока, читающего карту посадки.
   const staleFrame = [];
   const emptyClaims = [];
+  let emptyLooked = 0;
   let frameLaid = 0;
   let frameOwn = 0;
   let frameLives = true;
@@ -10874,7 +10885,7 @@ if (mode === "verify") {
       // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
       // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
       // с текстом. Признак тот же, что у каркаса: свой код вне каркаса.
-      if (!frameLives) {
+      {
         const docsAt =
           CONFIG.docsIndex == null
             ? null
@@ -10884,6 +10895,8 @@ if (mode === "verify") {
           for (const name of readdirSync(dir)) {
             if (!name.endsWith(".md")) continue;
             const at = path.join(dir, name);
+            emptyLooked += 1;
+            if (frameLives) continue;
             const text = readFileSync(at, "utf8");
             const rows = text.split(NEWLINE);
             for (let i = 0; i < rows.length; i++) {
@@ -11140,8 +11153,8 @@ if (mode === "verify") {
     }
   }
   checkHead("Запись о пустоте не пережила появление кода", {
-    n: seedsDeclared.filter((e) => e.onlyWhenEmpty).length,
-    unit: "семян каркаса",
+    n: emptyLooked,
+    unit: "файлов базы и доков",
   });
   console.log(
     frameLives
@@ -12605,6 +12618,33 @@ if (mode === "verify") {
       "    " + one + ". Завести строку открытой: чинить это переходом нельзя",
     );
 
+  // «Не мерено» — обещание замерить, и держится оно ничем. Спрашивается не
+  // замер, его нельзя сделать в день посадки, а ЗАПИСЬ: открытая строка
+  // реестра, которая мозолит глаза, пока замера нет.
+  let unmeasured = 0;
+  let unmeasuredNamed = true;
+  {
+    for (const name of readdirSync(BASE)) {
+      if (!name.endsWith(".md")) continue;
+      for (const line of readFileSync(path.join(BASE, name), "utf8").split(
+        NEWLINE,
+      ))
+        if (line.includes("не мерено")) unmeasured += 1;
+    }
+    if (unmeasured > 0)
+      unmeasuredNamed =
+        (openFindings().get("Незамеренное названо находкой") ?? 0) > 0;
+  }
+  checkHead("Незамеренное названо находкой", {
+    n: unmeasured,
+    unit: "записей «не мерено» в базе",
+  });
+  console.log("  без строки реестра: " + (unmeasuredNamed ? 0 : 1));
+  if (!unmeasuredNamed)
+    console.log(
+      "    замер отложен, а напомнить о нём нечему. Завести строку открытой",
+    );
+
   const mute = [...PRINTED].filter((one) => !LOOKED.has(one));
   checkHead("Каждая сверка называет свой корпус", {
     n: PRINTED.size,
@@ -12733,6 +12773,7 @@ if (mode === "verify") {
     SPOILED.length ||
     envUndeclared ||
     redUnnamed.length ||
+    !unmeasuredNamed ||
     mute.length
   )
     process.exitCode = 1;

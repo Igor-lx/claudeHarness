@@ -787,6 +787,13 @@
       "own": true,
       "file": ".context/01-facts.md",
       "append": "| `zzLink` | красно, код `1` |"
+    },
+    {
+      "section": "Незамеренное названо находкой",
+      "own": true,
+      "file": ".context/16-findings.md",
+      "find": "«Незамеренное названо находкой»",
+      "replace": "«Незамеренное названо иначе»"
     }
   ]
 }
