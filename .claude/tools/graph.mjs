@@ -2164,6 +2164,7 @@ const CHECK_SECTIONS = [
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
   "Диапазон среды объявлен",
+  "Красное звено названо находкой",
 ];
 
 /** Заголовок БАННЕРА — и он НЕ заголовок сверки.
@@ -12564,6 +12565,46 @@ if (mode === "verify") {
         ". Переписать заново либо удалить: обвязка заведёт его сама",
     );
 
+  // Звено, пришедшее красным, обязано иметь открытую строку реестра. Иначе
+  // замер сделан и забыт: базовая линия записывается один раз, а напоминать
+  // о непочинённом коде нечему.
+  const redUnnamed = [];
+  let redLinks = 0;
+  {
+    // Таблица базовой линии ищется по своей шапке во всей базе: поля под неё
+    // нет, а заводить его ради одной сверки значит просить проект объявить
+    // то, что и так лежит в семени под известным именем.
+    const open = openFindings();
+    const lines = [];
+    for (const name of readdirSync(BASE)) {
+      if (!name.endsWith(".md")) continue;
+      lines.push(...readFileSync(path.join(BASE, name), "utf8").split(NEWLINE));
+    }
+    {
+      for (const line of lines) {
+        const m = /^\|\s*`([^`]+)`\s*\|\s*красно/.exec(line.trim());
+        if (m === null) continue;
+        redLinks += 1;
+        if (m[1] === "verify") continue;
+        if ((open.get(m[1]) ?? 0) > 0) continue;
+        redUnnamed.push(
+          "`" +
+            m[1] +
+            "` пришло красным, а открытой строки реестра под него нет",
+        );
+      }
+    }
+  }
+  checkHead("Красное звено названо находкой", {
+    n: redLinks,
+    unit: "звеньев в базовой линии",
+  });
+  console.log("  без строки реестра: " + redUnnamed.length);
+  for (const one of redUnnamed)
+    console.log(
+      "    " + one + ". Завести строку открытой: чинить это переходом нельзя",
+    );
+
   const mute = [...PRINTED].filter((one) => !LOOKED.has(one));
   checkHead("Каждая сверка называет свой корпус", {
     n: PRINTED.size,
@@ -12691,6 +12732,7 @@ if (mode === "verify") {
     unresolved.length ||
     SPOILED.length ||
     envUndeclared ||
+    redUnnamed.length ||
     mute.length
   )
     process.exitCode = 1;

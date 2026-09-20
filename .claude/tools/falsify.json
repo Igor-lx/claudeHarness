@@ -781,6 +781,12 @@
       "file": "package.json",
       "find": "  \"engines\": {\n    \"node\": \">=22.0.0\",\n    \"npm\": \">=11.0.0\"\n  },\n",
       "replace": ""
+    },
+    {
+      "section": "Красное звено названо находкой",
+      "own": true,
+      "file": ".context/01-facts.md",
+      "append": "| `zzLink` | красно, код `1` |"
     }
   ]
 }
