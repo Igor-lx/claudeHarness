@@ -45,6 +45,29 @@ import {
 // Режим среды идёт ДО настройки проекта и потому объявлен здесь, а не среди
 // прочих: он отвечает на вопрос «годится ли машина», который задают в папке
 // снимка, когда проекта ещё нет. Адреса он считает от самого себя.
+/** Заголовок сверки. Единственный способ его напечатать.
+ *
+ * Второй довод — `looked`: СКОЛЬКО эта сверка осмотрела. Без него ноль
+ * находок неотличим от «не смотрела никуда», и это не рассуждение, а
+ * дважды замеренный дефект: сверка про README и сверка про документы
+ * компонента сужали корпус зашитым путём раскладки, в проекте с иной
+ * раскладкой не смотрели никуда и печатали ноль. Держит это мета-сверка
+ * «Каждая сверка называет свой корпус».
+ *
+ * Форма: `{ n, unit }` — число и то, что считали, в родительном падеже
+ * множественного числа («файлов», «листов», «папок»). Сверка, у которой
+ * предмет один, называет единицу честно: осмотрено `1` настройка. */
+/** Единственная форма, которой инструмент называет размер осмотренного —
+ * и у сверки, и у режима. Одна на всех потому, что требовать её можно только
+ * с того, что узнаётся машиной: у каждого режима были свои слова, и спросить
+ * с них было нечем.
+ *
+ * `unit` — родительный падеж множественного числа: «файлов», «листов»,
+ * «папок». Предмет один — называют честно: осмотрено `1` настройка. */
+const sayLooked = (unit, n) => {
+  console.log("  осмотрено " + unit + ": " + n);
+};
+
 const mode = process.argv[2];
 
 if (mode === "env") {
@@ -53,10 +76,18 @@ if (mode === "env") {
   if (!existsSync(seed)) {
     console.log("=== Среда: связка не объявлена ===");
     console.log("  Семя настройки не найдено, сверять не с чем.");
+    sayLooked("объявленных версий", 0);
     process.exit(0);
   }
   const block = readFileSync(seed, "utf8");
   const declared = block.slice(block.indexOf("verifiedVersions: {"));
+  // Корпус — сами объявленные версии: их считает тот же разбор семени,
+  // которым сверяются орудия. Настройки проекта здесь нет — режим среды идёт
+  // до неё.
+  sayLooked(
+    "объявленных версий",
+    [...declared.slice(0, declared.indexOf("},")).matchAll(/: "/g)].length,
+  );
   const pick = (name) => {
     const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(declared);
     return hit === null ? null : hit[1];
@@ -2084,18 +2115,6 @@ const LOOKED = new Map();
 /** Сверки, напечатавшие заголовок в этом прогоне. */
 const PRINTED = new Set();
 
-/** Заголовок сверки. Единственный способ его напечатать.
- *
- * Второй довод — `looked`: СКОЛЬКО эта сверка осмотрела. Без него ноль
- * находок неотличим от «не смотрела никуда», и это не рассуждение, а
- * дважды замеренный дефект: сверка про README и сверка про документы
- * компонента сужали корпус зашитым путём раскладки, в проекте с иной
- * раскладкой не смотрели никуда и печатали ноль. Держит это мета-сверка
- * «Каждая сверка называет свой корпус».
- *
- * Форма: `{ n, unit }` — число и то, что считали, в родительном падеже
- * множественного числа («файлов», «листов», «папок»). Сверка, у которой
- * предмет один, называет единицу честно: осмотрено `1` настройка. */
 const checkHead = (title, looked) => {
   if (!CHECK_SECTIONS.includes(title))
     throw new Error("секция не объявлена в CHECK_SECTIONS: " + title);
@@ -2103,7 +2122,7 @@ const checkHead = (title, looked) => {
   PRINTED.add(title);
   if (looked === undefined) return;
   LOOKED.set(title, looked);
-  console.log("  осмотрено " + looked.unit + ": " + looked.n);
+  sayLooked(looked.unit, looked.n);
 };
 
 // --- falsify: сверки ещё ловят -----------------------------------------------
@@ -2124,10 +2143,12 @@ if (mode === "falsify") {
   const recipesAt = path.join(TOOL_DIR, "falsify.json");
   if (!existsSync(recipesAt)) {
     console.log("=== Рецептов фальсификации нет ===");
+    sayLooked("рецептов опровержения", 0);
     console.log("  Ожидался файл: " + norm(recipesAt));
     process.exit(1);
   }
   const recipes = JSON.parse(readFileSync(recipesAt, "utf8")).recipes ?? [];
+  sayLooked("рецептов опровержения", recipes.length);
   const REPO_ROOT = path.join(BASE, "..");
   const tmp = path.join(REPO_ROOT, ".проба-сверок");
 
@@ -2660,6 +2681,15 @@ if (mode === "falsify") {
 // сверка базы для этого слишком долгая. Читает один файл и выходит нулём
 // всегда — напоминание не может ронять чужую работу.
 if (mode === "transition") {
+  // Корпус — сам файл плана: есть он или нет. Шаги считает `printTransition`,
+  // и второй счёт разошёлся бы с ним молча.
+  sayLooked(
+    "файлов плана перехода",
+    CONFIG.transition != null &&
+      existsSync(path.join(BASE, CONFIG.transition.file))
+      ? 1
+      : 0,
+  );
   if (!printTransition())
     console.log(
       "Перехода нет: проект родился под обвязкой либо переход закончен.",
@@ -2668,6 +2698,7 @@ if (mode === "transition") {
 }
 
 if (mode === "handoff") {
+  sayLooked("семян в карте посадки", seedsDeclared.length);
   // Имя по умолчанию — рядом с проектом и не `.claude`: редактор держит свои
   // папки настроек и в проекте, и в рабочей области, и снимок, положенный туда,
   // сливается с ними. Найдено попыткой собрать снимок в корень рабочей области,
@@ -2933,28 +2964,30 @@ if (mode === "handoff") {
   process.exit(process.exitCode ?? 0);
 }
 if (mode === "dead") {
+  sayLooked(
+    "файлов с экспортами",
+    files.filter((f) => !isTest(f) && exportsOf.get(f)?.size).length,
+  );
   console.log(
     "=== Экспорты, которые нигде не импортируют (тесты включены) ===\n",
   );
   const rows = [];
-  let withExports = 0;
   for (const f of files) {
     if (isTest(f)) continue;
     const pulled = importedNames.get(f) ?? new Set();
     if (pulled.has("*")) continue; // утащено через export * — разобрать нельзя
-    if (exportsOf.get(f).size) withExports += 1;
     const dead = [...exportsOf.get(f)].filter((n) => !pulled.has(n));
     if (dead.length) rows.push([rel(f), dead]);
   }
   for (const [f, dead] of rows.sort((a, b) => a[0].localeCompare(b[0]))) {
     console.log(`${f}\n    ${dead.join(", ")}`);
   }
-  console.log(
-    `\nОсмотрено файлов с экспортами: ${withExports}. Из них с неимпортируемым экспортом: ${rows.length}.`,
-  );
+  console.log(`
+Файлов с неимпортируемым экспортом: ${rows.length}.`);
 }
 
 if (mode === "blast") {
+  sayLooked("файлов кода", files.length);
   // С аргументом — радиус одного адреса: кто именно от него зависит. Без
   // аргумента — весь список по убыванию. Раньше аргумент молча игнорировался,
   // и документированная команда `blast <путь>` печатала общий список: ответ на
@@ -2998,6 +3031,7 @@ if (mode === "blast") {
 }
 
 if (mode === "plan") {
+  sayLooked("файлов кода и стилей в графе", files.length + styleFiles.length);
   // `brief` отвечает «что это такое», `blast` — «кто зависит», `tested` — «что
   // с тестами в уже сделанной правке». Перед правкой спрашивают другое, и
   // спрашивают первым: **что придётся тронуть**. Собрать этот ответ можно и
@@ -3115,6 +3149,7 @@ if (mode === "plan") {
 }
 
 if (mode === "cycles") {
+  sayLooked("файлов кода", files.length);
   const color = new Map();
   const stack = [];
   const found = [];
@@ -3138,15 +3173,17 @@ if (mode === "cycles") {
     console.log(c.map(rel).join("\n  -> "));
     console.log("");
   }
-  console.log(
-    `Осмотрено файлов: ${files.length}. Различных циклов: ${seen.size}.`,
-  );
+  console.log(`Различных циклов: ${seen.size}.`);
 }
 
 // --- open: что в проекте открыто --------------------------------------------
 // Три сводки, каждая считается заново. Написанные рукой, они бы устарели первыми
 // — а нужны они именно тому, кто садится за рефактор с чистого листа.
 if (mode === "open") {
+  sayLooked(
+    "файлов базы",
+    readdirSync(BASE).filter((n) => n.endsWith(".md")).length,
+  );
   const NEWLINE = String.fromCharCode(10);
   const TICK = String.fromCharCode(96);
 
@@ -3315,6 +3352,7 @@ const changedPaths = async (repoRoot) => {
 // одиночной библиотеке и фасаду нужно по-разному. Поэтому не сверка
 // содержимого, а вопрос в нужный момент: тронул одну копию — вот её близнец.
 if (mode === "twins") {
+  sayLooked("объявленных пар форков", (CONFIG.forks ?? []).length);
   const NEWLINE = String.fromCharCode(10);
   let changed = process.argv.slice(3);
   if (changed.length) {
@@ -3411,6 +3449,7 @@ if (mode === "twins") {
 // файлы, которые ты тронул, вот тесты, которые их гоняют, и вот те из них, что
 // в эту правку не попали. Решение — за тобой; молча пройти мимо — нет.
 if (mode === "tested") {
+  sayLooked("файлов кода и стилей в графе", files.length + styleFiles.length);
   const NEWLINE = String.fromCharCode(10);
   let changed = process.argv.slice(3);
   if (changed.length) {
@@ -4007,6 +4046,7 @@ if (mode === "tested") {
 // задача всегда приходит ПО АДРЕСУ: без этой сборки знание об одном файле
 // приходится обходить по девяти файлам базы вручную.
 if (mode === "mutated") {
+  sayLooked("файлов кода и стилей в графе", files.length + styleFiles.length);
   // Мутационный прогон бывает не у всякого проекта, и молчать об этом нельзя.
   // Прежде поле указывало на конфиг, которого нет, область прогона выходила
   // пустой, и режим печатал «правка файлов в области прогона не касается» —
@@ -4281,6 +4321,10 @@ if (mode === "mutated") {
 // и оттого заметнее настоящего. Доля выходит оптимистичной и читается как
 // верхняя граница. Критерии-суждения не сажаются вовсе.
 if (mode === "bar-probe") {
+  {
+    const all = liveBarCriteria();
+    sayLooked("живых критериев планки", all === null ? 0 : all.all.length);
+  }
   const NEWLINE = String.fromCharCode(10);
   const at = path.join(TOOL_DIR, "bar-probes.json");
   if (!existsSync(at)) {
@@ -4476,6 +4520,10 @@ if (mode === "bar-probe") {
 // согласна роду задачи; протокол сделан на ТОМ ЖЕ виде предмета, что лежит
 // сейчас. Верность самого исхода машине недоступна и здесь не изображается.
 if (mode === "bar") {
+  {
+    const all = liveBarCriteria();
+    sayLooked("живых критериев планки", all === null ? 0 : all.all.length);
+  }
   const NEWLINE = String.fromCharCode(10);
   const at =
     CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
@@ -4849,6 +4897,7 @@ if (mode === "bar") {
 }
 
 if (mode === "brief") {
+  sayLooked("файлов кода и стилей в графе", files.length + styleFiles.length);
   const NEWLINE = String.fromCharCode(10);
   const arg = argPath(process.argv[3]);
   if (!arg) {
@@ -5102,6 +5151,7 @@ if (mode === "brief") {
 }
 
 if (mode === "sizes") {
+  sayLooked("файлов кода", files.length);
   const NEWLINE = String.fromCharCode(10);
   const size = (f) =>
     readFileSync(f, "utf8")
