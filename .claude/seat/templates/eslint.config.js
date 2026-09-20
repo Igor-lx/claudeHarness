@@ -59,6 +59,13 @@ export default tseslint.config(
   // Исходники, полки и тесты: линт с типами.
   {
     files: ["**/*.{ts,tsx}"],
+    // Конфиги сборки в корне исключены ОТСЮДА и разобраны ниже без типов.
+    // Проект компилятора у живого репозитория обычно накрывает `src` и
+    // только его, а конфиг лежит в корне: под образец он попадает, в проект
+    // — нет, и служба роняет разбор ошибкой `not found by the project
+    // service`. Замерено вторым кругом проб: звено линта было красным во
+    // всех семи посаженных проектах на файле, которого никто не писал.
+    ignores: ["*.config.{ts,mts,cts}"],
     extends: [
       js.configs.recommended,
       ...tseslint.configs.recommendedTypeChecked,
@@ -123,10 +130,16 @@ export default tseslint.config(
   {
     files: [
       "*.config.{js,mjs,cjs}",
+      "*.config.{ts,mts,cts}",
       "eslint.config.js",
-      "scripts/**/*.{js,mjs}",
+      "scripts/**/*.{js,mjs,ts}",
     ],
-    extends: [js.configs.recommended],
+    // БЕЗ ТИПОВ, и по той же причине, что у исходников на обычном
+    // JavaScript: файл не входит в проект компилятора, и правила, которым
+    // нужен тип, разобрать его не могут. Набор `recommended` при этом
+    // обязателен — без него разборщик TypeScript не подключается вовсе, и
+    // конфиг сборки на `.ts` падает уже на синтаксисе.
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,

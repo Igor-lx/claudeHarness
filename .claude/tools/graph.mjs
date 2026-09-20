@@ -1942,7 +1942,9 @@ const CHECK_SECTIONS = [
   "Обещания без опоры собираются сводкой",
   "Связи через DOM и CSS",
   "Имена классов из кода есть в листе стилей",
+  "Класс из листа стилей спрошен кодом",
   "Отступление от схемы стилизации объявлено решением",
+  "Пустой папки под корнем исходников нет",
   "Новый узел лежит по раскладке",
   "Правила проекта не спорят с реестром решений",
   "У компонента есть README",
@@ -2228,6 +2230,18 @@ if (mode === "falsify") {
           undo.push(() =>
             had === null ? rmSync(madeAt) : writeFileSync(madeAt, had),
           );
+          continue;
+        }
+        // Завести ПУСТУЮ ПАПКУ. Без этого шага сверку «Пустой папки под
+        // корнем исходников нет» опровергнуть нечем: любой файл внутри
+        // делает папку живой, а словарь умел заводить только файлы.
+        if (step.mkdir !== undefined) {
+          const dirAt = path.join(tmp, step.mkdir);
+          const had = existsSync(dirAt);
+          mkdirSync(dirAt, { recursive: true });
+          undo.push(() => {
+            if (!had) rmSync(dirAt, { recursive: true, force: true });
+          });
           continue;
         }
         const stepAt = path.join(tmp, step.file);
@@ -8180,6 +8194,58 @@ if (mode === "verify") {
   console.log("  расхождений: " + classDrift.length);
   for (const d of classDrift) console.log("    " + d);
 
+  // Сторона обратная: класс объявлен листом, и не спрашивает его никто.
+  //
+  // Первая сторона ловит имя, которого нет в листе, — оно даёт `undefined` в
+  // разметке. Эта ловит имя, которого нет в коде, и оно не даёт ничего: лист
+  // растёт мёртвыми правилами, каждое из которых читается как живое. Правка
+  // такого правила — работа впустую, а удаление соседнего — поломка.
+  //
+  // Признак широкий: имя ищется текстом по всему коду и тестам. Класс,
+  // применённый строкой, через карту, из соседнего файла или из теста,
+  // найдётся — не найдётся только никем не спрошенный. Объявленная чужая
+  // сторона законна: её имена перечислены таблицей связей.
+  const classDead = [];
+  {
+    const asked = [];
+    for (const f of files)
+      if (existsSync(f)) asked.push(readFileSync(f, "utf8"));
+    const haystack = asked.join(NEWLINE);
+    // Объявленная чужая сторона берётся из таблицы связей — тем же чтением,
+    // что и у первой стороны: имена в обратных кавычках.
+    const foreign = new Set();
+    if (CONFIG.domTables != null) {
+      const atDom = path.join(BASE, CONFIG.domTables.file);
+      if (existsSync(atDom))
+        for (const m of readFileSync(atDom, "utf8").matchAll(/`([^`]+)`/g))
+          foreign.add(m[1]);
+    }
+    for (const sheet of styleFiles) {
+      const text = readFileSync(sheet, "utf8");
+      for (const name of cssClasses(text)) {
+        if (foreign.has(name)) continue;
+        // Имя, встреченное в коде хоть раз и хоть как, считается спрошенным.
+        // Граница слова обязательна: без неё `button` нашёлся бы внутри
+        // `buttonGroup`, и мёртвый класс прошёл бы как живой.
+        const edge = new RegExp(
+          "\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b",
+        );
+        if (edge.test(haystack)) continue;
+        classDead.push(
+          rel(sheet) + ": класс `" + name + "` не спрашивает ни один файл",
+        );
+      }
+    }
+  }
+  checkHead("Класс из листа стилей спрошен кодом");
+  console.log("  расхождений: " + classDead.length);
+  for (const d of classDead)
+    console.log(
+      "    " +
+        d +
+        ". Убрать из листа либо объявить чужой стороной в таблице связей",
+    );
+
   // 13j. Отступление от схемы стилизации объявлено решением.
   //
   // Схема — умолчание обвязки: компонент импортирует СВОЙ лист модулем, а карта
@@ -8411,9 +8477,13 @@ if (mode === "verify") {
   // к умолчанию не приводится», и не ловило этого ничто.
   //
   // Вторая сторона того же: сняв утверждение об умолчании, правила перестают
-  // ОТВЕЧАТЬ, куда кладут новый узел. Указатель на доктрину обязан пережить
-  // переписывание — иначе следующая сессия кладёт новое наугад, и сверка
-  // раскладки её не остановит: отступление объявлено, и она молчит.
+  // ОТВЕЧАТЬ, куда кладут новый узел, — и сверка раскладки следующую сессию
+  // не остановит: отступление объявлено, и она молчит.
+  //
+  // Отвечает при этом САМ ПРОЕКТ, а не доктрина. Прежде здесь стояло
+  // требование сохранить указатель на раздел доктрины, и оно было хуже, чем
+  // ничего: доктрина описывает другую раскладку и отвечает «в `components`»
+  // проекту, у которого такой папки нет. Замерено вторым кругом проб.
   const layoutLie = [];
   {
     const seedAt = shelfAt("seat/templates/CLAUDE.md");
@@ -8456,20 +8526,78 @@ if (mode === "verify") {
           );
         }
       }
-      // Указатель на доктрину: он отвечает, куда кладут новый узел, и обязан
-      // пережить переписывание таблицы под свою раскладку.
-      const pointer = lineWith("Куда кладут новый узел и почему так");
-      if (decided3.includes("раскладка проекта") && pointer !== "")
-        for (const at of mine) {
-          if (!existsSync(at)) continue;
-          if (readFileSync(at, "utf8").includes(pointer)) continue;
-          layoutLie.push(
-            rel0(at) +
-              " — раскладка своя, а указателя «куда кладут новый узел» не осталось",
-          );
+      // Своя раскладка обязана быть НАЗВАНА: каждая папка верхнего уровня,
+      // держащая код, названа в правилах проекта путём — с косой чертой либо
+      // в обратных кавычках. Без косой черты и кавычек имя папки не
+      // отличить от слова прозы: «весь показ под ui» проверку проходило бы,
+      // а ответом на «куда класть» не было.
+      if (decided3.includes("раскладка проекта")) {
+        const tops = new Set();
+        for (const f of [...files, ...styleFiles]) {
+          if (isTest(f) || f.endsWith(".d.ts")) continue;
+          const top = rel(f).split("/")[0];
+          if (top !== undefined && top !== rel(f)) tops.add(top);
         }
+        const said = mine
+          .filter((at) => existsSync(at))
+          .map((at) => readFileSync(at, "utf8"))
+          .join(NEWLINE);
+        const nameless = [...tops]
+          .sort()
+          .filter(
+            (top) =>
+              !said.includes(top + "/") && !said.includes("`" + top + "`"),
+          );
+        for (const top of nameless)
+          layoutLie.push(
+            "раскладка своя, а папка `" +
+              top +
+              "/` в правилах проекта не названа: «куда кладут новый узел» ответа не имеет",
+          );
+      }
     }
   }
+  // Пустая папка под корнем исходников не бывает своей: файл её заводит,
+  // файл и уносит. Остаётся она от посадки, заведшей папку раскладки
+  // умолчания там, где раскладка своя, и от правки, унёсшей последний файл.
+  // И то и другое — утверждение о раскладке, которого никто не делал.
+  const hollow = [];
+  {
+    const walk = (dir) => {
+      let kids = [];
+      try {
+        kids = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return true;
+      }
+      let live = false;
+      for (const e of kids) {
+        if (!e.isDirectory()) {
+          live = true;
+          continue;
+        }
+        const inner = dir + "/" + e.name;
+        if (walk(inner)) live = true;
+      }
+      if (!live)
+        hollow.push(path.relative(ROOT, dir).split(path.sep).join("/"));
+      return live;
+    };
+    if (existsSync(ROOT)) walk(ROOT);
+  }
+  checkHead("Пустой папки под корнем исходников нет");
+  console.log(
+    hollow.length === 0
+      ? "  пустых папок: 0"
+      : "  пустых папок: " + hollow.length,
+  );
+  for (const one of hollow)
+    console.log(
+      "    " +
+        one +
+        ". Убрать: папка без файлов утверждает раскладку, которой нет",
+    );
+
   checkHead("Правила проекта не спорят с реестром решений");
   console.log(
     layoutLie.length === 0
@@ -11735,8 +11863,10 @@ if (mode === "verify") {
     domDrift.length ||
     domMissed.length ||
     classDrift.length ||
+    classDead.length ||
     schemeStray.length ||
     layoutStray.length ||
+    hollow.length ||
     layoutLie.length ||
     overDebtOf("readme", noReadme.length) ||
     looseDocs.length ||
