@@ -1,0 +1,25 @@
+# Проектные файлы САМОЙ полки: она посажена в себя, чтобы прогонять свои
+# проверки на себе же. Публикации они не подлежат — репозиторий раздаёт
+# `.claude`, `.gitattributes`, `README.md` и реестр находок `FINDINGS.md`.
+#
+# ЗАЧЕМ ЭТОТ ФАЙЛ ЛЕЖИТ В РЕПОЗИТОРИИ. Исключения живут в `.git/info/exclude`,
+# а он в клон не приезжает: свежий клон видит все файлы посадки как
+# неотслеживаемые, и одно `git add -A` вываливает их в публичную полку. Список
+# восстанавливают так:
+#
+#     cat .gitexclude-self >> .git/info/exclude
+#
+# В семя `.gitignore` он не входит и в чужой проект не уезжает.
+/.context/
+/src/
+/docs/
+/node_modules/
+/dist/
+/CLAUDE.md
+/package.json
+/package-lock.json
+/tsconfig.json
+/vite.config.ts
+/eslint.config.js
+/index.html
+/stryker.config.json
