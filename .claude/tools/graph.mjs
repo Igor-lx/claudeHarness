@@ -2169,6 +2169,35 @@ if (mode === "falsify") {
     const field = NEEDS[section];
     return field !== undefined && CONFIG[field] == null;
   };
+  /** Приезжает ли этот адрес СЕМЕНЕМ посадки.
+   *
+   * Мерка, отличающая «рецепт устарел» от «рецепт написан под другой
+   * проект». Файл, который кладёт посадка, живой проект вправе разложить
+   * иначе или переписать под себя: рецепт тогда не находит места не потому,
+   * что сломался, а потому, что он про чужое устройство. Файл, семенем НЕ
+   * приезжающий, обязан быть там, где сказано, и его отсутствие — тревога.
+   *
+   * Прежде это решал флаг `own` в самом рецепте, то есть рука автора. На
+   * стенде со своей раскладкой девять рецептов из девяноста двух попадали в
+   * тревогу, не будучи тревогой, и режим не мог дойти до нуля никогда. */
+  const fromSeed = (() => {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt)) return () => false;
+    const m = JSON.parse(readFileSync(mapAt, "utf8"));
+    const seeded = new Set(
+      [...(m.copy ?? []), ...(m.deferred ?? [])].map((c) =>
+        c.to.split("\\").join("/"),
+      ),
+    );
+    return (to) => seeded.has(String(to).split("\\").join("/"));
+  })();
+  /** Тот же вопрос к СОСТАВНОМУ рецепту: поля `file` у него нет, адреса
+   * лежат по шагам. Хоть один шаг метит в семя — рецепт про устройство
+   * умолчания, а не про этот проект. */
+  const stepsFromSeed = (r) =>
+    (r.edits ?? []).some((e) =>
+      fromSeed(e.file ?? e.copyTo ?? e.create?.path ?? e.mkdir),
+    );
   const foreign = [];
   // Рецепт написан, а предмета у сверки в ЭТОМ проекте не заводится вовсе:
   // поле настройки пусто. Это не «перенацелить на свои файлы» — цели нет, и
@@ -2340,7 +2369,7 @@ if (mode === "falsify") {
         if (failed !== undefined) {
           (subjectless(r.section)
             ? idle
-            : r.own === true
+            : r.own === true || stepsFromSeed(r)
               ? foreign
               : broken
           ).push(r.section + " — " + failed);
@@ -2370,7 +2399,7 @@ if (mode === "falsify") {
       if (!existsSync(at)) {
         (subjectless(r.section)
           ? idle
-          : r.own === true
+          : r.own === true || fromSeed(r.file)
             ? foreign
             : broken
         ).push(r.section + " — файла нет: " + r.file);
@@ -2409,7 +2438,7 @@ if (mode === "falsify") {
           if (at0 < 0) {
             (subjectless(r.section)
               ? idle
-              : r.own === true
+              : r.own === true || fromSeed(r.file)
                 ? foreign
                 : broken
             ).push(r.section + " — якорь дописывания не найден: " + r.after);
@@ -2425,7 +2454,7 @@ if (mode === "falsify") {
         if (!before.includes(r.find.split("\n").join(NEWLINE))) {
           (subjectless(r.section)
             ? idle
-            : r.own === true
+            : r.own === true || fromSeed(r.file)
               ? foreign
               : broken
           ).push(r.section + " — рецепт не находит своего места");
@@ -8481,23 +8510,28 @@ if (mode === "verify") {
     console.log("    …и ещё " + (wrongTongue.length - 20));
   // 13l-бис. Документы компонента лежат в его `docs/`.
   //
-  // В папке компонента из прозы лежит ОДИН файл — README, дверь снаружи.
-  // Всё прочее внутри `docs/`: витрина, устройство, решения, настройки.
-  // Иначе проза перемешивается с кодом, и папка тяжёлого компонента
-  // превращается в свалку, где не видно ни кода, ни документов.
+  // Вся проза компонента лежит в `docs/`, и дверь — `docs/README.md`. В корне
+  // папки прозы нет ни строчки: иначе она перемешивается с кодом, и папка
+  // тяжёлого компонента превращается в свалку, где не видно ни кода, ни
+  // документов.
   //
   // Спрашивается со всего поддерева компонента, а не с его корня: у крупного
-  // компонента README есть в каждой значимой подпапке, и это правильно — а
-  // вот документ рядом с ними правильным не становится.
+  // компонента документы есть в каждой значимой подпапке, и это правильно — а
+  // вот документ РЯДОМ с ними правильным не становится.
+  //
+  // Слой компонентов брался зашитым образцом `^components/` — то есть по
+  // раскладке умолчания, — и в проекте, разложенном иначе, сверка не смотрела
+  // никуда и печатала ноль. Тот же дефект, что нашёлся у соседней сверки про
+  // README, вторым экземпляром; слой берётся из того же поля `componentsAt`.
   const looseDocs = [];
-  for (const f of docFiles) {
-    const r = rel(f);
-    if (!/^components\//.test(r)) continue;
-    // README не исключается по имени: он тоже проза, и место у него то же
-    // самое. Прежде он лежал в корне папки, и проза компонента жила в двух
-    // местах — правило приходилось объяснять исключением.
-    if (r.includes("/docs/")) continue;
-    looseDocs.push(r);
+  {
+    const layers = CONFIG.componentsAt ?? ["components"];
+    for (const f of docFiles) {
+      const r = rel(f);
+      if (!layers.some((l) => r.startsWith(l + "/"))) continue;
+      if (r.includes("/docs/")) continue;
+      looseDocs.push(r);
+    }
   }
   checkHead("Документы компонента лежат в его `docs/`");
   console.log("  документов мимо `docs/`: " + looseDocs.length);
