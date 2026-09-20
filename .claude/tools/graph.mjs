@@ -70,6 +70,8 @@ import {
  * защищённо, а порча копится списком и НАЗЫВАЕТСЯ в конце прогона — иначе
  * сырой стек обрывает прогон на середине, и треть сверок не выполняется. */
 const SPOILED = [];
+/** Диапазон среды не объявлен вовсе: опоры нет, и это роняет прогон. */
+let envUndeclared = false;
 const readJson = (at, fallback) => {
   if (!existsSync(at)) return fallback;
   try {
@@ -2107,6 +2109,7 @@ const CHECK_SECTIONS = [
   "Вопросы разработчику без ответа",
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
+  "Диапазон среды объявлен",
 ];
 
 /** Заголовок БАННЕРА — и он НЕ заголовок сверки.
@@ -8137,7 +8140,19 @@ if (mode === "verify") {
             : high !== null && cmp(now, high) >= 0
               ? `  версия ВЫШЕ объявленной: ${now} при «${want}»`
               : null;
-    if (say !== null) {
+    // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
+    // роняет прогон. Дрейф версии остаётся предупреждением.
+    envUndeclared = want === null;
+    checkHead("Диапазон среды объявлен", {
+      n: envUndeclared ? 0 : 1,
+      unit: "объявленных диапазонов",
+    });
+    console.log("  не объявлено: " + (envUndeclared ? 1 : 0));
+    if (envUndeclared)
+      console.log(
+        "    переносимость держится на памяти. Объявить `engines` в манифесте",
+      );
+    if (say !== null && !envUndeclared) {
       checkHead("Версия среды (предупреждение, прогон не роняет)", {
         n: 1,
         unit: "объявленный диапазон среды",
@@ -12611,6 +12626,7 @@ if (mode === "verify") {
     wrapped.length ||
     unresolved.length ||
     SPOILED.length ||
+    envUndeclared ||
     mute.length
   )
     process.exitCode = 1;

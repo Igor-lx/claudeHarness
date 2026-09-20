@@ -774,6 +774,13 @@
       "file": ".context/tested-ledger.json",
       "find": "{",
       "replace": "{ это не json"
+    },
+    {
+      "section": "Диапазон среды объявлен",
+      "own": true,
+      "file": "package.json",
+      "find": "  \"engines\": {\n    \"node\": \">=22.0.0\",\n    \"npm\": \">=11.0.0\"\n  },\n",
+      "replace": ""
     }
   ]
 }
