@@ -838,6 +838,16 @@
           }
         }
       ]
+    },
+    {
+      "section": "Ворота перед коммитом установлены",
+      "edits": [
+        {
+          "file": ".claude/seat/map.json",
+          "find": "\"dir\": \".claude/hooks/git\"",
+          "replace": "\"dir\": \".claude/hooks/zzНЕТУ\""
+        }
+      ]
     }
   ]
 }

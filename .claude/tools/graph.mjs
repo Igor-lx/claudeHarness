@@ -714,9 +714,9 @@ const barChangedSubject = async (repoRoot) => {
     .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
 };
 /** Шапка протокола, разобранная: род, отпечатки предмета, печать. */
-const barHeader = (at) => {
-  if (at === null || !existsSync(at)) return null;
-  const body = readFileSync(at, "utf8");
+/** Шапка протокола из ТЕКСТА. Ревизия читает протокол из истории — файла с
+ * таким содержимым на диске нет, и путь ей передать нечего. */
+const barHeaderOf = (body) => {
   const kind = new RegExp(
     "^- род: " + BAR_TICK + "(.+)" + BAR_TICK + "$",
     "m",
@@ -747,6 +747,47 @@ const barHeader = (at) => {
     seal: seal === null ? null : seal[1],
     marks: [...body.matchAll(rowOf)].map((h) => ({ file: h[1], mark: h[2] })),
   };
+};
+const barHeader = (at) =>
+  at === null || !existsSync(at) ? null : barHeaderOf(readFileSync(at, "utf8"));
+
+/** ПОКРЫТ ЛИ набор файлов кода запечатанным сводом. Пустая строка — покрыт,
+ * иначе причина словами.
+ *
+ * Помощник общий намеренно, и это не та же ошибка, что чинилась здесь
+ * трижды. Сторон у требования две, и они разного рода: ворота — хук перед
+ * коммитом, который правку без свода не пропускает, — и ревизия, сверка по
+ * истории, которая обход ворот делает вечно красным. Ворота нельзя сделать
+ * абсолютными: хук лежит в `.git`, с клоном не едет и снимается флагом
+ * `--no-verify`. Ревизия обход не предотвращает, но и не забывает.
+ *
+ * Разойтись им нечем: обе спрашивают ЭТУ функцию.
+ *
+ * @param want [{file, mark}] — файлы предмета с отпечатками их содержимого
+ * @param body текст протокола, либо null — протокола нет
+ */
+const barCoverFault = (want, body) => {
+  if (!want.length) return "";
+  if (body === null) return "свода нет вовсе";
+  const was = barHeaderOf(body);
+  if (was.kind !== "на изменение")
+    return "свод сделан на задаче чтения, а правленый код есть";
+  if (was.seal === null || was.seal === "нет")
+    return "печати нет: свод начат и не закончен";
+  if (was.seal !== barSealOf(body))
+    return "печать не сходится: протокол правлен после того, как закрыт";
+  const had = new Map(was.marks.map((m) => [m.file, m.mark]));
+  const loose = [];
+  for (const one of want) {
+    const mark = had.get(one.file);
+    if (mark === undefined) loose.push(one.file + " — в своде не назван");
+    else if (mark !== one.mark)
+      loose.push(one.file + " — свод сделан на другом его виде");
+    had.delete(one.file);
+  }
+  for (const file of had.keys())
+    loose.push(file + " — назван сводом, а в правке его нет");
+  return loose.join("; ");
 };
 const barSameMarks = (was, now) =>
   was.length === now.length &&
@@ -2204,6 +2245,8 @@ const CHECK_SECTIONS = [
   "Таблица сверок описывает существующие сверки",
   "Вопрос о планке задан на конечном виде правки",
   "Планка пройдена покритериально",
+  "Коммит с кодом накрыт сводом",
+  "Ворота перед коммитом установлены",
   "Предложенное сводом названо находкой",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
@@ -2391,6 +2434,11 @@ if (mode === "falsify") {
   // «рецепт устарел» на сверке, чей предмет в том проекте не заводится вовсе.
   // Долг, который проект не может закрыть, перестают читать целиком.
   const NEEDS = {
+    // Ревизия сводов по истории: в песочнице истории нет вовсе — она заводит
+    // свой репозиторий одним коммитом, — и предмета у сверки там не
+    // существует. Опровергнута она замером на стенде: коммит, прошедший мимо
+    // ворот флагом, стал красным и остался им.
+    "Коммит с кодом накрыт сводом": "barSince",
     "Константы настроек описаны": "configDocs",
     "Точечные исключения линта": "lintExceptions",
     "Решения адресуемы": "adr",
@@ -3505,6 +3553,93 @@ const changedPaths = async (repoRoot) => {
 
 // одиночной библиотеке и фасаду нужно по-разному. Поэтому не сверка
 // содержимого, а вопрос в нужный момент: тронул одну копию — вот её близнец.
+// --- gate: ворота перед коммитом --------------------------------------------
+//
+// Свод по планке спрашивался только с НЕЗАКОММИЧЕННОГО: предмет его —
+// правленое по `git status`, то есть рабочее дерево. Коммит дерево опустошает,
+// и сверка замолкала. Требование при этом не откладывалось — оно УДАЛЯЛОСЬ:
+// красное «свод на другом предмете» исчезало от коммита, а не от починки, и
+// ни один следующий прогон о нём не вспоминал.
+//
+// Ломалось это четырьмя обычными способами, и ни один не был жульничеством:
+// коммит раньше прогона; коммит поверх красного; сессия, кончившаяся посреди
+// работы; несколько коммитов подряд. Замерено на себе.
+//
+// Ворота стоят там, где ошибка совершается. Предмет их — ИНДЕКС, а не рабочее
+// дерево: отпечатки считаются с того содержимого, которое поедет в коммит, и
+// свод обязан быть в индексе вместе с ним. Иначе история получила бы правку
+// без свода, а ревизия — свод, которого в коммите нет.
+if (mode === "gate") {
+  const NEWLINE = String.fromCharCode(10);
+  const { execFileSync } = await import("node:child_process");
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: REPO_AT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  let staged;
+  try {
+    staged = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
+      .split(NEWLINE)
+      .map((l) => l.trim())
+      .filter(Boolean);
+  } catch {
+    staged = null;
+  }
+  if (staged === null) {
+    sayLooked("файлов в индексе", 0);
+    console.log("  git недоступен — ворота проверить нечем, и это не «чисто»");
+    process.exit(1);
+  }
+  sayLooked("файлов в индексе", staged.length);
+  const want = [];
+  for (const one of staged) {
+    const abs = norm(path.join(REPO_AT, one));
+    if (!files.includes(abs) && !styleFiles.includes(abs)) continue;
+    if (abs.endsWith(".d.ts")) continue;
+    let body;
+    try {
+      body = git(["show", ":" + one]);
+    } catch {
+      continue;
+    }
+    want.push({ file: rel(abs), mark: barDigest(body) });
+  }
+  want.sort((x, y) => (x.file < y.file ? -1 : 1));
+  console.log("=== Ворота перед коммитом ===");
+  console.log("  кода и стилей в индексе: " + want.length);
+  if (!want.length) {
+    console.log("  кода в коммите нет — свод не спрашивается");
+    process.exit(0);
+  }
+  for (const one of want) console.log("    " + one.file);
+  let body = null;
+  if (CONFIG.barProtocol != null) {
+    const at = path.posix.join(
+      path.relative(REPO_AT, BASE).split(path.sep).join("/"),
+      CONFIG.barProtocol,
+    );
+    try {
+      body = git(["show", ":" + at]);
+    } catch {
+      body = null;
+    }
+  }
+  const fault = barCoverFault(want, body);
+  if (fault === "") {
+    console.log("  свод покрывает правку: коммит проходит");
+    process.exit(0);
+  }
+  console.log("  КОММИТ НЕ ПРОХОДИТ: " + fault);
+  console.log(
+    "  Свод по планке делают ДО коммита: node .claude/tools/graph.mjs bar",
+  );
+  console.log(
+    "  Протокол добавляют в тот же коммит — иначе история получит правку без свода.",
+  );
+  process.exit(1);
+}
 if (mode === "twins") {
   sayLooked("объявленных пар форков", (CONFIG.forks ?? []).length);
   const NEWLINE = String.fromCharCode(10);
@@ -10857,6 +10992,181 @@ if (mode === "verify") {
   console.log("  без строки реестра: " + barLoose.length);
   for (const one of barLoose)
     console.log("    " + one + ". Завести строку открытой");
+  // Коммит с кодом накрыт запечатанным сводом — ревизия по ИСТОРИИ.
+  //
+  // Соседняя сверка спрашивает свод с правленого, то есть с рабочего дерева.
+  // Коммит дерево опустошает, и она замолкает: требование не откладывалось, а
+  // удалялось. Ворота — хук перед коммитом — правку без свода не пропускают,
+  // но хук лежит в `.git`, с клоном не едет и снимается флагом. Эта сверка
+  // обход не предотвращает: она делает его вечно красным.
+  //
+  // Обе стороны спрашивают один помощник, `barCoverFault`. Разойтись им
+  // нечем — это не две проверки одного, а ворота и ревизия при них.
+  const barPast = [];
+  let barPastLooked = 0;
+  let barPastNote = null;
+  {
+    const at =
+      CONFIG.barProtocol == null
+        ? null
+        : path.posix.join(
+            path.relative(REPO_AT, BASE).split(path.sep).join("/"),
+            CONFIG.barProtocol,
+          );
+    if (at === null) barPastNote = "протоколу негде лежать: поле не объявлено";
+    else if (CONFIG.barSince == null)
+      barPastNote =
+        "коммит-основание сводов не объявлено — история не сверяется";
+    else {
+      const { execFileSync } = await import("node:child_process");
+      const git = (args) =>
+        execFileSync("git", args, {
+          cwd: REPO_AT,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      let log;
+      try {
+        log = git(["log", "--format=%H", CONFIG.barSince + "..HEAD"])
+          .split(NEWLINE)
+          .map((l) => l.trim())
+          .filter(Boolean);
+      } catch {
+        log = null;
+      }
+      if (log === null)
+        barPastNote =
+          "коммита-основания " +
+          CONFIG.barSince +
+          " в истории этой копии нет — своды по истории не сверены";
+      else
+        for (const hash of log) {
+          let touched;
+          try {
+            touched = git(["show", "--name-only", "--format=", hash])
+              .split(NEWLINE)
+              .map((l) => l.trim())
+              .filter(Boolean);
+          } catch {
+            continue;
+          }
+          const want = [];
+          for (const one of touched) {
+            const abs = norm(path.join(REPO_AT, one));
+            // Предикат тот же, что у предмета свода и у ворот: корпус кода и
+            // корпус стилей. Свой предикат здесь отбирал иначе — тесты в него
+            // не попадали, — и ревизия объявляла непокрытым коммит, накрытый
+            // сводом полностью. Та же болезнь, от которой эта пара и лечит.
+            //
+            // Цена у общего предиката одна: файл, снесённый после того
+            // коммита, в корпусе не значится, и коммит, только сносивший код,
+            // ревизией не спрашивается.
+            if (!files.includes(abs) && !styleFiles.includes(abs)) continue;
+            if (abs.endsWith(".d.ts")) continue;
+            let was;
+            try {
+              was = git(["show", hash + ":" + one]);
+            } catch {
+              continue;
+            }
+            want.push({ file: rel(abs), mark: barDigest(was) });
+          }
+          if (!want.length) continue;
+          barPastLooked += 1;
+          want.sort((x, y) => (x.file < y.file ? -1 : 1));
+          let said = null;
+          try {
+            said = git(["show", hash + ":" + at]);
+          } catch {
+            said = null;
+          }
+          const fault = barCoverFault(want, said);
+          if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
+        }
+    }
+  }
+  // Ворота перед коммитом УСТАНОВЛЕНЫ.
+  //
+  // Хуки git лежат в `.git/hooks`, а `.git` с клоном не копируется. Поэтому
+  // они лежат в репозитории, а git направляется туда настройкой
+  // `core.hooksPath` — одной командой, которую даёт посадка. Команду можно не
+  // дать, отменить или перенаправить, и тогда ворота молчат: правка без свода
+  // проходит в коммит, и узнаёт об этом только ревизия по истории, позже.
+  //
+  // Сверка говорит это вслух. Ревизия остаётся вторым слоем: она ловит и
+  // снятые ворота, и обход флагом.
+  const gateGap = [];
+  let gateLooked = 0;
+  let gateNote = null;
+  {
+    const mapAt = shelfAt("seat/map.json");
+    const said = mapAt === null ? null : readJson(mapAt, {}).gitHooks;
+    if (said == null) gateGap.push("папка хуков не объявлена картой посадки");
+    else {
+      gateLooked = (said.hooks ?? []).length;
+      for (const one of said.hooks ?? []) {
+        const at = path.join(REPO_AT, said.dir, one);
+        if (!existsSync(at))
+          gateGap.push(
+            said.dir + "/" + one + " — объявлен картой, а файла нет",
+          );
+      }
+      // «Репозитория нет» и «настройка не задана» — разные ответы, и обе
+      // команды падают одинаково. Проект без git коммитов не делает, дыры у
+      // него нет, и краснеть тут не на что: сверка это НАЗЫВАЕТ, а не молчит.
+      const { execFileSync } = await import("node:child_process");
+      const gitSays = (args) => {
+        try {
+          return execFileSync("git", args, {
+            cwd: REPO_AT,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+        } catch {
+          return null;
+        }
+      };
+      const repo = gitSays(["rev-parse", "--git-dir"]);
+      const where =
+        repo === null ? null : gitSays(["config", "core.hooksPath"]);
+      if (repo === null)
+        gateNote = "репозитория нет: коммитов не делают, и ворота не нужны";
+      else if (where === null)
+        gateGap.push(
+          "`core.hooksPath` не задан — ворота не установлены: `git config core.hooksPath " +
+            said.dir +
+            "`",
+        );
+      else if (norm(where) !== norm(said.dir))
+        gateGap.push(
+          "`core.hooksPath` ведёт в " +
+            where +
+            ", а ворота лежат в " +
+            said.dir,
+        );
+    }
+  }
+  checkHead("Ворота перед коммитом установлены", {
+    n: gateLooked,
+    unit: "объявленных хуков git",
+  });
+  console.log(
+    gateNote === null ? "  не на месте: " + gateGap.length : "  " + gateNote,
+  );
+  for (const one of gateGap) console.log("    " + one);
+  checkHead("Коммит с кодом накрыт сводом", {
+    n: barPastLooked,
+    unit: "коммитов с кодом после основания",
+  });
+  console.log(
+    barPastNote === null
+      ? "  без свода: " + barPast.length
+      : "  " + barPastNote,
+  );
+  for (const one of barPast)
+    console.log(
+      "    " + one + ". Свод делают ДО коммита и кладут в тот же коммит",
+    );
   checkHead("Планка пройдена покритериально", {
     n: barCriteriaLive,
     unit: "живых критериев планки",
