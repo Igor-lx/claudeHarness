@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
  * Дымовой набор на РЕЖИМЫ инструмента.
@@ -117,6 +117,45 @@ const LOOKED = /^\s*осмотрено .+: \d+\s*$/m;
 const CRASH =
   /ReferenceError|TypeError|SyntaxError|is not defined|is not a function|Cannot read propert/;
 
+/** База, какой она была до прогона.
+ *
+ * Режимы не только читают: свод по планке ПИШЕТ протокол. Пока целью
+ * служил файл самого набора, режим выходил раньше записи и побочного
+ * действия не было видно. Как только целью стал живой исходник, прогон
+ * набора стал превращать запечатанный протокол текущей работы в пустой
+ * скелет — предмет не совпал, и свод начался заново.
+ *
+ * Круг от этого замыкался: набор гоняется звеном `test`, звено входит в
+ * связку проверок, а сверка базы требует печати — то есть связка стирала
+ * печать, которую сама же потом и спрашивала. Замерено воспроизведением:
+ * печать «на изменение» до прогона, пустой скелет «на чтение» после.
+ *
+ * Снимается и возвращается вся папка базы, а не один протокол: писать туда
+ * может любой режим, и список имён разошёлся бы с ними молча.
+ */
+const BASE_DIR = path.join(TOOL_DIR, "..", "..", ".context");
+let baseWas = null;
+
+beforeAll(() => {
+  if (!fs.existsSync(BASE_DIR)) return;
+  baseWas = new Map();
+  for (const name of fs.readdirSync(BASE_DIR)) {
+    const at = path.join(BASE_DIR, name);
+    if (fs.statSync(at).isDirectory()) continue;
+    baseWas.set(name, fs.readFileSync(at));
+  }
+});
+
+afterAll(() => {
+  if (baseWas === null) return;
+  for (const name of fs.readdirSync(BASE_DIR)) {
+    const at = path.join(BASE_DIR, name);
+    if (fs.statSync(at).isDirectory()) continue;
+    if (!baseWas.has(name)) fs.rmSync(at);
+  }
+  for (const [name, body] of baseWas)
+    fs.writeFileSync(path.join(BASE_DIR, name), body);
+});
 describe("режимы инструмента запускаются", () => {
   it("инструмент назвал свои режимы", () => {
     expect(modes.length, "список режимов не прочитан").toBeGreaterThan(0);
