@@ -2144,6 +2144,7 @@ const CHECK_SECTIONS = [
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
   "Каркас обвязки не лежит в живом проекте",
+  "Раздел планки объявлен по своему замеру",
   "Файл базы о живом коде назвал его адрес",
   "Каркас не отстал от семени",
   "Запись о пустоте не пережила появление кода",
@@ -8043,10 +8044,35 @@ if (mode === "verify") {
         ? JSON.parse(readFileSync(manifest, "utf8"))
         : {};
       const script = (n) => (pkg.scripts ?? {})[n] !== undefined;
+      // Считается только то, что проект добавил САМ.
+      //
+      // Сеть по зависимостям ищет предмет раздела по имени библиотеки:
+      // клиент запросов, обёртка хранилища, движок движения, набор
+      // локализации. Пока полка везла один React, имя в манифесте означало
+      // выбор проекта. Как только она стала раздавать стек приложения —
+      // маршрутизатор, кэш запросов, хранилище, очистку разметки, даты,
+      // локализацию, — те же имена стали означать ПОДАРОК ПОЛКИ, и сеть
+      // объявляла бы живыми шесть разделов на проекте, где нет ни строки
+      // соответствующего кода.
+      //
+      // Поэтому из манифеста вычитается манифест семени: остаётся то, что
+      // дописали после посадки. Сеть по КОДУ при этом не трогается — она
+      // и была про код, а не про намерение.
+      const shelfDeps = new Set();
+      {
+        const seedAt = shelfAt("seat/templates/package.json");
+        if (seedAt !== null && existsSync(seedAt)) {
+          const seed = readJson(seedAt, {});
+          for (const d of Object.keys(seed.dependencies ?? {}))
+            shelfDeps.add(d);
+          for (const d of Object.keys(seed.devDependencies ?? {}))
+            shelfDeps.add(d);
+        }
+      }
       const deps = Object.keys({
         ...(pkg.dependencies ?? {}),
         ...(pkg.devDependencies ?? {}),
-      });
+      }).filter((d) => !shelfDeps.has(d));
       const dep = (re) => deps.some((d) => re.test(d));
       // Признак ищется двумя сетями: по коду и по зависимостям. Вторая нужна
       // потому, что предмет чаще всего приезжает библиотекой, а её имя известно
@@ -11204,6 +11230,69 @@ if (mode === "verify") {
   console.log("  молчат о своём коде: " + codeMute.length);
   for (const g of codeMute)
     console.log("    " + g + ". Прочитать код и написать, что в нём есть");
+  // Раздел планки объявлен по СВОЕМУ замеру, а не словом семени.
+  //
+  // Таблица применимости приезжает заполненной — под ПУСТОЙ проект, где
+  // предмета нет ни у одного раздела. Живой проект наследует её целиком и
+  // молча: приговоры инструмент меряет сам, а третью графу — обоснование —
+  // не меряет ничто, и она остаётся словом, написанным до того, как код
+  // прочитали.
+  //
+  // Замерено ревизией двух переведённых стендов. Обе базы утверждали
+  // «текстов для человека в коде нет» при подписи кнопки и заголовке
+  // бегущей строки, «ни промиса, ни таймера, ни отмены» при трёх снятиях
+  // подписок, «зависимостей тоже нет» при пяти. Последнее — ложь и на самой
+  // полке: семя манифеста везёт `react` и `react-dom`, то есть строка была
+  // неверна с первой минуты и ни разу никем не прочитана.
+  //
+  // Спрашивается самое слабое, что тут проверяемо: ОТЛИЧАЕТСЯ ЛИ обоснование
+  // от семенного. Переписать его нельзя, не прочитав код. Переформулировать
+  // не читая — можно, и это не ловится ничем; но строка, к которой никто не
+  // прикасался, ловится вся.
+  const scopeSeeded = [];
+  let scopeSeededLooked = 0;
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt) && CONFIG.qualityScope != null) {
+      const tableAt = path.join(BASE, CONFIG.qualityScope.table);
+      const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+      let seedAt = null;
+      for (const e of copy) {
+        if (norm(path.join(REPO, e.to)) !== norm(tableAt)) continue;
+        seedAt = shelfAt(e.from);
+      }
+      if (seedAt !== null && existsSync(seedAt) && existsSync(tableAt)) {
+        // Строка таблицы: `| X. имя | приговор | обоснование |`.
+        const rows = (text) => {
+          const out = new Map();
+          for (const line of text.split(NEWLINE)) {
+            const m = /^\|\s*([K-U])\.[^|]*\|([^|]*)\|([^|]*)\|/.exec(line);
+            if (m !== null) out.set(m[1], m[3].trim());
+          }
+          return out;
+        };
+        const seeded = rows(readFileSync(seedAt, "utf8"));
+        const mine = rows(readFileSync(tableAt, "utf8"));
+        for (const [letter, said] of mine) {
+          scopeSeededLooked += 1;
+          if (frameLives) continue;
+          if (seeded.get(letter) !== said) continue;
+          scopeSeeded.push(letter);
+        }
+      }
+    }
+  }
+  checkHead("Раздел планки объявлен по своему замеру", {
+    n: scopeSeededLooked,
+    unit: "разделов планки в таблице",
+  });
+  console.log("  объявлены словом семени: " + scopeSeeded.length);
+  for (const g of scopeSeeded)
+    console.log(
+      "    раздел " +
+        g +
+        " — обоснование приехало семенем и не переписано. Прочитать код и написать, что замерено",
+    );
   checkHead("Каркас обвязки не лежит в живом проекте", {
     n: seedsDeclared.length,
     unit: "семян в карте посадки",
@@ -11733,11 +11822,24 @@ if (mode === "verify") {
         for (const p of l.packages ?? [])
           byLink.set(p, (byLink.get(p) ?? []).concat(l.script ?? "звено"));
       const platform = new Set(seatMapNow.platformPackages?.packages ?? []);
+      // Второй список — стек приложения: пакеты, не нужные ни звену, ни
+      // платформе, привезённые заранее под будущее приложение. Держатся
+      // отдельно от платформы, потому что смысл у списков разный: платформа
+      // работает с первого дня, стек лежит неиспользованным. Свалить их в
+      // один список значило бы сделать описание платформы ложью.
+      const stack = new Set(seatMapNow.stackPackages?.packages ?? []);
       for (const p of inSeed)
-        if (!byLink.has(p) && !platform.has(p))
+        if (!byLink.has(p) && !platform.has(p) && !stack.has(p))
           packDrift.push(
-            p + " — пакет семени не назван ни звеном, ни списком платформы",
+            p +
+              " — пакет семени не назван ни звеном, ни списком платформы, ни стеком",
           );
+      // Обратная сторона: имя в списке, которого нет в семени. Без неё
+      // список копит пакеты, давно выброшенные из манифеста, и перестаёт
+      // говорить о том, что действительно приезжает.
+      for (const p of stack)
+        if (!inSeed.has(p))
+          packDrift.push(p + " — назван стеком, а в семени манифеста его нет");
       for (const [p, links] of byLink)
         if (!inSeed.has(p))
           packDrift.push(

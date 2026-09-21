@@ -17,8 +17,16 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && node .claude/tools/graph.mjs verify"
   },
   "dependencies": {
+    "@reduxjs/toolkit": "^2.12.0",
+    "axios": "^1.20.0",
+    "clsx": "^2.1.1",
+    "i18next": "^26.4.2",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "react-i18next": "^17.0.14",
+    "react-redux": "^9.3.0",
+    "react-router": "^8.4.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
