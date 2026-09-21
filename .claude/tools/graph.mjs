@@ -2144,6 +2144,7 @@ const CHECK_SECTIONS = [
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
   "Каркас обвязки не лежит в живом проекте",
+  "Файл базы о живом коде назвал его адрес",
   "Каркас не отстал от семени",
   "Запись о пустоте не пережила появление кода",
   "Якоря семени ведут в семя",
@@ -10885,29 +10886,55 @@ if (mode === "verify") {
       // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
       // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
       // с текстом. Признак тот же, что у каркаса: свой код вне каркаса.
+      // Спрашивается САМО УТВЕРЖДЕНИЕ, а не пометка при нём.
+      //
+      // Пометка стоит в СЕМЕНИ и там же называет свои строки: всё, что
+      // внутри неё, — текст, верный только для пустого проекта. Сверка
+      // читает семя, берёт эти строки и ищет их в файле проекта.
+      //
+      // Прежде искалась пометка в файле ПРОЕКТА, и это ловилось снятием
+      // одной строки. Замерено круговым прогоном стенда: переход снял пять
+      // пометок, не тронув ни слова под ними, — свод идиом остался с
+      // привезённым «Здесь пока нечего описывать» при готовом компоненте
+      // рядом, и сверка вышла зелёной. То есть механизм закрывал ровно ту
+      // работу, ради которой заведён, и закрывался жестом.
+      //
+      // Утверждение уходит только вместе с текстом, потому что спрашивают
+      // текст. Пометка в файле проекта тоже считается: её оставили — значит
+      // оставили и то, что она накрывает.
       {
-        const docsAt =
-          CONFIG.docsIndex == null
-            ? null
-            : path.join(BASE, CONFIG.docsIndex.dir);
-        for (const dir of [BASE, docsAt]) {
-          if (dir === null || !existsSync(dir)) continue;
-          for (const name of readdirSync(dir)) {
-            if (!name.endsWith(".md")) continue;
-            const at = path.join(dir, name);
-            emptyLooked += 1;
-            if (frameLives) continue;
-            const text = readFileSync(at, "utf8");
-            const rows = text.split(NEWLINE);
-            for (let i = 0; i < rows.length; i++) {
-              if (!rows[i].includes("<!-- ПУСТО")) continue;
-              emptyClaims.push(
-                norm(at).slice(norm(REPO).length + 1) +
-                  ":" +
-                  (i + 1) +
-                  " — утверждает пустоту, а свой код уже есть",
-              );
+        const OPEN = "<!-- ПУСТО -->";
+        const SHUT = "<!-- /ПУСТО -->";
+        for (const e of seatMap.copy ?? []) {
+          const seedAt = shelfAt(e.from);
+          if (seedAt === null || !existsSync(seedAt)) continue;
+          const seed = readFileSync(seedAt, "utf8").split(NEWLINE);
+          const claim = [];
+          for (let i = 0; i < seed.length; i += 1) {
+            if (seed[i].trim() !== OPEN) continue;
+            let shut = i + 1;
+            while (shut < seed.length && seed[shut].trim() !== SHUT) {
+              const row = seed[shut].trim();
+              if (row !== "") claim.push(row);
+              shut += 1;
             }
+            i = shut;
+          }
+          if (!claim.length) continue;
+          const at = path.join(REPO, e.to);
+          if (!existsSync(at)) continue;
+          emptyLooked += 1;
+          if (frameLives) continue;
+          const rows = readFileSync(at, "utf8").split(NEWLINE);
+          for (let i = 0; i < rows.length; i += 1) {
+            const row = rows[i].trim();
+            if (!claim.includes(row) && row !== OPEN) continue;
+            emptyClaims.push(
+              norm(at).slice(norm(REPO).length + 1) +
+                ":" +
+                (i + 1) +
+                " — утверждает пустоту, а свой код уже есть",
+            );
           }
         }
       }
@@ -11113,6 +11140,70 @@ if (mode === "verify") {
       "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
     );
 
+  // Файл базы о живом коде обязан назвать из него хоть один адрес.
+  //
+  // Соседняя сверка спрашивает, ушло ли ПРИВЕЗЁННОЕ утверждение о пустоте.
+  // Её обходят, написав на его место СВОЁ: «здесь пока нечего описывать».
+  // Замерено круговым прогоном стенда — переход заменил пять привезённых
+  // записей своими, такими же пустыми, и обе сверки вышли зелёными при
+  // готовом компоненте рядом.
+  //
+  // Спрашивается то же самое, что у предметов базы, и так же слабо:
+  // НАЗВАН ЛИ ХОТЬ ОДИН АДРЕС своего кода. Слабо намеренно — судить
+  // полноту прозы машине нечем, а назвать адрес нельзя, не прочитав код.
+  // Именем считается и путь файла, и его имя без расширения, и имя папки
+  // с заглавной: список поведения естественно зовёт узел именем, а не
+  // путём. Папки со строчной буквы — `src`, `client` — не в счёт: они
+  // попадаются в прозе сами собой и не говорят о прочтении кода.
+  // Признак живого кода тот же, что у соседней сверки: СВОЙ файл вне каркаса.
+  // По одному лишь наличию файлов судить нельзя — каркас есть у всякого
+  // свежепосаженного проекта, и сверка краснела бы на пустом.
+  const codeMute = [];
+  let codeMuteLooked = 0;
+  {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt !== null && existsSync(mapAt)) {
+      const declared =
+        JSON.parse(readFileSync(mapAt, "utf8")).namesOwnCode ?? [];
+      const own = files.filter((f) => !isTest(f));
+      const tokens = new Set();
+      const GENERIC = new Set(["index", "main", "app", "types", "utils"]);
+      for (const f of own) {
+        const address = rel(f);
+        tokens.add(address);
+        const parts = address.split("/");
+        const base = (parts[parts.length - 1] ?? "").replace(/.[^.]+$/, "");
+        if (base.length > 3 && !GENERIC.has(base.toLowerCase()))
+          tokens.add(base);
+        const folder = parts[parts.length - 2] ?? "";
+        if (folder.length > 3 && /^[A-ZА-Я]/.test(folder)) tokens.add(folder);
+      }
+      for (const to of declared) {
+        const at = path.join(REPO, to);
+        if (!existsSync(at)) continue;
+        codeMuteLooked += 1;
+        if (frameLives) continue;
+        const said = readFileSync(at, "utf8");
+        let named = false;
+        for (const t of tokens)
+          if (said.includes(t)) {
+            named = true;
+            break;
+          }
+        if (!named)
+          codeMute.push(
+            to + " — свой код есть, а в файле не назван ни один его адрес",
+          );
+      }
+    }
+  }
+  checkHead("Файл базы о живом коде назвал его адрес", {
+    n: codeMuteLooked,
+    unit: "файлов базы, обязанных назвать код",
+  });
+  console.log("  молчат о своём коде: " + codeMute.length);
+  for (const g of codeMute)
+    console.log("    " + g + ". Прочитать код и написать, что в нём есть");
   checkHead("Каркас обвязки не лежит в живом проекте", {
     n: seedsDeclared.length,
     unit: "семян в карте посадки",
@@ -11154,7 +11245,7 @@ if (mode === "verify") {
   }
   checkHead("Запись о пустоте не пережила появление кода", {
     n: emptyLooked,
-    unit: "файлов базы и доков",
+    unit: "записей о пустоте в семенах",
   });
   console.log(
     frameLives
