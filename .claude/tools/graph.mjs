@@ -751,6 +751,36 @@ const barHeaderOf = (body) => {
 const barHeader = (at) =>
   at === null || !existsSync(at) ? null : barHeaderOf(readFileSync(at, "utf8"));
 
+/** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
+const seedOfPath = () => {
+  const mapAt = shelfAt("seat/map.json");
+  const out = new Map();
+  if (mapAt === null || !existsSync(mapAt)) return out;
+  for (const e of readJson(mapAt, {}).copy ?? []) out.set(e.to, e.from);
+  return out;
+};
+
+/** Лежит ли файл ТЕМ ЖЕ, каким его положило семя.
+ *
+ * Признак не новый: им же сверка «Каркас не отстал от семени» решает, живёт
+ * ли проект каркасом, и сверка «Каркас обвязки не лежит в живом проекте» —
+ * мусор ли он. Здесь он отвечает на третий вопрос того же рода: чья это
+ * работа. Код, приехавший с полки и не тронутый, написан обвязкой, и свода по
+ * планке на него не спрашивают — иначе ворота не пропускали бы саму посадку.
+ *
+ * Концы строк приводятся к одному виду: снимок едет между машинами, и
+ * побайтовое сравнение расходилось бы на каждой строке, ничего не говоря о
+ * содержимом.
+ *
+ * Тело семени подаёт зовущий: ворота читают его с диска, ревизия — из того
+ * коммита, который судит. Сравнение при этом одно.
+ */
+const sameAsSeed = (body, seedBody) => {
+  if (seedBody === null) return false;
+  const eol = String.fromCharCode(13) + String.fromCharCode(10);
+  const flat = (t) => t.split(eol).join(String.fromCharCode(10));
+  return flat(body) === flat(seedBody);
+};
 /** ПОКРЫТ ЛИ набор файлов кода запечатанным сводом. Пустая строка — покрыт,
  * иначе причина словами.
  *
@@ -3593,6 +3623,8 @@ if (mode === "gate") {
     process.exit(1);
   }
   sayLooked("файлов в индексе", staged.length);
+  const seeds = seedOfPath();
+  let fromShelf = 0;
   const want = [];
   for (const one of staged) {
     const abs = norm(path.join(REPO_AT, one));
@@ -3604,11 +3636,25 @@ if (mode === "gate") {
     } catch {
       continue;
     }
+    // Семя, лежащее нетронутым, — работа обвязки, а не проекта.
+    const seedAt = seeds.has(one) ? shelfAt(seeds.get(one)) : null;
+    const seedBody =
+      seedAt !== null && existsSync(seedAt)
+        ? readFileSync(seedAt, "utf8")
+        : null;
+    if (sameAsSeed(body, seedBody)) {
+      fromShelf += 1;
+      continue;
+    }
     want.push({ file: rel(abs), mark: barDigest(body) });
   }
   want.sort((x, y) => (x.file < y.file ? -1 : 1));
   console.log("=== Ворота перед коммитом ===");
-  console.log("  кода и стилей в индексе: " + want.length);
+  console.log(
+    "  кода и стилей в индексе: " +
+      want.length +
+      (fromShelf ? ", и ещё " + fromShelf + " лежит семенем обвязки" : ""),
+  );
   if (!want.length) {
     console.log("  кода в коммите нет — свод не спрашивается");
     process.exit(0);
@@ -11025,6 +11071,7 @@ if (mode === "verify") {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
         });
+      const seeds = seedOfPath();
       let log;
       try {
         log = git(["log", "--format=%H", CONFIG.barSince + "..HEAD"])
@@ -11069,6 +11116,19 @@ if (mode === "verify") {
             } catch {
               continue;
             }
+            // Семя берётся ИЗ ТОГО ЖЕ коммита: семя правится своей жизнью,
+            // и сравнение с сегодняшним сделало бы старую посадку красной
+            // задним числом.
+            let seedWas = null;
+            if (seeds.has(one)) {
+              const from = seeds.get(one);
+              try {
+                seedWas = git(["show", hash + ":.claude/" + from]);
+              } catch {
+                seedWas = null;
+              }
+            }
+            if (sameAsSeed(was, seedWas)) continue;
             want.push({ file: rel(abs), mark: barDigest(was) });
           }
           if (!want.length) continue;
