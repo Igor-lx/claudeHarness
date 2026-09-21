@@ -23,6 +23,14 @@
       "to": ".context/02-todo.md"
     },
     {
+      "from": "seat/templates/03-graph.md",
+      "to": ".context/03-graph.md"
+    },
+    {
+      "from": "seat/templates/05-flows.md",
+      "to": ".context/05-flows.md"
+    },
+    {
       "from": "seat/templates/07-invariants.md",
       "to": ".context/07-invariants.md"
     },
