@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,12 +24,49 @@ import { describe, expect, it } from "vitest";
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TOOL = path.join(TOOL_DIR, "graph.mjs");
 
-/** Режим, которому нужен путь, получает файл этого самого набора: он есть
- * всегда и лежит там же, где инструмент. */
-const SUBJECT = path.relative(
-  path.join(TOOL_DIR, "..", ".."),
-  fileURLToPath(import.meta.url),
-);
+/** Цель для режима, которому нужен путь: САМЫЙ НАСЫЩЕННЫЙ файл исходников.
+ *
+ * Прежде целью служил файл самого набора. Путь при этом передавался, и
+ * набор выглядел полным — но `.mjs` в папке инструмента не лежит в графе
+ * проекта, и режим выходил раньше, чем доходил до веток, работающих по
+ * коду. То есть по коду режимы не гонялись НИ РАЗУ.
+ *
+ * Замерено сценарием на стенде: `brief` падал на живом файле с
+ * `ReferenceError`, а набор был зелёный.
+ *
+ * ГРАНИЦА ОХВАТА, и она объявляется, а не подразумевается: набор гоняет
+ * режимы по коду ЭТОГО проекта. Ветка режима, которую код проекта не
+ * достаёт, не проверяется ничем. На полке, живущей каркасом, у корневого
+ * компонента хуков ноль — то самое падение там не ловится; на стенде с
+ * готовым узлом ловится. Это не дефект набора, а его предмет: дымовой
+ * прогон отвечает «запускается ли режим на здешнем коде», и шире отвечать
+ * не может.
+ *
+ * Насыщенность считается числом хуков: файл, держащий состояние и эффекты,
+ * заводит в режимах ветки, которых простой файл не заводит, — долг базы по
+ * предмету, порядок, радиус. Выбор детерминирован: при равном счёте берётся
+ * первый по алфавиту.
+ */
+const SUBJECT = (() => {
+  const root = path.join(TOOL_DIR, "..", "..");
+  const src = path.join(root, "src");
+  const out = [];
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const at = path.join(dir, e.name);
+      if (e.isDirectory()) walk(at);
+      else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\./.test(e.name))
+        out.push(at);
+    }
+  };
+  walk(src);
+  if (!out.length) return path.relative(root, fileURLToPath(import.meta.url));
+  const HOOKS = /use[A-Z][A-Za-z]*\s*\(/g;
+  const score = (f) => (fs.readFileSync(f, "utf8").match(HOOKS) ?? []).length;
+  out.sort((a, b) => score(b) - score(a) || a.localeCompare(b));
+  return path.relative(root, out[0]).split(path.sep).join("/");
+})();
 
 /** Режимы вне дымового прогона — с причиной у каждого.
  *

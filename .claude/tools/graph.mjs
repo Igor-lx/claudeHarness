@@ -425,6 +425,16 @@ const OUT_OF_TREE = new Set([
 // адреса стояли семью отдельными полями, и «полку с собой не берём» означало
 // погасить каждое: инструкция называла одно, посадка ломалась на шести.
 const SHELF = CONFIG.shelf == null ? null : path.join(BASE, CONFIG.shelf);
+
+/** Корень проекта: папка над базой.
+ *
+ * Одна на модуль намеренно. Считалась она трижды — двумя локальными копиями
+ * внутри режимов и третьей, которая понадобилась общему помощнику, — и
+ * ровно на таком расхождении досье узла искало файл базы по пути
+ * `.context/.context/…`. Величина, посчитанная в двух местах, однажды
+ * расходится; посчитанная в трёх — расходится быстрее.
+ */
+const REPO_AT = path.join(BASE, "..");
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
 /** Справочник режимов — лежит рядом с инструментом и читается из работы.
  *
@@ -800,6 +810,39 @@ const sandboxManifests = (from, to) => {
  * объявленное листом» — это любая строка и любое обращение к полю. Своё
  * держит свод по планке тем же критерием.
  */
+/** Чем база должна ОДНОМУ файлу кода: предметы, которые в нём есть, а в
+ * своём файле базы не названы.
+ *
+ * Помощник общий намеренно. Досье и сверка спрашивали одно и то же двумя
+ * кусками кода, и они разошлись: сверка строила путь файла базы от КОРНЯ
+ * проекта, досье — от папки базы, то есть искало `.context/.context/…`.
+ * Такого пути нет никогда, и досье докладывало «файла базы нет вовсе» на
+ * файл, который тем же выводом цитировало строкой выше. Раздел долга в нём
+ * не работал ни разу с заведения.
+ *
+ * Комментарий соседнего раздела предупреждал ровно об этом — «два сканера
+ * одного и того же с разными правилами — это гарантия однажды разойтись», —
+ * и предупреждал о ДРУГОЙ паре. Поэтому чинится не корень пути, а пара.
+ */
+const owedFor = (file) => {
+  const out = [];
+  const mapAt = shelfAt("seat/map.json");
+  if (mapAt === null || !existsSync(mapAt)) return out;
+  const body = readFileSync(file, "utf8");
+  for (const one of readJson(mapAt, {}).onSubject ?? []) {
+    const re = BRIEF_SUBJECTS[one.subject];
+    if (re === undefined) continue;
+    if (!re.test(body)) continue;
+    const at = path.join(REPO_AT, one.to);
+    if (!existsSync(at)) {
+      out.push({ to: one.to, subject: one.subject, why: "нет файла" });
+      continue;
+    }
+    if (readFileSync(at, "utf8").includes(rel(file))) continue;
+    out.push({ to: one.to, subject: one.subject, why: "не назван" });
+  }
+  return out;
+};
 const foreignLinks = () => {
   const declared = new Set();
   const used = new Map();
@@ -2253,7 +2296,7 @@ if (mode === "falsify") {
   }
   const recipes = JSON.parse(readFileSync(recipesAt, "utf8")).recipes ?? [];
   sayLooked("рецептов опровержения", recipes.length);
-  const REPO_ROOT = path.join(BASE, "..");
+  const REPO_ROOT = REPO_AT;
   const tmp = path.join(REPO_ROOT, ".проба-сверок");
 
   // Разбор вывода и разбор исхода живут в словаре области: это чистые
@@ -5175,27 +5218,14 @@ if (mode === "brief") {
         // остановить её должна была запись о порядке, а её не было, и область
         // об этом не сказала.
         {
-          const owed = [];
-          const mapAt = shelfAt("seat/map.json");
-          if (mapAt !== null && existsSync(mapAt))
-            for (const one of JSON.parse(readFileSync(mapAt, "utf8"))
-              .onSubject ?? []) {
-              const re = BRIEF_SUBJECTS[one.subject];
-              if (re === undefined) continue;
-              if (!re.test(readFileSync(target, "utf8"))) continue;
-              const owedAt = path.join(BASE, one.to);
-              if (!existsSync(owedAt)) {
-                owed.push(one.to + " — файла базы нет вовсе");
-                continue;
-              }
-              if (!readFileSync(owedAt, "utf8").includes(rel(target)))
-                owed.push(
-                  one.to +
-                    " — файл не назван, а предмет «" +
-                    one.subject +
-                    "» в нём есть",
-                );
-            }
+          const owed = owedFor(target).map((one) =>
+            one.why === "нет файла"
+              ? one.to + " — файла базы нет вовсе"
+              : one.to +
+                " — файл не назван, а предмет «" +
+                one.subject +
+                "» в нём есть",
+          );
           if (owed.length) {
             console.log("--- ДОЛГ базы про этот файл ---");
             for (const one of owed) console.log("  " + one);
@@ -5300,7 +5330,7 @@ if (mode === "verify") {
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
   const NEWLINE = String.fromCharCode(10);
-  const REPO = path.join(BASE, "..");
+  const REPO = REPO_AT;
 
   /** Предмет звена цепочки: файлы, которые читает его инструмент.
    *
