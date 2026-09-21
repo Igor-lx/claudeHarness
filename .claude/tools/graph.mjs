@@ -5616,6 +5616,40 @@ if (mode === "sizes") {
 }
 
 if (mode === "verify") {
+  // Прогон запоминает свой вывод, потому что по нему же и судит: красное —
+  // это НАПЕЧАТАННАЯ находка, а не имя переменной в перечне.
+  //
+  // Прежде код возврата собирался руками — длинной цепочкой `a.length ||
+  // b.length || …`, куда новую сверку полагалось дописать. Шесть сверок
+  // подряд туда не дописали, и все шесть печатали находки при зелёном
+  // прогоне: вершина обвязки держалась вниманием, то есть ровно тем, что
+  // сама обвязка объявляет ненадёжным.
+  //
+  // Признак находки у вывода один и давний: четыре пробела в начале строки —
+  // им его узнаёт и разбор фальсификации. Секция, которая печатает не
+  // находки, а предупреждение, говорит это своим заголовком, и только она
+  // исключается.
+  const SAID = [];
+  {
+    const was = console.log;
+    console.log = (...args) => {
+      SAID.push(args.join(" "));
+      was(...args);
+    };
+  }
+  const WARNING = "прогон не роняет";
+  const printedRed = () => {
+    let warned = false;
+    for (const line of SAID) {
+      const title = /^=== (.+) ===$/.exec(line);
+      if (title !== null) {
+        warned = title[1].includes(WARNING);
+        continue;
+      }
+      if (!warned && /^ {4}\S/.test(line)) return true;
+    }
+    return false;
+  };
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
   const NEWLINE = String.fromCharCode(10);
@@ -13506,124 +13540,7 @@ if (mode === "verify") {
     );
   for (const q of malformedQuestions) console.log("    сломана форма: " + q);
 
-  if (
-    // Долг карты роняет прогон только СВЕРХ объявленного, и это верно всегда,
-    // а не только пока стоит флаг посадки. Прежде связка была с флагом: фаза 2
-    // снимала его, и объявленный долг переставал работать — прогон краснел до
-    // тех пор, пока карта не описана целиком. Это спорило и с самим полем,
-    // заведённым ради живого проекта, где описать всё за день нельзя, и с
-    // рубежом завершения посадки, где красной вправе остаться только цепочка
-    // проверок по чужому коду. Найдено исполнением плана перехода на полигоне.
-    reportJargon.length ||
-    stepsAdrift.length ||
-    hookOff.length ||
-    debtUnplanned ||
-    overDebt ||
-    // Долг вычитается только из НЕОПИСАННОГО. Запись о том, чего в коде
-    // уже нет, и пометка не той формы роняют прогон при любом долге: это
-    // не «не успели описать», а расхождение записи с кодом.
-    overDebtOf("tests", unnamed.length) ||
-    goneTests.length ||
-    goneMapped.length ||
-    markerKinds.some(
-      (k) =>
-        overDebtOf(k.debtKind, k.unlisted.length) ||
-        k.gone.length ||
-        (k.missed?.length ?? 0),
-    ) ||
-    broken7.length ||
-    brokenIso.length ||
-    emptyRules.length ||
-    missingTables.length ||
-    starDrift.length ||
-    barrelDrift.length ||
-    broken.length ||
-    wrong.length ||
-    orphanAdr.length ||
-    danglingAdr.length ||
-    overDebtOf("constants", undocumentedConst.length) ||
-    lintDrift.length ||
-    offDrift.length ||
-    undocumented.length ||
-    deadAnchors.length ||
-    overOpen("Комментарий не перерос в прозу", wordyComments.length) ||
-    overOpen("Доля комментариев в файле", chattyFiles.length) ||
-    closedTodos.length ||
-    danglingTodo.length ||
-    // Только сломанная форма записи. Сам открытый вопрос прогон не роняет: он
-    // ждёт решения человека, а красный прогон на этом приучил бы гасить список.
-    malformedQuestions.length ||
-    doctrineDrift.length ||
-    bannedWords.length ||
-    uncitedNew.length ||
-    parked.length ||
-    // Проверка, не влияющая на код возврата, печатает, но не держит. Здесь
-    // такое уже случилось однажды: сверка разрешений среды была добавлена
-    // мимо этого списка и молча не роняла прогон.
-    settingsDrift.length ||
-    skillDrift.length ||
-    disarmed.length ||
-    toolchainDrift.length ||
-    checksTableDrift.length ||
-    indexDrift.length ||
-    domDrift.length ||
-    domMissed.length ||
-    classDrift.length ||
-    classDead.length ||
-    schemeStray.length ||
-    layoutStray.length ||
-    hollow.length ||
-    layoutLie.length ||
-    overDebtOf("readme", noReadme.length) ||
-    readmeBlind !== null ||
-    looseDocs.length ||
-    overOpen("Язык внутри корня исходников", wrongTongue.length) ||
-    mutePromises.length ||
-    unexplained.length ||
-    goneScope.length ||
-    unclassified.length ||
-    (seatingIsUp() ? 0 : unfilledTemplate.length) ||
-    scopeDrift.length ||
-    danglingRefs.length ||
-    deadExceptions.length ||
-    danglingPaths.length ||
-    danglingLinks.length ||
-    corpusGap.length ||
-    seedLint.length ||
-    idleConfig.length ||
-    packDrift.length ||
-    earlySeed.length ||
-    findingDrift.length ||
-    transitionDrift.length ||
-    baseGap.length ||
-    overDebtOf("subjects", baseMute.length) ||
-    frameLitter.length ||
-    staleFrame.length ||
-    emptyClaims.length ||
-    seedAnchors.length ||
-    twinConfigs.length ||
-    chainDrift.length ||
-    chainTwins.length ||
-    peerDup.length ||
-    unasked.length ||
-    barGaps.length ||
-    goneNames.length ||
-    frozenNumbers.length ||
-    goneCamel.length ||
-    (headingMissed === null ? 0 : 1) ||
-    (isoMissed === null ? 0 : 1) ||
-    strayTests.length ||
-    (seatingUp ? 0 : unmerged.length) ||
-    lateSeeds.length ||
-    roughSeeds.length ||
-    seedRefs.length ||
-    wrapped.length ||
-    unresolved.length ||
-    SPOILED.length ||
-    envUndeclared ||
-    redUnnamed.length ||
-    !unmeasuredNamed ||
-    mute.length
-  )
-    process.exitCode = 1;
+  // Судит НАПЕЧАТАННОЕ, а не перечень имён: перечень старел молча, и сверка,
+  // забытая в нём, печатала находки при зелёном прогоне.
+  if (printedRed()) process.exitCode = 1;
 }
