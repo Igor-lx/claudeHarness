@@ -304,6 +304,7 @@ const DEBT_KINDS = [
   "constants",
   "subjects",
   "readme",
+  "comments",
 ];
 if (CONFIG.debt != null) {
   const wrong = [];
@@ -7357,22 +7358,30 @@ if (mode === "verify") {
         " %",
     );
   }
+  const overWordy = overDebtOf("comments", wordyComments.length);
   checkHead("Комментарий не перерос в прозу", {
     n: commentRuns,
     unit: "рядов комментария",
   });
-  console.log("  длиннее потолка: " + wordyComments.length);
-  for (const c of wordyComments)
+  console.log(
+    "  длиннее потолка: " + wordyComments.length + debtTail("comments"),
+  );
+  debtNote("comments", wordyComments.length);
+  for (const c of wordyComments.slice(0, overWordy))
     console.log(
       "    " + c + ". Оставить суть; остальное — в документ слоя или решение",
     );
 
+  const overChatty = overDebtOf("comments", chattyFiles.length);
   checkHead("Доля комментариев в файле", {
     n: shareLooked,
     unit: "файлов от потолка строк и выше",
   });
-  console.log("  файлов сверх потолка: " + chattyFiles.length);
-  for (const c of chattyFiles)
+  console.log(
+    "  файлов сверх потолка: " + chattyFiles.length + debtTail("comments"),
+  );
+  debtNote("comments", chattyFiles.length);
+  for (const c of chattyFiles.slice(0, overChatty))
     console.log("    " + c + ". Объяснения переносят в документ слоя");
   checkHead("Якоря на документацию в коде", {
     n: anchorCount,
