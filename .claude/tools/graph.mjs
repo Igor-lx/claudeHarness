@@ -707,10 +707,24 @@ const barChangedSubject = async (repoRoot) => {
   const changed = await changedPaths(repoRoot);
   if (changed === null) return null;
   const all = changed.map((f) => norm(path.join(repoRoot, f)));
+  // Семя, лежащее нетронутым, — работа обвязки, а не проекта, и свода на него
+  // не спрашивают. Признак тот же, что у ворот и у ревизии, и применяется он
+  // ЗДЕСЬ ТОЖЕ: сперва я поставил его в двух местах из трёх, и предмет свода
+  // разошёлся с предметом ворот — протокол называл файл, который ворота уже
+  // пропускали. Замерено на стенде, тем же заходом, что и завёл правило.
+  const seeds = seedOfPath();
+  const untouched = (at) => {
+    const to = norm(path.relative(repoRoot, at));
+    const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
+    if (from === null || !existsSync(from) || !existsSync(at)) return false;
+    return sameAsSeed(readFileSync(at, "utf8"), readFileSync(from, "utf8"));
+  };
   return all
     .filter(
       (f) =>
-        (files.includes(f) || styleFiles.includes(f)) && !f.endsWith(".d.ts"),
+        (files.includes(f) || styleFiles.includes(f)) &&
+        !f.endsWith(".d.ts") &&
+        !untouched(f),
     )
     .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
 };
@@ -4413,8 +4427,21 @@ if (mode === "mutated") {
   const mutateGlobs = (() => {
     const cfg = path.join(BASE, CONFIG.mutationConfig);
     if (!existsSync(cfg)) return null;
-    return JSON.parse(readFileSync(cfg, "utf8")).mutate ?? [];
+    return readJson(cfg, {}).mutate ?? [];
   })();
+  // Третье состояние, которого не было: конфиг ЕСТЬ, а область в нём не
+  // заполнена. Семя привозит его с заглушкой, и заполняет её проект. Пока не
+  // заполнил, ни один путь не совпадает — и режим печатал «правка файлов в
+  // области прогона не касается», то есть зелёное. Выключенное от «нечего
+  // делать» отличали, а НЕЗАПОЛНЕННОЕ — нет, и выглядело оно как второе.
+  //
+  // Найдено вопросом разработчика «прогонялось ли написанное Stryker»: на
+  // стенде область стояла заглушкой с посадки, прогон не делался ни разу, а
+  // режим отвечал так, будто делать нечего.
+  const areaEmpty =
+    mutateGlobs !== null &&
+    (mutateGlobs.length === 0 ||
+      mutateGlobs.every((g) => /^<.*>$/.test(String(g).trim())));
   const globsToTest = (globs) => {
     const toRe = (glob) => {
       let out = "";
@@ -4583,7 +4610,13 @@ if (mode === "mutated") {
 
     console.log(`  тронуто файлов в области прогона: ${touchedCode.length}`);
     if (touchedCode.length === 0)
-      console.log("  правка файлов в области прогона не касается");
+      console.log(
+        areaEmpty
+          ? "  ОБЛАСТЬ ПРОГОНА НЕ ЗАПОЛНЕНА: в конфиге стоит заглушка с посадки," +
+              NEWLINE +
+              "  и долг мутационного прогона не считается ни по одному файлу"
+          : "  правка файлов в области прогона не касается",
+      );
     for (const [title, rows] of [
       ["Под мутациями не были ни разу:", never],
       [
