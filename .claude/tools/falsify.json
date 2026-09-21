@@ -858,6 +858,23 @@
           "replace": "  mutationConfig: \"../stryker.config.json\","
         }
       ]
+    },
+    {
+      "section": "В корне узла только сам узел",
+      "edits": [
+        {
+          "create": {
+            "path": "src/components/ZzNode/zzOne.ts",
+            "text": "export const zzOne = 1;"
+          }
+        },
+        {
+          "create": {
+            "path": "src/components/ZzNode/zzTwo.ts",
+            "text": "export const zzTwo = 2;"
+          }
+        }
+      ]
     }
   ]
 }

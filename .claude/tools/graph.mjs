@@ -22,6 +22,7 @@ import {
   classifyRun,
   barRowFault,
   barNoSubject,
+  barCoreCriterion,
   codeOf,
   inComment,
   isCodePath,
@@ -2293,6 +2294,7 @@ const CHECK_SECTIONS = [
   "Коммит с кодом накрыт сводом",
   "Ворота перед коммитом установлены",
   "Мутационный прогон исполним",
+  "В корне узла только сам узел",
   "Предложенное сводом названо находкой",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
@@ -5077,6 +5079,10 @@ if (mode === "bar") {
           "| " +
           c.id +
           " | " +
+          // Строка архитектурного ядра помечена в самом протоколе: клетка
+          // основания у неё обязательна, и без пометки она выглядела бы
+          // лишней ровно там, где нужнее всего.
+          (barCoreCriterion(c.id) ? "**ядро.** " : "") +
           c.title +
           " | " +
           outcome +
@@ -5172,7 +5178,7 @@ if (mode === "bar") {
     // законность судьбы при роде задачи, вид адреса. Второй её разбор здесь
     // разошёлся бы с первым при первой же правке словаря исходов.
     const fault = barRowFault(
-      [kind, one.outcome, one.addr, one.what, one.fate].join("|"),
+      [kind, one.outcome, one.addr, one.what, one.fate, c.id].join("|"),
     );
     if (fault !== "") {
       // Неверное значение называется тут же: сообщение, после которого надо
@@ -11382,6 +11388,63 @@ if (mode === "verify") {
         );
     }
   }
+  // В корне папки узла — только то, что отвечает за узел целиком.
+  //
+  // Раскладка проекта отвечает, куда кладут узел; внутри его папки раскладки
+  // не было вовсе, и держалось это на вкусе. Первый вынесенный помощник
+  // ложится в корень папки, второй рядом, десятый превращает корень в
+  // свалку, где сам узел уже не найти глазом.
+  //
+  // Корень узла держит: сам узел, его лист, его типы, и папки `tests/`,
+  // `docs/`. Всё прочее — в папке по смыслу. Папка заводится со ВТОРОГО
+  // файла: один помощник в корне законен, папка на один файл — лишний
+  // уровень.
+  //
+  // Имя узла берётся у папки, а не угадывается: папка компонента названа им
+  // же, и файл узла лежит её именем со строчной буквы либо точно её именем.
+  const nodeLitter = [];
+  let nodeLooked = 0;
+  {
+    // Слой компонентов — СПИСОК имён под корнем исходников, и умолчание у
+    // него то же, что у соседних сверок. Своя форма здесь разошлась бы с ними
+    // при первом же проекте, объявившем два слоя.
+    for (const layer of CONFIG.componentsAt ?? ["components"]) {
+      const root = path.join(ROOT, layer);
+      if (!existsSync(root)) continue;
+      for (const name of readdirSync(root)) {
+        const folder = path.join(root, name);
+        if (!statSync(folder).isDirectory()) continue;
+        nodeLooked += 1;
+        const loose = [];
+        for (const one of readdirSync(folder)) {
+          const inside = path.join(folder, one);
+          if (statSync(inside).isDirectory()) continue;
+          const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
+          if (bare.toLowerCase() === name.toLowerCase()) continue;
+          if (one === "types.ts" || one === "index.ts" || one === "index.tsx")
+            continue;
+          if (!isCodePath(norm(inside)) && !isStylePath(norm(inside))) continue;
+          loose.push(one);
+        }
+        // Один в корне законен: папка на один файл — лишний уровень.
+        if (loose.length > 1)
+          nodeLitter.push(
+            layer +
+              "/" +
+              name +
+              " — в корне узла лежит не только он: " +
+              loose.join(", ") +
+              ". Развести по папкам ПО СМЫСЛУ",
+          );
+      }
+    }
+  }
+  checkHead("В корне узла только сам узел", {
+    n: nodeLooked,
+    unit: "папок узлов",
+  });
+  console.log("  со свалкой в корне: " + nodeLitter.length);
+  for (const one of nodeLitter) console.log("    " + one);
   checkHead("Мутационный прогон исполним", {
     n: mutLooked,
     unit: "объявлений мутационного прогона",
