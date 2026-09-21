@@ -8705,13 +8705,13 @@ if (mode === "verify") {
     const now = process.version;
     const say =
       want === null
-        ? "  диапазон версии не объявлен — переносимость держится на памяти"
+        ? "    диапазон версии не объявлен — переносимость держится на памяти"
         : low === null && high === null
-          ? `  диапазон «${want}» записан формой, которой разбор не знает`
+          ? `    диапазон «${want}» записан формой, которой разбор не знает`
           : low !== null && cmp(now, low) < 0
-            ? `  версия НИЖЕ объявленной: ${now} при «${want}»`
+            ? `    версия НИЖЕ объявленной: ${now} при «${want}»`
             : high !== null && cmp(now, high) >= 0
-              ? `  версия ВЫШЕ объявленной: ${now} при «${want}»`
+              ? `    версия ВЫШЕ объявленной: ${now} при «${want}»`
               : null;
     // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
     // роняет прогон. Дрейф версии остаётся предупреждением.
@@ -8725,16 +8725,24 @@ if (mode === "verify") {
       console.log(
         "    переносимость держится на памяти. Объявить `engines` в манифесте",
       );
-    if (say !== null && !envUndeclared) {
+    {
       checkHead("Версия среды (предупреждение, прогон не роняет)", {
-        n: 1,
+        n: envUndeclared ? 0 : 1,
         unit: "объявленный диапазон среды",
       });
-      console.log(say);
-      console.log(
-        "  Числа базовой линии снимались на объявленной версии; решение, что",
-      );
-      console.log("  с этим делать, за вами — прогон остановлен не будет.");
+      if (say !== null && !envUndeclared) {
+        console.log(say);
+        console.log(
+          "  Числа базовой линии снимались на объявленной версии; решение, что",
+        );
+        console.log("  с этим делать, за вами — прогон остановлен не будет.");
+      } else {
+        console.log(
+          envUndeclared
+            ? "  диапазон не объявлен — сверять не с чем"
+            : "  версия в объявленном диапазоне",
+        );
+      }
     }
   }
 
@@ -10282,13 +10290,12 @@ if (mode === "verify") {
         spans.has(`${PACKAGE_MANAGER} ${s}`) ||
         spans.has(`${PACKAGE_MANAGER} run ${s}`);
       const silent = scripts.filter((s) => !named(s));
-      if (silent.length) {
+      {
         checkHead(
           "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
+          { n: scripts.length, unit: "скриптов манифеста" },
         );
-        console.log(
-          `  скриптов: ${scripts.length}, не названы нигде: ${silent.length}`,
-        );
+        console.log(`  не названы нигде: ${silent.length}`);
         for (const s of silent)
           console.log(
             `    ${s} — есть в манифесте, но ни таблица проверок, ни список` +
@@ -10964,11 +10971,12 @@ if (mode === "verify") {
   });
   console.log(`  разошлось: ${wrong.length}`);
   for (const w of wrong) console.log("    " + w);
-  if (unresolved.length) {
+  {
     checkHead("Не разобрано (проверкой не покрыто)", {
       n: unresolved.length,
       unit: "нерасшифрованных адресов",
     });
+    console.log("  не разобрано: " + unresolved.length);
     for (const u of unresolved) console.log("    " + u);
   }
   // Печатается заголовками, а не числом: число рядом с сорока другими числами
