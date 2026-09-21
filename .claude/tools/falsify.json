@@ -848,6 +848,16 @@
           "replace": "\"dir\": \".claude/hooks/zzНЕТУ\""
         }
       ]
+    },
+    {
+      "section": "Мутационный прогон исполним",
+      "edits": [
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  mutationConfig: null,",
+          "replace": "  mutationConfig: \"../stryker.config.json\","
+        }
+      ]
     }
   ]
 }
