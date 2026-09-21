@@ -150,8 +150,7 @@
     {
       "from": "seat/templates/stryker.config.json",
       "to": "stryker.config.json",
-      "alsoKnownAs": ["stryker.conf.json", "stryker.conf.js"],
-      "notAtSeating": "до первых тестов бесполезен: кладётся первой правкой, заведшей тесты"
+      "alsoKnownAs": ["stryker.conf.json", "stryker.conf.js"]
     },
     {
       "from": "seat/templates/14-probes.md",
