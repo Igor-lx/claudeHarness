@@ -6619,6 +6619,7 @@ if (mode === "verify") {
   // состав — перечислить его целиком запретило бы само правило о счётах, —
   // и сверка «каждый экспорт назван» краснела бы на законном.
   const barrelDrift = [];
+  let barrelLooked = 0;
   {
     const CAMEL = /^(?=.*[a-z])(?=.*[A-Z])[A-Za-z][A-Za-z0-9]*$/;
     const mapLines = readFileSync(path.join(BASE, CONFIG.map), "utf8").split(
@@ -6627,6 +6628,7 @@ if (mode === "verify") {
     let barrel = null;
     const close = () => {
       if (barrel === null) return;
+      barrelLooked += 1;
       const own = exportsOf.get(barrel.file) ?? new Set();
       for (const [name, line] of barrel.named)
         if (!own.has(name))
@@ -6660,8 +6662,8 @@ if (mode === "verify") {
     close();
   }
   checkHead("Состав бочки в записи карты", {
-    n: dossierLines().length,
-    unit: "строк прозы базы",
+    n: barrelLooked,
+    unit: "бочек, названных картой",
   });
   console.log(`  имён названо неверно: ${barrelDrift.length}`);
   for (const b of barrelDrift) console.log("    " + b);
@@ -10903,7 +10905,7 @@ if (mode === "verify") {
     }
   }
   checkHead("Числа в прозе базы", {
-    n: dossierLines().length,
+    n: dossierLines().base.length,
     unit: "строк прозы базы",
   });
   console.log(`  счётов вне формы: ${frozenNumbers.length}`);
@@ -13775,14 +13777,25 @@ if (mode === "verify") {
     );
 
   const mute = [...PRINTED].filter((one) => !LOOKED.has(one));
+  const notNumber = [...LOOKED].filter(
+    ([, one]) => !Number.isInteger(one.n) || one.n < 0,
+  );
   checkHead("Каждая сверка называет свой корпус", {
     n: PRINTED.size,
     unit: "сверок в этом прогоне",
   });
-  console.log("  молчат о корпусе: " + mute.length);
+  console.log("  молчат о корпусе: " + (mute.length + notNumber.length));
   for (const one of mute)
     console.log(
       "    " + one + ". Назвать вторым доводом `checkHead`, сколько осмотрено",
+    );
+  for (const [one, looked] of notNumber)
+    console.log(
+      "    " +
+        one +
+        " — корпус назван, но это не число: «" +
+        String(looked.n) +
+        "». Считать осмотренное, а не брать длину у чужого помощника",
     );
   for (const q of malformedQuestions) console.log("    сломана форма: " + q);
 
