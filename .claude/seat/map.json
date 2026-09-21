@@ -227,6 +227,12 @@
       "name": "check",
       "recognise": null,
       "needsFiles": null
+    },
+    {
+      "name": "mutate",
+      "recognise": "^\\s*stryker\\s+run\\b",
+      "needsFiles": null,
+      "follows": "test"
     }
   ],
   "platformPackages": {

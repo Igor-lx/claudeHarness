@@ -5,7 +5,12 @@
   "testRunner": "vitest",
   "reporters": ["html", "clear-text", "progress"],
   "coverageAnalysis": "perTest",
-  "mutate": ["<ПУТИ ОБЛАСТИ ПРОГОНА>"],
+  "mutate": [
+    "src/components/**/*.ts",
+    "src/components/**/*.tsx",
+    "!src/**/tests/**",
+    "!src/**/*.test.*"
+  ],
   "thresholds": {
     "break": null
   },

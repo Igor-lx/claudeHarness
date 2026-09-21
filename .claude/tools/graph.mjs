@@ -730,6 +730,57 @@ const barChangedSubject = async (repoRoot) => {
     .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
 };
 /** Шапка протокола, разобранная: род, отпечатки предмета, печать. */
+/** Путь против списка образцов Stryker: включающие и исключающие.
+ *
+ * Общий намеренно. Режим долга спрашивает им, что лежит в области прогона, а
+ * сверка исполнимости — совпала ли область хоть с чем-нибудь. Свой матчер у
+ * каждого разошёлся бы при первом же образце нового вида.
+ */
+const globsToTest = (globs) => {
+  const toRe = (glob) => {
+    let out = "";
+    for (let i = 0; i < glob.length; i += 1) {
+      const ch = glob[i];
+      if (ch === "*") {
+        if (glob[i + 1] === "*") {
+          if (glob[i + 2] === "/") {
+            out += "(?:[^/]*/)*";
+            i += 2;
+          } else {
+            out += ".*";
+            i += 1;
+          }
+        } else out += "[^/]*";
+      } else if (".+^${}()|[]\\?".includes(ch)) out += "\\" + ch;
+      else out += ch;
+    }
+    return new RegExp("^" + out + "$");
+  };
+  const yes = globs.filter((g) => !g.startsWith("!")).map(toRe);
+  const no = globs
+    .filter((g) => g.startsWith("!"))
+    .map((g) => toRe(g.slice(1)));
+  return (f) => yes.some((r) => r.test(f)) && !no.some((r) => r.test(f));
+};
+
+/** Файлы проекта, попавшие в область мутационного прогона.
+ *
+ * Область берётся из конфига самого Stryker, а не из настройки обвязки:
+ * считать по всему корню исходников значило бы врать — часть файлов исключена
+ * намеренно и с записанной причиной.
+ */
+const mutationArea = () => {
+  if (CONFIG.mutationConfig == null) return [];
+  const at = path.join(BASE, CONFIG.mutationConfig);
+  if (!existsSync(at)) return [];
+  const globs = readJson(at, {}).mutate ?? [];
+  if (!globs.length) return [];
+  const inside = globsToTest(globs);
+  // Путь считается от КОРНЯ РЕПОЗИТОРИЯ: образцы в конфиге Stryker написаны
+  // от него же. Форма та же, какой пользуется режим долга.
+  const key = (f) => norm(path.relative(REPO_AT, f));
+  return [...files, ...styleFiles].filter((f) => inside(key(f)));
+};
 /** Шапка протокола из ТЕКСТА. Ревизия читает протокол из истории — файла с
  * таким содержимым на диске нет, и путь ей передать нечего. */
 const barHeaderOf = (body) => {
@@ -2251,7 +2302,7 @@ const CHECK_SECTIONS = [
   "Найденное — исправлено, а не отложено",
   "Ссылки на разделы",
   "Версия среды (предупреждение, прогон не роняет)",
-  "Инструменты обвязки (предупреждение, прогон не роняет)",
+  "Инструменты звеньев на месте",
   "Объявленные области существуют",
   "Обещания без опоры собираются сводкой",
   "Связи через DOM и CSS",
@@ -2294,6 +2345,7 @@ const CHECK_SECTIONS = [
   "Коммит с кодом накрыт сводом",
   "Ворота перед коммитом установлены",
   "Мутационный прогон исполним",
+  "Названное доктриной исполнимо",
   "В корне узла только сам узел",
   "Предложенное сводом названо находкой",
   "Файлы базы заведены под свой предмет",
@@ -4455,32 +4507,6 @@ if (mode === "mutated") {
     mutateGlobs !== null &&
     (mutateGlobs.length === 0 ||
       mutateGlobs.every((g) => /^<.*>$/.test(String(g).trim())));
-  const globsToTest = (globs) => {
-    const toRe = (glob) => {
-      let out = "";
-      for (let i = 0; i < glob.length; i += 1) {
-        const ch = glob[i];
-        if (ch === "*") {
-          if (glob[i + 1] === "*") {
-            if (glob[i + 2] === "/") {
-              out += "(?:[^/]*/)*";
-              i += 2;
-            } else {
-              out += ".*";
-              i += 1;
-            }
-          } else out += "[^/]*";
-        } else if (".+^${}()|[]\\?".includes(ch)) out += "\\" + ch;
-        else out += ch;
-      }
-      return new RegExp("^" + out + "$");
-    };
-    const yes = globs.filter((g) => !g.startsWith("!")).map(toRe);
-    const no = globs
-      .filter((g) => g.startsWith("!"))
-      .map((g) => toRe(g.slice(1)));
-    return (f) => yes.some((r) => r.test(f)) && !no.some((r) => r.test(f));
-  };
   const inScope = mutateGlobs === null ? null : globsToTest(mutateGlobs);
   const key = (f) => norm(path.relative(repoRoot, f));
 
@@ -5717,6 +5743,9 @@ if (mode === "verify") {
         if (Array.isArray(e.needsFiles)) linkNeeds.set(e.name, e.needsFiles);
   }
   const linkHasSubject = (script) => {
+    // Звено мутационного прогона беспредметно там, где прогон не заявлен:
+    // поле настройки пусто — и спрашивать с проекта его пакеты не за что.
+    if (script === "mutate" && CONFIG.mutationConfig == null) return false;
     const want = linkNeeds.get(script);
     if (want === undefined) return true;
     const ext = new Set(want.map((x) => "." + x));
@@ -8700,8 +8729,10 @@ if (mode === "verify") {
       ]
         .filter((x) => x !== null)
         .join("; ");
+      // Четыре пробела: этим отступом прогон узнаёт находку. С двумя она не
+      // роняла его даже после того, как секция перестала быть предупреждением.
       gaps.push(
-        `  ${link.script ?? "звено"} — ${what}` +
+        `    ${link.script ?? "звено"} — ${what}` +
           NEWLINE +
           `      зачем: ${link.why}` +
           NEWLINE +
@@ -8741,26 +8772,53 @@ if (mode === "verify") {
       for (const link of inChain)
         if (!known.has(link))
           gaps.push(
-            `  ${link} — цепочка проверок его зовёт, а в объявлении звеньев его нет` +
+            `    ${link} — цепочка проверок его зовёт, а в объявлении звеньев его нет` +
               NEWLINE +
               "      значит про его инструмент на посадке не спросят",
           );
     }
 
-    if (gaps.length) {
-      checkHead("Инструменты обвязки (предупреждение, прогон не роняет)", {
+    // Смотрится ВСЕГДА, краснеет только при снятом флаге посадки.
+    //
+    // Прежде секция была объявлена предупреждением и прогон не роняла никогда
+    // — при том, что докладывает ровно то, чего у обвязки быть не должно:
+    // звено цепочки объявлено, а инструмента под него нет. Её собственный
+    // вывод говорит это прямым текстом: «поставленный без настройки проходит,
+    // не проверив ничего».
+    //
+    // Оправдание было, но узкое: пока посадка идёт, пакеты ещё не поставлены,
+    // и падать на этом значило бы падать на собственном незаконченном шаге.
+    // Флаг посадки это и различает — тем же приёмом, каким соседняя сверка
+    // различает несведённое семя.
+    //
+    // Найдено обходом «требование стояло, а инструмента не было»: рецепт
+    // фальсификации на эту секцию не доходил ни до одной сверки, потому что
+    // дойти было некуда.
+    // Печатается ВСЕГДА, а не только при находках. Секция, которой в чистом
+    // прогоне нет вовсе, не попадает ни в мета-сверку о корпусе, ни в разбор
+    // фальсификации: подсаженную поломку тот приписать некуда, и рецепт на неё
+    // докладывал «не дошла ни до одной сверки» с рождения.
+    {
+      checkHead("Инструменты звеньев на месте", {
         n: CONFIG.toolchain.length,
         unit: "звеньев цепочки",
       });
-      console.log(`  звеньев цепочки без инструмента: ${gaps.length}`);
-      for (const g of gaps) console.log(g);
+      const upNow = seatingIsUp();
       console.log(
-        "  Поставить и настроить — фаза 2 посадки, раздел «Умолчания» в инструкции",
+        "  звеньев цепочки без инструмента: " +
+          gaps.length +
+          (upNow ? " — флаг посадки поднят, ставит их её же шаг" : ""),
       );
-      console.log(
-        "  на полке. Инструмент ставится вместе со своей настройкой, одной правкой:",
-      );
-      console.log("  поставленный без неё проходит, не проверив ничего.");
+      for (const g of gaps) console.log(upNow ? g.replace(/^ {4}/, "  ") : g);
+      if (gaps.length) {
+        console.log(
+          "  Поставить и настроить — фаза 2 посадки, раздел «Умолчания» в инструкции",
+        );
+        console.log(
+          "  на полке. Инструмент ставится вместе со своей настройкой, одной правкой:",
+        );
+        console.log("  поставленный без неё проходит, не проверив ничего.");
+      }
     }
   }
 
@@ -10187,18 +10245,12 @@ if (mode === "verify") {
         spans.has(`${PACKAGE_MANAGER} ${s}`) ||
         spans.has(`${PACKAGE_MANAGER} run ${s}`);
       const silent = scripts.filter((s) => !named(s));
-      const declared = new Set(scripts);
-      const phantom = new Set();
-      for (const span of spans) {
-        const m = /^npm run ([\w:.-]+)$/.exec(span);
-        if (m !== null && !declared.has(m[1])) phantom.add(m[1]);
-      }
-      if (silent.length || phantom.size) {
+      if (silent.length) {
         checkHead(
           "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
         );
         console.log(
-          `  скриптов: ${scripts.length}, не названы нигде: ${silent.length}, названы и не существуют: ${phantom.size}`,
+          `  скриптов: ${scripts.length}, не названы нигде: ${silent.length}`,
         );
         for (const s of silent)
           console.log(
@@ -10206,10 +10258,10 @@ if (mode === "verify") {
               NEWLINE +
               "      исключённых его не называет: решение о нём не принято",
           );
-        for (const s of phantom)
-          console.log(
-            `    ${PACKAGE_MANAGER} run ${s} — названо в прозе, скрипта нет`,
-          );
+        // Половина «названо в прозе, а скрипта нет» отсюда УБРАНА: это
+        // ошибка, а не предупреждение, и в секции, которая прогон не роняет,
+        // она не краснела никогда. Её спрашивает сверка «Названное доктриной
+        // исполнимо» — там же, где команду без пакета и режим без режима.
       }
     }
   }
@@ -11395,6 +11447,14 @@ if (mode === "verify") {
           mutGap.push(
             "область прогона не заполнена: в конфиге стоит заглушка с посадки",
           );
+        // Область, ЗАПОЛНЕННАЯ путями, по которым ничего не лежит, бесполезна
+        // так же, как заглушка, и выглядит наоборот — заполненной. Случай не
+        // выдуманный: семя кладёт умолчание под раскладку обвязки, а проект со
+        // своей раскладкой держит узлы под другим именем слоя.
+        else if (mutationArea().length === 0)
+          mutGap.push(
+            "область прогона не совпала ни с одним файлом: пути есть, предмета нет",
+          );
       }
       const manifest = path.join(BASE, "..", "package.json");
       const pkg = readJson(manifest, {});
@@ -11465,6 +11525,63 @@ if (mode === "verify") {
   });
   console.log("  со свалкой в корне: " + nodeLitter.length);
   for (const one of nodeLitter) console.log("    " + one);
+  // Названное доктриной ИСПОЛНИМО.
+  //
+  // Класс находки: требование стояло, а инструмента не было. Замерено на
+  // мутационном прогоне: `code.md` требовал его по новым файлам, конфиг
+  // приезжал с заглушкой вместо области, пакетов не было ни одного, а режим
+  // долга отвечал зелёным. Обещание без опоры — не мелочь, о которой помнят:
+  // оно не проявляется, пока помнят, и проявляется, когда забыли.
+  //
+  // Спрашивается всё, что проза велит ЗАПУСКАТЬ: звено связки, пакет,
+  // режим инструмента. Три вида, и все три проверяемы точно — ни одного
+  // суждения. Обход по всей доктрине дал ровно один случай, и это был он.
+  //
+  // Блоки кода снимаются: пример — не требование. Тем же съёмником и по той
+  // же причине, что у прочих сканеров прозы.
+  const unrunnable = [];
+  let runnableLooked = 0;
+  {
+    const seedAt = shelfAt("seat/templates/package.json");
+    const seed = seedAt === null ? {} : readJson(seedAt, {});
+    const scripts = new Set(Object.keys(seed.scripts ?? {}));
+    const deps = Object.keys({
+      ...(seed.dependencies ?? {}),
+      ...(seed.devDependencies ?? {}),
+    });
+    const said = new Set();
+    const say = (what, why, where) => {
+      if (said.has(what)) return;
+      said.add(what);
+      unrunnable.push(what + " — " + why + " (" + where + ")");
+    };
+    const RUN = /npm run ([a-z:]+)/g;
+    const NPX = /npx ([@a-z0-9/-]+)/g;
+    const MODE = /graph\.mjs ([a-z-]+)/g;
+    // Помощник прозы отдаёт ПАРУ ПУТЕЙ — короткий для сообщений и полный для
+    // чтения, — а не текст. Первая редакция сканировала строку полного пути и
+    // молчала всегда: сверка, заведённая против зелёного без проверки, сама им
+    // и была. Найдено подсадкой всех трёх видов сразу.
+    for (const [where, full] of shelfProse()) {
+      runnableLooked += 1;
+      const flat = unfenced(readFileSync(full, "utf8"));
+      for (const m of flat.matchAll(RUN))
+        if (!scripts.has(m[1]))
+          say("npm run " + m[1], "звена нет в манифесте проекта", where);
+      for (const m of flat.matchAll(NPX))
+        if (!deps.some((d) => d === m[1] || d.includes(m[1])))
+          say("npx " + m[1], "пакета нет в манифесте проекта", where);
+      for (const m of flat.matchAll(MODE))
+        if (!toolModes().includes(m[1]))
+          say("graph.mjs " + m[1], "такого режима у инструмента нет", where);
+    }
+  }
+  checkHead("Названное доктриной исполнимо", {
+    n: runnableLooked,
+    unit: "файлов прозы обвязки",
+  });
+  console.log("  требований без инструмента: " + unrunnable.length);
+  for (const one of unrunnable) console.log("    " + one);
   checkHead("Мутационный прогон исполним", {
     n: mutLooked,
     unit: "объявлений мутационного прогона",

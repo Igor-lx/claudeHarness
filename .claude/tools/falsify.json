@@ -476,7 +476,7 @@
       "own": true
     },
     {
-      "section": "Инструменты обвязки (предупреждение, прогон не роняет)",
+      "section": "Инструменты звеньев на месте",
       "file": "package.json",
       "find": "\"check\": \"npm run typecheck",
       "replace": "\"check\": \"npm run unknown-link && npm run typecheck"
@@ -873,6 +873,15 @@
             "path": "src/components/ZzNode/zzTwo.ts",
             "text": "export const zzTwo = 2;"
           }
+        }
+      ]
+    },
+    {
+      "section": "Названное доктриной исполнимо",
+      "edits": [
+        {
+          "file": ".claude/rules/close.md",
+          "append": "\nПрогон закрывают командой `npm run zznone`.\n"
         }
       ]
     }
