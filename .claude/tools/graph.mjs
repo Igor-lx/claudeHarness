@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import {
   classifyRun,
   barRowFault,
+  barNoSubject,
   codeOf,
   inComment,
   isCodePath,
@@ -4936,6 +4937,41 @@ if (mode === "bar") {
     process.exit(0);
   }
 
+  // Что ЕСТЬ в предмете этой правки. Признаки узкие и замеряются текстом:
+  // по ним инструмент сам проставляет «нет предмета» там, где критерий эту
+  // правку не касается, — и только там, где это выводится, а не судится.
+  //
+  // Разбор, какой критерий каким признаком закрывается, живёт в словаре
+  // области: здесь только замер. Второй разбор здесь разошёлся бы с первым
+  // при первой же правке набора критериев.
+  const subjectFlags = (() => {
+    const code = subject.filter((f) => !isStylePath(f));
+    const styles = subject.filter((f) => isStylePath(f));
+    const tests = new Set();
+    for (const f of subject)
+      for (const t of testReach().get(f) ?? []) tests.add(t);
+    for (const f of subject) if (isTest(f)) tests.add(f);
+    const text = code
+      .map((f) => (existsSync(f) ? codeOf(readFileSync(f, "utf8")) : ""))
+      .join(NEWLINE);
+    const has = (re) => re.test(text);
+    const manifest = subject.some((f) => /package(-lock)?\.json$/.test(f));
+    return {
+      code: code.length > 0,
+      style: styles.length > 0,
+      test: tests.size > 0,
+      time: has(
+        /useEffect|useLayoutEffect|setTimeout|setInterval|requestAnimationFrame|addEventListener|new [A-Za-z]*Observer|\.subscribe\(/,
+      ),
+      async: has(/\basync\b|\bawait\b|Promise|\.then\(|AbortController/),
+      list: has(/\.map\(|\.flatMap\(/),
+      manifest,
+      forks: (CONFIG.forks ?? []).length > 0,
+    };
+  })();
+  const subjectRow = Object.entries(subjectFlags)
+    .map(([k, v]) => k + "=" + (v ? "1" : "0"))
+    .join(",");
   const marks = barMarks(subject);
   const HEAD = "| критерий | о чём | исход | адрес | что | судьба |";
   const BASE_HEAD = "| файл | база | документация | чем это объяснено |";
@@ -4982,17 +5018,24 @@ if (mode === "bar") {
       HEAD,
       "| --- | --- | --- | --- | --- | --- |",
       // Лозунгу исход проставлен заранее: ставить его нечем, и пустая
-      // клетка тут означала бы работу, которой не существует.
-      ...live.all.map(
-        (c) =>
+      // клетка тут означала бы работу, которой не существует. Беспредметное
+      // на ЭТОЙ правке — тоже: причина при нём замеренная, и переписать её
+      // руками никто не мешает.
+      ...live.all.map((c) => {
+        const none = c.slogan ? "" : barNoSubject(c.id + "|" + subjectRow);
+        const outcome = c.slogan ? "лозунг" : none === "" ? "" : "нет предмета";
+        return (
           "| " +
           c.id +
           " | " +
           c.title +
           " | " +
-          (c.slogan ? "лозунг" : "") +
-          " |  |  |  |",
-      ),
+          outcome +
+          " |  | " +
+          none +
+          " |  |"
+        );
+      }),
       "",
       "## База и документация",
       "",
