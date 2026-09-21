@@ -7384,7 +7384,12 @@ if (mode === "verify") {
     "  длиннее потолка: " + wordyComments.length + debtTail("comments"),
   );
   debtNote("comments", wordyComments.length);
-  for (const c of wordyComments.slice(0, overWordy))
+  // Список печатается ЦЕЛИКОМ, а не хвостом сверх долга. Долг решает, красный
+  // ли прогон; что именно нарушено — не его дело. Срез по числу отсекал с
+  // начала списка и потому поглощал НОВОЕ нарушение, показывая вместо него
+  // старое, известное. Замерено на стенде: сессия дописала свой длинный
+  // комментарий, прогон покраснел — и назвал чужой блок, принесённый кодом.
+  for (const c of overWordy > 0 ? wordyComments : [])
     console.log(
       "    " + c + ". Оставить суть; остальное — в документ слоя или решение",
     );
@@ -7398,7 +7403,7 @@ if (mode === "verify") {
     "  файлов сверх потолка: " + chattyFiles.length + debtTail("comments"),
   );
   debtNote("comments", chattyFiles.length);
-  for (const c of chattyFiles.slice(0, overChatty))
+  for (const c of overChatty > 0 ? chattyFiles : [])
     console.log("    " + c + ". Объяснения переносят в документ слоя");
   checkHead("Якоря на документацию в коде", {
     n: anchorCount,
