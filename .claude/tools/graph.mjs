@@ -5846,6 +5846,24 @@ if (mode === "verify") {
         [])
         if (Array.isArray(e.needsFiles)) linkNeeds.set(e.name, e.needsFiles);
   }
+  // Предмет звена — код ПРОЕКТА, и нетронутые семена в него не входят, ПОКА
+  // у проекта есть свой код. Обвязка везёт файлы на своём языке — общий
+  // помощник и подготовку прогона, — и в проекте на обычном JavaScript они
+  // оказывались всем ответом на вопрос «есть ли тут TypeScript»: звено типов
+  // выглядело применимым оттого, что обвязка сама же положила два своих
+  // файла. Дописанное по такому ответу звено разбирало бы только их — зелено,
+  // а проверено ничего.
+  //
+  // Своего кода нет — считается ВСЁ: проект живёт каркасом, и каркас ему не
+  // чужой, он и есть его код. Признак тот же, что у ворот, ревизии, предмета
+  // свода и следа прогона: шестое его место, и общий помощник на всех один.
+  const subjectCode = (() => {
+    const every = [...files, ...styleFiles];
+    const seeds = seedOfPath();
+    const repoRoot = path.join(BASE, "..");
+    const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
+    return own.length > 0 ? own : every;
+  })();
   const linkHasSubject = (script) => {
     // Звено мутационного прогона беспредметно там, где прогон не заявлен:
     // поле настройки пусто — и спрашивать с проекта его пакеты не за что.
@@ -5853,9 +5871,7 @@ if (mode === "verify") {
     const want = linkNeeds.get(script);
     if (want === undefined) return true;
     const ext = new Set(want.map((x) => "." + x));
-    return [...files, ...styleFiles].some((f) =>
-      ext.has(f.slice(f.lastIndexOf("."))),
-    );
+    return subjectCode.some((f) => ext.has(f.slice(f.lastIndexOf("."))));
   };
 
   const bare = (q) => q.replace(/[*]+$/, "").replace(/[/]+$/, "");
