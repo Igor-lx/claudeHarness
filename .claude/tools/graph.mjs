@@ -305,6 +305,7 @@ const DEBT_KINDS = [
   "subjects",
   "readme",
   "comments",
+  "tongue",
 ];
 const DEBT = CONFIG.debt ?? {};
 const debtOf = (kind) => DEBT[kind] ?? 0;
@@ -9571,11 +9572,19 @@ if (mode === "verify") {
     n: files.length + styleFiles.length,
     unit: "файлов кода и стилей",
   });
-  console.log("  строк не на языке кода: " + wrongTongue.length);
-  for (const one of wrongTongue.slice(0, 20))
+  console.log(
+    "  строк не на языке кода: " + wrongTongue.length + debtTail("tongue"),
+  );
+  debtNote("tongue", wrongTongue.length);
+  // Долг обещан доктриной с тех пор, как сверка заведена, а поля не было ни
+  // одного: живой проект с русскими комментариями — обычный случай у этой
+  // обвязки — краснел навсегда, и свод запрещает это сам. Найдено посадкой
+  // библиотеки, чей лист стилей объясняется по-русски.
+  const tongueSaid = debtList("tongue", wrongTongue);
+  for (const one of tongueSaid.slice(0, 20))
     console.log("    " + one + ". Внутри корня исходников — английский");
-  if (wrongTongue.length > 20)
-    console.log("    …и ещё " + (wrongTongue.length - 20));
+  if (tongueSaid.length > 20)
+    console.log("    …и ещё " + (tongueSaid.length - 20));
   // 13l-бис. Документы компонента лежат в его `docs/`.
   //
   // Вся проза компонента лежит в `docs/`, и дверь — `docs/README.md`. В корне
