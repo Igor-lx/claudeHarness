@@ -6483,7 +6483,6 @@ if (mode === "verify") {
   printTransition();
   printFindings();
 
-
   const overDebt = overDebtOf("map", missing.length);
   checkHead("Покрытие карты", {
     n: code.length,
@@ -9418,7 +9417,13 @@ if (mode === "verify") {
         // с индексной подписью либо по соглашению об имени.
         if (
           /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(body) ||
-          /(?:interface|type)\s+\w*(?:ClassMap|ClassNames?|ClassNameKeys|ClassNameMap)\w*\b/.test(
+          // Объявить карту классов можно не только типом: проект, пишущий
+          // контракт СХЕМОЙ, объявляет её обычной константой. Пока здесь
+          // стояли только interface и type, такой проект был для сверки
+          // невидим, и отступление от схемы стилизации молчало ровно там, где
+          // оно самое сильное. Замерено на стенде, объявляющем контракт через
+          // zod, — а zod обвязка везёт с собой сама.
+          /(?:interface|type|const|let|var)\s+\w*(?:ClassMap|ClassNames?|ClassNameKeys|ClassNameMap)\w*\b/.test(
             body,
           )
         )
