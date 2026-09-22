@@ -5890,6 +5890,125 @@ if (mode === "sizes") {
   );
 }
 
+// Цена ярусов входа: СКОЛЬКО читается до кода на задаче каждого класса.
+//
+// Доктрина требует числа прямо — «у каждого яруса есть цена, и она
+// замеряется, а не прикидывается», — и запрещает ставить их в себя: она одна
+// на все проекты, а цена у каждого своя. Инструмента под это требование не
+// было ни одного, и таблица фактов стояла «не мерено» на каждом проекте,
+// включая саму мастерскую: открытая находка висела дольше всех прочих.
+//
+// Считается СЛОВАМИ, а не строками: цена яруса — это объём, который войдёт в
+// контекст, и слово ближе к нему, чем строка. Порядок, а не точность: между
+// «две тысячи» и «тридцать тысяч» разница решающая, между двадцатью восемью
+// и тридцатью — никакой, и печатается поэтому порядок.
+//
+// Состав ярусов взят из таблицы `loop.md` дословно и здесь не выдуман.
+if (mode === "tiers") {
+  const NEWLINE = String.fromCharCode(10);
+  const words = (f) => {
+    if (!existsSync(f)) return 0;
+    return readFileSync(f, "utf8")
+      .split(/[ \t\r\n]+/)
+      .filter(Boolean).length;
+  };
+  const baseAt = (name) => path.join(BASE, name);
+  const sum = (list) => list.reduce((n, f) => n + words(f), 0);
+  const order = (n) =>
+    n === 0
+      ? "0"
+      : n < 1000
+        ? "сотни"
+        : n < 10000
+          ? "тысячи"
+          : n < 100000
+            ? "десятки тысяч"
+            : "сотни тысяч";
+
+  // Правила доктрины целиком: полный вход верхних ярусов.
+  const doctrine = [];
+  if (SHELF !== null) {
+    const walk = (dir) => {
+      if (!existsSync(dir)) return;
+      for (const e of readdirSync(dir)) {
+        const at = norm(path.join(dir, e));
+        if (statSync(at).isDirectory()) walk(at);
+        else if (e.endsWith(".md")) doctrine.push(at);
+      }
+    };
+    walk(norm(path.join(SHELF, "rules")));
+  }
+  // База целиком.
+  const baseAll = readdirSync(BASE)
+    .filter((e) => e.endsWith(".md"))
+    .map((e) => baseAt(e));
+
+  // Узел с самой большой областью: цена яруса называется по ВЕРХНЕЙ оценке,
+  // иначе она обещает меньше, чем стоит.
+  const nodes = new Map();
+  for (const layer of CONFIG.componentsAt ?? ["components"])
+    for (const f of [...files, ...styleFiles]) {
+      const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
+      if (m === null) continue;
+      const key = layer + "/" + m[1];
+      nodes.set(key, (nodes.get(key) ?? 0) + words(f));
+    }
+  let node = null;
+  let nodeWords = 0;
+  for (const [k, n] of nodes) if (n > nodeWords) [node, nodeWords] = [k, n];
+  const nodeDocs =
+    node === null ? 0 : words(norm(path.join(ROOT, node, "docs", "README.md")));
+
+  const map0 = words(baseAt(CONFIG.map ?? "00-map.md"));
+  const rows = [
+    ["Где что лежит, что уже решено", map0, "карта кода целиком"],
+    [
+      "Объяснить поведение одного узла",
+      map0 + nodeWords + nodeDocs,
+      node === null
+        ? "карта: узлов у проекта нет, область совпадает с первым ярусом"
+        : "карта + область узла " + node + " + его документ",
+    ],
+    [
+      "Багфикс в известном месте",
+      map0 +
+        nodeWords +
+        nodeDocs +
+        words(baseAt(CONFIG.invariants ?? "07-invariants.md")) +
+        words(baseAt(CONFIG.decisions ?? "09-decisions.md")),
+      "то же + ограничения и решения",
+    ],
+    [
+      "Рефактор узла или слоя",
+      sum(doctrine) + sum(baseAll),
+      "полный вход: доктрина и база целиком",
+    ],
+    [
+      "Новая функциональность",
+      sum(doctrine) + sum(baseAll) + words(baseAt("10-idioms.md")),
+      "полный вход + идиомы",
+    ],
+  ];
+
+  sayLooked("ярусов входа", rows.length);
+  console.log("=== Цена ярусов входа, словами ===" + NEWLINE);
+  for (const [what, n, how] of rows)
+    console.log(
+      String(n).padStart(7) +
+        "  " +
+        order(n).padEnd(14) +
+        "  " +
+        what +
+        " — " +
+        how,
+    );
+  console.log(
+    NEWLINE +
+      "Числа переписывают в таблицу «Цена ярусов входа» файла фактов графой" +
+      NEWLINE +
+      "«Порядок цены», в обратных кавычках. Пересчитывают той же командой.",
+  );
+}
 if (mode === "verify") {
   // Прогон запоминает свой вывод, потому что по нему же и судит: красное —
   // это НАПЕЧАТАННАЯ находка, а не имя переменной в перечне.
@@ -14869,8 +14988,16 @@ if (mode === "verify") {
   let unmeasured = 0;
   let unmeasuredNamed = true;
   {
+    // Реестр находок из корпуса ИСКЛЮЧЁН: он описывает находки, а не ведёт
+    // замеры. Строка про то, что цена ярусов когда-то была не мерена,
+    // содержит эти же слова — и, будучи ЗАКРЫТОЙ, требовала открытой строки
+    // под саму себя. Замерено закрытием находки о цене ярусов: замер
+    // сделан, числа записаны, а прогон требовал держать напоминание о
+    // работе, которой больше нет.
+    const skipBase = CONFIG.findings == null ? null : CONFIG.findings.file;
     for (const name of readdirSync(BASE)) {
       if (!name.endsWith(".md")) continue;
+      if (name === skipBase) continue;
       for (const line of readFileSync(path.join(BASE, name), "utf8").split(
         NEWLINE,
       ))
