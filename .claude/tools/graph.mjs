@@ -11996,7 +11996,7 @@ if (mode === "verify") {
         for (const e of seatMap.copy ?? []) {
           const seedAt = shelfAt(e.from);
           if (seedAt === null || !existsSync(seedAt)) continue;
-          const seed = readFileSync(seedAt, "utf8").split(NEWLINE);
+          const seed = unfenced(readFileSync(seedAt, "utf8")).split(NEWLINE);
           const claim = [];
           for (let i = 0; i < seed.length; i += 1) {
             if (seed[i].trim() !== OPEN) continue;
@@ -12015,7 +12015,7 @@ if (mode === "verify") {
           // пока счёт шёл по файлам, прогон печатал «осмотрено 5» над
           // списком из 36 находок. Найдено больше, чем осмотрено, —
           // отличить здоровье от слепоты по такому числу нельзя вовсе.
-          const rows = readFileSync(at, "utf8").split(NEWLINE);
+          const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
           emptyLooked += rows.length;
           if (frameLives) continue;
           for (let i = 0; i < rows.length; i += 1) {
@@ -14032,10 +14032,16 @@ if (mode === "verify") {
           : (readJson(mapAt, {}).chainScripts ?? []).map((one) => one.name);
       })(),
     );
+    // Забор пропускается: строка в нём — ОБРАЗЕЦ формы, а не замер. Пока
+    // это не различалось, семя базовой линии показывало форму живой
+    // строкой, и свежепосаженный проект получал красное звено, которого
+    // никто не мерил, — знание, выведенное из чужого примера.
     const lines = [];
     for (const name of readdirSync(BASE)) {
       if (!name.endsWith(".md")) continue;
-      lines.push(...readFileSync(path.join(BASE, name), "utf8").split(NEWLINE));
+      lines.push(
+        ...unfenced(readFileSync(path.join(BASE, name), "utf8")).split(NEWLINE),
+      );
     }
     {
       for (const line of lines) {
