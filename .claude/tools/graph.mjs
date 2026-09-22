@@ -772,12 +772,7 @@ const barChangedSubject = async (repoRoot) => {
   // разошёлся с предметом ворот — протокол называл файл, который ворота уже
   // пропускали. Замерено на стенде, тем же заходом, что и завёл правило.
   const seeds = seedOfPath();
-  const untouched = (at) => {
-    const to = norm(path.relative(repoRoot, at));
-    const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
-    if (from === null || !existsSync(from) || !existsSync(at)) return false;
-    return sameAsSeed(readFileSync(at, "utf8"), readFileSync(from, "utf8"));
-  };
+  const untouched = (at) => untouchedSeed(at, repoRoot, seeds);
   return all
     .filter(
       (f) =>
@@ -905,6 +900,21 @@ const sameAsSeed = (body, seedBody) => {
   const eol = String.fromCharCode(13) + String.fromCharCode(10);
   const flat = (t) => t.split(eol).join(String.fromCharCode(10));
   return flat(body) === flat(seedBody);
+};
+/** ЛЕЖИТ ЛИ файл нетронутым семенем: работа обвязки, а не проекта.
+ *
+ * Помощник общий потому, что признак этот спрашивают в ЧЕТЫРЁХ местах —
+ * ворота, ревизия, предмет свода и след прогона, — и разойтись им нельзя.
+ * Пока он стоял местной функцией внутри предмета свода, четвёртое место
+ * его не получило: свод отвечал «правленого нет», а сверка следа требовала
+ * по тому же файлу вопроса, которого свод задать не мог. Выхода из красного
+ * прогона не было. Замерено посадкой живого стенда — на общем помощнике
+ * слияния карт классов, приехавшем семенем и никем не тронутом. */
+const untouchedSeed = (at, repoRoot, seeds) => {
+  const to = norm(path.relative(repoRoot, at));
+  const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
+  if (from === null || !existsSync(from) || !existsSync(at)) return false;
+  return sameAsSeed(readFileSync(at, "utf8"), readFileSync(from, "utf8"));
 };
 /** ПОКРЫТ ЛИ набор файлов кода запечатанным сводом. Пустая строка — покрыт,
  * иначе причина словами.
@@ -11240,7 +11250,10 @@ if (mode === "verify") {
         .filter(Boolean)
         .map((l) => (l.includes(" -> ") ? l.split(" -> ")[1] : l))
         .map((f) => norm(path.join(BASE, "..", f)))
-        .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"));
+        .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
+        // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
+        // вопроса о планке тоже. Признак общий со сводом намеренно.
+        .filter((f) => !untouchedSeed(f, path.join(BASE, ".."), seedOfPath()));
     } catch {
       // Репозитория нет или git недоступен. Это НЕ «правленого нет»: сверке
       // нечего смотреть, и молчать об этом нельзя. Проект без репозитория
