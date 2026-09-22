@@ -12506,7 +12506,15 @@ if (mode === "verify") {
     // чтения, — а не текст. Первая редакция сканировала строку полного пути и
     // молчала всегда: сверка, заведённая против зелёного без проверки, сама им
     // и была. Найдено подсадкой всех трёх видов сразу.
-    for (const [where, full] of shelfProse()) {
+    // Корпус — проза ПОЛКИ и проза БАЗЫ ПРОЕКТА. Вопрос к ним один и тот
+    // же: названа команда — она обязана существовать. Пока спрашивалась
+    // одна полка, план перехода мог звать режим, которого у инструмента
+    // нет, и прогон молчал. Замерено на собственном плане: последний шаг
+    // звал `graph.mjs snapshot` — режим, которого не было никогда.
+    const baseProse = readdirSync(BASE)
+      .filter((e) => e.endsWith(".md"))
+      .map((e) => [e, path.join(BASE, e)]);
+    for (const [where, full] of [...shelfProse(), ...baseProse]) {
       runnableLooked += 1;
       const flat = unfenced(readFileSync(full, "utf8"));
       for (const m of flat.matchAll(RUN))
@@ -12532,7 +12540,7 @@ if (mode === "verify") {
   }
   checkHead("Названное доктриной исполнимо", {
     n: runnableLooked,
-    unit: "файлов прозы обвязки",
+    unit: "файлов прозы обвязки и базы",
   });
   console.log("  требований без инструмента: " + unrunnable.length);
   for (const one of unrunnable) console.log("    " + one);
