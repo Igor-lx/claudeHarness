@@ -306,6 +306,38 @@ const DEBT_KINDS = [
   "readme",
   "comments",
 ];
+const DEBT = CONFIG.debt ?? {};
+const debtOf = (kind) => DEBT[kind] ?? 0;
+const overDebtOf = (kind, undescribed) =>
+  Math.max(0, undescribed - debtOf(kind));
+/** Хвост счётной строки: сколько из неописанного объявлено долгом. */
+const debtTail = (kind) =>
+  debtOf(kind) > 0 ? ", из них долг посадки: " + debtOf(kind) : "";
+/** Строка под счётом: долг не вырос, и это не находка. Печатается в ДВА
+ * пробела — формой счёта, а не формой находки: всё, что читает вывод
+ * механически, иначе сочло бы её красной. */
+const debtNote = (kind, undescribed) => {
+  if (debtOf(kind) > 0 && overDebtOf(kind, undescribed) === 0)
+    console.log(
+      "  Долг не вырос. Уменьшить его — работа по команде разработчика:" +
+        " описать записи и уменьшить поле долга в настройке.",
+    );
+};
+/** Что из неописанного ПЕЧАТАЕТСЯ находкой.
+ *
+ * Долг решает, красный ли прогон; какие именно записи не заведены — не его
+ * дело, поэтому список либо печатается целиком, либо не печатается вовсе.
+ * Срезом по числу пользоваться нельзя: он отсекает с начала и потому
+ * поглощает НОВОЕ, показывая вместо него старое, известное.
+ *
+ * Прежде этого помощника не было, и долг был ДЕКОРАТИВНЫМ: счётная строка
+ * говорила «долг не вырос», а следом печатался полный список находок — и
+ * прогон оставался красным. Из семи видов долга работал ровно один, заведённый
+ * последним. Живой проект не мог пройти рубеж посадки ни при каком долге.
+ * Замерено посадкой семи стендов подряд. */
+const debtList = (kind, items) =>
+  overDebtOf(kind, items.length) > 0 ? items : [];
+
 if (CONFIG.debt != null) {
   const wrong = [];
   for (const [kind, value] of Object.entries(CONFIG.debt)) {
@@ -6451,23 +6483,7 @@ if (mode === "verify") {
   printTransition();
   printFindings();
 
-  const DEBT = CONFIG.debt ?? {};
-  const debtOf = (kind) => DEBT[kind] ?? 0;
-  const overDebtOf = (kind, undescribed) =>
-    Math.max(0, undescribed - debtOf(kind));
-  /** Хвост счётной строки: сколько из неописанного объявлено долгом. */
-  const debtTail = (kind) =>
-    debtOf(kind) > 0 ? ", из них долг посадки: " + debtOf(kind) : "";
-  /** Строка под счётом: долг не вырос, и это не находка. Печатается в ДВА
-   * пробела — формой счёта, а не формой находки: всё, что читает вывод
-   * механически, иначе сочло бы её красной. */
-  const debtNote = (kind, undescribed) => {
-    if (debtOf(kind) > 0 && overDebtOf(kind, undescribed) === 0)
-      console.log(
-        "  Долг не вырос. Уменьшить его — работа по команде разработчика:" +
-          " описать записи и уменьшить поле долга в настройке.",
-      );
-  };
+
   const overDebt = overDebtOf("map", missing.length);
   checkHead("Покрытие карты", {
     n: code.length,
@@ -6481,7 +6497,7 @@ if (mode === "verify") {
         : ""),
   );
   debtNote("map", missing.length);
-  for (const f of missing) console.log("    " + rel(f));
+  for (const f of debtList("map", missing)) console.log("    " + rel(f));
   for (const m of goneMapped) console.log("    " + m);
 
   // 2. каждый тестовый файл назван в 08-tests.md — поимённо, папкой не зачесть
@@ -6499,7 +6515,7 @@ if (mode === "verify") {
         : ""),
   );
   debtNote("tests", unnamed.length);
-  for (const f of unnamed) console.log("    " + rel(f));
+  for (const f of debtList("tests", unnamed)) console.log("    " + rel(f));
   for (const t of goneTests) console.log("    " + t);
 
   // 7. правила направления импортов держатся
@@ -6784,7 +6800,8 @@ if (mode === "verify") {
     );
     debtNote(kind.debtKind, kind.unlisted.length);
     for (const m of kind.missed ?? []) console.log("    " + m);
-    for (const u of kind.unlisted) console.log("    " + u);
+    for (const u of debtList(kind.debtKind, kind.unlisted))
+      console.log("    " + u);
     for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
   }
 
@@ -7049,7 +7066,8 @@ if (mode === "verify") {
     `  разошлось: ${undocumentedConst.length}` + debtTail("constants"),
   );
   debtNote("constants", undocumentedConst.length);
-  for (const c of undocumentedConst) console.log("    " + c);
+  for (const c of debtList("constants", undocumentedConst))
+    console.log("    " + c);
 
   checkHead("Точечные исключения линта", {
     n: files.length,
@@ -9594,8 +9612,11 @@ if (mode === "verify") {
     unit: "папок компонентов",
   });
   if (readmeBlind !== null) console.log("  " + readmeBlind);
-  console.log("  папок компонентов без README: " + noReadme.length);
-  for (const one of noReadme)
+  console.log(
+    "  папок компонентов без README: " + noReadme.length + debtTail("readme"),
+  );
+  debtNote("readme", noReadme.length);
+  for (const one of debtList("readme", noReadme))
     console.log(
       "    " +
         one +
@@ -12135,8 +12156,13 @@ if (mode === "verify") {
     n: subjectsDeclared.length,
     unit: "предметов базы",
   });
-  console.log("  файлов с предметом без записи: " + baseMute.length);
-  for (const g of baseMute)
+  console.log(
+    "  файлов с предметом без записи: " +
+      baseMute.length +
+      debtTail("subjects"),
+  );
+  debtNote("subjects", baseMute.length);
+  for (const g of debtList("subjects", baseMute))
     console.log(
       "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
     );
