@@ -1349,6 +1349,11 @@ if (CONFIG.docsIndex != null) {
   if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
     const full = norm(path.join(dir, e));
+    // Общее исключение спрашивается и здесь. Пока корень исходников лежал
+    // глубже зависимостей, вопрос не вставал; проект с двумя деревьями
+    // объявляет корнем корень репозитория — и в корпус прозы поехали
+    // `CHANGELOG` и `README` чужих пакетов. Замерено посадкой такого стенда.
+    if (outOfTree(e, full)) continue;
     if (statSync(full).isDirectory()) walkNear(full);
     else if (/\.md$/.test(e) && !docFiles.includes(full)) docFiles.push(full);
   }
