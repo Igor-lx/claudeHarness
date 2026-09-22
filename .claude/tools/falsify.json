@@ -896,6 +896,11 @@
       "file": ".context/graph.config.mjs",
       "find": "    map: null,",
       "replace": "    map: 3,"
+    },
+    {
+      "section": "Шаблон правил заполнен",
+      "file": "CLAUDE.md",
+      "append": "<!-- ЗАПОЛНИТЬ -->\nОтвечать по слотам.\n<!-- /ЗАПОЛНИТЬ -->"
     }
   ]
 }
