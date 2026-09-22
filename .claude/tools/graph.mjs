@@ -2433,6 +2433,7 @@ const CHECK_SECTIONS = [
   "Один предмет — один файл настройки",
   "Конвейер зовёт проверки",
   "Связка проверок зовёт живые звенья",
+  "Привезённый код виден компилятору",
   "Конфиг снятого звена служит живому",
   "Настройка проекта знает все поля семени",
   "Поле семени настройки объяснено",
@@ -9033,6 +9034,54 @@ if (mode === "verify") {
           );
         }
       }
+
+      // Обвязка везёт СВОИ файлы кода — общий помощник, подготовку прогона —
+      // и кладёт их в `src/`. Проект, чей компилятор смотрит в другие папки,
+      // их не видит: звено типов их не проверяет, а звено линта с типами
+      // падает РАЗБОРОМ — «файл не найден по настройке компилятора», — и
+      // падает на файлах самой обвязки, а не на коде проекта.
+      //
+      // Замерено посадкой стенда с двумя деревьями: `include` объявлял
+      // `client` и `server`, привезённые семена легли в `src`, и линт дал
+      // три ошибки разбора подряд.
+      const unseen = [];
+      let seedCode = 0;
+      {
+        const at = path.join(BASE, "..", "tsconfig.json");
+        const inc = existsSync(at) ? (readJson(at, {}).include ?? null) : null;
+        const mapAt = shelfAt("seat/map.json");
+        const seeds =
+          mapAt === null || !existsSync(mapAt)
+            ? []
+            : (readJson(mapAt, {}).copy ?? []);
+        const covers = (one, file) => {
+          const bare = one.replace(/[/]+$/, "");
+          if (file === bare || file.startsWith(bare + "/")) return true;
+          if (!bare.includes("*")) return false;
+          const head = bare.slice(0, bare.indexOf("*"));
+          return file.startsWith(head);
+        };
+        if (inc !== null)
+          for (const e of seeds) {
+            if (!/[.][jt]sx?$/.test(e.to)) continue;
+            // Конфиг в корне репозитория компилятору не принадлежит: его
+            // читает свой инструмент, и в область типов он не входит.
+            if (!e.to.includes("/")) continue;
+            if (!existsSync(path.join(REPO, e.to))) continue;
+            seedCode += 1;
+            if (inc.some((one) => covers(one, e.to))) continue;
+            unseen.push(
+              e.to +
+                " — файл кода приехал обвязкой, а `include` компилятора его не накрывает: звено линта с типами падает на нём разбором",
+            );
+          }
+      }
+      checkHead("Привезённый код виден компилятору", {
+        n: seedCode,
+        unit: "файлов кода, привезённых обвязкой",
+      });
+      console.log("  вне области компилятора: " + unseen.length);
+      for (const one of unseen) console.log("    " + one);
       checkHead("Конфиг снятого звена служит живому", {
         n: CONFIG.toolchain.length,
         unit: "звеньев цепочки",

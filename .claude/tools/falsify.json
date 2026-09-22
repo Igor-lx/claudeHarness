@@ -903,6 +903,12 @@
       "replace": "\"check\": \"npm run типов-нет && npm run typecheck"
     },
     {
+      "section": "Привезённый код виден компилятору",
+      "file": "tsconfig.json",
+      "find": "\"src\"",
+      "replace": "\"каталога-такого-нет\""
+    },
+    {
       "section": "Конфиг снятого звена служит живому",
       "edits": [
         {

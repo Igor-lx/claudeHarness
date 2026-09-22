@@ -161,29 +161,40 @@ describe("режимы инструмента запускаются", () => {
     expect(modes.length, "список режимов не прочитан").toBeGreaterThan(0);
   });
 
-  it.each(smoke)("%s", (mode) => {
-    let said = "";
-    try {
-      said = execFileSync(process.execPath, [TOOL, mode, SUBJECT], {
-        cwd: path.join(TOOL_DIR, "..", ".."),
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 120000,
-      });
-    } catch (e) {
-      said = String(e.stdout ?? "") + String(e.stderr ?? "");
-    }
-    expect(said, `${mode}: пустой вывод — режим ничего не сказал`).not.toBe("");
-    const hit = CRASH.exec(said);
-    expect(
-      hit === null,
-      `${mode} упал: ${said.split("\n").find((l) => CRASH.test(l)) ?? ""}`,
-    ).toBe(true);
-    expect(
-      LOOKED.test(said),
-      `${mode} не назвал размер осмотренного: строки «осмотрено <чего>: <сколько>» в выводе нет`,
-    ).toBe(true);
-  });
+  it.each(smoke)(
+    "%s",
+    (mode) => {
+      let said = "";
+      try {
+        said = execFileSync(process.execPath, [TOOL, mode, SUBJECT], {
+          cwd: path.join(TOOL_DIR, "..", ".."),
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 120000,
+        });
+      } catch (e) {
+        said = String(e.stdout ?? "") + String(e.stderr ?? "");
+      }
+      expect(said, `${mode}: пустой вывод — режим ничего не сказал`).not.toBe(
+        "",
+      );
+      const hit = CRASH.exec(said);
+      expect(
+        hit === null,
+        `${mode} упал: ${said.split("\n").find((l) => CRASH.test(l)) ?? ""}`,
+      ).toBe(true);
+      expect(
+        LOOKED.test(said),
+        `${mode} не назвал размер осмотренного: строки «осмотрено <чего>: <сколько>» в выводе нет`,
+      ).toBe(true);
+      // Срок теста назван ЯВНО и совпадает со сроком подпроцесса. Умолчание
+      // раннера — пять секунд, и режим, отработавший дольше, падал сообщением
+      // «Test timed out in 5000ms»: про обвязку оно не говорит ничего, а
+      // случается на любом проекте, который больше стенда. Замерено посадкой
+      // стенда с двумя деревьями: verify отработал за шесть секунд.
+    },
+    120000,
+  );
 
   it("каждый режим либо в дымовом прогоне, либо назван с причиной", () => {
     for (const mode of modes) {
