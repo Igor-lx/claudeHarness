@@ -890,6 +890,12 @@
       "file": ".context/graph.config.mjs",
       "find": "    tongue: null,",
       "replace": ""
+    },
+    {
+      "section": "Объявленный долг не больше фактического",
+      "file": ".context/graph.config.mjs",
+      "find": "    map: null,",
+      "replace": "    map: 3,"
     }
   ]
 }
