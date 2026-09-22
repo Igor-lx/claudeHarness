@@ -10646,7 +10646,10 @@ if (mode === "verify") {
         plannedPaths.length +
         " — их заводят шаги плана",
     );
-  for (const d of plannedPaths) console.log("    " + d);
+  // Отступ здесь ДВА пробела, а не четыре: четыре — признак находки, и
+  // список, напечатанный ими, ронял бы прогон ровно за то, что сверка
+  // только что признала законным.
+  for (const d of plannedPaths) console.log("  · " + d);
 
   checkHead("Ссылки markdown", { n: linkFiles, unit: "файлов прозы" });
   console.log(`  ведут в никуда: ${danglingLinks.length}`);
@@ -13068,6 +13071,7 @@ if (mode === "verify") {
   // Найдено вопросом разработчика о том, что дальше происходит с таким
   // файлом, — ответа в проекте не было.
   const unmerged = [];
+  let seatWalked = 0;
   // Смотрится ВСЕГДА, краснеет только при снятом флаге. Прежде при
   // поднятом флаге сверка не смотрела вовсе: отчёт посадки не называл, что
   // ещё предстоит слить, — ровно тогда, когда это нужнее всего, — а прогон
@@ -13079,7 +13083,7 @@ if (mode === "verify") {
         if (OUT_OF_TREE.has(e)) continue;
         const at = path.join(dir, e);
         if (statSync(at).isDirectory()) look(at);
-        else if (e.endsWith(".seat"))
+        else if ((seatWalked += 1) && e.endsWith(".seat"))
           unmerged.push(
             norm(path.relative(REPO, at)).split(path.sep).join("/"),
           );
@@ -13368,9 +13372,12 @@ if (mode === "verify") {
         one +
         " — в проекте суффикс снимается, и звено формата краснеет в первый же день",
     );
+  // Корпус — файлы, осмотренные на суффикс отложенного. Пока он считался
+  // семенами карты, прогон печатал «осмотрено 0» над списком из двух
+  // непрослитых: найдено больше, чем осмотрено.
   checkHead("Отложенное семя слито", {
-    n: seedsDeferred.length,
-    unit: "отложенных семян",
+    n: seatWalked,
+    unit: "файлов проекта под суффикс отложенного",
   });
   console.log("  не слито: " + unmerged.length);
   for (const u of unmerged)
