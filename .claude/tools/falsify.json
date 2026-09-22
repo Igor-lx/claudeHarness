@@ -592,6 +592,12 @@
       "replace": "ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.\n  Проба: каркас положен, манифест слит."
     },
     {
+      "section": "Закомментированного кода нет",
+      "file": "src/app/App.tsx",
+      "find": "function App()",
+      "replace": "// const was = useState(0);\n// function Old() {\n//   return null;\n// }\nfunction App()"
+    },
+    {
       "section": "Комментарий не перерос в прозу",
       "create": {
         "path": "src/zzPoem.ts",

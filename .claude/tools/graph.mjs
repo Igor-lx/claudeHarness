@@ -2407,6 +2407,7 @@ const CHECK_SECTIONS = [
   "Разрешения, нажитые по ходу работы",
   "Разрешения среды",
   "Якоря на документацию в коде",
+  "Закомментированного кода нет",
   "Комментарий не перерос в прозу",
   "Доля комментариев в файле",
   "Новые якоря — с цитатой",
@@ -7440,9 +7441,13 @@ if (mode === "verify") {
   const ownCode = (() => {
     const seeds = seedOfPath();
     const repoRoot = path.join(BASE, "..");
-    return [...files, ...styleFiles].filter(
-      (f) => !untouchedSeed(f, repoRoot, seeds),
-    );
+    const every = [...files, ...styleFiles];
+    const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
+    // Своего кода нет — судится ВСЁ: проект живёт каркасом, и каркас ему не
+    // чужой. Иначе корпус этих сверок становится нулевым, а ноль осмотренного
+    // неотличим от здоровья — что свод запрещает прямо. Оговорка та же, что у
+    // предмета звена цепочки.
+    return own.length > 0 ? own : every;
   })();
   const wordyComments = [];
   const chattyFiles = [];
@@ -7451,6 +7456,37 @@ if (mode === "verify") {
   // Листы стилей входят в корпус наравне с кодом: проза в них стареет так же,
   // а мёртвый блок объявлений лежит там столь же охотно. Прежде корпус был
   // только кодом, и лист не видела ни одна из двух сверок.
+  // Код, закомментированный «на всякий случай». Доктрина запрещает его
+  // прямо — documentation.md, список «нельзя», — а крючка у запрета не
+  // было ни одного. Единственной соседней сверкой была доля комментария в
+  // файле, и та смотрит файлы ОТ ПОТОЛКА СТРОК: короткий файл, наполовину
+  // состоящий из прежней витрины, проходил зелёным.
+  //
+  // Опознаётся по СТРОЕНИЮ строки, а не по словам: строка кода начинается
+  // ключевым словом языка либо кончается знаком, которым проза не
+  // кончается. Одной такой строки мало — цитата в объяснении законна, — и
+  // потому спрашивается ряд: три строки и не меньше двух похожих на код.
+  const CODE_HEADS = [
+    "import ",
+    "export ",
+    "const ",
+    "let ",
+    "var ",
+    "function ",
+    "class ",
+    "return ",
+    "await ",
+    "new ",
+  ];
+  const looksCode = (line) => {
+    const bare = line.trim();
+    if (bare.length === 0) return false;
+    if (CODE_HEADS.some((h) => bare.startsWith(h))) return true;
+    const tail = bare.slice(-1);
+    if (tail !== ";" && tail !== "{" && tail !== "}") return false;
+    return bare.includes("(") || bare.includes("=") || bare.includes("<");
+  };
+  const deadCode = [];
   for (const f of ownCode) {
     const body = readFileSync(f, "utf8");
     const runs = commentRunsOf(body);
@@ -7475,6 +7511,34 @@ if (mode === "verify") {
           ceiling,
       );
     }
+    {
+      const lines = body.split(NEWLINE);
+      for (const run of runs.split(";")) {
+        const [, at, , rows] = run.split(":");
+        if (Number(rows) < 3) continue;
+        const from = Number(at) - 1;
+        let hits = 0;
+        for (let i = from; i < from + Number(rows); i += 1) {
+          const bare = lines[i]
+            .replace("//", " ")
+            .replace("/*", " ")
+            .replace("*/", " ")
+            .trim();
+          const body2 = bare.startsWith("*") ? bare.slice(1).trim() : bare;
+          if (looksCode(body2)) hits += 1;
+        }
+        if (hits < 2) continue;
+        deadCode.push(
+          rel(f) +
+            ":" +
+            at +
+            " — в комментарии лежит код: строк, похожих на код, " +
+            hits +
+            " из " +
+            rows,
+        );
+      }
+    }
     const total = body.split(NEWLINE).length;
     if (total < COMMENT_SHARE_FLOOR) continue;
     shareLooked += 1;
@@ -7492,6 +7556,17 @@ if (mode === "verify") {
         " %",
     );
   }
+  const overDead = overDebtOf("comments", deadCode.length);
+  checkHead("Закомментированного кода нет", {
+    n: commentRuns,
+    unit: "рядов комментария",
+  });
+  console.log("  рядов с кодом внутри: " + deadCode.length);
+  for (const one of debtList("comments", deadCode)) console.log("    " + one);
+  if (deadCode.length > 0 && overDead === 0)
+    console.log(
+      "  Держится долгом посадки: код закомментирован до неё. Снять его — работа, а не правка",
+    );
   const overWordy = overDebtOf("comments", wordyComments.length);
   checkHead("Комментарий не перерос в прозу", {
     n: commentRuns,
