@@ -892,6 +892,21 @@
       "replace": "\"check\": \"npm run типов-нет && npm run typecheck"
     },
     {
+      "section": "Конфиг снятого звена служит живому",
+      "edits": [
+        {
+          "file": ".claude/seat/map.json",
+          "find": "\"chainScripts\": [",
+          "replace": "\"chainScripts\": [\n    { \"name\": \"звено-без-предмета\", \"recognise\": null, \"needsFiles\": [\"нетакогорасширения\"] },"
+        },
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  toolchain: [",
+          "replace": "  toolchain: [\n    {\n      script: \"звено-без-предмета\",\n      packages: [\"typescript\"],\n      template: null,\n      config: \"конфига-нет.json\",\n      why: \"поломка: звено без предмета, чей инструмент служит живому\",\n    },"
+        }
+      ]
+    },
+    {
       "section": "Настройка проекта знает все поля семени",
       "file": ".context/graph.config.mjs",
       "find": "    tongue: null,",

@@ -2426,6 +2426,7 @@ const CHECK_SECTIONS = [
   "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
   "Связка проверок зовёт живые звенья",
+  "Конфиг снятого звена служит живому",
   "Настройка проекта знает все поля семени",
   "Поле семени настройки объяснено",
   "Цепочка проверок объявлена данными",
@@ -8991,6 +8992,48 @@ if (mode === "verify") {
           );
         }
       }
+
+      // Конфиг СНЯТОГО звена остаётся, когда его инструмент служит живому.
+      // Оговорка та же, что у пакетов, и следует из неё: пакет, названный
+      // двумя звеньями, живёт, пока живо хотя бы одно, — а инструмент без
+      // своей настройки не работает. Компилятор назван и у звена линта:
+      // правила с типами держатся на нём и читают `tsconfig.json`.
+      //
+      // Замерено посадкой в проект на обычном JavaScript: звено типов снято
+      // по инструкции вместе с конфигом, и живое звено линта стало падать
+      // разбором на файлах САМОЙ ОБВЯЗКИ — «не найден в проекте компилятора».
+      // Цепочка красная, чинить нечем: конфиг класть запрещала инструкция.
+      const sharedConfigs = [];
+      {
+        const live = CONFIG.toolchain.filter((one) =>
+          linkHasSubject(one.script),
+        );
+        const livePacks = new Set(live.flatMap((one) => one.packages ?? []));
+        for (const link of CONFIG.toolchain) {
+          if (linkHasSubject(link.script)) continue;
+          if (link.config == null) continue;
+          const shared = (link.packages ?? []).filter((one) =>
+            livePacks.has(one),
+          );
+          if (shared.length === 0) continue;
+          if (existsSync(path.join(BASE, "..", link.config))) continue;
+          sharedConfigs.push(
+            link.config +
+              " — конфиг снятого звена " +
+              link.script +
+              ", а его инструмент служит живому: " +
+              shared.join(", "),
+          );
+        }
+      }
+      checkHead("Конфиг снятого звена служит живому", {
+        n: CONFIG.toolchain.length,
+        unit: "звеньев цепочки",
+      });
+      console.log(
+        "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
+      );
+      for (const one of sharedConfigs) console.log("    " + one);
       checkHead("Связка проверок зовёт живые звенья", {
         n: chainCalls.length,
         unit: "вызовов в связке проверок",
