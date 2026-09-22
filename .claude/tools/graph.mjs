@@ -9737,7 +9737,11 @@ if (mode === "verify") {
   // библиотеки, чей лист стилей объясняется по-русски.
   const tongueSaid = debtList("tongue", wrongTongue);
   for (const one of tongueSaid.slice(0, 20))
-    console.log("    " + one + ". Внутри корня исходников — английский");
+    console.log(
+      "    " +
+        one +
+        " — комментарий на русском, а внутри корня исходников пишут по-английски",
+    );
   if (tongueSaid.length > 20)
     console.log("    …и ещё " + (tongueSaid.length - 20));
   // 13l-бис. Документы компонента лежат в его `docs/`.
