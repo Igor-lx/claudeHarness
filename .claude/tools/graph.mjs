@@ -9473,9 +9473,17 @@ if (mode === "verify") {
     if (decided2.toLowerCase().includes("раскладка проекта"))
       layoutSaid = "отступление объявлено решением: раскладка проекта своя";
     else {
+      // Слой УЗЛОВ берётся из объявления, а не из умолчания: проект уже
+      // сказал обвязке, где они лежат, полем componentsAt — им пользуются и
+      // сверка про README, и область мутационного прогона. Пока здесь стояло
+      // зашитое components, проект со своим именем слоя получал находку на
+      // каждом файле узла и ответ «место по умолчанию — components», то есть
+      // обвязка переспрашивала то, что ей уже объявили.
       const LAYERS = [
         new RegExp("^app/"),
-        new RegExp("^components/[^/]+/"),
+        ...(CONFIG.componentsAt ?? ["components"]).map(
+          (one) => new RegExp("^" + one + "/[^/]+/"),
+        ),
         new RegExp("^shared/[^/]+/"),
       ];
       for (const f of [...files, ...styleFiles]) {
@@ -9803,7 +9811,11 @@ if (mode === "verify") {
     console.log(
       "    " +
         one +
-        ". Место по умолчанию: app — корень композиции, components/<Имя> — компонент, shared/<область> — общее",
+        ". Объявленные слои: app — корень композиции, " +
+        (CONFIG.componentsAt ?? ["components"])
+          .map((one) => one + "/<Имя>")
+          .join(", ") +
+        " — узел, shared/<область> — общее",
     );
   if (layoutStray.length)
     console.log(
