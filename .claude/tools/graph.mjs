@@ -9222,7 +9222,11 @@ if (mode === "verify") {
       // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
       const viteDrift = [];
       let viteLooked = 0;
-      {
+      // Спрашивается только там, где есть ЗВЕНО ТИПОВ: ломается от этого
+      // именно компилятор. В проекте на обычном JavaScript импорт берут
+      // откуда угодно — раннер читает секцию тестов в любом случае, и
+      // требовать тут `vitest/config` значило бы краснеть на законном.
+      if (linkHasSubject("typecheck")) {
         for (const name of ["vite.config.ts", "vite.config.js"]) {
           const at = path.join(BASE, "..", name);
           if (!existsSync(at)) continue;
