@@ -10553,6 +10553,15 @@ if (mode === "verify") {
   const knownDangling = new Set(CONFIG.docPathExceptions);
   const knownUsed = new Set();
   const danglingPaths = [];
+  // План перехода называет работу, КОТОРОЙ ЕЩЁ НЕТ, и адреса будущих файлов
+  // в нём законны по устройству: семя плана прямо велит завести шаг на
+  // документ каждого узла, а документа на диске нет — затем шаг и стоит.
+  // Пока это не различалось, доктрина спорила сама с собой: посадка писала
+  // предписанный шаг и получала «путь ведёт в никуда» на собственном плане.
+  // Молча такие адреса пропускать нельзя — опечатка в плане невидима, — и
+  // потому они считаются и печатаются своей строкой, не роняя прогон.
+  const plannedPaths = [];
+  const planName = CONFIG.transition == null ? null : CONFIG.transition.file;
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
     const dir = norm(path.dirname(at));
@@ -10575,6 +10584,8 @@ if (mode === "verify") {
           pathTokens++;
           if (knownDangling.has(`${name}|${tok}`))
             knownUsed.add(`${name}|${tok}`);
+          else if (planName !== null && name === planName)
+            plannedPaths.push(`${name}: ${tok}`);
           else danglingPaths.push(`${name}: ${tok}`);
         } else if (seen === 1) pathTokens++;
         continue;
@@ -10612,6 +10623,10 @@ if (mode === "verify") {
         knownUsed.add(`${name}|${tok}`);
         continue;
       }
+      if (planName !== null && name === planName) {
+        plannedPaths.push(`${name}: ${tok}`);
+        continue;
+      }
       danglingPaths.push(`${name}: ${tok}`);
     }
   }
@@ -10625,6 +10640,13 @@ if (mode === "verify") {
   });
   console.log(`  ведут в никуда: ${danglingPaths.length}`);
   for (const d of danglingPaths) console.log("    " + d);
+  if (plannedPaths.length)
+    console.log(
+      "  адресов будущих файлов в плане перехода: " +
+        plannedPaths.length +
+        " — их заводят шаги плана",
+    );
+  for (const d of plannedPaths) console.log("    " + d);
 
   checkHead("Ссылки markdown", { n: linkFiles, unit: "файлов прозы" });
   console.log(`  ведут в никуда: ${danglingLinks.length}`);
