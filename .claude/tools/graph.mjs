@@ -14469,8 +14469,15 @@ if (mode === "verify") {
   // не перечитывает никто.
   const debtDeclared = DEBT_KINDS.filter((k) => debtOf(k) > 0);
   const debtTotal = debtDeclared.reduce((n, k) => n + debtOf(k), 0);
+  // Долг КОДА планом не держится и после его удаления остаётся законным:
+  // держит его открытая строка реестра. Считаются поэтому только виды
+  // долга БАЗЫ — иначе проект, закончивший переход и удаливший план,
+  // получал «долг держится только настройкой» на долге, который планом
+  // держаться и не может. Замерено переходом стенда с русским
+  // комментарием в коде: план выполнен и удалён, долг по языку остался.
+  const DEBT_BY_WORK_KINDS = new Set(["comments", "tongue"]);
   const debtUnplanned =
-    debtDeclared.length > 0 &&
+    debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
     (CONFIG.transition == null || transitionSteps === 0);
   /** Какая сверка гаснет, когда долг этого вида закрыт. Пара «вид долга —
    * сверка» и есть то, чем шаг плана опознаётся: шаг обязан назвать её в графе
@@ -14507,7 +14514,7 @@ if (mode === "verify") {
   //
   // Держит его ОТКРЫТАЯ СТРОКА РЕЕСТРА: она мозолит глаза каждым прогоном,
   // а чинят её работой, когда до неё дойдут руки.
-  const DEBT_BY_WORK = new Set(["comments", "tongue"]);
+  const DEBT_BY_WORK = DEBT_BY_WORK_KINDS;
   const debtStepless = [];
   {
     const at =
