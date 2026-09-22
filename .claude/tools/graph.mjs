@@ -13978,6 +13978,14 @@ if (mode === "verify") {
     // нет, а заводить его ради одной сверки значит просить проект объявить
     // то, что и так лежит в семени под известным именем.
     const open = openFindings();
+    const chainNames = new Set(
+      (() => {
+        const mapAt = shelfAt("seat/map.json");
+        return mapAt === null || !existsSync(mapAt)
+          ? []
+          : (readJson(mapAt, {}).chainScripts ?? []).map((one) => one.name);
+      })(),
+    );
     const lines = [];
     for (const name of readdirSync(BASE)) {
       if (!name.endsWith(".md")) continue;
@@ -13985,9 +13993,13 @@ if (mode === "verify") {
     }
     {
       for (const line of lines) {
+        // Корпус — строки, опознанные КАК строки звена, а не только красные:
+        // ноль красных при зелёной цепочке есть здоровье, а ноль опознанных
+        // при живых звеньях — слепота, и различать их надо здесь.
+        const row = /^\|\s*`([^`]+)`\s*\|\s*\S/.exec(line.trim());
+        if (row !== null && chainNames.has(row[1])) redLinks += 1;
         const m = /^\|\s*`([^`]+)`\s*\|\s*красно/.exec(line.trim());
         if (m === null) continue;
-        redLinks += 1;
         if (m[1] === "verify") continue;
         if ((open.get(m[1]) ?? 0) > 0) continue;
         redUnnamed.push(
@@ -13998,10 +14010,35 @@ if (mode === "verify") {
       }
     }
   }
+  // Корпус этой сверки — ПРОЗА, которую пишет человек, и форму её до сих пор
+  // не называл никто: семя базовой линии даёт свободный абзац. Написанная
+  // иначе строка не опознаётся, сверка осматривает ноль и остаётся зелёной —
+  // то есть ровно «проверено ноль» неотличимо от «предмета нет», что свод
+  // запрещает прямо. Замерено посадкой в пустой проект: базовая линия
+  // называла красный формат словом, а не именем звена, и сверка не увидела
+  // ни одного звена при трёх живых.
+  const chainAlive = (() => {
+    const at = path.join(BASE, "..", "package.json");
+    const scripts = Object.keys(readJson(at, {}).scripts ?? {});
+    const mapAt = shelfAt("seat/map.json");
+    const names =
+      mapAt === null || !existsSync(mapAt)
+        ? []
+        : (readJson(mapAt, {}).chainScripts ?? []).map((one) => one.name);
+    return names.filter((one) => scripts.includes(one)).length;
+  })();
+  const redBlind = redLinks === 0 && chainAlive > 0;
   checkHead("Красное звено названо находкой", {
     n: redLinks,
     unit: "звеньев в базовой линии",
   });
+  if (redBlind)
+    console.log(
+      "    звеньев цепочки у проекта " +
+        chainAlive +
+        ", а в базовой линии не опознано ни одного: строка звена пишется" +
+        " ИМЕНЕМ В ОБРАТНЫХ КАВЫЧКАХ в первой графе, иначе сверка слепа",
+    );
   console.log("  без строки реестра: " + redUnnamed.length);
   for (const one of redUnnamed)
     console.log(
