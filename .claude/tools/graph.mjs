@@ -2410,6 +2410,7 @@ const CHECK_SECTIONS = [
   "Запись о пустоте не пережила появление кода",
   "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
+  "Настройка проекта знает все поля семени",
   "Цепочка проверок объявлена данными",
   "Звено цепочки не задвоено",
   "Одноранговая зависимость не продублирована",
@@ -13141,6 +13142,55 @@ if (mode === "verify") {
         one +
         " — живой проект снимет пометку вместе с записью и получит файл, о котором посадка не написала",
     );
+  // Поля, заведённые обвязкой ПОСЛЕ посадки, до проекта не доезжают: папку
+  // обвязки обновляют копированием, а настройку проекта — нет. Молчание тут
+  // хуже всего: инструмент читает отсутствующее поле как осознанный отказ.
+  const seedFields = [];
+  {
+    const at = shelfAt("seat/templates/graph.config.mjs");
+    if (at !== null && existsSync(at)) {
+      const body = readFileSync(at, "utf8");
+      // Верхний уровень: строка вида «  имя:» с отступом ровно в два пробела.
+      for (const m of body.matchAll(/^ {2}([A-Za-z][\w]*):/gm))
+        seedFields.push([m[1], null]);
+      // Вложенное в долг: отступ в четыре пробела внутри блока debt.
+      const from = body.indexOf("  debt: {");
+      if (from >= 0) {
+        const to = body.indexOf(NEWLINE + "  },", from);
+        for (const m of body
+          .slice(from, to)
+          .matchAll(/^ {4}([A-Za-z][\w]*):/gm))
+          seedFields.push(["debt", m[1]]);
+      }
+    }
+  }
+  const fieldGone = [];
+  for (const [top, inner] of seedFields) {
+    if (inner === null) {
+      if (!(top in CONFIG))
+        fieldGone.push(
+          top +
+            " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
+        );
+      continue;
+    }
+    const held = CONFIG[top];
+    if (held == null || typeof held !== "object") continue;
+    if (!(inner in held))
+      fieldGone.push(
+        top +
+          "." +
+          inner +
+          " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
+      );
+  }
+  checkHead("Настройка проекта знает все поля семени", {
+    n: seedFields.length,
+    unit: "полей семени настройки",
+  });
+  console.log("  полей нет у проекта: " + fieldGone.length);
+  for (const one of fieldGone) console.log("    " + one);
+
   checkHead("Настройка семени не ссылается на непривезённое", {
     n: seedsDeclared.length,
     unit: "семян в карте посадки",

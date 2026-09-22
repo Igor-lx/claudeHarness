@@ -884,6 +884,12 @@
           "append": "\nПрогон закрывают командой `npm run zznone`.\n"
         }
       ]
+    },
+    {
+      "section": "Настройка проекта знает все поля семени",
+      "file": ".context/graph.config.mjs",
+      "find": "    tongue: null,",
+      "replace": ""
     }
   ]
 }
