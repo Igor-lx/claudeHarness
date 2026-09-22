@@ -886,6 +886,12 @@
       ]
     },
     {
+      "section": "Связка проверок зовёт живые звенья",
+      "file": "package.json",
+      "find": "\"check\": \"npm run typecheck",
+      "replace": "\"check\": \"npm run типов-нет && npm run typecheck"
+    },
+    {
       "section": "Настройка проекта знает все поля семени",
       "file": ".context/graph.config.mjs",
       "find": "    tongue: null,",

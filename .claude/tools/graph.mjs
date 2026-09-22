@@ -2425,6 +2425,7 @@ const CHECK_SECTIONS = [
   "Запись о пустоте не пережила появление кода",
   "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
+  "Связка проверок зовёт живые звенья",
   "Настройка проекта знает все поля семени",
   "Поле семени настройки объяснено",
   "Цепочка проверок объявлена данными",
@@ -8937,6 +8938,65 @@ if (mode === "verify") {
     // фальсификации: подсаженную поломку тот приписать некуда, и рецепт на неё
     // докладывал «не дошла ни до одной сверки» с рождения.
     {
+      // Связка проверок — ОДНА СТРОКА манифеста, приехавшая семенем целиком,
+      // и данными она не является. Проект, снявший звено без предмета,
+      // обязан вычеркнуть его и отсюда — а не вычеркнув, получает цепочку,
+      // которая не доходит до первой команды: `npm run check` падает на
+      // «Missing script», и падает НАВСЕГДА. Сверки при этом зелёные: они
+      // спрашивают звенья по отдельности, а связку не читал никто.
+      //
+      // Замерено посадкой в проект на обычном JavaScript: звено типов снято
+      // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
+      const chainCalls = [];
+      {
+        const body = scripts.check;
+        if (typeof body === "string") {
+          for (const piece of body.split("&&")) {
+            const one = piece.trim();
+            const run = /^npm run ([^ ]+)/.exec(one);
+            if (run !== null) chainCalls.push(run[1]);
+            else if (/^npm test( |$)/.test(one)) chainCalls.push("test");
+          }
+        }
+      }
+      const chainBroken = [];
+      for (const one of chainCalls)
+        if (scripts[one] == null)
+          chainBroken.push(
+            one +
+              " — связка проверок зовёт команду, которой в манифесте нет: цепочка не доходит до первой",
+          );
+      {
+        // Обратная сторона: живое звено, выпавшее из связки, перестаёт
+        // спрашиваться вовсе — и молча. Состав связки объявлен СЕМЕНЕМ
+        // манифеста, а не этим списком: он растёт вместе с цепочкой.
+        const seedAt = shelfAt("seat/templates/package.json");
+        const seedBody =
+          seedAt === null || !existsSync(seedAt)
+            ? null
+            : readJson(seedAt, {}).scripts?.check;
+        for (const piece of String(seedBody ?? "").split("&&")) {
+          const one = piece.trim();
+          const run = /^npm run ([^ ]+)/.exec(one);
+          const name =
+            run !== null ? run[1] : /^npm test( |$)/.test(one) ? "test" : null;
+          if (name === null) continue;
+          if (!linkHasSubject(name)) continue;
+          const own = linkOwnName(name, scripts) ?? name;
+          if (scripts[own] == null) continue;
+          if (chainCalls.includes(own)) continue;
+          chainBroken.push(
+            own +
+              " — звено живо и команда есть, а связка проверок его не зовёт: спрашивать его нечему",
+          );
+        }
+      }
+      checkHead("Связка проверок зовёт живые звенья", {
+        n: chainCalls.length,
+        unit: "вызовов в связке проверок",
+      });
+      console.log("  расхождений: " + chainBroken.length);
+      for (const one of chainBroken) console.log("    " + one);
       checkHead("Инструменты звеньев на месте", {
         n: CONFIG.toolchain.length,
         unit: "звеньев цепочки",
