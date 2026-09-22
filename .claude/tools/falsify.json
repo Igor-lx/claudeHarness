@@ -892,6 +892,12 @@
       "replace": ""
     },
     {
+      "section": "Поле семени настройки объяснено",
+      "file": ".claude/seat/templates/graph.config.mjs",
+      "find": "  /** Корень исходников, относительно папки базы. */\n",
+      "replace": ""
+    },
+    {
       "section": "Объявленный долг не больше фактического",
       "file": ".context/graph.config.mjs",
       "find": "    map: null,",

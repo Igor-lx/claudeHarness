@@ -2416,6 +2416,7 @@ const CHECK_SECTIONS = [
   "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
   "Настройка проекта знает все поля семени",
+  "Поле семени настройки объяснено",
   "Цепочка проверок объявлена данными",
   "Звено цепочки не задвоено",
   "Одноранговая зависимость не продублирована",
@@ -13288,6 +13289,39 @@ if (mode === "verify") {
   console.log("  полей нет у проекта: " + fieldGone.length);
   for (const one of fieldGone) console.log("    " + one);
 
+  // Поле семени без объяснения узнают ОШИБКОЙ: пишут значение наугад,
+  // получают «настройка задана неверно» и оттуда вычитывают форму. Семя
+  // настройки и есть место, где поля объяснены, — у каждого соседа объяснение
+  // стоит, и пропуск читается не как пропуск, а как «тут объяснять нечего».
+  // Замерено посадкой: поле плана перехода приехало голым, форму его —
+  // объект с частями — назвал только текст ошибки инструмента.
+  const fieldMute = [];
+  {
+    const at = shelfAt("seat/templates/graph.config.mjs");
+    if (at !== null && existsSync(at)) {
+      const rows = readFileSync(at, "utf8").split(NEWLINE);
+      for (let i = 0; i < rows.length; i += 1) {
+        const m = /^ {2}([A-Za-z][A-Za-z0-9_]*):/.exec(rows[i]);
+        if (m === null) continue;
+        let up = i - 1;
+        while (up >= 0 && rows[up].trim() === "") up -= 1;
+        const near = up < 0 ? "" : rows[up].trim();
+        const told =
+          near.startsWith("*") || near.startsWith("//") || near.endsWith("*/");
+        if (!told)
+          fieldMute.push(
+            m[1] +
+              " — поле семени настройки без объяснения: форму его узнают ошибкой инструмента",
+          );
+      }
+    }
+  }
+  checkHead("Поле семени настройки объяснено", {
+    n: seedFields.filter((one) => one[1] === null).length,
+    unit: "полей верхнего уровня в семени настройки",
+  });
+  console.log("  без объяснения: " + fieldMute.length);
+  for (const one of fieldMute) console.log("    " + one);
   checkHead("Настройка семени не ссылается на непривезённое", {
     n: seedsDeclared.length,
     unit: "семян в карте посадки",
