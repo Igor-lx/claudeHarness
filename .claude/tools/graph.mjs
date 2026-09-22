@@ -12895,31 +12895,54 @@ if (mode === "verify") {
       // работает с первого дня, стек лежит неиспользованным. Свалить их в
       // один список значило бы сделать описание платформы ложью.
       const stack = new Set(seatMapNow.stackPackages?.packages ?? []);
-      // Пакет, которого у проекта НЕТ, объяснять некому и незачем: сверка
-      // существует, чтобы слияние не втащило в манифест пакет, за который никто
-      // не отвечает. Не втащило — значит предмета нет.
+      // Половин у сверки две, и опоры у них РАЗНЫЕ.
       //
-      // Без этой оговорки доктрина воевала сама с собой: она дважды велит снять
-      // неприменимое звено вместе с его пакетами — а сверка карала за это
-      // навсегда, потому что в СЕМЕНИ пакеты остаются. Замерено на проекте,
-      // чей конфиг линта лежит в старом формате: звено снято по инструкции, и
-      // прогон стал красным без выхода.
+      // Гигиена СЕМЕНИ: каждый пакет семени назван связкой СЕМЕНИ. Она не
+      // зависит от того, что проект у себя оставил, и потому ловит пакет,
+      // который положили в манифест обвязки и забыли объявить.
+      //
+      // Здравость ПРОЕКТА: каждый пакет, который проект ДЕРЖИТ, назван
+      // связкой ПРОЕКТА. Снять неприменимое звено вместе с пакетами доктрина
+      // велит дважды, и карать за это нельзя: пока опора была одна, снявший
+      // звено получал красный прогон без выхода. Замерено на проекте, чей
+      // конфиг линта лежит в старом формате.
+      const seedLinks = (() => {
+        const at = shelfAt("seat/templates/graph.config.mjs");
+        if (at === null || !existsSync(at)) return null;
+        const body = readFileSync(at, "utf8");
+        if (!body.includes("toolchain: [")) return null;
+        // Читается только то, что семя называет ПАКЕТАМИ. Взять любую
+        // строку в кавычках было бы поблажкой: имена шаблонов и сценариев
+        // оправдывали бы совпавший с ними пакет.
+        const names = new Set();
+        let mark = body.indexOf("packages:");
+        while (mark >= 0) {
+          const end = body.indexOf("]", mark);
+          if (end < 0) break;
+          const parts = body.slice(mark, end).split('"');
+          for (let i = 1; i < parts.length; i += 2) names.add(parts[i]);
+          mark = body.indexOf("packages:", end);
+        }
+        return names.size === 0 ? null : names;
+      })();
+      const manifestAt = path.join(BASE, "..", "package.json");
       const held = new Set([
-        ...Object.keys(
-          readJson(path.join(BASE, "..", "package.json"), {}).dependencies ??
-            {},
-        ),
-        ...Object.keys(
-          readJson(path.join(BASE, "..", "package.json"), {}).devDependencies ??
-            {},
-        ),
+        ...Object.keys(readJson(manifestAt, {}).dependencies ?? {}),
+        ...Object.keys(readJson(manifestAt, {}).devDependencies ?? {}),
       ]);
-      for (const p of inSeed)
-        if (!byLink.has(p) && !platform.has(p) && !stack.has(p) && held.has(p))
+      for (const one of inSeed) {
+        if (platform.has(one) || stack.has(one)) continue;
+        if (seedLinks !== null && !seedLinks.has(one))
           packDrift.push(
-            p +
-              " — пакет семени не назван ни звеном, ни списком платформы, ни стеком",
+            one +
+              " — пакет семени не назван ни звеном семени, ни списком платформы, ни стеком",
           );
+        else if (held.has(one) && !byLink.has(one))
+          packDrift.push(
+            one +
+              " — проект держит пакет, которого не называет ни одно его звено",
+          );
+      }
       // Обратная сторона: имя в списке, которого нет в семени. Без неё
       // список копит пакеты, давно выброшенные из манифеста, и перестаёт
       // говорить о том, что действительно приезжает.
