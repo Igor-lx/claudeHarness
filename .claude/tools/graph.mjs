@@ -462,7 +462,40 @@ const PACKAGE_MANAGER = (() => {
   }
 })();
 
-const ROOT = path.join(BASE, CONFIG.src).split(path.sep).join("/");
+/** Корни исходников, объявленные настройкой, и их ОБЩИЙ РОДИТЕЛЬ.
+ *
+ * Поле `src` держит либо один адрес, либо список: деревьев у проекта бывает
+ * несколько — браузерное и серверное, — и общей папки у них может не быть
+ * вовсе. Прежде поле было одним адресом, и такой проект описывал себя
+ * корнем репозитория: работало это ценой того, что в корпус кода попадало
+ * ВСЁ, что лежит рядом с деревьями, — папка сборочных сценариев, чужие
+ * копии, служебные каталоги, — и отличить своё от соседского было нечем.
+ *
+ * Разделение такое. По ДЕРЕВЬЯМ ходят обходы: опись кода, опись прозы рядом
+ * с кодом, поиск пустых папок и папок настроек. От ОБЩЕГО РОДИТЕЛЯ пишутся
+ * и разрешаются адреса: база пишет `client/App.tsx`, и только так два
+ * дерева с одинаковыми именами файлов внутри остаются различимы.
+ *
+ * У проекта с одним деревом общий родитель и есть это дерево, и всё
+ * поведение остаётся прежним до буквы. */
+const SRC_ROOTS = (Array.isArray(CONFIG.src) ? CONFIG.src : [CONFIG.src]).map(
+  (one) => path.join(BASE, one).split(path.sep).join("/"),
+);
+const ROOT = (() => {
+  if (SRC_ROOTS.length === 1) return SRC_ROOTS[0];
+  const parts = SRC_ROOTS.map((one) => one.split("/"));
+  const head = [];
+  for (let i = 0; i < parts[0].length; i += 1) {
+    const piece = parts[0][i];
+    if (!parts.every((one) => one[i] === piece)) break;
+    head.push(piece);
+  }
+  return head.join("/");
+})();
+/** Лежит ли файл В ОБЪЯВЛЕННОМ дереве. Спрашивается там, где корпус кода
+ * собирается не обходом, а фильтром по уже собранному списку. */
+const insideRoots = (f) =>
+  SRC_ROOTS.some((one) => f === one || norm(f).startsWith(one + "/"));
 
 /** Папки, которых в описи нет: порождённые инструментами копии дерева и
  * служебные каталоги. Список один на всех, кто обходит дерево, — опись голых
@@ -1333,7 +1366,7 @@ const collect = (dir) => {
       styleFiles.push(full);
   }
 };
-collect(ROOT);
+for (const one of SRC_ROOTS) collect(one);
 
 // Папки с тестами, лежащие ВНЕ корня исходников.
 //
@@ -1372,7 +1405,8 @@ if (CONFIG.docsIndex != null) {
 // папке, названной настройкой, и покомпонентный документ не проверялся
 // ничем — ни якоря в нём, ни имена из кода, ни ссылки. Это ровно тот класс,
 // которым когда-то нашлась и сама папка документации.
-(function walkNear(dir) {
+// Деревьев исходников бывает несколько, и обход зовётся по каждому.
+const walkNear = (dir) => {
   if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
     const full = norm(path.join(dir, e));
@@ -1384,7 +1418,8 @@ if (CONFIG.docsIndex != null) {
     if (statSync(full).isDirectory()) walkNear(full);
     else if (/\.md$/.test(e) && !docFiles.includes(full)) docFiles.push(full);
   }
-})(ROOT);
+};
+for (const one of SRC_ROOTS) walkNear(one);
 
 const isTest = isTestPath;
 
@@ -2225,11 +2260,17 @@ if (predicateFailures.length > 0) {
  * есть говорила «файла нет» про существующий файл; при этом соседний режим
  * (`mutated`) её принимал. Найдено пробой, и это тот же класс, что записан в
  * базе отдельно: отсутствие и «я не понял адрес» звучали одинаково. */
-const SRC_PREFIX = path.basename(CONFIG.src) + "/";
+// Приставок столько, сколько деревьев: путь из отчёта может начинаться с
+// любого из них.
+const SRC_PREFIXES = SRC_ROOTS.map((one) => path.basename(one) + "/");
 const argPath = (a) => {
   if (a === undefined) return a;
-  const s = a.split("\\").join("/").replace(/^\.\//, "");
-  return s.startsWith(SRC_PREFIX) ? s.slice(SRC_PREFIX.length) : s;
+  const s = a
+    .split(String.fromCharCode(92))
+    .join("/")
+    .replace(/^[.][/]/, "");
+  const hit = SRC_PREFIXES.find((one) => s.startsWith(one));
+  return hit === undefined ? s : s.slice(hit.length);
 };
 
 /** «Ничего не нашлось» про файл, который на диске ЕСТЬ, — это ответ не на тот
@@ -2448,6 +2489,7 @@ const CHECK_SECTIONS = [
   "Имена классов из кода есть в листе стилей",
   "Класс из листа стилей спрошен кодом",
   "Отступление от схемы стилизации объявлено решением",
+  "Код лежит в объявленных деревьях",
   "Пустой папки под корнем исходников нет",
   "Новый узел лежит по раскладке",
   "Правила проекта не спорят с реестром решений",
@@ -5979,7 +6021,7 @@ if (mode === "verify") {
   // (`everyFile`), а якоря указывают ещё и на доки (`everyPath`).
   const everyFile = [];
   const everyPath = [];
-  (function walkAll(dir) {
+  const walkAll = (dir) => {
     if (!walkable(dir)) return;
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
@@ -5998,8 +6040,10 @@ if (mode === "verify") {
     // стоит, молчало — в первую очередь покрытие карты по файлам стилей.
     // Заметить это было нечем: соседний список собирается другим обходом, тоже
     // молча, и сверка печатала правдоподобное число. Найдено сверкой двух
-    // замеров одного и того же проекта, разошедшихся на единицу.
-  })(ROOT);
+    // замеров одного и того же проекта, разошедшихся на единицу. Деревьев
+    // бывает несколько, и обход зовётся по каждому.
+  };
+  for (const one of SRC_ROOTS) walkAll(one);
 
   // Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
   // хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
@@ -8515,8 +8559,8 @@ if (mode === "verify") {
   };
   if (CONFIG.adr == null) {
     disarmedLooked += 1;
-    const found = dirsUnder(ROOT, "adr").filter((d) =>
-      readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)),
+    const found = SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")).filter(
+      (d) => readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)),
     );
     if (found.length)
       disarmed.push(
@@ -8525,15 +8569,16 @@ if (mode === "verify") {
   }
   if (CONFIG.configDocs == null) {
     disarmedLooked += 1;
-    const found = dirsUnder(ROOT, "config").filter((d) =>
-      readdirSync(d).some(
-        (n) =>
-          /\.md$/.test(n) ||
-          (/\.ts$/.test(n) &&
-            /^export const [A-Z][A-Z0-9_]*/m.test(
-              readFileSync(path.join(d, n), "utf8"),
-            )),
-      ),
+    const found = SRC_ROOTS.flatMap((one) => dirsUnder(one, "config")).filter(
+      (d) =>
+        readdirSync(d).some(
+          (n) =>
+            /\.md$/.test(n) ||
+            (/\.ts$/.test(n) &&
+              /^export const [A-Z][A-Z0-9_]*/m.test(
+                readFileSync(path.join(d, n), "utf8"),
+              )),
+        ),
     );
     if (found.length)
       disarmed.push(
@@ -10239,8 +10284,61 @@ if (mode === "verify") {
         hollow.push(path.relative(ROOT, dir).split(path.sep).join("/"));
       return live;
     };
-    if (existsSync(ROOT)) walk(ROOT);
+    for (const one of SRC_ROOTS) if (existsSync(one)) walk(one);
   }
+
+  // Код, лежащий ВНЕ объявленных деревьев. Спрашивается только у проекта,
+  // который объявил их СПИСКОМ: он тем самым сказал «мои деревья вот эти», и
+  // файл рядом с ними — либо забытое дерево, либо чужая копия. Ни одна
+  // сверка кода его не видит, и молчать об этом нельзя: «осмотрено ноль»
+  // неотличимо от здоровья.
+  //
+  // У проекта с ОДНИМ деревом вопрос не задаётся: там корень и есть весь
+  // корпус по определению, а код вне него объявляют полями `testDirs` и
+  // `corpusOutside` — это другая развилка, со своей ценой.
+  const outsideRoots = [];
+  let outsideLooked = 0;
+  if (Array.isArray(CONFIG.src) && CONFIG.src.length > 1) {
+    const skip = new Set(ROOT_SEEDS);
+    const walk = (dir) => {
+      let kids = [];
+      try {
+        kids = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of kids) {
+        const at = norm(path.join(dir, e.name));
+        if (outOfTree(e.name, at)) continue;
+        if (e.isDirectory()) {
+          walk(at);
+          continue;
+        }
+        if (!/[.][jt]sx?$/.test(e.name) && !isStylePath(e.name)) continue;
+        // Файл в самом корне репозитория — настройка, а не код проекта:
+        // тот же признак, что у описи кода.
+        if (norm(dir) === norm(REPO)) continue;
+        outsideLooked += 1;
+        if (insideRoots(at)) continue;
+        if (skip.has(at)) continue;
+        outsideRoots.push(
+          norm(path.relative(REPO, at)).split(path.sep).join("/") +
+            " — код вне объявленных деревьев: его не видит ни одна сверка кода",
+        );
+      }
+    };
+    walk(norm(REPO));
+  }
+  checkHead("Код лежит в объявленных деревьях", {
+    n: outsideLooked,
+    unit: "файлов кода под корнем репозитория",
+  });
+  console.log(
+    Array.isArray(CONFIG.src) && CONFIG.src.length > 1
+      ? "  вне деревьев: " + outsideRoots.length
+      : "  дерево исходников одно: корень и есть весь корпус",
+  );
+  for (const one of outsideRoots) console.log("    " + one);
   checkHead("Пустой папки под корнем исходников нет", {
     n: dirsWalked,
     unit: "папок под корнем исходников",
@@ -10938,7 +11036,7 @@ if (mode === "verify") {
   // заявленных папок. Поэтому у сверки путей свой инвентарь: тот же список
   // плюс скрипты, на которые база ссылается по имени.
   const scriptFiles = [];
-  (function walkScripts(dir) {
+  const walkScripts = (dir) => {
     if (!walkable(dir)) return;
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
@@ -10947,7 +11045,8 @@ if (mode === "verify") {
     }
     // Корень исходников — из настройки, а не имя `src` строкой: см. соседний
     // обход. У проекта, зовущего его иначе, этот список выходил пустым.
-  })(ROOT);
+  };
+  for (const one of SRC_ROOTS) walkScripts(one);
   const inventory = [...everyPath, ...scriptFiles];
   // Ссылка markdown — ВТОРАЯ форма адреса, и её не читала ни одна сверка.
   // Разница с обратными кавычками принципиальная: там адрес может оказаться
