@@ -886,6 +886,17 @@
       ]
     },
     {
+      "section": "Конвейер зовёт проверки",
+      "edits": [
+        {
+          "create": {
+            "path": ".github/workflows/поломка.yml",
+            "text": "name: поломка\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm ci\n      - run: npm run build"
+          }
+        }
+      ]
+    },
+    {
       "section": "Связка проверок зовёт живые звенья",
       "file": "package.json",
       "find": "\"check\": \"npm run typecheck",

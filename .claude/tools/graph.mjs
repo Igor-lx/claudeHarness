@@ -2431,6 +2431,7 @@ const CHECK_SECTIONS = [
   "Запись о пустоте не пережила появление кода",
   "Якоря семени ведут в семя",
   "Один предмет — один файл настройки",
+  "Конвейер зовёт проверки",
   "Связка проверок зовёт живые звенья",
   "Конфиг снятого звена служит живому",
   "Настройка проекта знает все поля семени",
@@ -9040,6 +9041,61 @@ if (mode === "verify") {
         "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
       );
       for (const one of sharedConfigs) console.log("    " + one);
+
+      // Конвейер — ТА ЖЕ СВЯЗКА, что скрипт проверок, только написанная
+      // однажды и живущая отдельно. Описание сборки на сервере, которое
+      // собирает проект и не зовёт ни одного звена цепочки, даёт ворота,
+      // не проверяющие ничего: зелёная галочка стоит, типы и тесты не
+      // прогонялись. Планка требует обратного прямо — раздел U, «порядок
+      // ворот от дешёвых к дорогим», — а ловца у требования не было.
+      //
+      // Замерено посадкой стенда с описанием на сервере: единственный шаг
+      // конвейера — сборка, и прогон об этом молчал.
+      const ciFiles = [];
+      {
+        const roots = [".github/workflows", ".circleci"];
+        const loose = [
+          ".gitlab-ci.yml",
+          ".drone.yml",
+          "azure-pipelines.yml",
+          "Jenkinsfile",
+          "bitbucket-pipelines.yml",
+          ".woodpecker.yml",
+        ];
+        const at = (one) => path.join(BASE, "..", one);
+        for (const one of loose) if (existsSync(at(one))) ciFiles.push(one);
+        for (const dir of roots) {
+          if (!existsSync(at(dir))) continue;
+          for (const name of readdirSync(at(dir))) {
+            const full = path.join(at(dir), name);
+            if (statSync(full).isDirectory()) continue;
+            ciFiles.push(dir + "/" + name);
+          }
+        }
+      }
+      const ciMute = [];
+      for (const one of ciFiles) {
+        const body = readFileSync(path.join(BASE, "..", one), "utf8");
+        const names = CONFIG.toolchain
+          .map((link) => link.script)
+          .filter((name) => name != null)
+          .filter((name) => linkHasSubject(name))
+          .filter(
+            (name) => scripts[linkOwnName(name, scripts) ?? name] != null,
+          );
+        const calls = names.filter((name) => body.includes("run " + name));
+        if (body.includes("run check") || calls.length > 0) continue;
+        ciMute.push(
+          one +
+            " — описание сборки на сервере не зовёт ни связку проверок, ни одно звено цепочки: ворота стоят и не проверяют ничего",
+        );
+      }
+      checkHead("Конвейер зовёт проверки", {
+        n: ciFiles.length,
+        unit: "описаний сборки на сервере",
+      });
+      console.log("  не зовут цепочку: " + ciMute.length);
+      for (const one of ciMute) console.log("    " + one);
       checkHead("Связка проверок зовёт живые звенья", {
         n: chainCalls.length,
         unit: "вызовов в связке проверок",
