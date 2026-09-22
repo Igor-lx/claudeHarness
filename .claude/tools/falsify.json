@@ -901,6 +901,12 @@
       "section": "Шаблон правил заполнен",
       "file": "CLAUDE.md",
       "append": "<!-- ЗАПОЛНИТЬ -->\nОтвечать по слотам.\n<!-- /ЗАПОЛНИТЬ -->"
+    },
+    {
+      "section": "Объявленный долг назван планом перехода",
+      "file": ".context/graph.config.mjs",
+      "find": "    tongue: null,",
+      "replace": "    tongue: 3,"
     }
   ]
 }

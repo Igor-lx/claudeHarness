@@ -13541,6 +13541,40 @@ if (mode === "verify") {
   const debtUnplanned =
     debtDeclared.length > 0 &&
     (CONFIG.transition == null || transitionSteps === 0);
+  /** Какая сверка гаснет, когда долг этого вида закрыт. Пара «вид долга —
+   * сверка» и есть то, чем шаг плана опознаётся: шаг обязан назвать её в графе
+   * «чем проверяется», и форма этой графы уже сверяется дословно. */
+  const DEBT_GUARD = {
+    map: "Покрытие карты",
+    tests: "Покрытие тестов",
+    decisions: "Пометки решений",
+    invariants: "Пометки CONSTRAINT",
+    constants: "Константы настроек описаны",
+    readme: "У компонента есть README",
+    subjects: "Предмет из кода назван в своём файле базы",
+    comments: "Доля комментариев в файле",
+    tongue: "Язык внутри корня исходников",
+  };
+  // Сверка ГОВОРИЛА «все стоят шагами плана», а проверяла только что план
+  // вообще есть. Замерено ревизией результата: стенд объявил долг по языку,
+  // шага про язык в плане не было ни одного — и строка прогона утверждала
+  // обратное. Утверждение без проверки хуже молчания: на него полагаются.
+  const debtStepless = [];
+  {
+    const at =
+      CONFIG.transition == null
+        ? null
+        : path.join(BASE, CONFIG.transition.file);
+    const plan = at !== null && existsSync(at) ? readFileSync(at, "utf8") : "";
+    for (const kind of debtDeclared) {
+      const guard = DEBT_GUARD[kind];
+      if (guard === undefined) continue;
+      if (!plan.includes("«" + guard + "»"))
+        debtStepless.push(
+          kind + " — шага, закрывающего «" + guard + "», в плане перехода нет",
+        );
+    }
+  }
   // Баннер перехода печатает сверка базы — но её зовут не на каждой правке, а
   // переход измеряется днями. Между двумя прогонами о нём забывают, и файл
   // плана лежит непрочитанным ровно столько же.
@@ -13728,12 +13762,20 @@ if (mode === "verify") {
           " по видам " +
           debtDeclared.join(", ") +
           " — а плана перехода нет"
-        : "  объявлено долга: " +
-          debtTotal +
-          " по видам " +
-          debtDeclared.join(", ") +
-          " — все стоят шагами плана",
+        : debtStepless.length > 0
+          ? "  объявлено долга: " +
+            debtTotal +
+            " по видам " +
+            debtDeclared.join(", ") +
+            " — а шагов под них нет: " +
+            debtStepless.length
+          : "  объявлено долга: " +
+            debtTotal +
+            " по видам " +
+            debtDeclared.join(", ") +
+            " — все стоят шагами плана",
   );
+  for (const one of debtStepless) console.log("    " + one);
   if (debtUnplanned)
     console.log(
       "    долг держится только настройкой: заполнить `transition` и" +
