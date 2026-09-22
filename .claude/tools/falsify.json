@@ -903,6 +903,12 @@
       "replace": "\"check\": \"npm run типов-нет && npm run typecheck"
     },
     {
+      "section": "Настройка сборки знает про тесты",
+      "file": "vite.config.ts",
+      "find": "from \"vitest/config\"",
+      "replace": "from \"vite\""
+    },
+    {
       "section": "Привезённый код виден компилятору",
       "file": "tsconfig.json",
       "find": "\"src\"",

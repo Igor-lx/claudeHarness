@@ -2470,6 +2470,7 @@ const CHECK_SECTIONS = [
   "Один предмет — один файл настройки",
   "Конвейер зовёт проверки",
   "Связка проверок зовёт живые звенья",
+  "Настройка сборки знает про тесты",
   "Привезённый код виден компилятору",
   "Конфиг снятого звена служит живому",
   "Настройка проекта знает все поля семени",
@@ -9134,6 +9135,38 @@ if (mode === "verify") {
             );
           }
       }
+
+      // Секция тестов в настройке сборщика требует, чтобы `defineConfig`
+      // был взят из `vitest/config`, а не из `vite`: у сборщика в типе
+      // такого поля нет вовсе. Привозит секцию обвязка, а импорт остаётся
+      // проектным — и звено типов краснеет на СВОЕЙ ЖЕ настройке, сообщением
+      // «'test' does not exist in type UserConfigExport», которое про тесты
+      // не говорит ничего.
+      //
+      // Замерено посадкой стенда с раскладкой умолчания: слияние дописало
+      // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
+      const viteDrift = [];
+      let viteLooked = 0;
+      {
+        for (const name of ["vite.config.ts", "vite.config.js"]) {
+          const at = path.join(BASE, "..", name);
+          if (!existsSync(at)) continue;
+          viteLooked += 1;
+          const body = readFileSync(at, "utf8");
+          if (!body.includes("test: {")) continue;
+          if (body.includes("vitest/config")) continue;
+          viteDrift.push(
+            name +
+              " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
+          );
+        }
+      }
+      checkHead("Настройка сборки знает про тесты", {
+        n: viteLooked,
+        unit: "настроек сборки",
+      });
+      console.log("  расхождений: " + viteDrift.length);
+      for (const one of viteDrift) console.log("    " + one);
       checkHead("Привезённый код виден компилятору", {
         n: seedCode,
         unit: "файлов кода, привезённых обвязкой",
