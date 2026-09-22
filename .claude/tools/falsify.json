@@ -693,6 +693,29 @@
       ]
     },
     {
+      "section": "Узел, тянущий соседа, назван документом",
+      "edits": [
+        {
+          "create": {
+            "path": "src/components/Тянущий/узел.tsx",
+            "text": "import Сосед from \"../Ведомый/узел\";\n\nfunction Тянущий() {\n  return <Сосед />;\n}\n\nexport default Тянущий;"
+          }
+        },
+        {
+          "create": {
+            "path": "src/components/Тянущий/docs/README.md",
+            "text": "# Тянущий\n\nЗачем папка: поломка для рецепта фальсификации.\nЧто берут: ничего.\nЧто тянется следом: ничего.\nЧего нельзя: ничего."
+          }
+        },
+        {
+          "create": {
+            "path": "src/components/Ведомый/узел.tsx",
+            "text": "function Ведомый() {\n  return null;\n}\n\nexport default Ведомый;"
+          }
+        }
+      ]
+    },
+    {
       "section": "Язык внутри корня исходников",
       "file": "src/app/App.tsx",
       "append": "// комментарий не на том языке"
