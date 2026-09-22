@@ -10039,6 +10039,7 @@ if (mode === "verify") {
   // одному, а собираются в приложение, и обвязка обязана держать сборку
   // штатно, а не потому, что повезло.
   const pulled = [];
+  const pullSeen = [];
   let pullLooked = 0;
   {
     const layers = CONFIG.componentsAt ?? ["components"];
@@ -10057,6 +10058,11 @@ if (mode === "verify") {
         if (there === null || there === here) continue;
         pullLooked += 1;
         const doc = norm(path.join(ROOT, here, "docs", "README.md"));
+        // Пара называется ВСЕГДА, даже когда документа ещё нет: строение
+        // приложения — кто кого тянет — видно из графа импортов и без
+        // чтения кода, и прятать его до перехода незачем. Находкой это
+        // становится только при живом документе, который молчит.
+        pullSeen.push(here + " → " + there);
         if (!existsSync(doc)) continue;
         if (readFileSync(doc, "utf8").includes(there)) continue;
         pulled.push(
@@ -10074,6 +10080,10 @@ if (mode === "verify") {
   });
   console.log("  не названо документом: " + pulled.length);
   for (const one of pulled) console.log("    " + one);
+  if (pullSeen.length)
+    console.log(
+      "  узлы, тянущие соседей: " + [...new Set(pullSeen)].join(", "),
+    );
   const noReadme = [];
   let readmeBlind = null;
   let componentDirs = 0;
