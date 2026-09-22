@@ -12011,9 +12011,13 @@ if (mode === "verify") {
           if (!claim.length) continue;
           const at = path.join(REPO, e.to);
           if (!existsSync(at)) continue;
-          emptyLooked += 1;
-          if (frameLives) continue;
+          // Корпус считается в СТРОКАХ, а не в файлах: находки — строки, и
+          // пока счёт шёл по файлам, прогон печатал «осмотрено 5» над
+          // списком из 36 находок. Найдено больше, чем осмотрено, —
+          // отличить здоровье от слепоты по такому числу нельзя вовсе.
           const rows = readFileSync(at, "utf8").split(NEWLINE);
+          emptyLooked += rows.length;
+          if (frameLives) continue;
           for (let i = 0; i < rows.length; i += 1) {
             const row = rows[i].trim();
             if (!claim.includes(row) && row !== OPEN) continue;
@@ -12401,7 +12405,7 @@ if (mode === "verify") {
   }
   checkHead("Запись о пустоте не пережила появление кода", {
     n: emptyLooked,
-    unit: "записей о пустоте в семенах",
+    unit: "строк в файлах, куда приехала пометка пустоты",
   });
   console.log(
     frameLives
