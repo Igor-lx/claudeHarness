@@ -8395,6 +8395,10 @@ if (mode === "verify") {
       for (const entry of readdirSync(dir)) {
         const full = norm(path.join(dir, entry));
         if (!statSync(full).isDirectory()) continue;
+        // Общее исключение спрашивается и здесь: на проекте, объявившем
+        // корнем исходников корень репозитория, обход находил папки внутри
+        // `node_modules` и предлагал объявить ЧУЖИЕ таблицы настроек своими.
+        if (outOfTree(entry, full)) continue;
         if (entry === name) found.push(full);
         walk(full);
       }
