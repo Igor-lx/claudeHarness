@@ -32,6 +32,7 @@ import {
   isStylePath,
   isTestPath,
   commentRunsOf,
+  printedIsRed,
   sectionsOf,
   selfCheck,
   touchesRuntime,
@@ -2522,6 +2523,7 @@ const CHECK_SECTIONS = [
   "Не разобрано (проверкой не покрыто)",
   "Конфиг звена цепочки на месте",
   "Таблица сверок описывает существующие сверки",
+  "Рецепт находит место в свежей посадке",
   "Вопрос о планке задан на конечном виде правки",
   "Планка пройдена покритериально",
   "Коммит с кодом накрыт сводом",
@@ -2610,6 +2612,41 @@ const checkHead = (title, looked) => {
   sayLooked(looked.unit, looked.n);
 };
 
+// Какому полю настройки принадлежит предмет сверки. Список нужен трижды:
+// сверке без рецепта — чтобы не числить её долгом там, где ломать нечего, —
+// и рецепту, не нашедшему своего места: если поле пусто, это не устаревший
+// рецепт, а отсутствующий предмет.
+//
+// Второе применение заведено по замеру: посадка в пустой проект дала
+// «рецепт устарел» на сверке, чей предмет в том проекте не заводится вовсе.
+// Долг, который проект не может закрыть, перестают читать целиком.
+//
+// Третье — сверке «Рецепт находит место в свежей посадке»: рецепт, чей
+// предмет в свежей посадке не заводится, места там и не ищет.
+const RECIPE_NEEDS = {
+  // Ревизия сводов по истории: в песочнице истории нет вовсе — она заводит
+  // свой репозиторий одним коммитом, — и предмета у сверки там не
+  // существует. Опровергнута она замером на стенде: коммит, прошедший мимо
+  // ворот флагом, стал красным и остался им.
+  "Коммит с кодом накрыт сводом": "barSince",
+  "Константы настроек описаны": "configDocs",
+  "Точечные исключения линта": "lintExceptions",
+  "Решения адресуемы": "adr",
+  // Предмет — объявленная таблица связей. Её нет — ломать нечего; она есть —
+  // рецепт ломает ОБЪЯВЛЕНИЕ, а не проектное содержимое таблицы.
+  "Связи через DOM и CSS": "domTables",
+  "Находки закрыты": "findings",
+  // Предмет этих трёх — сам переход, и у проекта без него ломать нечего:
+  // все три печатают «перехода нет». Прежде их рецепты сами заводили план,
+  // опираясь на строку `transition: null`, — и у живого проекта сразу после
+  // посадки, где план открыт, места не находили. Красную фальсификацию
+  // получал каждый живой проект в день посадки: ровно там, где рубеж
+  // завершения требует зелёной.
+  "План перехода не потерялся": "transition",
+  "Шаги перехода закрывают измерение": "transition",
+  "Напоминание о переходе включено": "transition",
+};
+
 // --- falsify: сверки ещё ловят -----------------------------------------------
 //
 // Фальсификация при заведении сверки доказывает, что она ловила ТОГДА. Через
@@ -2623,6 +2660,7 @@ const checkHead = (title, looked) => {
 // Сверки без рецепта печатаются списком. Этот список — долг, и он обязан
 // укорачиваться: сверка, заведённая без рецепта, снова становится
 // одноразово фальсифицированной.
+
 if (mode === "falsify") {
   const NEWLINE = String.fromCharCode(10);
   const recipesAt = path.join(TOOL_DIR, "falsify.json");
@@ -2715,38 +2753,6 @@ if (mode === "falsify") {
   // и это не порча рецепта, а его природа. Смешанный с настоящей порчей, он
   // давал посаженному проекту семнадцать строк «рецепт устарел» на первом же
   // прогоне — вид, в котором долг не читают вовсе.
-  // Какому полю настройки принадлежит предмет сверки. Список нужен дважды:
-  // сверке без рецепта — чтобы не числить её долгом там, где ломать нечего, —
-  // и рецепту, не нашедшему своего места: если поле пусто, это не устаревший
-  // рецепт, а отсутствующий предмет.
-  //
-  // Второе применение заведено по замеру: посадка в пустой проект дала
-  // «рецепт устарел» на сверке, чей предмет в том проекте не заводится вовсе.
-  // Долг, который проект не может закрыть, перестают читать целиком.
-  const NEEDS = {
-    // Ревизия сводов по истории: в песочнице истории нет вовсе — она заводит
-    // свой репозиторий одним коммитом, — и предмета у сверки там не
-    // существует. Опровергнута она замером на стенде: коммит, прошедший мимо
-    // ворот флагом, стал красным и остался им.
-    "Коммит с кодом накрыт сводом": "barSince",
-    "Константы настроек описаны": "configDocs",
-    "Точечные исключения линта": "lintExceptions",
-    "Решения адресуемы": "adr",
-    "Связи через DOM и CSS": "domTables",
-    "Находки закрыты": "findings",
-    // Предмет этих трёх — сам переход, и у проекта без него ломать нечего:
-    // все три печатают «перехода нет». Прежде их рецепты сами заводили план,
-    // опираясь на строку `transition: null`, — и у живого проекта сразу после
-    // посадки, где план открыт, места не находили. Красную фальсификацию
-    // получал каждый живой проект в день посадки: ровно там, где рубеж
-    // завершения требует зелёной.
-    "План перехода не потерялся": "transition",
-    "Шаги перехода закрывают измерение": "transition",
-    "Напоминание о переходе включено": "transition",
-    // Предмет — объявленная таблица связей. Её нет — ломать нечего; она есть —
-    // рецепт ломает ОБЪЯВЛЕНИЕ, а не проектное содержимое таблицы.
-    "Связи через DOM и CSS": "domTables",
-  };
   /** Предмет сверки в этом проекте не заводится: поле настройки пусто. */
   /** Карта посадки рядом, разобранная. */
   const seatMapOf = () => {
@@ -2754,7 +2760,7 @@ if (mode === "falsify") {
     return at === null || !existsSync(at) ? {} : readJson(at, {});
   };
   const subjectless = (section) => {
-    const field = NEEDS[section];
+    const field = RECIPE_NEEDS[section];
     if (field !== undefined && CONFIG[field] == null) return true;
     // Семейство отложенных семян: предмет у него не поле настройки, а НАЛИЧИЕ
     // хоть одного семени с пометкой «не на посадке». Пометок не осталось —
@@ -2814,6 +2820,27 @@ if (mode === "falsify") {
       else silent.push(section);
     };
 
+    /** Завести папку со всеми недостающими над ней — и отдать их откат.
+     *
+     * Откат рецепта снимал только файл: папка, заведённая под него, оставалась
+     * в песочнице пустой до конца прогона. Каждый следующий рецепт находил
+     * «Пустой папки под корнем исходников нет» красной, и классификатор
+     * записывал здоровую сверку в «поломка ушла не туда» — то самое отравление
+     * соседом, ради которого откат и заведён. Замерено фальсификацией в пустом
+     * проекте: слоя узлов у него ещё нет, и рецепт, кладущий файл узла,
+     * заводил папку слоя сам. В мастерской слой есть, и там это не видно
+     * никогда.
+     *
+     * Снимается ВЕРХНЯЯ из заведённых — вместе со всем, что под ней. */
+    const makeDirs = (dir) => {
+      let top = null;
+      for (let d = dir; !existsSync(d); d = path.dirname(d)) top = d;
+      mkdirSync(dir, { recursive: true });
+      return () => {
+        if (top !== null) rmSync(top, { recursive: true, force: true });
+      };
+    };
+
     /** Шестая форма: НЕСКОЛЬКО правок разом.
      *
      * Часть сверок держит предмет и его объявление в разных файлах — бочку и
@@ -2849,27 +2876,24 @@ if (mode === "falsify") {
       for (const step of r.edits) {
         if (step.create !== undefined) {
           const madeAt = path.join(tmp, step.create.path);
-          mkdirSync(path.dirname(madeAt), { recursive: true });
+          const dirsBack = makeDirs(path.dirname(madeAt));
           const had = existsSync(madeAt) ? readFileSync(madeAt) : null;
           writeFileSync(
             madeAt,
             step.create.text.split("\n").join(NEWLINE) + NEWLINE,
           );
-          undo.push(() =>
-            had === null ? rmSync(madeAt) : writeFileSync(madeAt, had),
-          );
+          undo.push(() => {
+            if (had === null) rmSync(madeAt);
+            else writeFileSync(madeAt, had);
+            dirsBack();
+          });
           continue;
         }
         // Завести ПУСТУЮ ПАПКУ. Без этого шага сверку «Пустой папки под
         // корнем исходников нет» опровергнуть нечем: любой файл внутри
         // делает папку живой, а словарь умел заводить только файлы.
         if (step.mkdir !== undefined) {
-          const dirAt = path.join(tmp, step.mkdir);
-          const had = existsSync(dirAt);
-          mkdirSync(dirAt, { recursive: true });
-          undo.push(() => {
-            if (!had) rmSync(dirAt, { recursive: true, force: true });
-          });
+          undo.push(makeDirs(path.join(tmp, step.mkdir)));
           continue;
         }
         const stepAt = path.join(tmp, step.file);
@@ -2885,11 +2909,13 @@ if (mode === "falsify") {
         if (step.copyTo !== undefined) {
           const toAt = path.join(tmp, step.copyTo);
           const had = existsSync(toAt) ? readFileSync(toAt) : null;
-          mkdirSync(path.dirname(toAt), { recursive: true });
+          const dirsBack = makeDirs(path.dirname(toAt));
           writeFileSync(toAt, readFileSync(stepAt));
-          undo.push(() =>
-            had === null ? rmSync(toAt) : writeFileSync(toAt, had),
-          );
+          undo.push(() => {
+            if (had === null) rmSync(toAt);
+            else writeFileSync(toAt, had);
+            dirsBack();
+          });
           continue;
         }
         if (step.rename !== undefined) {
@@ -2983,7 +3009,7 @@ if (mode === "falsify") {
       // заведомо битой ссылкой. Заведена при выплате долга рецептов.
       if (r.create !== undefined) {
         const madeAt = path.join(tmp, r.create.path);
-        mkdirSync(path.dirname(madeAt), { recursive: true });
+        const dirsBack = makeDirs(path.dirname(madeAt));
         const had = existsSync(madeAt) ? readFileSync(madeAt) : null;
         writeFileSync(
           madeAt,
@@ -2992,6 +3018,7 @@ if (mode === "falsify") {
         record(r.section, readSections(runVerify(tmp)));
         if (had === null) rmSync(madeAt);
         else writeFileSync(madeAt, had);
+        dirsBack();
         continue;
       }
       const at = path.join(tmp, r.file);
@@ -3012,10 +3039,11 @@ if (mode === "falsify") {
       // посадки есть механизм исключений: непроверяемое исключение хуже
       // отсутствующего.
       let copiedOver = null;
+      let copyDirsBack = () => {};
       if (r.copyTo !== undefined) {
         const toAt = path.join(tmp, r.copyTo);
         copiedOver = existsSync(toAt) ? readFileSync(toAt) : null;
-        mkdirSync(path.dirname(toAt), { recursive: true });
+        copyDirsBack = makeDirs(path.dirname(toAt));
         writeFileSync(toAt, before);
       } else if (r.append !== undefined) {
         // Четвёртая форма: ДОПИСАТЬ. Часть сверок ловит появление новой
@@ -3072,6 +3100,7 @@ if (mode === "falsify") {
         const toAt = path.join(tmp, r.copyTo);
         if (copiedOver === null) rmSync(toAt);
         else writeFileSync(toAt, copiedOver);
+        copyDirsBack();
       } else if (r.rename !== undefined) {
         writeFileSync(at, before);
         rmSync(path.join(tmp, r.rename));
@@ -3098,7 +3127,7 @@ if (mode === "falsify") {
   const uncovered = [];
   for (const s of CHECK_SECTIONS) {
     if (covered.has(s)) continue;
-    const field = NEEDS[s];
+    const field = RECIPE_NEEDS[s];
     if (field !== undefined && CONFIG[field] == null) {
       noSubject.push(s + " — предмета нет: поле `" + field + "` не заполнено");
       continue;
@@ -6032,18 +6061,28 @@ if (mode === "verify") {
     };
   }
   const WARNING = "прогон не роняет";
-  const printedRed = () => {
-    let warned = false;
-    for (const line of SAID) {
-      const title = /^=== (.+) ===$/.exec(line);
-      if (title !== null) {
-        warned = title[1].includes(WARNING);
-        continue;
-      }
-      if (!warned && /^ {4}\S/.test(line)) return true;
-    }
-    return false;
-  };
+  // Сверки, которые СМЯГЧАЕТ флаг посадки: их предмет доделывает фаза 2 —
+  // правила проекта заполняются из ответа разработчика, отложенные семена
+  // сливаются, звенья без инструмента ставит её же шаг. Секция печатает всё
+  // найденное: отчёт фазы 1 берёт отсюда список работы. Прогон она не роняет,
+  // пока флаг стоит.
+  //
+  // Список один, и баннер посадки печатает его отсюда же: прежде баннер,
+  // инструкция и настройка перечисляли смягчения прозой, и за два переделки
+  // вердикта проза разошлась с кодом — называла смягчённым долг карты,
+  // которого флаг давно не трогал, и молчала о том, что смягчений не стало
+  // вовсе.
+  const SOFT_WHILE_SEATING = [
+    "Шаблон правил заполнен",
+    "Отложенное семя слито",
+    "Инструменты звеньев на месте",
+  ];
+  const printedRed = () =>
+    printedIsRed(
+      SAID,
+      WARNING,
+      new Set(seatingIsUp() ? SOFT_WHILE_SEATING : []),
+    );
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
   const NEWLINE = String.fromCharCode(10);
@@ -9565,19 +9604,20 @@ if (mode === "verify") {
         n: CONFIG.toolchain.length,
         unit: "звеньев цепочки",
       });
-      const upNow = seatingIsUp();
       console.log(
         "  звеньев цепочки без инструмента: " +
           gaps.length +
-          (upNow ? " — флаг посадки поднят, ставит их её же шаг" : ""),
+          (seatingIsUp()
+            ? " — флаг посадки поднят: прогон не роняет, ставит их её же шаг"
+            : ""),
       );
-      for (const g of gaps) console.log(upNow ? g.replace(/^ {4}/, "  ") : g);
+      for (const g of gaps) console.log(g);
       if (gaps.length) {
         console.log(
-          "  Поставить и настроить — фаза 2 посадки, раздел «Умолчания» в инструкции",
+          "  Поставить и настроить — шаг 6 фазы 1 посадки, «Поставить пакеты».",
         );
         console.log(
-          "  на полке. Инструмент ставится вместе со своей настройкой, одной правкой:",
+          "  Инструмент ставится вместе со своей настройкой, одной правкой:",
         );
         console.log("  поставленный без неё проходит, не проверив ничего.");
       }
@@ -11972,6 +12012,98 @@ if (mode === "verify") {
   );
   for (const d of checksTableDrift) console.log("    " + d);
 
+  // Рецепт фальсификации находит место в СВЕЖЕЙ посадке.
+  //
+  // Рецепты едут с обвязкой в каждый проект, а пишутся в мастерской — и
+  // якорь, списанный с её правленого файла, в свежепосаженном проекте не
+  // находится: семя говорит иное. Режим фальсификации называет такой рецепт
+  // «написан под свой проект», и прогон остаётся зелёным — пометка гасит
+  // сигнал, о чём она сама и предупреждает. Замерено посадкой руками в пустой
+  // проект: семь рецептов из ста шестнадцати не нашли места, и три из них не
+  // находили его НИГДЕ, в мастерской тоже. Три сверки молча потеряли
+  // фальсификацию, а видно это было только как «работа проекта».
+  //
+  // Свежая посадка — это семена и сама обвязка, больше ничего. Поэтому вопрос
+  // простой: каждый якорь рецепта — строка, которую он ищет, и строка, за
+  // которой дописывает, — стоит в СЕМЕНИ того файла, куда рецепт нацелен, или
+  // в файле обвязки. Файл, которого посадка не кладёт, рецепт заводит сам.
+  // Рецепт сверки, чей предмет посадка не заводит — поле настройки в семени
+  // пусто, — места в ней и не ищет.
+  //
+  // Живой проект правит свои файлы, и там рецепт вправе не найти места:
+  // это законно и печатается режимом отдельно. Здесь спрашивается другое —
+  // что рецепт работает хотя бы там, откуда начинает каждый проект.
+  const recipeAdrift = [];
+  let recipeAnchors = 0;
+  {
+    const recipesAt = path.join(TOOL_DIR, "falsify.json");
+    const mapAt = shelfAt("seat/map.json");
+    if (existsSync(recipesAt) && mapAt !== null && existsSync(mapAt)) {
+      const seat = readJson(mapAt, {});
+      const seedFrom = new Map(
+        [
+          ...(seat.copy ?? []),
+          ...(seat.onSubject ?? []),
+          ...(seat.onTransition ?? []),
+        ].map((e) => [e.to, e.from]),
+      );
+      const shelfRel = path.relative(REPO, SHELF).split(path.sep).join("/");
+      const seedConfigAt = shelfAt("seat/templates/graph.config.mjs");
+      const seedConfig = existsSync(seedConfigAt)
+        ? readFileSync(seedConfigAt, "utf8")
+        : "";
+      const idleInSeat = (section) => {
+        const field = RECIPE_NEEDS[section];
+        return (
+          field !== undefined &&
+          seedConfig.includes(NEWLINE + "  " + field + ": null,")
+        );
+      };
+      // Текст файла в свежей посадке: семя, если посадка его кладёт; сам
+      // файл, если он из обвязки; иначе такого файла там нет.
+      const freshText = (file) => {
+        const at = seedFrom.has(file)
+          ? shelfAt(seedFrom.get(file))
+          : file.startsWith(shelfRel + "/")
+            ? path.join(REPO, file)
+            : null;
+        return at !== null && existsSync(at) ? readFileSync(at, "utf8") : null;
+      };
+      for (const r of readJson(recipesAt, {}).recipes ?? []) {
+        if (idleInSeat(r.section)) continue;
+        for (const step of r.edits ?? [r]) {
+          // Шаг без адреса заводит свой предмет сам: файл или папку.
+          if (step.file === undefined) continue;
+          recipeAnchors += 1;
+          const say = (why) =>
+            recipeAdrift.push(
+              "«" + r.section + "» — " + step.file + ": " + why,
+            );
+          const text = freshText(step.file);
+          if (text === null) {
+            say(
+              "в свежей посадке такого файла нет — рецепт обязан завести его сам",
+            );
+            continue;
+          }
+          if (step.find !== undefined && !text.includes(step.find))
+            say("якоря нет в семени — «" + step.find.split("\n")[0] + "»");
+          if (
+            step.after !== undefined &&
+            !text.split(NEWLINE).some((l) => l.trim() === step.after)
+          )
+            say("якоря дописывания нет в семени — «" + step.after + "»");
+        }
+      }
+    }
+  }
+  checkHead("Рецепт находит место в свежей посадке", {
+    n: recipeAnchors,
+    unit: "шагов рецептов с адресом файла",
+  });
+  console.log("  не найдут места: " + recipeAdrift.length);
+  for (const one of recipeAdrift) console.log("    " + one);
+
   // Флаг посадки читается ОДНИМ способом на весь инструмент.
   //
   // Значений в ходу три, и прежде баннер смотрел «не null», а две сверки —
@@ -11981,10 +12113,14 @@ if (mode === "verify") {
   if (seatingIsUp()) {
     console.log("");
     banner("ПОСАДКА НЕ ЗАВЕРШЕНА");
-    console.log("  Фаза 1 пройдена, фаза 2 — нет. Пока флаг стоит, три сверки");
-    console.log("  смягчены: незаполненные места заготовок, долг карты и");
-    console.log("  несобранная цепочка проверок. Снять флаг — отдельное");
-    console.log("  действие, и делает его фаза 2, а не прогон.");
+    console.log(
+      "  Флаг посадки стоит: фаза 2 ещё не закончена. Пока он стоит,",
+    );
+    console.log("  прогон не роняют сверки, чей предмет доделывает фаза 2.");
+    console.log("  Найденное они печатают целиком — это и есть её работа:");
+    for (const one of SOFT_WHILE_SEATING) console.log("  «" + one + "»");
+    console.log("  Снять флаг — отдельное действие, и делает его фаза 2, а не");
+    console.log("  прогон.");
   }
 
   // 44b. Вопрос о планке задан на конечном виде правки.
@@ -12545,6 +12681,20 @@ if (mode === "verify") {
     const NPX = /npx ([@a-z0-9/-]+)/g;
     const MODE = /graph\.mjs ([a-z-]+)/g;
     const BASE_FILE = /`(\d\d-[a-z]+\.md)`/g;
+    const SEED_PATH = /seat\/templates\/([A-Za-z0-9_./-]*[A-Za-z0-9_])/g;
+    // Семя → кладёт ли его посадка. Кладёт — всё из `copy`, кроме помеченного
+    // `notAtSeating`; семена по предмету и по переходу — нет.
+    const seatEntries = (() => {
+      const out = new Map();
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt === null || !existsSync(mapAt)) return out;
+      const seat = readJson(mapAt, {});
+      for (const e of seat.copy ?? [])
+        out.set(e.from, { laidBySeat: e.notAtSeating == null });
+      for (const e of [...(seat.onSubject ?? []), ...(seat.onTransition ?? [])])
+        out.set(e.from, { laidBySeat: false });
+      return out;
+    })();
     // Помощник прозы отдаёт ПАРУ ПУТЕЙ — короткий для сообщений и полный для
     // чтения, — а не текст. Первая редакция сканировала строку полного пути и
     // молчала всегда: сверка, заведённая против зелёного без проверки, сама им
@@ -12579,6 +12729,43 @@ if (mode === "verify") {
       for (const m of flat.matchAll(BASE_FILE))
         if (!seededBase().has(m[1]))
           say(m[1], "файла базы нет ни в семенах, ни в карте посадки", where);
+      // Пятый вид: СЕМЯ, названное прозой по пути. Что откуда куда и КОГДА
+      // кладётся, объявляет карта, и она единственный источник; проза,
+      // повторяющая это, расходится с ней при первой же правке карты.
+      // Замерено посадкой руками: конфиг мутационного прогона переехал в
+      // посадку, починку записали в шаге 1 — а последний раздел инструкции
+      // по-прежнему велел класть его «не при посадке», руками и потом.
+      //
+      // Спрашивается узко: названное семя существует, и абзац, говорящий
+      // о нём «не при посадке», говорит это про семя, которое карта и правда
+      // не кладёт посадкой. Семена по предмету и по переходу — законно такие.
+      // Единица — абзац, а у таблицы строка: строки таблицы идут подряд без
+      // пустой, и «не на посадке» одной строки иначе цеплялось к семени,
+      // названному другой.
+      const units = flat
+        .split(NEWLINE + NEWLINE)
+        .flatMap((p) =>
+          p.trimStart().startsWith("|") ? p.split(NEWLINE) : [p],
+        );
+      for (const para of units) {
+        const deferred = /не (?:при|на) посадке/.test(para);
+        for (const m of para.matchAll(SEED_PATH)) {
+          const seed = "seat/templates/" + m[1];
+          const entry = seatEntries.get(seed);
+          if (entry === undefined) {
+            const seedAt = shelfAt(seed);
+            if (seedAt === null || !existsSync(seedAt))
+              say(seed, "такого семени на полке нет", where);
+            continue;
+          }
+          if (deferred && entry.laidBySeat)
+            say(
+              seed,
+              "проза кладёт его не при посадке, а карта — посадкой",
+              where,
+            );
+        }
+      }
     }
   }
   checkHead("Названное доктриной исполнимо", {
@@ -14181,6 +14368,27 @@ if (mode === "verify") {
             m[1] +
               " — поле семени настройки без объяснения: форму его узнают ошибкой инструмента",
           );
+      }
+      // Обратная сторона: объяснение БЕЗ поля. Блок, за которым сразу идёт
+      // другой блок, ни к какому полю не относится — а поле, о котором он,
+      // стоит ниже голым либо со вторым, коротким объяснением. Замерено
+      // посадкой руками: объяснение списка тестов вне своей папки стояло над
+      // полем слоёв компонентов, у самого списка было второе, а в настройке
+      // мастерской список не был объяснён вовсе. Сверка выше смотрела только
+      // «есть ли над полем объяснение» и не видела ни того, ни другого.
+      for (let i = 0; i < rows.length; i += 1) {
+        if (!/^ {2}\/\*\*|^ {3}\*/.test(rows[i])) continue;
+        if (!rows[i].trimEnd().endsWith("*/")) continue;
+        let down = i + 1;
+        while (down < rows.length && rows[down].trim() === "") down += 1;
+        if (down >= rows.length || !/^ {2}\/\*\*/.test(rows[down])) continue;
+        let head = i;
+        while (head > 0 && !/^ {2}\/\*\*/.test(rows[head])) head -= 1;
+        fieldMute.push(
+          "«" +
+            rows[head].replace(/^ {2}\/\*\*\s*/, "").slice(0, 60) +
+            "…» — объяснение без поля: за ним сразу другое. Поставить над полем, о котором оно",
+        );
       }
     }
   }

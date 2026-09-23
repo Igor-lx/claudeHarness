@@ -109,6 +109,12 @@
       "replace": "| Ссылки markdownn | адрес в круглых скобках"
     },
     {
+      "section": "Рецепт находит место в свежей посадке",
+      "file": ".claude/tools/falsify.json",
+      "find": "\"find\": \"| M. Модель рендера фреймворка | да |\"",
+      "replace": "\"find\": \"| M. Модель рендера фреймворка | ДА |\""
+    },
+    {
       "section": "Сверки, выключенные при живом предмете",
       "file": ".context/graph.config.mjs",
       "find": "  docsIndex: {\n    dir: \"../docs\",\n    table: \"01-facts.md\",\n    heading: \"| Нужно понять | Файл |\",\n  },",
@@ -124,7 +130,7 @@
     {
       "section": "Заготовки обвязки не разбираются линтом проекта",
       "file": "eslint.config.js",
-      "find": "      \".claude/seat/templates\",",
+      "find": "      \".claude\",",
       "replace": "",
       "own": true
     },
@@ -153,8 +159,8 @@
       "edits": [
         {
           "file": ".context/graph.config.mjs",
-          "find": "  seating: null,",
-          "replace": "  seating: 1,"
+          "find": "  seating: ",
+          "replace": "  seating: 1 ?? "
         },
         {
           "file": ".claude/seat/templates/stryker.config.json",
@@ -191,8 +197,8 @@
     {
       "section": "Находки закрыты",
       "file": ".context/16-findings.md",
-      "find": "«Проза целиком попадает в корпус сверок»",
-      "replace": "«Проза целиком читается сверками»"
+      "find": "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |",
+      "replace": "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n| 9999 | проба | проба |  | «нечем» | закрыта |"
     },
     {
       "section": "Объявленный долг назван планом перехода",
@@ -398,8 +404,8 @@
     {
       "section": "Правила направления",
       "file": ".context/graph.config.mjs",
-      "find": "  rulesHeading: null,",
-      "replace": "  rulesHeading: \"| Слой | Кому разрешено |\","
+      "find": "  rulesHeading: ",
+      "replace": "  rulesHeading: \"| Слой | Кому разрешено |\" ?? "
     },
     {
       "section": "Правила изоляции",
@@ -539,8 +545,8 @@
       "edits": [
         {
           "file": ".context/graph.config.mjs",
-          "find": "  rulesHeading: null,",
-          "replace": "  rulesHeading: \"Проба направления\","
+          "find": "  rulesHeading: ",
+          "replace": "  rulesHeading: \"Проба направления\" ?? "
         },
         {
           "file": ".context/00-map.md",
@@ -815,10 +821,10 @@
     },
     {
       "section": "Файл, написанный обвязкой, читается",
-      "own": true,
-      "file": ".context/tested-ledger.json",
-      "find": "{",
-      "replace": "{ это не json"
+      "create": {
+        "path": ".context/tested-ledger.json",
+        "text": "{ это не json"
+      }
     },
     {
       "section": "Диапазон среды объявлен",
@@ -835,14 +841,8 @@
     },
     {
       "section": "Незамеренное названо находкой",
-      "own": true,
-      "edits": [
-        {
-          "file": ".context/01-facts.md",
-          "find": "| Где что лежит, что уже решено | сотни, слов",
-          "replace": "| Где что лежит, что уже решено | не мерено | слов"
-        }
-      ]
+      "file": ".context/01-facts.md",
+      "append": "Проба: цена яруса входа не мерено."
     },
     {
       "section": "Файл базы о живом коде назвал его адрес",
@@ -903,8 +903,8 @@
       "edits": [
         {
           "file": ".context/graph.config.mjs",
-          "find": "  mutationConfig: null,",
-          "replace": "  mutationConfig: \"../stryker.config.json\","
+          "find": "  mutationConfig: ",
+          "replace": "  mutationConfig: \"../нет-такого-конфига.json\" ?? "
         }
       ]
     },
@@ -933,6 +933,11 @@
           "append": "\nПрогон закрывают командой `npm run zznone`.\n"
         }
       ]
+    },
+    {
+      "section": "Названное доктриной исполнимо",
+      "file": ".claude/rules/close.md",
+      "append": "\nЕдинственный шаг, который делают не при посадке: положить\n`seat/templates/stryker.config.json` в корень.\n"
     },
     {
       "section": "Конвейер зовёт проверки",
@@ -998,8 +1003,10 @@
     },
     {
       "section": "Шаблон правил заполнен",
-      "file": "CLAUDE.md",
-      "append": "<!-- ЗАПОЛНИТЬ -->\nОтвечать по слотам.\n<!-- /ЗАПОЛНИТЬ -->"
+      "create": {
+        "path": "CLAUDE.md",
+        "text": "# Проба\n\nПравила заполнены.\n\n<!-- ЗАПОЛНИТЬ -->\nОтвечать по слотам.\n<!-- /ЗАПОЛНИТЬ -->"
+      }
     },
     {
       "section": "Объявленный долг назван планом перехода",

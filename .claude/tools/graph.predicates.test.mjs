@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import * as vocabulary from "./graph.predicates.mjs";
 
-const { PREDICATE_CASES, classifyRun, inComment, sectionsOf, selfCheck } =
-  vocabulary;
+const {
+  PREDICATE_CASES,
+  classifyRun,
+  inComment,
+  printedIsRed,
+  sectionsOf,
+  selfCheck,
+} = vocabulary;
 
 /** Перевод строки — тот же, которым инструмент разбирает свой вывод. */
 const NEWLINE = String.fromCharCode(10);
@@ -140,6 +146,46 @@ describe("sectionsOf", () => {
     const got = sectionsOf(run, NEWLINE);
     for (const red of got.values())
       for (const line of red) expect(line.startsWith("    ")).toBe(true);
+  });
+});
+
+describe("printedIsRed", () => {
+  // Вердикт прогона по напечатанному. Смягчённая секция печатает находки той
+  // же формой, что и любая, — иначе рецепт фальсификации её не узнает, — и
+  // прогон не роняет только она сама, а не всё, что идёт за ней.
+  const WARN = "прогон не роняет";
+  const none = new Set();
+  const lines = [
+    "=== Шаблон ===",
+    "  осталось: 1",
+    "    CLAUDE.md: <ИМЯ ПРОЕКТА>",
+    "=== Версии (предупреждение, прогон не роняет) ===",
+    "    npm выше проверенной",
+    "=== Карта ===",
+    "  не упомянуто: 0",
+  ];
+
+  it("краснеет на находке в обычной секции", () => {
+    expect(printedIsRed(lines, WARN, none)).toBe(true);
+  });
+
+  it("не краснеет на находке предупреждения", () => {
+    expect(printedIsRed(lines.slice(3), WARN, none)).toBe(false);
+  });
+
+  it("не краснеет на находке смягчённой секции", () => {
+    expect(printedIsRed(lines, WARN, new Set(["Шаблон"]))).toBe(false);
+  });
+
+  it("смягчение кончается на заголовке следующей секции", () => {
+    const after = [...lines, "    src/zzProbe.ts"];
+    expect(printedIsRed(after, WARN, new Set(["Шаблон"]))).toBe(true);
+  });
+
+  it("строка в два пробела находкой не является", () => {
+    expect(printedIsRed(["=== А ===", "  проверено: 3"], WARN, none)).toBe(
+      false,
+    );
   });
 });
 
