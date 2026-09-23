@@ -9343,7 +9343,50 @@ if (mode === "verify") {
           linkHasSubject(one.script),
         );
         const livePacks = new Set(live.flatMap((one) => one.packages ?? []));
-        for (const link of CONFIG.toolchain) {
+        // Спрашивается СЕМЯ, а не настройка проекта. Звено, у которого
+        // предмета нет, проект снимает из своей цепочки ЦЕЛИКОМ — так
+        // велит инструкция, — и охранять его конфиг стало бы нечем:
+        // сверка смотрела бы в список, из которого звено уже вычеркнуто.
+        // Семя знает все звенья и их инструменты, и знание это не
+        // зависит от того, что проект у себя оставил.
+        //
+        // Замерено повторной посадкой в проект на обычном JavaScript:
+        // звено типов снято по инструкции, конфиг компилятора унесён
+        // вместе с ним, и живое звено линта снова падало разбором на
+        // файлах самой обвязки — при зелёном прогоне.
+        const seedLinks = (() => {
+          const at = shelfAt("seat/templates/graph.config.mjs");
+          if (at === null || !existsSync(at)) return [];
+          const body = readFileSync(at, "utf8");
+          const from = body.indexOf("toolchain: [");
+          if (from < 0) return [];
+          const out = [];
+          for (const piece of body.slice(from).split("    {")) {
+            const pick = (key) => {
+              const k = piece.indexOf(key + ": ");
+              if (k < 0) return null;
+              const q1 = piece.indexOf(String.fromCharCode(34), k);
+              if (q1 < 0) return null;
+              const q2 = piece.indexOf(String.fromCharCode(34), q1 + 1);
+              return q2 < 0 ? null : piece.slice(q1 + 1, q2);
+            };
+            const name = pick("script");
+            if (name === null) continue;
+            const conf = pick("config");
+            const packs = (() => {
+              const k = piece.indexOf("packages: [");
+              if (k < 0) return [];
+              const end = piece.indexOf("]", k);
+              const parts = piece.slice(k, end).split(String.fromCharCode(34));
+              const out = [];
+              for (let i = 1; i < parts.length; i += 2) out.push(parts[i]);
+              return out;
+            })();
+            out.push({ script: name, config: conf, packages: packs });
+          }
+          return out;
+        })();
+        for (const link of seedLinks) {
           if (linkHasSubject(link.script)) continue;
           if (link.config == null) continue;
           const shared = (link.packages ?? []).filter((one) =>

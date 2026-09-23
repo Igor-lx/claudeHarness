@@ -972,7 +972,7 @@
           "replace": "\"chainScripts\": [\n    { \"name\": \"звено-без-предмета\", \"recognise\": null, \"needsFiles\": [\"нетакогорасширения\"] },"
         },
         {
-          "file": ".context/graph.config.mjs",
+          "file": ".claude/seat/templates/graph.config.mjs",
           "find": "  toolchain: [",
           "replace": "  toolchain: [\n    {\n      script: \"звено-без-предмета\",\n      packages: [\"typescript\"],\n      template: null,\n      config: \"конфига-нет.json\",\n      why: \"поломка: звено без предмета, чей инструмент служит живому\",\n    },"
         }
