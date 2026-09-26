@@ -648,6 +648,7 @@ export const CONFIG = {
       packages: ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"],
       template: "seat/templates/stryker.config.json",
       inChain: false,
+      why: "мутации: сколько посаженных поломок набор тестов ловит на деле",
     },
     {
       // Звено покрытия было объявлено цепочкой и написано в манифест каждой

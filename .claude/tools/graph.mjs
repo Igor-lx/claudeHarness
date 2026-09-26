@@ -6177,6 +6177,34 @@ if (mode === "verify") {
     const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
     return own.length > 0 ? own : every;
   })();
+  // Звено, которого в проекте нет ПО ЕГО УСТРОЙСТВУ, а не по недосмотру.
+  // Два случая, оба из правил слияния манифеста. Семенное имя звена занято
+  // другой работой — скрипт под ним есть, а образец звена не совпадает ни с
+  // одним скриптом: у проекта свой раннер тестов, и пакеты, конфиг и семена
+  // звена посадка не кладёт, а расхождение держит план перехода. И спутник,
+  // чьего ведущего звена в проекте нет: покрытие и мутации следуют за
+  // тестами и без них не работают.
+  //
+  // Прежде сверка инструментов спрашивала с такого звена пакеты семени и,
+  // едва посадка снимала флаг, краснела навсегда: проект со своим раннером
+  // не мог стать зелёным ни при какой работе. Замерено посадкой руками в
+  // проект на jest.
+  const linkTakenElsewhere = (script, scripts) => {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt)) return false;
+    const chain = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
+    const one = chain.find((e) => e.name === script);
+    if (one === undefined) return false;
+    const called = (e) =>
+      e?.recognise != null &&
+      Object.values(scripts).some((body) => new RegExp(e.recognise).test(body));
+    if (one.follows != null) {
+      const master = chain.find((e) => e.name === one.follows);
+      if (master?.recognise != null && !called(master)) return true;
+    }
+    if (one.recognise == null || scripts[script] == null) return false;
+    return !called(one);
+  };
   const linkHasSubject = (script) => {
     // Звено мутационного прогона беспредметно там, где прогон не заявлен:
     // поле настройки пусто — и спрашивать с проекта его пакеты не за что.
@@ -9264,9 +9292,14 @@ if (mode === "verify") {
       ...Object.keys(pkg?.devDependencies ?? {}),
     ]);
     const gaps = [];
+    const elsewhere = [];
     for (const link of CONFIG.toolchain) {
       // Звено без предмета пробелом не является: его не дописывают намеренно.
       if (!linkHasSubject(link.script)) continue;
+      if (linkTakenElsewhere(link.script, scripts)) {
+        elsewhere.push(link.script);
+        continue;
+      }
       // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
       const own = linkOwnName(link.script, scripts) ?? link.script;
       const noScript = link.script != null && scripts[own] == null;
@@ -9283,7 +9316,7 @@ if (mode === "verify") {
       gaps.push(
         `    ${link.script ?? "звено"} — ${what}` +
           NEWLINE +
-          `      зачем: ${link.why}` +
+          `      зачем: ${link.why ?? "не сказано в настройке"}` +
           NEWLINE +
           (link.template == null
             ? "      настраивается руками: шаблона на полке нет намеренно, конфиг" +
@@ -9419,9 +9452,9 @@ if (mode === "verify") {
         );
         const livePacks = new Set(live.flatMap((one) => one.packages ?? []));
         // Спрашивается СЕМЯ, а не настройка проекта. Звено, у которого
-        // предмета нет, проект снимает из своей цепочки ЦЕЛИКОМ — так
-        // велит инструкция, — и охранять его конфиг стало бы нечем:
-        // сверка смотрела бы в список, из которого звено уже вычеркнуто.
+        // предмета нет, проект вправе вычеркнуть из своего списка звеньев
+        // целиком, — и охранять его конфиг стало бы нечем: сверка смотрела
+        // бы в список, из которого звено уже вычеркнуто.
         // Семя знает все звенья и их инструменты, и знание это не
         // зависит от того, что проект у себя оставил.
         //
@@ -9648,6 +9681,12 @@ if (mode === "verify") {
             : ""),
       );
       for (const g of gaps) console.log(g);
+      if (elsewhere.length)
+        console.log(
+          "  у проекта своё устройство, не пробел: " +
+            elsewhere.join(", ") +
+            " — имя звена занято своей работой либо нет ведущего звена; расхождение с умолчанием держит план перехода",
+        );
       if (gaps.length) {
         console.log(
           "  Поставить и настроить — шаг 6 фазы 1 посадки, «Поставить пакеты».",
@@ -13956,9 +13995,25 @@ if (mode === "verify") {
         ? (JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [])
         : [];
     const idleSaid = new Set();
+    // Конфиг звена без предмета, нужный ЖИВОМУ звену, законен: его требует
+    // соседняя сверка «Конфиг снятого звена служит живому». Прежде эта
+    // сверка требовала звать его инструмент — то есть обе вместе требовали
+    // противоположного от одного файла, и проект на обычном JavaScript не
+    // мог стать зелёным ни с конфигом компилятора, ни без него. Замерено
+    // посадкой руками.
+    const livePacks = new Set(
+      CONFIG.toolchain
+        .filter((one) => linkHasSubject(one.script))
+        .flatMap((one) => one.packages ?? []),
+    );
     for (const link of CONFIG.toolchain) {
       if (link.config == null) continue;
       if (!existsSync(path.join(REPO, link.config))) continue;
+      if (
+        !linkHasSubject(link.script) &&
+        (link.packages ?? []).some((one) => livePacks.has(one))
+      )
+        continue;
       const one = chain.find((e) => e.name === link.script);
       if (one === undefined || one.recognise == null) continue;
       const re = new RegExp(one.recognise);
