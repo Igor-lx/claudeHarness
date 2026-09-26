@@ -9584,6 +9584,47 @@ if (mode === "verify") {
           );
         }
       }
+      // Подготовка прогона легла — раннер обязан её звать. Правило слияния
+      // «дописать в конфиг раннера область сбора, и только её» оставляло
+      // семя подготовки лежать мёртвым: реестр тестов называл его уборкой
+      // между тестами, а раннер проекта с `globals: false` его не читал, и
+      // вторая же отрисовка в одном файле нашла бы две копии узла. Замерено
+      // посадкой руками в проект со своей секцией тестов.
+      {
+        const setupAt = shelfAt("seat/map.json");
+        const setupSeed =
+          setupAt !== null && existsSync(setupAt)
+            ? (readJson(setupAt, {}).copy ?? []).find((e) =>
+                e.from.endsWith("tests/setup.ts"),
+              )
+            : undefined;
+        if (
+          setupSeed !== undefined &&
+          existsSync(path.join(REPO, setupSeed.to))
+        ) {
+          const runnerConf = [
+            "vitest.config.ts",
+            "vitest.config.js",
+            "vitest.config.mts",
+            "vite.config.ts",
+            "vite.config.js",
+            "vite.config.mts",
+          ]
+            .map((n) => path.join(BASE, "..", n))
+            .filter((at) => existsSync(at))
+            .map((at) => readFileSync(at, "utf8"))
+            .find((body) => body.includes("test: {"));
+          viteLooked += 1;
+          if (
+            runnerConf !== undefined &&
+            !runnerConf.includes(setupSeed.to.replace(/^src\//, ""))
+          )
+            viteDrift.push(
+              setupSeed.to +
+                " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
+            );
+        }
+      }
       checkHead("Настройка сборки знает про тесты", {
         n: viteLooked,
         unit: "настроек сборки",

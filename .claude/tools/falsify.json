@@ -1027,6 +1027,12 @@
       "replace": "from \"vite\""
     },
     {
+      "section": "Настройка сборки знает про тесты",
+      "file": "vite.config.ts",
+      "find": "    setupFiles: [\"./src/tests/setup.ts\"],",
+      "replace": ""
+    },
+    {
       "section": "Привезённый код виден компилятору",
       "file": "tsconfig.json",
       "find": "\"src\"",
