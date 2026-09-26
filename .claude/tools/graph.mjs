@@ -12721,15 +12721,33 @@ if (mode === "verify") {
     const baseProse = readdirSync(BASE)
       .filter((e) => e.endsWith(".md"))
       .map((e) => [e, path.join(BASE, e)]);
+    // Проза ОБВЯЗКИ говорит семенными именами — она одна на все проекты, —
+    // и спрашивается с манифестом семени. Проза БАЗЫ пишется про этот проект
+    // и его же командами, и спрашивается с его манифестом. Прежде обе шли
+    // по семени: живой проект держит звено типов под именем `types`, базовая
+    // линия записала замер его командой — и сверка ответила «звена нет в
+    // манифесте проекта» про звено, которое там есть. Замерено посадкой
+    // руками в проект со своим именем звена.
+    const own = readJson(path.join(BASE, "..", "package.json"), {});
+    const ownScripts = new Set(Object.keys(own.scripts ?? {}));
+    const ownDeps = Object.keys({
+      ...(own.dependencies ?? {}),
+      ...(own.devDependencies ?? {}),
+    });
+    const shelfSide = new Set(shelfProse().map(([, full]) => full));
     for (const [where, full] of [...shelfProse(), ...baseProse]) {
       runnableLooked += 1;
       const flat = unfenced(readFileSync(full, "utf8"));
+      const fromShelf = shelfSide.has(full);
+      const names = fromShelf ? scripts : ownScripts;
+      const packs = fromShelf ? deps : ownDeps;
+      const whose = fromShelf ? "манифесте семени" : "манифесте проекта";
       for (const m of flat.matchAll(RUN))
-        if (!scripts.has(m[1]))
-          say("npm run " + m[1], "звена нет в манифесте проекта", where);
+        if (!names.has(m[1]))
+          say("npm run " + m[1], "звена нет в " + whose, where);
       for (const m of flat.matchAll(NPX))
-        if (!deps.some((d) => d === m[1] || d.includes(m[1])))
-          say("npx " + m[1], "пакета нет в манифесте проекта", where);
+        if (!packs.some((d) => d === m[1] || d.includes(m[1])))
+          say("npx " + m[1], "пакета нет в " + whose, where);
       for (const m of flat.matchAll(MODE))
         if (!toolModes().includes(m[1]))
           say("graph.mjs " + m[1], "такого режима у инструмента нет", where);

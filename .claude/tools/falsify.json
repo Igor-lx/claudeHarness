@@ -978,6 +978,11 @@
       "append": "\nЕдинственный шаг, который делают не при посадке: положить\n`seat/templates/stryker.config.json` в корень.\n"
     },
     {
+      "section": "Названное доктриной исполнимо",
+      "file": ".context/02-todo.md",
+      "append": "\nОтложенное закрывают командой `npm run zznone`.\n"
+    },
+    {
       "section": "Конвейер зовёт проверки",
       "edits": [
         {
