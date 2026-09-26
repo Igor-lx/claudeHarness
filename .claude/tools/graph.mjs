@@ -15191,6 +15191,27 @@ if (mode === "verify") {
   // Звено, пришедшее красным, обязано иметь открытую строку реестра. Иначе
   // замер сделан и забыт: базовая линия записывается один раз, а напоминать
   // о непочинённом коде нечему.
+  // Имена звеньев цепочки В ЭТОМ проекте: семенное имя и то, под которым
+  // проект держит то же звено, — опознанное тем же образцом, что у слияния
+  // манифеста. Прежде спрашивались одни семенные имена: звено под своим
+  // именем в корпус не входило, и сверка печатала «осмотрено пять» при
+  // шести строках. Проект, назвавший по-своему ВСЕ звенья, получил бы
+  // ложное «в базовой линии не опознано ни одного» — ровно на верно
+  // записанной базовой линии. Замерено посадкой руками в проект со звеном
+  // типов `types`.
+  const chainLinkNames = () => {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt)) return [];
+    const scripts =
+      readJson(path.join(BASE, "..", "package.json"), {}).scripts ?? {};
+    const out = new Set();
+    for (const one of readJson(mapAt, {}).chainScripts ?? []) {
+      out.add(one.name);
+      const own = linkOwnName(one.name, scripts);
+      if (own !== null) out.add(own);
+    }
+    return [...out];
+  };
   const redUnnamed = [];
   let redLinks = 0;
   {
@@ -15200,14 +15221,7 @@ if (mode === "verify") {
     // Спрашивается ЛЮБАЯ строка — и открытая, и закрытая: запись базовой
     // линии есть замер прошлого, и починка звена не должна ронять прогон.
     const open = namedFindings();
-    const chainNames = new Set(
-      (() => {
-        const mapAt = shelfAt("seat/map.json");
-        return mapAt === null || !existsSync(mapAt)
-          ? []
-          : (readJson(mapAt, {}).chainScripts ?? []).map((one) => one.name);
-      })(),
-    );
+    const chainNames = new Set(chainLinkNames());
     // Забор пропускается: строка в нём — ОБРАЗЕЦ формы, а не замер. Пока
     // это не различалось, семя базовой линии показывало форму живой
     // строкой, и свежепосаженный проект получал красное звено, которого
@@ -15233,7 +15247,9 @@ if (mode === "verify") {
         redUnnamed.push(
           "`" +
             m[1] +
-            "` пришло красным, а открытой строки реестра под него нет",
+            "` пришло красным, а открытой строки реестра под него нет. Имя звена в строке реестра пишется в ёлочках: «" +
+            m[1] +
+            "»",
         );
       }
     }
@@ -15248,12 +15264,7 @@ if (mode === "verify") {
   const chainAlive = (() => {
     const at = path.join(BASE, "..", "package.json");
     const scripts = Object.keys(readJson(at, {}).scripts ?? {});
-    const mapAt = shelfAt("seat/map.json");
-    const names =
-      mapAt === null || !existsSync(mapAt)
-        ? []
-        : (readJson(mapAt, {}).chainScripts ?? []).map((one) => one.name);
-    return names.filter((one) => scripts.includes(one)).length;
+    return chainLinkNames().filter((one) => scripts.includes(one)).length;
   })();
   const redBlind = redLinks === 0 && chainAlive > 0;
   checkHead("Красное звено названо находкой", {
