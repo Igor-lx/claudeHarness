@@ -12538,7 +12538,21 @@ if (mode === "verify") {
             CONFIG.mutationConfig,
         );
       else {
-        const area = readJson(at, {}).mutate ?? [];
+        const mutConf = readJson(at, {});
+        const area = mutConf.mutate ?? [];
+        // Раннер тестов по умолчанию ищет тесты, СВЯЗАННЫЕ с мутируемым
+        // файлом. Узел без своих тестов — обычное дело в живом проекте — не
+        // даёт ни одного, и прогон падает стеком «No tests were executed…
+        // check your configuration»: вместо замера «убито ноль» разработчик
+        // получает ошибку, указывающую на настройку обвязки. Замерено
+        // посадкой руками в живой проект с одним компонентом без тестов.
+        if (
+          mutConf.testRunner === "vitest" &&
+          mutConf.vitest?.related !== false
+        )
+          mutGap.push(
+            "раннер ищет только тесты, связанные с мутируемым файлом: узел без своих тестов роняет прогон ошибкой настройки вместо замера. Нужно `vitest.related: false`",
+          );
         if (
           area.length === 0 ||
           area.every((g) => /^<.*>$/.test(String(g).trim()))

@@ -928,6 +928,25 @@
       ]
     },
     {
+      "section": "Мутационный прогон исполним",
+      "edits": [
+        {
+          "file": ".claude/seat/templates/stryker.config.json",
+          "copyTo": "stryker.config.json"
+        },
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  mutationConfig: ",
+          "replace": "  mutationConfig: \"../stryker.config.json\" ?? "
+        },
+        {
+          "file": "stryker.config.json",
+          "find": "\"related\": false",
+          "replace": "\"related\": true"
+        }
+      ]
+    },
+    {
       "section": "В корне узла только сам узел",
       "edits": [
         {
