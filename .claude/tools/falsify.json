@@ -34,6 +34,12 @@
       "rename": "settings.json.hidden"
     },
     {
+      "section": "Разрешения среды",
+      "file": ".claude/settings.json",
+      "find": "\"Bash(git push --force *)\",",
+      "replace": ""
+    },
+    {
       "section": "Применимость разделов планки",
       "file": ".context/01-facts.md",
       "find": "| M. Модель рендера фреймворка | да |",
