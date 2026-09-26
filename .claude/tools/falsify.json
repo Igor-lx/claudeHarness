@@ -389,6 +389,25 @@
       ]
     },
     {
+      "section": "Каркас обвязки не лежит в живом проекте",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzOwn.tsx",
+            "text": "export const zzOwn = 1;"
+          }
+        },
+        {
+          "file": "index.html",
+          "rename": "index.html.hidden"
+        },
+        {
+          "file": "src/app/tests/App.test.tsx",
+          "rename": "App.test.tsx.hidden"
+        }
+      ]
+    },
+    {
       "section": "Цепочка проверок объявлена данными",
       "file": ".claude/seat/map.json",
       "find": "\"typecheck\",",
