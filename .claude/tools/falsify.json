@@ -129,7 +129,7 @@
     },
     {
       "section": "Заготовки обвязки не разбираются линтом проекта",
-      "file": "eslint.config.js",
+      "file": "eslint.config.mjs",
       "find": "      \".claude\",",
       "replace": "",
       "own": true
@@ -533,7 +533,7 @@
     },
     {
       "section": "Выключения правил линта",
-      "file": "eslint.config.js",
+      "file": "eslint.config.mjs",
       "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };",
       "own": true
     },

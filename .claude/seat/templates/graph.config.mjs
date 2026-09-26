@@ -103,7 +103,7 @@ export const CONFIG = {
     "00-map.md",
     "01-facts.md",
     "09-decisions.md",
-    "../eslint.config.js",
+    "../eslint.config.mjs",
     "../.prettierignore",
   ],
   /** Сокращения путей: база пишет адреса коротко, и каждый короткий префикс
@@ -607,8 +607,8 @@ export const CONFIG = {
         "eslint-plugin-react-hooks",
         "eslint-plugin-react-refresh",
       ],
-      template: "seat/templates/eslint.config.js",
-      config: "eslint.config.js",
+      template: "seat/templates/eslint.config.mjs",
+      config: "eslint.config.mjs",
       why: "линт с типами, правила хуков, и он не спорит с форматтером",
     },
     {
@@ -790,7 +790,7 @@ export const CONFIG = {
    *
    * `null` — конфига линта у проекта нет. */
   lintConfigOff: {
-    file: "../eslint.config.js",
+    file: "../eslint.config.mjs",
     allowed: [
       ["**/tests/**/*.{ts,tsx,js,jsx}", "@typescript-eslint/require-await"],
       ["**/tests/**/*.{ts,tsx,js,jsx}", "react-hooks/globals"],

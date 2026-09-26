@@ -1,6 +1,12 @@
-// Конфиг линтера. Кладётся в корень проекта как `eslint.config.js` и правок
+// Конфиг линтера. Кладётся в корень проекта как `eslint.config.mjs` и правок
 // при посадке не требует: проектные послабления дописывают, когда появится
 // первый случай.
+//
+// Имя с `.mjs` потому, что файл написан модулем, а под этим именем он модуль
+// в любом пакете — и с `"type": "module"` в манифесте, и без. Под `.js` в
+// пакете без этого поля среда на каждом прогоне линта печатала
+// предупреждение и разбирала файл дважды. Замерено посадкой руками в проект
+// на обычном JavaScript.
 //
 // ЧТО ЭТОТ ФАЙЛ ДЕРЖИТ, а не оформляет:
 //
@@ -112,7 +118,7 @@ export default tseslint.config(
   // входил в проект компилятора, а здесь компилятора может не быть вовсе.
   {
     files: ["**/*.{js,jsx,mjs,cjs}"],
-    ignores: ["*.config.{js,mjs,cjs}", "eslint.config.js"],
+    ignores: ["*.config.{js,mjs,cjs}", "eslint.config.mjs"],
     extends: [
       js.configs.recommended,
       ...tseslint.configs.recommended,
@@ -137,7 +143,7 @@ export default tseslint.config(
     files: [
       "*.config.{js,mjs,cjs}",
       "*.config.{ts,mts,cts}",
-      "eslint.config.js",
+      "eslint.config.mjs",
       "scripts/**/*.{js,mjs,ts}",
     ],
     // БЕЗ ТИПОВ, и по той же причине, что у исходников на обычном
