@@ -8846,12 +8846,21 @@ if (mode === "verify") {
   };
   if (CONFIG.adr == null) {
     disarmedLooked += 1;
-    const found = SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")).filter(
-      (d) => readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)),
-    );
+    // Папку решений ищут и в документах корня: по обычаю она лежит в
+    // `docs/adr`, а не среди исходников. Пока искали в одних деревьях кода,
+    // проект со своими решениями в документах посадку проходил с пустым
+    // полем, и сверка адресуемости решений не вооружалась никогда —
+    // напоминание, обещанное шагом 2, не звучало. Замерено посадкой руками.
+    const docsAt = path.join(REPO, "docs");
+    const found = [
+      ...SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")),
+      ...(existsSync(docsAt) ? dirsUnder(docsAt, "adr") : []),
+    ].filter((d) => readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)));
     if (found.length)
       disarmed.push(
-        "решения уже есть (" + rel(found[0]) + "), а CONFIG.adr пуст",
+        "решения уже есть (" +
+          path.relative(REPO, found[0]).split(path.sep).join("/") +
+          "), а CONFIG.adr пуст",
       );
   }
   if (CONFIG.configDocs == null) {

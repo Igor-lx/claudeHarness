@@ -128,6 +128,13 @@
       "own": true
     },
     {
+      "section": "Сверки, выключенные при живом предмете",
+      "create": {
+        "path": "docs/adr/0001-proba.md",
+        "text": "# 1. Проба"
+      }
+    },
+    {
       "section": "Проза целиком попадает в корпус сверок",
       "file": ".context/graph.config.mjs",
       "find": "    dir: \"../docs\",",
