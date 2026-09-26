@@ -297,6 +297,21 @@
       "replace": "\"peerDependencies\": { \"react\": \">=18\" },\n  \"dependencies\": {"
     },
     {
+      "section": "Поставка не несёт лишнего",
+      "edits": [
+        {
+          "file": "package.json",
+          "find": "\"private\": true,",
+          "replace": "\"private\": false,\n  \"files\": [\"src\"],"
+        },
+        {
+          "file": "package.json",
+          "find": "\"dependencies\": {",
+          "replace": "\"dependencies\": {\n    \"zz-kod-ne-zovyot\": \"^1.0.0\","
+        }
+      ]
+    },
+    {
       "section": "Каркас обвязки не лежит в живом проекте",
       "edits": [
         {
