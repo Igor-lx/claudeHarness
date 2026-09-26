@@ -513,7 +513,15 @@ const insideRoots = (f) =>
  * кладут под версионный контроль, и первый же `git init` добавил бы к её
  * составу сотни служебных файлов — каждый как «файл полки без объяснения».
  * Найдено до первого коммита. */
+// Песочница фальсификации — тоже вне дерева, и не только для копии. Она
+// лежит ВНУТРИ репозитория минуты подряд, и любой прогон в это время —
+// вторая консоль, крючок среды перед правкой, ворота коммита — видел полную
+// копию проекта своим содержимым: незаявленные файлы правил, прозу мимо
+// корпуса, код вне деревьев. Замерено: сверка базы, пущенная рядом с идущей
+// фальсификацией, покраснела на десятках строк про песочницу. Прежде папка
+// исключалась одной лишь копией, а обходы держали каждый свой список.
 const OUT_OF_TREE = new Set([
+  ".проба-сверок",
   "node_modules",
   ".git",
   ".stryker-tmp",
@@ -1025,13 +1033,12 @@ const barSameMarks = (was, now) =>
  * разошлась бы с первой ровно тогда, когда в исключения добавят папку, —
  * то есть в тот единственный момент, когда расхождение опасно.
  *
- * Папки самих песочниц исключены: копия копии смысла не имеет, а весит
- * столько же. */
-const SANDBOX_DIRS = new Set([".проба-сверок"]);
+ * Папки самих песочниц исключены общим списком того, что вне дерева: копия
+ * копии смысла не имеет, а весит столько же. */
 const sandboxTree = (from, to) => {
   mkdirSync(to, { recursive: true });
   for (const e of readdirSync(from)) {
-    if (OUT_OF_TREE.has(e) || SANDBOX_DIRS.has(e)) continue;
+    if (OUT_OF_TREE.has(e)) continue;
     const src = path.join(from, e);
     if (statSync(src).isDirectory()) sandboxTree(src, path.join(to, e));
     else writeFileSync(path.join(to, e), readFileSync(src));
@@ -2647,6 +2654,19 @@ const RECIPE_NEEDS = {
   "Напоминание о переходе включено": "transition",
 };
 
+// Сверки, чей предмет в ЭТОМ проекте не заводится по его устройству, а не
+// по пустому полю настройки. Такая сверка печатает об этом строку, и режим
+// фальсификации читает её в чистом прогоне: рецепту ломать нечего. Строка
+// объявлена здесь, одна на сверку и на рецепт: написанная в двух местах, она
+// разошлась бы при первой правке. Заведено посадкой руками в живой проект:
+// сверка каркаса у него молчит по устройству, а рецепт правил СВОЙ корневой
+// компонент проекта, и поломку принимала соседняя сверка — «ушла не туда»,
+// то есть красная фальсификация на здоровой обвязке.
+const IDLE_NOTES = {
+  "Каркас не отстал от семени":
+    "  у проекта свой код: каркас спрашивает соседняя сверка",
+};
+
 // --- falsify: сверки ещё ловят -----------------------------------------------
 //
 // Фальсификация при заведении сверки доказывает, что она ловила ТОГДА. Через
@@ -2810,7 +2830,23 @@ if (mode === "falsify") {
   // которой не существует.
   const idle = [];
   try {
-    const clean = readSections(runVerify(tmp));
+    const cleanOut = runVerify(tmp);
+    const clean = readSections(cleanOut);
+    /** Сверка сказала в чистом прогоне, что предмета у неё здесь нет. */
+    const idleByNote = (section) => {
+      const note = IDLE_NOTES[section];
+      if (note === undefined) return false;
+      const rows = cleanOut.split(NEWLINE);
+      const at = rows.indexOf("=== " + section + " ===");
+      if (at < 0) return false;
+      for (
+        let i = at + 1;
+        i < rows.length && !rows[i].startsWith("=== ");
+        i += 1
+      )
+        if (rows[i] === note) return true;
+      return false;
+    };
 
     const record = (section, after) => {
       const { how, why } = classifyRun(clean, after, section);
@@ -2985,7 +3021,7 @@ if (mode === "falsify") {
       // рецептом напоминания о переходе: правка хука ложилась, сверка отвечала
       // «перехода нет: напоминать не о чем», и прогон краснел на законном
       // устройстве проекта.
-      if (subjectless(r.section)) {
+      if (subjectless(r.section) || idleByNote(r.section)) {
         idle.push(r.section + " — предмета в этом проекте нет");
         continue;
       }
@@ -8281,7 +8317,7 @@ if (mode === "verify") {
       ]);
       (function walkRules(dir) {
         for (const e of readdirSync(dir)) {
-          if (skipDirs.has(e)) continue;
+          if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
           const full = norm(path.join(dir, e));
           // Обвязка из обхода исключена целиком: в её семенах лежит заготовка
           // файла правил, и обход объявлял её незаявленным файлом правил
@@ -11348,7 +11384,7 @@ if (mode === "verify") {
     const mdFiles = [];
     (function walkMd(dir) {
       for (const e of readdirSync(dir)) {
-        if (skipDirs.has(e)) continue;
+        if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
         const full = path.join(dir, e);
         if (statSync(full).isDirectory()) walkMd(full);
         else if (e.endsWith(".md")) mdFiles.push(norm(full));
@@ -13041,7 +13077,7 @@ if (mode === "verify") {
             return;
           }
           for (const e of kids) {
-            if (skip.has(e.name)) continue;
+            if (skip.has(e.name) || OUT_OF_TREE.has(e.name)) continue;
             const at = norm(path.join(dir, e.name));
             if (e.isDirectory()) walk(at);
             else if (
@@ -13432,21 +13468,30 @@ if (mode === "verify") {
       }
       if (seedAt !== null && existsSync(seedAt) && existsSync(tableAt)) {
         // Строка таблицы: `| X. имя | приговор | обоснование |`.
+        // Строка помнит свой НОМЕР: находка называет адрес, и поломка даёт
+        // новую строку вывода и там, где все разделы уже объявлены словом
+        // семени. Без номера сверка, красная на всём предмете, — обычное
+        // состояние живого проекта до перехода, — не могла показать ни одной
+        // новой находки, и её рецепт уходил «не туда». Замерено посадкой
+        // руками в живой проект.
         const rows = (text) => {
           const out = new Map();
-          for (const line of text.split(NEWLINE)) {
-            const m = /^\|\s*([K-U])\.[^|]*\|([^|]*)\|([^|]*)\|/.exec(line);
-            if (m !== null) out.set(m[1], m[3].trim());
+          const lines = text.split(NEWLINE);
+          for (let n = 0; n < lines.length; n += 1) {
+            const m = /^\|\s*([K-U])\.[^|]*\|([^|]*)\|([^|]*)\|/.exec(lines[n]);
+            if (m !== null) out.set(m[1], { said: m[3].trim(), at: n + 1 });
           }
           return out;
         };
         const seeded = rows(readFileSync(seedAt, "utf8"));
         const mine = rows(readFileSync(tableAt, "utf8"));
-        for (const [letter, said] of mine) {
+        for (const [letter, row] of mine) {
           scopeSeededLooked += 1;
           if (frameLives) continue;
-          if (seeded.get(letter) !== said) continue;
-          scopeSeeded.push(letter);
+          if (seeded.get(letter)?.said !== row.said) continue;
+          scopeSeeded.push(
+            letter + " (" + CONFIG.qualityScope.table + ":" + row.at + ")",
+          );
         }
       }
     }
@@ -13522,7 +13567,7 @@ if (mode === "verify") {
   console.log(
     frameLives
       ? "  расходится с семенем: " + staleFrame.length
-      : "  у проекта свой код: каркас спрашивает соседняя сверка",
+      : IDLE_NOTES["Каркас не отстал от семени"],
   );
   for (const one of staleFrame) console.log("    " + one);
 
@@ -13910,6 +13955,7 @@ if (mode === "verify") {
       mapAt !== null && existsSync(mapAt)
         ? (JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [])
         : [];
+    const idleSaid = new Set();
     for (const link of CONFIG.toolchain) {
       if (link.config == null) continue;
       if (!existsSync(path.join(REPO, link.config))) continue;
@@ -13917,11 +13963,36 @@ if (mode === "verify") {
       if (one === undefined || one.recognise == null) continue;
       const re = new RegExp(one.recognise);
       if (Object.values(scripts).some((body) => re.test(body))) continue;
+      idleSaid.add(link.config);
       idleConfig.push(
         link.config +
           " — конфиг звена «" +
           link.script +
           "» лежит, а инструмент его не зовёт ни один скрипт манифеста",
+      );
+    }
+    // То же спрашивается с ЛЮБОГО семени, которое карта отдаёт звену полем
+    // `neededBy`, а не только с конфига. Подготовка тестов и тест помощника
+    // стилей написаны под свой раннер; в проект со своим раннером jest они
+    // легли, не запускались ничем, а линт краснел на них двадцатью пятью
+    // ошибками — пакетов раннера в проекте нет, и типы их не разрешались.
+    // Замерено посадкой руками.
+    const seatCopy =
+      mapAt !== null && existsSync(mapAt)
+        ? (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+        : [];
+    for (const e of seatCopy) {
+      if (e.neededBy == null || idleSaid.has(e.to)) continue;
+      if (!existsSync(path.join(REPO, e.to))) continue;
+      const one = chain.find((c) => c.name === e.neededBy);
+      if (one === undefined || one.recognise == null) continue;
+      const re = new RegExp(one.recognise);
+      if (Object.values(scripts).some((body) => re.test(body))) continue;
+      idleConfig.push(
+        e.to +
+          " — семя звена «" +
+          e.neededBy +
+          "» лежит, а инструмент звена не зовёт ни один скрипт манифеста",
       );
     }
 

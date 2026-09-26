@@ -142,6 +142,12 @@
       "own": true
     },
     {
+      "section": "Звену цепочки есть на чём работать",
+      "file": "package.json",
+      "find": "\"mutate\": \"stryker run\"",
+      "replace": "\"mutate-off\": \"echo нет\""
+    },
+    {
       "section": "Пакеты семени разобраны по звеньям",
       "file": ".claude/seat/templates/package.json",
       "find": "    \"prettier\": \"^3.9.6\",",
@@ -416,9 +422,8 @@
     {
       "section": "Звено цепочки не задвоено",
       "file": "package.json",
-      "find": "\"typecheck\": \"tsc --noEmit\",",
-      "replace": "\"typecheck\": \"tsc --noEmit\",\n    \"types\": \"tsc --noEmit -p tsconfig.json\",",
-      "own": true
+      "find": "\"scripts\": {",
+      "replace": "\"scripts\": {\n    \"types-twin\": \"tsc --noEmit -p tsconfig.json\","
     },
     {
       "section": "Правила направления",
@@ -503,8 +508,8 @@
     {
       "section": "Инструменты звеньев на месте",
       "file": "package.json",
-      "find": "\"check\": \"npm run typecheck",
-      "replace": "\"check\": \"npm run unknown-link && npm run typecheck"
+      "find": "\"check\": \"",
+      "replace": "\"check\": \"npm run unknown-link && "
     },
     {
       "section": "Звёздные бочки",
@@ -658,8 +663,8 @@
         },
         {
           "file": ".context/00-map.md",
-          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
-          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/zzStateful.ts` | посаженная поломка | `zz` | нет |"
+          "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzStateful.ts` | посаженная поломка | `zz` | нет |"
         },
         {
           "create": {
@@ -680,8 +685,8 @@
         },
         {
           "file": ".context/00-map.md",
-          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
-          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/zzOwn.ts` | посаженная поломка | нет | нет |\n\n<!-- ПУСТО -->"
+          "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzOwn.ts` | посаженная поломка | нет | нет |\n\n<!-- ПУСТО -->"
         }
       ]
     },
@@ -696,8 +701,8 @@
         },
         {
           "file": ".context/00-map.md",
-          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
-          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/zzStray.ts` | посаженная поломка | нет | нет |"
+          "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzStray.ts` | посаженная поломка | нет | нет |"
         }
       ]
     },
@@ -712,8 +717,8 @@
         },
         {
           "file": ".context/00-map.md",
-          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
-          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
+          "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
         }
       ]
     },
@@ -756,8 +761,8 @@
         },
         {
           "file": ".context/00-map.md",
-          "find": "| `src/app/App.tsx` | корневой компонент | нет | нет |",
-          "replace": "| `src/app/App.tsx` | корневой компонент | нет | нет |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
+          "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
         },
         {
           "create": {
@@ -873,10 +878,9 @@
           }
         },
         {
-          "create": {
-            "path": ".context/10-idioms.md",
-            "text": "# Идиомы проекта\n\nКак здесь принято заводить узел: форма файла, форма теста, имена, порядок\nэкспортов. Читается перед тем, как появляется новый файл, — чтобы он был похож на\nсоседей, а не на предыдущий проект автора.\n\nРаздел временно пуст.\n"
-          }
+          "file": ".claude/seat/map.json",
+          "find": "\"namesOwnCode\": [",
+          "replace": "\"namesOwnCode\": [\".context/02-todo.md\", "
         }
       ]
     },
@@ -891,8 +895,10 @@
         },
         {
           "file": ".context/01-facts.md",
-          "find": "| S. Наблюдаемость | нет | ни запуска, ни доставки, ни библиотек логирования: наблюдать нечего |",
-          "replace": "| S. Наблюдаемость | нет | ни запуска, ни доставки, ни библиотек логирования: наблюдать нечего |"
+          "appendFrom": {
+            "seed": ".claude/seat/templates/01-facts.md",
+            "startsWith": "| S. Наблюдаемость |"
+          }
         }
       ]
     },
@@ -996,8 +1002,8 @@
     {
       "section": "Связка проверок зовёт живые звенья",
       "file": "package.json",
-      "find": "\"check\": \"npm run typecheck",
-      "replace": "\"check\": \"npm run типов-нет && npm run typecheck"
+      "find": "\"check\": \"",
+      "replace": "\"check\": \"npm run типов-нет && "
     },
     {
       "section": "Настройка сборки знает про тесты",
@@ -1041,8 +1047,8 @@
     {
       "section": "Объявленный долг не больше фактического",
       "file": ".context/graph.config.mjs",
-      "find": "    map: null,",
-      "replace": "    map: 3,"
+      "find": "    map: ",
+      "replace": "    map: 9999 ?? "
     },
     {
       "section": "Шаблон правил заполнен",
