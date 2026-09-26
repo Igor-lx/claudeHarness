@@ -6194,6 +6194,10 @@ if (mode === "verify") {
     }
     return null;
   };
+  /** Звено зовётся в манифесте — прямо либо делегированием пакетам. */
+  const linkCalled = (re, scripts) =>
+    Object.values(scripts).some((body) => re.test(body)) ||
+    delegatedLink(re, scripts) !== null;
   const linkNeeds = new Map();
   {
     const mapAt = shelfAt("seat/map.json");
@@ -6239,8 +6243,7 @@ if (mode === "verify") {
     const one = chain.find((e) => e.name === script);
     if (one === undefined) return false;
     const called = (e) =>
-      e?.recognise != null &&
-      Object.values(scripts).some((body) => new RegExp(e.recognise).test(body));
+      e?.recognise != null && linkCalled(new RegExp(e.recognise), scripts);
     if (one.follows != null) {
       const master = chain.find((e) => e.name === one.follows);
       if (master?.recognise != null && !called(master)) return true;
@@ -10382,6 +10385,22 @@ if (mode === "verify") {
         if (isTest(f) || f.endsWith(".d.ts")) continue;
         const r = rel(f);
         if (LAYERS.some((re) => re.test(r))) continue;
+        // У проекта со СПИСКОМ деревьев адрес пишется от общего родителя, а
+        // слои приложения и общего живут внутри каждого дерева. Файл узнаётся
+        // и по адресу внутри своего дерева. Прежде помощник слияния карт
+        // классов, который обвязка кладёт в `src/shared/`, в любом проекте с
+        // несколькими деревьями объявлялся лежащим вне раскладки. Замерено
+        // посадкой руками в монорепозиторий.
+        const tree = SRC_ROOTS.find((one) =>
+          norm(f).startsWith(norm(one) + "/"),
+        );
+        if (
+          tree !== undefined &&
+          LAYERS.some((re) =>
+            re.test(path.relative(tree, f).split(path.sep).join("/")),
+          )
+        )
+          continue;
         layoutStray.push(r);
       }
       if (layoutStray.length === 0) layoutSaid = "вне объявленных слоёв: 0";
@@ -10765,6 +10784,12 @@ if (mode === "verify") {
         // Файл в самом корне репозитория — настройка, а не код проекта:
         // тот же признак, что у описи кода.
         if (norm(dir) === norm(REPO)) continue;
+        // Настройка инструмента названа по обычаю — `*.config.*`, — и лежит
+        // она не только в корне репозитория, но и в корне каждого пакета
+        // монорепозитория. Прежде исключался один корень репозитория, и
+        // конфиг сборщика пакета приложения объявлялся кодом вне деревьев.
+        // Замерено посадкой руками в монорепозиторий.
+        if (/[.]config[.][cm]?[jt]s$/.test(e.name)) continue;
         outsideLooked += 1;
         if (insideRoots(at)) continue;
         if (skip.has(at)) continue;
@@ -14196,7 +14221,7 @@ if (mode === "verify") {
       const one = chain.find((e) => e.name === link.script);
       if (one === undefined || one.recognise == null) continue;
       const re = new RegExp(one.recognise);
-      if (Object.values(scripts).some((body) => re.test(body))) continue;
+      if (linkCalled(re, scripts)) continue;
       idleSaid.add(link.config);
       idleConfig.push(
         link.config +
@@ -14221,7 +14246,7 @@ if (mode === "verify") {
       const one = chain.find((c) => c.name === e.neededBy);
       if (one === undefined || one.recognise == null) continue;
       const re = new RegExp(one.recognise);
-      if (Object.values(scripts).some((body) => re.test(body))) continue;
+      if (linkCalled(re, scripts)) continue;
       idleConfig.push(
         e.to +
           " — семя звена «" +
@@ -14241,7 +14266,7 @@ if (mode === "verify") {
       const master = chain.find((c) => c.name === e.follows);
       if (master === undefined || master.recognise == null) continue;
       const re = new RegExp(master.recognise);
-      if (Object.values(scripts).some((body) => re.test(body))) continue;
+      if (linkCalled(re, scripts)) continue;
       idleConfig.push(
         e.name +
           " — звено-спутник написано, а звена «" +
