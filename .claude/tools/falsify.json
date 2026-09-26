@@ -97,13 +97,13 @@
       "replace": "# Карта исходников\n\nФайл `src/НЕТУ.tsx` тут ни при чём."
     },
     {
-      "section": "Вопросы разработчику без ответа",
+      "section": "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
       "file": ".context/13-questions.md",
       "find": "Открытых вопросов нет.",
       "replace": "## Вопрос 1. Проба\n\n**Задан:** пробой.\n\n**Что решить.** Ничего.\n\n**Последствие отсутствия ответа.** Нет."
     },
     {
-      "section": "Списки исключений не разрослись",
+      "section": "Списки исключений не разрослись (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
       "find": "  docPathExceptions: [],",
       "replace": "  docPathExceptions: [\"a|a\", \"b|b\", \"c|c\", \"d|d\", \"e|e\", \"f|f\"],"
@@ -527,7 +527,7 @@
       "own": true
     },
     {
-      "section": "Инструменты звеньев на месте",
+      "section": "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
       "file": "package.json",
       "find": "\"check\": \"",
       "replace": "\"check\": \"npm run unknown-link && "
@@ -564,7 +564,7 @@
       "append": "Папка `src/` (999 файлов)."
     },
     {
-      "section": "Разрешения, нажитые по ходу работы",
+      "section": "Разрешения, нажитые по ходу работы (предупреждение, прогон не роняет)",
       "create": {
         "path": ".claude/settings.local.json",
         "text": "{\n  \"permissions\": {\n    \"allow\": [\"Bash(проба:*)\"]\n  }\n}"
@@ -970,6 +970,25 @@
           "file": "stryker.config.json",
           "find": "\"related\": false",
           "replace": "\"related\": true"
+        }
+      ]
+    },
+    {
+      "section": "Мутационный прогон исполним",
+      "edits": [
+        {
+          "file": ".claude/seat/templates/stryker.config.json",
+          "copyTo": "stryker.config.json"
+        },
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "  mutationConfig: ",
+          "replace": "  mutationConfig: \"../stryker.config.json\" ?? "
+        },
+        {
+          "file": "stryker.config.json",
+          "find": "\"ignorePatterns\": [\".claude\"],",
+          "replace": ""
         }
       ]
     },
