@@ -9646,7 +9646,16 @@ if (mode === "verify") {
           .filter(
             (name) => scripts[linkOwnName(name, scripts) ?? name] != null,
           );
-        const calls = names.filter((name) => body.includes("run " + name));
+        // Звено зовут ЕГО ИМЕНЕМ В ПРОЕКТЕ, а не семенным: конвейер проекта
+        // пишет `npm run types`, если звено типов у него `types`. Прежде
+        // искалось семенное имя, и конвейер, зовущий звено типов проекта,
+        // объявлялся не зовущим ни одного — замерено посадкой руками. Звено
+        // тестов менеджер зовёт и сокращённо, `npm test`.
+        const calls = names.filter((name) => {
+          const own = linkOwnName(name, scripts) ?? name;
+          if (body.includes("run " + own)) return true;
+          return own === "test" && /\bnpm test\b/.test(body);
+        });
         if (body.includes("run check") || calls.length > 0) continue;
         // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
         // посадки не входит: она ставит инструмент, а не чинит код. Строка
