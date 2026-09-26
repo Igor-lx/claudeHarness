@@ -6154,7 +6154,45 @@ if (mode === "verify") {
     if (one === undefined || one.recognise == null) return null;
     const re = new RegExp(one.recognise);
     const hit = Object.entries(scripts).find(([, body]) => re.test(body));
-    return hit === undefined ? null : hit[0];
+    if (hit !== undefined) return hit[0];
+    // Звено, ДЕЛЕГИРОВАННОЕ пакетам: корневой скрипт зовёт одноимённые
+    // скрипты воркспейсов, а уже они — инструмент звена. Опознаётся по тому,
+    // что зовут пакеты. Прежде корень монорепозитория с `types`, раздающим
+    // проверку типов пакетам, считался проектом без звена типов: посадка
+    // дописывала в корень свой `tsc --noEmit`, слепой к коду пакетов, —
+    // посаженную ошибку в пакете он пропускал кодом ноль. Замерено посадкой
+    // руками в монорепозиторий.
+    return delegatedLink(re, scripts);
+  };
+  /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые
+   * скрипты узнаются образцом звена; `null` — такого нет. */
+  const delegatedLink = (re, scripts) => {
+    const rootAt = path.join(BASE, CONFIG.manifest ?? "../package.json");
+    const globs = readJson(rootAt, {}).workspaces ?? [];
+    const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
+    const packs = [];
+    for (const g of list) {
+      const dir = path.join(
+        path.dirname(rootAt),
+        String(g).replace(/\/\*$/, ""),
+      );
+      if (!existsSync(dir)) continue;
+      const one = path.join(dir, "package.json");
+      if (!String(g).endsWith("/*")) {
+        if (existsSync(one)) packs.push(readJson(one, {}));
+        continue;
+      }
+      for (const e of readdirSync(dir)) {
+        const at = path.join(dir, e, "package.json");
+        if (existsSync(at)) packs.push(readJson(at, {}));
+      }
+    }
+    for (const [name, body] of Object.entries(scripts)) {
+      const m = /\bnpm run ([\w:-]+)\s+(?:--workspaces|-ws)\b/.exec(body);
+      if (m === null) continue;
+      if (packs.some((p) => re.test(p.scripts?.[m[1]] ?? ""))) return name;
+    }
+    return null;
   };
   const linkNeeds = new Map();
   {
@@ -13936,6 +13974,10 @@ if (mode === "verify") {
           const hits = Object.entries(scripts)
             .filter(([, body]) => re.test(body))
             .map(([n]) => n);
+          // Делегирующий корневой скрипт — то же звено, и рядом со своим
+          // вызовом инструмента в корне он близнец.
+          const handed = delegatedLink(re, scripts);
+          if (handed !== null && !hits.includes(handed)) hits.push(handed);
           if (hits.length > 1)
             chainTwins.push(
               e.name + " — одно звено под именами: " + hits.join(", "),
