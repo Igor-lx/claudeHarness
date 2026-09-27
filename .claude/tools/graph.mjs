@@ -11730,8 +11730,26 @@ if (mode === "verify") {
   // предписанный шаг и получала «путь ведёт в никуда» на собственном плане.
   // Молча такие адреса пропускать нельзя — опечатка в плане невидима, — и
   // потому они считаются и печатаются своей строкой, не роняя прогон.
+  // План ПРИВЕДЕНИЯ того же рода: он переносит код туда, где его ещё нет, и
+  // называет новые адреса по построению. Пока освобождался один план
+  // перехода, шаг «перенести поверхность пакета в `src/app/`» ронял прогон
+  // строкой «ведёт в никуда» на плане, который семя велит написать. Замерено
+  // посадкой руками в библиотеку. Адрес плана берётся из карты посадки — там
+  // же, откуда его кладёт посадка.
   const plannedPaths = [];
   const planName = CONFIG.transition == null ? null : CONFIG.transition.file;
+  const conversionName = (() => {
+    const mapAt = shelfAt("seat/map.json");
+    if (mapAt === null || !existsSync(mapAt)) return null;
+    const e = (readJson(mapAt, {}).copy ?? []).find((one) =>
+      one.from.endsWith("/17-conversion.md"),
+    );
+    return e === undefined
+      ? null
+      : path.relative(BASE, path.join(REPO, e.to)).split(path.sep).join("/");
+  })();
+  const isPlan = (name) =>
+    (planName !== null && name === planName) || name === conversionName;
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
     const dir = norm(path.dirname(at));
@@ -11754,8 +11772,7 @@ if (mode === "verify") {
           pathTokens++;
           if (knownDangling.has(`${name}|${tok}`))
             knownUsed.add(`${name}|${tok}`);
-          else if (planName !== null && name === planName)
-            plannedPaths.push(`${name}: ${tok}`);
+          else if (isPlan(name)) plannedPaths.push(`${name}: ${tok}`);
           else danglingPaths.push(`${name}: ${tok}`);
         } else if (seen === 1) pathTokens++;
         continue;
@@ -11793,7 +11810,7 @@ if (mode === "verify") {
         knownUsed.add(`${name}|${tok}`);
         continue;
       }
-      if (planName !== null && name === planName) {
+      if (isPlan(name)) {
         plannedPaths.push(`${name}: ${tok}`);
         continue;
       }
@@ -11812,7 +11829,7 @@ if (mode === "verify") {
   for (const d of danglingPaths) console.log("    " + d);
   if (plannedPaths.length)
     console.log(
-      "  адресов будущих файлов в плане перехода: " +
+      "  адресов будущих файлов в планах перехода и приведения: " +
         plannedPaths.length +
         " — их заводят шаги плана",
     );
