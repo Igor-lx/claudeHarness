@@ -241,3 +241,96 @@ describe("снимок обвязки собирается", () => {
     }
   }, 180000);
 });
+
+/**
+ * Ворота пропускают ОДНО приведение формата и не пропускают смысл под его
+ * видом. Держать это прогоном нечем: ворота зовёт хук git, а не цепочка, и
+ * отдельный коммит формата, которого требует посадка, не проходил их ни в
+ * одном проекте, чей код форматтер переписывает. Замерено на копии стенда.
+ *
+ * Мастерская копируется во временную папку со своим репозиторием, и с ней —
+ * один пакет форматтера: инструменту из пакетов нужен только он. Ссылкой на
+ * папку пакетов не обходятся намеренно — рекурсивное удаление временной папки
+ * не должно иметь дороги в живые пакеты мастерской.
+ */
+describe("ворота и приведение формата", () => {
+  it("коммит одного формата проходит, смысл под видом формата — нет", async () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "vorota-"));
+    const skip = new Set([
+      "node_modules",
+      ".git",
+      ".проба-сверок",
+      ".stryker-tmp",
+      "reports",
+      "coverage",
+      "dist",
+    ]);
+    try {
+      fs.cpSync(home, box, {
+        recursive: true,
+        filter: (src) => !skip.has(path.basename(src)),
+      });
+      fs.cpSync(
+        path.join(home, "node_modules", "prettier"),
+        path.join(box, "node_modules", "prettier"),
+        { recursive: true },
+      );
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=vorota",
+            "-c",
+            "user.email=vorota@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      // Файл проекта, а не семя: нетронутое семя ворота пропускают по
+      // своему признаку, и приведение на нём не проверило бы ничего.
+      const file = path.join(box, "src", "app", "zzOwn.ts");
+      const neat = [
+        "export const zzOwn = (n: number): number => {",
+        "  return n + 1;",
+        "};",
+        "",
+      ].join("\n");
+      fs.writeFileSync(file, neat);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "база", "--no-verify");
+      fs.writeFileSync(file, neat.split("return ").join("return    "));
+      git("commit", "-qam", "старый код без формата", "--no-verify");
+      fs.writeFileSync(file, neat);
+      git("add", "-A");
+      const gate = () => {
+        try {
+          return {
+            code: 0,
+            out: execFileSync(
+              process.execPath,
+              [path.join(box, ".claude", "tools", "graph.mjs"), "gate"],
+              { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+            ),
+          };
+        } catch (e) {
+          return { code: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      const clean = gate();
+      expect(clean.out).toContain("одно приведение формата");
+      expect(clean.code).toBe(0);
+      fs.writeFileSync(file, neat + "export const zzMeant = 1;\n");
+      git("add", "-A");
+      const meant = gate();
+      expect(meant.out).toContain("КОММИТ НЕ ПРОХОДИТ");
+      expect(meant.code).toBe(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

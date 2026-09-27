@@ -927,14 +927,17 @@ const barChangedSubject = async (repoRoot) => {
   // пропускали. Замерено на стенде, тем же заходом, что и завёл правило.
   const seeds = seedOfPath();
   const untouched = (at) => untouchedSeed(at, repoRoot, seeds);
-  return all
-    .filter(
-      (f) =>
-        (files.includes(f) || styleFiles.includes(f)) &&
-        !f.endsWith(".d.ts") &&
-        !untouched(f),
+  return (
+    await withoutFormatOnly(
+      all.filter(
+        (f) =>
+          (files.includes(f) || styleFiles.includes(f)) &&
+          !f.endsWith(".d.ts") &&
+          !untouched(f),
+      ),
+      repoRoot,
     )
-    .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+  ).sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
 };
 /** Шапка протокола, разобранная: род, отпечатки предмета, печать. */
 /** Путь против списка образцов Stryker: включающие и исключающие.
@@ -1054,6 +1057,75 @@ const sameAsSeed = (body, seedBody) => {
   const eol = String.fromCharCode(13) + String.fromCharCode(10);
   const flat = (t) => t.split(eol).join(String.fromCharCode(10));
   return flat(body) === flat(seedBody);
+};
+/** Prettier ЭТОГО проекта, загруженный один раз; `null` — его нет. */
+let PRETTIER_HERE;
+const prettierHere = async () => {
+  if (PRETTIER_HERE !== undefined) return PRETTIER_HERE;
+  PRETTIER_HERE = null;
+  try {
+    const { createRequire } = await import("node:module");
+    const { pathToFileURL } = await import("node:url");
+    const at = createRequire(path.join(REPO_AT, "package.json")).resolve(
+      "prettier",
+    );
+    const mod = await import(pathToFileURL(at).href);
+    PRETTIER_HERE = typeof mod.format === "function" ? mod : mod.default;
+  } catch {
+    PRETTIER_HERE = null;
+  }
+  return PRETTIER_HERE;
+};
+/** Правка — ОДНО ЛИШЬ приведение формата: прежнее содержимое, пропущенное
+ * через форматтер проекта с его настройками, даёт ровно новое.
+ *
+ * Такая правка механическая, и планка к ней не относится — это сказано в
+ * инструкции посадки прямо. А ворота спрашивали свод с любого кода в индексе,
+ * и отдельный коммит формата, которого фаза 2 требует, не проходил в любом
+ * проекте, чей код форматтер переписывает. На стендах это не проявилось
+ * только потому, что их код был написан уже в формате. Замерено на копии
+ * стенда: старый код без формата, приведение, коммит — «свода нет вовсе».
+ *
+ * Спрашивают его те же четыре места, что и признак нетронутого семени, —
+ * ворота, ревизия по истории, предмет свода и след вопроса о планке, — и
+ * разойтись им нечем: ответ даёт эта функция. Правка, смешавшая формат со
+ * смыслом, приведением не является: форматтер её не воспроизводит. */
+const formatOnly = async (before, after, abs) => {
+  if (before === null || after === null) return false;
+  const eol = String.fromCharCode(13) + String.fromCharCode(10);
+  const flat = (t) => t.split(eol).join(String.fromCharCode(10));
+  if (flat(before) === flat(after)) return false;
+  const p = await prettierHere();
+  if (p === null) return false;
+  try {
+    const options = (await p.resolveConfig(abs)) ?? {};
+    const pretty = await p.format(flat(before), { ...options, filepath: abs });
+    return pretty === flat(after);
+  } catch {
+    return false;
+  }
+};
+/** Правленые файлы без тех, чья правка — одно приведение формата. Прежнее
+ * содержимое берётся из последнего коммита. */
+const withoutFormatOnly = async (abs, repoRoot) => {
+  const out = [];
+  for (const f of abs) {
+    const one = path.relative(repoRoot, f).split(path.sep).join("/");
+    let head = null;
+    try {
+      head = execFileSync("git", ["show", "HEAD:" + one], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      head = null;
+    }
+    const now = existsSync(f) ? readFileSync(f, "utf8") : null;
+    if (await formatOnly(head, now, f)) continue;
+    out.push(f);
+  }
+  return out;
 };
 /** ЛЕЖИТ ЛИ файл нетронутым семенем: работа обвязки, а не проекта.
  *
@@ -4118,6 +4190,7 @@ if (mode === "gate") {
   sayLooked("файлов в индексе", staged.length);
   const seeds = seedOfPath();
   let fromShelf = 0;
+  let formatted = 0;
   const want = [];
   for (const one of staged) {
     const abs = norm(path.join(REPO_AT, one));
@@ -4139,6 +4212,16 @@ if (mode === "gate") {
       fromShelf += 1;
       continue;
     }
+    let head = null;
+    try {
+      head = git(["show", "HEAD:" + one]);
+    } catch {
+      head = null;
+    }
+    if (await formatOnly(head, body, abs)) {
+      formatted += 1;
+      continue;
+    }
     want.push({ file: rel(abs), mark: barDigest(body) });
   }
   want.sort((x, y) => (x.file < y.file ? -1 : 1));
@@ -4146,7 +4229,8 @@ if (mode === "gate") {
   console.log(
     "  кода и стилей в индексе: " +
       want.length +
-      (fromShelf ? ", и ещё " + fromShelf + " лежит семенем обвязки" : ""),
+      (fromShelf ? ", и ещё " + fromShelf + " лежит семенем обвязки" : "") +
+      (formatted ? ", и ещё " + formatted + " — одно приведение формата" : ""),
   );
   if (!want.length) {
     console.log("  кода в коммите нет — свод не спрашивается");
@@ -12650,6 +12734,9 @@ if (mode === "verify") {
       changedNow = null;
       ledgerBlind = true;
     }
+    // Приведение формата вопроса о планке не требует — ответ общий с воротами.
+    if (changedNow !== null)
+      changedNow = await withoutFormatOnly(changedNow, path.join(BASE, ".."));
     for (const f of changedNow ?? []) {
       const now = createHash("sha1")
         .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
@@ -12906,7 +12993,7 @@ if (mode === "verify") {
               }
             }
             if (sameAsSeed(was, seedWas)) continue;
-            want.push({ file: rel(abs), mark: barDigest(was) });
+            want.push({ file: rel(abs), mark: barDigest(was), one, abs, was });
           }
           if (!want.length) continue;
           barPastLooked += 1;
@@ -12917,7 +13004,22 @@ if (mode === "verify") {
           } catch {
             said = null;
           }
-          const fault = barCoverFault(want, said);
+          let fault = barCoverFault(want, said);
+          // Приведение формата свода не требует — тот же ответ, что у ворот.
+          // Спрашивается лениво: только у коммита, который иначе красный.
+          if (fault !== "") {
+            const meant = [];
+            for (const w of want) {
+              let before = null;
+              try {
+                before = git(["show", hash + "^:" + w.one]);
+              } catch {
+                before = null;
+              }
+              if (!(await formatOnly(before, w.was, w.abs))) meant.push(w);
+            }
+            fault = barCoverFault(meant, said);
+          }
           if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
         }
     }
