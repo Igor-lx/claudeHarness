@@ -75,8 +75,8 @@
     },
     {
       "section": "Конфиг звена цепочки на месте",
-      "file": "tsconfig.json",
-      "rename": "tsconfig.json.hidden"
+      "file": "eslint.config.mjs",
+      "rename": "eslint.config.mjs.hidden"
     },
     {
       "section": "Числа в прозе базы",
@@ -132,13 +132,20 @@
       "create": {
         "path": "docs/adr/0001-proba.md",
         "text": "# 1. Проба"
-      }
+      },
+      "whenNull": "adr"
     },
     {
       "section": "Проза целиком попадает в корпус сверок",
       "file": ".context/graph.config.mjs",
       "find": "    dir: \"../docs\",",
       "replace": "    dir: \"../docs-нет\","
+    },
+    {
+      "section": "Строка таблицы по ширине шапки",
+      "file": ".claude/rules/base-format.md",
+      "find": "| Строка таблицы по ширине шапки |",
+      "replace": "| Строка таблицы по ширине шапки | проба |"
     },
     {
       "section": "Заготовки обвязки не разбираются линтом проекта",
@@ -158,7 +165,8 @@
       "section": "Звену цепочки есть на чём работать",
       "file": "package.json",
       "find": "\"mutate\": \"stryker run\"",
-      "replace": "\"mutate-off\": \"echo нет\""
+      "replace": "\"mutate-off\": \"echo нет\"",
+      "whenScript": "mutate"
     },
     {
       "section": "Пакеты семени разобраны по звеньям",
@@ -306,21 +314,21 @@
     {
       "section": "Одноранговая зависимость не продублирована",
       "file": "package.json",
-      "find": "\"dependencies\": {",
-      "replace": "\"peerDependencies\": { \"react\": \">=18\" },\n  \"dependencies\": {"
+      "find": "\"devDependencies\": {",
+      "replace": "\"peerDependencies\": { \"react\": \">=18\" },\n  \"dependencies\": { \"react\": \"^19.0.0\" },\n  \"devDependencies\": {"
     },
     {
       "section": "Поставка не несёт лишнего",
       "edits": [
         {
           "file": "package.json",
-          "find": "\"private\": true,",
-          "replace": "\"private\": false,\n  \"files\": [\"src\"],"
+          "find": "\"scripts\": {",
+          "replace": "\"private\": false,\n  \"files\": [\"src\"],\n  \"scripts\": {"
         },
         {
           "file": "package.json",
-          "find": "\"dependencies\": {",
-          "replace": "\"dependencies\": {\n    \"zz-kod-ne-zovyot\": \"^1.0.0\","
+          "find": "\"devDependencies\": {",
+          "replace": "\"dependencies\": { \"zz-kod-ne-zovyot\": \"^1.0.0\" },\n  \"devDependencies\": {"
         }
       ]
     },
@@ -451,7 +459,7 @@
       "section": "Звено цепочки не задвоено",
       "file": "package.json",
       "find": "\"scripts\": {",
-      "replace": "\"scripts\": {\n    \"types-twin\": \"tsc --noEmit -p tsconfig.json\","
+      "replace": "\"scripts\": {\n    \"lint-twin\": \"eslint .\","
     },
     {
       "section": "Правила направления",
@@ -581,14 +589,14 @@
       "section": "Версии установленного (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
       "find": "  verifiedVersions: {",
-      "replace": "  verifiedVersions: {\n    \"@testing-library/jest-dom\": \"0.0.1\","
+      "replace": "  verifiedVersions: {\n    \"typescript-eslint\": \"0.0.1\","
     },
     {
       "section": "Состав бочки в записи карты",
       "edits": [
         {
           "file": ".context/00-map.md",
-          "append": "### `main.tsx` — бочка модуля\n\nОтдаёт наружу: `zzNotExported`."
+          "append": "### `{файл кода}` — бочка модуля\n\nОтдаёт наружу: `zzNotExported`."
         }
       ]
     },
@@ -651,9 +659,10 @@
     },
     {
       "section": "Закомментированного кода нет",
-      "file": "src/app/App.tsx",
-      "find": "function App()",
-      "replace": "// const was = useState(0);\n// function Old() {\n//   return null;\n// }\nfunction App()"
+      "create": {
+        "path": "{исходники}/zzCommented.ts",
+        "text": "// const was = useState(0);\n// function Old() {\n//   return null;\n// }\nexport const zzCommented = 1;"
+      }
     },
     {
       "section": "Комментарий не перерос в прозу",
@@ -739,14 +748,14 @@
       "edits": [
         {
           "create": {
-            "path": "src/components/ZzProbe/ZzProbe.tsx",
+            "path": "{узлы}/ZzProbe/ZzProbe.tsx",
             "text": "export const ZzProbe = () => null;"
           }
         },
         {
           "file": ".context/00-map.md",
           "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
-          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `{узлы}/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
         }
       ]
     },
@@ -755,19 +764,19 @@
       "edits": [
         {
           "create": {
-            "path": "src/components/Тянущий/узел.tsx",
+            "path": "{узлы}/Тянущий/узел.tsx",
             "text": "import Сосед from \"../Ведомый/узел\";\n\nfunction Тянущий() {\n  return <Сосед />;\n}\n\nexport default Тянущий;"
           }
         },
         {
           "create": {
-            "path": "src/components/Тянущий/docs/README.md",
+            "path": "{узлы}/Тянущий/docs/README.md",
             "text": "# Тянущий\n\nЗачем папка: поломка для рецепта фальсификации.\nЧто берут: ничего.\nЧто тянется следом: ничего.\nЧего нельзя: ничего."
           }
         },
         {
           "create": {
-            "path": "src/components/Ведомый/узел.tsx",
+            "path": "{узлы}/Ведомый/узел.tsx",
             "text": "function Ведомый() {\n  return null;\n}\n\nexport default Ведомый;"
           }
         }
@@ -775,32 +784,34 @@
     },
     {
       "section": "Язык внутри корня исходников",
-      "file": "src/app/App.tsx",
-      "append": "// комментарий не на том языке"
+      "create": {
+        "path": "{исходники}/zzTongue.ts",
+        "text": "// комментарий не на том языке\nexport const zzTongue = 1;"
+      }
     },
     {
       "section": "Документы компонента лежат в его `docs/`",
       "edits": [
         {
           "create": {
-            "path": "src/components/ZzProbe/ZzProbe.tsx",
+            "path": "{узлы}/ZzProbe/ZzProbe.tsx",
             "text": "export const ZzProbe = () => null;"
           }
         },
         {
           "file": ".context/00-map.md",
           "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
-          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/components/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `{узлы}/ZzProbe/ZzProbe.tsx` | посаженная поломка | нет | нет |"
         },
         {
           "create": {
-            "path": "src/components/ZzProbe/docs/README.md",
+            "path": "{узлы}/ZzProbe/docs/README.md",
             "text": "# ZzProbe"
           }
         },
         {
           "create": {
-            "path": "src/components/ZzProbe/README.md",
+            "path": "{узлы}/ZzProbe/README.md",
             "text": "# посаженная поломка"
           }
         }
@@ -840,8 +851,8 @@
       "edits": [
         {
           "file": ".context/graph.config.mjs",
-          "find": "  src: \"../src\",",
-          "replace": "  src: [\"../src\", \"../нет-такого-дерева\"],"
+          "find": "  src: ",
+          "replace": "  src: [\"../src\", \"../нет-такого-дерева\"] ?? "
         },
         {
           "create": {
@@ -1004,13 +1015,13 @@
       "edits": [
         {
           "create": {
-            "path": "src/components/ZzNode/zzOne.ts",
+            "path": "{узлы}/ZzNode/zzOne.ts",
             "text": "export const zzOne = 1;"
           }
         },
         {
           "create": {
-            "path": "src/components/ZzNode/zzTwo.ts",
+            "path": "{узлы}/ZzNode/zzTwo.ts",
             "text": "export const zzTwo = 2;"
           }
         }
@@ -1054,12 +1065,14 @@
     },
     {
       "section": "Настройка сборки знает про тесты",
+      "whenLink": ["typecheck", "test"],
       "file": "vite.config.ts",
       "find": "from \"vitest/config\"",
       "replace": "from \"vite\""
     },
     {
       "section": "Настройка сборки знает про тесты",
+      "whenLink": ["test"],
       "file": "vite.config.ts",
       "find": "    setupFiles: [\"./src/tests/setup.ts\"],",
       "replace": ""
