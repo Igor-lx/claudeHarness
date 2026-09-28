@@ -33,6 +33,7 @@ import {
   isStylePath,
   isTestPath,
   commentRunsOf,
+  namesAddress,
   printedIsRed,
   sectionsOf,
   selfCheck,
@@ -12788,18 +12789,33 @@ if (mode === "verify") {
   // называет сверка, которая идёт раньше, и посчитанное после неё она бы уже не
   // увидела. Найдено фальсификацией самого списка — снятый тест при оставшемся
   // исключении не дал ни одной строки.
-  const testsOutside = new Set(
-    (CONFIG.testsOutside ?? []).map((one) => norm(path.join(REPO, one))),
-  );
+  // Запись — файл, папка с косой на конце либо образец со звёздочкой. Прежде
+  // принимался только файл, и проект, держащий тесты в `__tests__/` у каждого
+  // узла, отвечал на КЛАСС записями по одной: список рос с каждым тестом,
+  // порог разросшихся списков срабатывал на законном, а новый тест краснел,
+  // пока его не вписали. Замерено посадкой в живое приложение: пятнадцать
+  // записей на одну раскладку. Решение при этом уже принималось про папку.
+  const testsOutsideRules = (CONFIG.testsOutside ?? []).map((one) => {
+    if (one.includes("*")) {
+      const test = globsToTest([one]);
+      return {
+        one,
+        hit: (f) => test(path.relative(REPO, f).split(path.sep).join("/")),
+      };
+    }
+    const at = norm(path.join(REPO, one));
+    return one.endsWith("/")
+      ? { one, hit: (f) => f.startsWith(at + "/") }
+      : { one, hit: (f) => f === at };
+  });
+  const testsOutsideHit = (f) => testsOutsideRules.some((r) => r.hit(f));
   const testsOutsideUsed = new Set(
-    files.filter((f) => isTestPath(f) && testsOutside.has(f)),
+    files.filter((f) => isTestPath(f) && testsOutsideHit(f)),
   );
-  for (const one of testsOutside)
-    if (!testsOutsideUsed.has(one))
+  for (const r of testsOutsideRules)
+    if (![...testsOutsideUsed].some((f) => r.hit(f)))
       deadExceptions.push(
-        "тест вне своей папки: " +
-          path.relative(REPO, one).split(path.sep).join("/") +
-          " — ничего не исключает",
+        "тест вне своей папки: " + r.one + " — ничего не исключает",
       );
 
   checkHead("Исключения сверок используются", {
@@ -13195,14 +13211,20 @@ if (mode === "verify") {
   // того, как сбор научился видеть второе написание: видимость появилась,
   // несогласие осталось немым.
   const strayTests = files.filter(
-    (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutside.has(f),
+    (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutsideHit(f),
   );
   // Исключение обязано стоять на РЕШЕНИИ: поле снимает красное, а причину
   // снять не может. Настройка говорила «обязан иметь запись в реестре
   // решений», а спрашивала это одна лишь её строка: адрес, вписанный без
-  // записи, гасил сверку молча. Запись узнаётся по адресу файла либо любой
-  // его папки — проект, держащий тесты в `__tests__/`, решает про папку, а не
-  // про каждый файл. Найдено посадкой руками в проект на `jest`.
+  // записи, гасил сверку молча. Запись узнаётся по адресу файла, его папки
+  // либо самой записи списка — проект, держащий тесты в `__tests__/`, решает
+  // про папку, а не про каждый файл. Найдено посадкой руками в проект на
+  // `jest`.
+  //
+  // Папки ВЫШЕ своей не в счёт, и адрес ищется целиком: решение о раскладке
+  // проекта называет `src/` и `src/lib/`, и тест под ними проходил без
+  // всякого решения о себе. Замерено снятием папки тестов из записи решения:
+  // прогон остался зелёным.
   const reasonlessTests = [];
   {
     const decidedAt =
@@ -13213,14 +13235,12 @@ if (mode === "verify") {
         : "";
     for (const f of testsOutsideUsed) {
       const own = path.relative(REPO, f).split(path.sep).join("/");
-      const said = [own];
-      for (
-        let d = path.posix.dirname(own);
-        d !== ".";
-        d = path.posix.dirname(d)
-      )
-        said.push(d + "/");
-      if (!said.some((one) => decided.includes(one)))
+      const said = [
+        own,
+        path.posix.dirname(own) + "/",
+        ...testsOutsideRules.filter((r) => r.hit(f)).map((r) => r.one),
+      ];
+      if (!said.some((one) => namesAddress(one + "|" + decided)))
         reasonlessTests.push(
           own +
             " — объявлен вне папки, а записи решения ни с его адресом, ни с адресом его папки нет",

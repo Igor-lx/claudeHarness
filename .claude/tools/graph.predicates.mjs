@@ -311,6 +311,23 @@ const BAR_CORE = new Set([
   "O1",
 ]);
 
+/** Называет ли текст адрес ЦЕЛИКОМ, а не как начало другого адреса.
+ *
+ * Вход — `адрес|текст`. Папка засчитывается с косой на конце и без неё.
+ * Прежде запись решения узнавалась вхождением подстроки, и адрес `src/`
+ * находился в любом тексте, где назван хоть один путь под ним: тест,
+ * объявленный вне своей папки, проходил без всякого решения о нём.
+ */
+export const namesAddress = (row) => {
+  const cut = row.indexOf("|");
+  const addr = row.slice(0, cut).replace(/\/$/, "");
+  const esc = addr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    "(^|[\\s`(«\"'])" + esc + "/?(?=$|[\\s`)»\"',.;:])",
+    "m",
+  ).test(row.slice(cut + 1));
+};
+
 /** Входит ли критерий в архитектурное ядро. Наружу — для свода: он печатает
  * такие строки помеченными, чтобы клетка основания не выглядела лишней. */
 export const barCoreCriterion = (id) => BAR_CORE.has(id);
@@ -504,6 +521,14 @@ export const PREDICATE_CASES = [
   // признак не замерен вовсе — молчим: отвечает сессия
   ["barNoSubject", "C5|code=1", ""],
   ["barNoSubject", "A1|code=1,style=1", ""],
+  // --- namesAddress: адрес назван целиком ---
+  ["namesAddress", "src/hooks/__tests__/|в `src/hooks/__tests__` рядом", true],
+  ["namesAddress", "src/hooks/__tests__/|в `src/hooks/__tests__/` рядом", true],
+  ["namesAddress", "src/a.test.ts|файл `src/a.test.ts`.", true],
+  // дефект: корень находился в любом тексте, называющем путь под ним
+  ["namesAddress", "src/|см. `src/lib/a.ts`", false],
+  ["namesAddress", "src/a.test.ts|файл `src/a.test.tsx`", false],
+  ["namesAddress", "src/**/__tests__/**|образец `src/**/__tests__/**`", true],
   // --- barRowFault: строка протокола свода по планке ---
   ["barRowFault", "на изменение|чисто|||", ""],
   ["barRowFault", "на изменение|чисто||||A1", "чисто без основания"],
