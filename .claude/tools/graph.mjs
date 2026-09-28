@@ -1743,6 +1743,61 @@ const rel = (f) =>
     ? f.slice(ROOT.length + 1)
     : norm(path.relative(path.join(BASE, ".."), f));
 
+/** Конфиг с комментариями: `tsconfig.json` их допускает, `JSON.parse` — нет.
+ * `null` — разобрать не удалось. Один разбор на всех, кто читает конфиг
+ * компилятора: короткие адреса и строгость. */
+const parseJsonc = (raw) => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Конфиг компилятора допускает комментарии, а разбор JSON — нет. Снимать
+    // их образцом по всему тексту нельзя: маска вида `src` со звёздами
+    // содержит последовательность, неотличимую от пустого блочного
+    // комментария, и образец съедает её ИЗНУТРИ СТРОКИ. Поймано сразу:
+    // короткий адрес превращался в огрызок, таблица выходила пустой, и
+    // разрешение коротких адресов не работало бы молча.
+    //
+    // Поэтому сканер, знающий про строки, и зовётся он только тогда, когда
+    // простой разбор уже не удался.
+    let out = "";
+    let inString = false;
+    for (let i = 0; i < raw.length; i += 1) {
+      const c = raw[i];
+      if (inString) {
+        out += c;
+        if (c === "\\") {
+          out += raw[i + 1] ?? "";
+          i += 1;
+          continue;
+        }
+        if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') {
+        inString = true;
+        out += c;
+        continue;
+      }
+      if (c === "/" && raw[i + 1] === "/") {
+        while (i < raw.length && raw[i] !== "\n") i += 1;
+        out += "\n";
+        continue;
+      }
+      if (c === "/" && raw[i + 1] === "*") {
+        const end = raw.indexOf("*/", i + 2);
+        i = end < 0 ? raw.length : end + 1;
+        continue;
+      }
+      out += c;
+    }
+    try {
+      return JSON.parse(out);
+    } catch {
+      return null;
+    }
+  }
+};
+
 // --- разрешение спецификатора импорта в файл ---------------------------------
 /** Короткие адреса импорта — те, что объявлены конфигом компилятора.
  *
@@ -1768,57 +1823,8 @@ const ALIASES = (() => {
   const read = (at) => {
     if (seen.has(at) || !existsSync(at)) return;
     seen.add(at);
-    const raw = readFileSync(at, "utf8");
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Конфиг компилятора допускает комментарии, а разбор JSON — нет. Снимать
-      // их образцом по всему тексту нельзя: маска вида `src` со звёздами
-      // содержит последовательность, неотличимую от пустого блочного
-      // комментария, и образец съедает её ИЗНУТРИ СТРОКИ. Поймано сразу:
-      // короткий адрес превращался в огрызок, таблица выходила пустой, и
-      // разрешение коротких адресов не работало бы молча.
-      //
-      // Поэтому сканер, знающий про строки, и зовётся он только тогда, когда
-      // простой разбор уже не удался.
-      let out = "";
-      let inString = false;
-      for (let i = 0; i < raw.length; i += 1) {
-        const c = raw[i];
-        if (inString) {
-          out += c;
-          if (c === "\\") {
-            out += raw[i + 1] ?? "";
-            i += 1;
-            continue;
-          }
-          if (c === '"') inString = false;
-          continue;
-        }
-        if (c === '"') {
-          inString = true;
-          out += c;
-          continue;
-        }
-        if (c === "/" && raw[i + 1] === "/") {
-          while (i < raw.length && raw[i] !== "\n") i += 1;
-          out += "\n";
-          continue;
-        }
-        if (c === "/" && raw[i + 1] === "*") {
-          const end = raw.indexOf("*/", i + 2);
-          i = end < 0 ? raw.length : end + 1;
-          continue;
-        }
-        out += c;
-      }
-      try {
-        parsed = JSON.parse(out);
-      } catch {
-        return;
-      }
-    }
+    const parsed = parseJsonc(readFileSync(at, "utf8"));
+    if (parsed === null) return;
     const here = path.dirname(at);
     const paths = parsed.compilerOptions?.paths;
     if (paths !== undefined)
@@ -2688,6 +2694,8 @@ const CHECK_SECTIONS = [
   "Строка таблицы по ширине шапки",
   "Ссылка на критерий планки несёт его заголовок",
   "Таблица состава лежит в одном месте",
+  "Файлы обвязки видны git",
+  "Концы строк рабочего дерева сходятся с объявленными",
   "Перечень папок полки полный",
   "Исключения сверок используются",
   "Списки исключений не разрослись (предупреждение, прогон не роняет)",
@@ -2721,6 +2729,7 @@ const CHECK_SECTIONS = [
   "Связка проверок зовёт живые звенья",
   "Настройка сборки знает про тесты",
   "Привезённый код виден компилятору",
+  "Строгость компилятора там, где проверяются типы",
   "Конфиг снятого звена служит живому",
   "Настройка проекта знает все поля семени",
   "Поле семени настройки объяснено",
@@ -9919,6 +9928,30 @@ if (mode === "verify") {
               setupSeed.to +
                 " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
             );
+          // Секции тестов нет НИ В ОДНОЙ настройке, а звено тестов обвязки
+          // живое: раннер идёт умолчанием и подготовку не зовёт. Так выходило,
+          // когда настройку сборщика под другим именем того же формата
+          // откладывали в `.seat` до фазы 2 — тесты фазы 1 шли без области
+          // сбора и без подготовки, и зелёными. Найдено посадкой руками в
+          // проект с `vite.config.js`. У проекта со своим раннером звено
+          // тестов не живое, и вопроса нет.
+          const testLink = (
+            readJson(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
+          ).find((e) => e.name === "test");
+          const testLives =
+            testLink?.recognise != null &&
+            linkCalled(
+              new RegExp(testLink.recognise),
+              readJson(
+                path.join(BASE, CONFIG.manifest ?? "../package.json"),
+                {},
+              ).scripts ?? {},
+            );
+          if (runnerConf === undefined && testLives)
+            viteDrift.push(
+              setupSeed.to +
+                " — подготовка прогона лежит, звено тестов живое, а секции тестов нет ни в одной настройке сборщика: раннер идёт умолчанием и подготовку не зовёт",
+            );
         }
       }
       checkHead("Настройка сборки знает про тесты", {
@@ -9933,6 +9966,128 @@ if (mode === "verify") {
       });
       console.log("  вне области компилятора: " + unseen.length);
       for (const one of unseen) console.log("    " + one);
+
+      // Строгость компилятора — там, где звено типов проверяет код.
+      //
+      // Половина планки стоит на строгости, и посадка дописывает её всегда.
+      // Проверки у этого не было никакой: монорепозиторий раздаёт проверку
+      // типов пакетам, строгость дописали в конфиг корня, а пакеты остались
+      // при своей, и звено типов проверяло их мягче объявленного — зелёным.
+      // Замерено посадкой руками в монорепозиторий.
+      //
+      // Конфиги берутся по тому, что звено ЗОВЁТ: `-p` и `--project` —
+      // названный файл, иначе конфиг корня; конфиг-решение со ссылками — его
+      // ссылки; делегирование пакетам — те же вызовы в каждом пакете. Опции
+      // читаются вместе с тем, что конфиг продолжает. Набор флагов — из семени
+      // конфига: всё включённое в нём, что строже умолчания.
+      const strictGap = [];
+      let strictLooked = 0;
+      if (linkHasSubject("typecheck")) {
+        const seedTs = shelfAt("seat/templates/tsconfig.json");
+        const seedOpts =
+          seedTs !== null && existsSync(seedTs)
+            ? (parseJsonc(readFileSync(seedTs, "utf8"))?.compilerOptions ?? {})
+            : {};
+        const want = Object.entries(seedOpts)
+          .filter(
+            ([k, v]) =>
+              v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
+          )
+          .map(([k]) => k);
+        const mapAt = shelfAt("seat/map.json");
+        const link = (
+          mapAt !== null && existsSync(mapAt)
+            ? (readJson(mapAt, {}).chainScripts ?? [])
+            : []
+        ).find((e) => e.name === "typecheck");
+        const manifestAt = path.join(
+          BASE,
+          CONFIG.manifest ?? "../package.json",
+        );
+        const rootScripts = readJson(manifestAt, {}).scripts ?? {};
+        const calls = [];
+        if (link?.recognise != null) {
+          const re = new RegExp(link.recognise);
+          for (const body of Object.values(rootScripts))
+            if (re.test(body)) calls.push([path.dirname(manifestAt), body]);
+          // Делегирование: корневой скрипт раздаёт одноимённые скрипты пакетам.
+          const handed = delegatedLink(re, rootScripts);
+          if (handed !== null) {
+            const m = /\bnpm run ([\w:-]+)/.exec(rootScripts[handed]);
+            const globs = readJson(manifestAt, {}).workspaces ?? [];
+            const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
+            for (const g of list) {
+              const dir = path.join(
+                path.dirname(manifestAt),
+                String(g).replace(/\/\*$/, ""),
+              );
+              if (!existsSync(dir)) continue;
+              const dirs = String(g).endsWith("/*")
+                ? readdirSync(dir).map((e) => path.join(dir, e))
+                : [dir];
+              for (const d of dirs) {
+                const body = readJson(path.join(d, "package.json"), {})
+                  .scripts?.[m?.[1] ?? ""];
+                if (body !== undefined && re.test(body)) calls.push([d, body]);
+              }
+            }
+          }
+        }
+        const optionsOf = (at, seen = new Set()) => {
+          if (seen.has(at) || !existsSync(at)) return null;
+          seen.add(at);
+          const parsed = parseJsonc(readFileSync(at, "utf8"));
+          if (parsed === null) return null;
+          let out = {};
+          for (const ext of [parsed.extends ?? []].flat()) {
+            if (!String(ext).startsWith(".")) continue;
+            let to = path.resolve(path.dirname(at), ext);
+            if (!existsSync(to) && existsSync(to + ".json")) to += ".json";
+            out = { ...out, ...(optionsOf(to, seen)?.options ?? {}) };
+          }
+          return {
+            options: { ...out, ...(parsed.compilerOptions ?? {}) },
+            parsed,
+          };
+        };
+        const configs = new Set();
+        for (const [dir, body] of calls) {
+          const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
+          configs.add(path.resolve(dir, p === null ? "tsconfig.json" : p[1]));
+        }
+        for (const at of configs) {
+          const got = optionsOf(at);
+          if (got === null) continue;
+          const refs = got.parsed.references ?? [];
+          const targets =
+            got.parsed.compilerOptions == null && refs.length
+              ? refs.map((r) => {
+                  const to = path.resolve(path.dirname(at), r.path);
+                  return existsSync(to) && statSync(to).isDirectory()
+                    ? path.join(to, "tsconfig.json")
+                    : to;
+                })
+              : [at];
+          for (const one of targets) {
+            const opts = one === at ? got.options : optionsOf(one)?.options;
+            if (opts == null) continue;
+            strictLooked += 1;
+            const lax = want.filter((k) => opts[k] !== true);
+            if (lax.length)
+              strictGap.push(
+                path.relative(REPO, one).split(path.sep).join("/") +
+                  " — звено типов проверяет по нему, а строгости семени нет: " +
+                  lax.join(", "),
+              );
+          }
+        }
+      }
+      checkHead("Строгость компилятора там, где проверяются типы", {
+        n: strictLooked,
+        unit: "конфигов компилятора, по которым идёт проверка типов",
+      });
+      console.log("  без строгости семени: " + strictGap.length);
+      for (const one of strictGap) console.log("    " + one);
       checkHead("Конфиг снятого звена служит живому", {
         n: CONFIG.toolchain.length,
         unit: "звеньев цепочки",
@@ -11224,6 +11379,29 @@ if (mode === "verify") {
       for (const one of placed)
         if (!existsSync(path.join(SHELF, one)))
           unexplained.push(one + " — назван в карте посадки, а файла нет");
+      // Адрес назначения решает и то, КАК файл будет прочитан. Семя,
+      // написанное модулем, под именем `.js` читается модулем или сценарием
+      // по полю `type` манифеста ЧУЖОГО проекта: без поля среда на каждом
+      // прогоне печатает предупреждение и разбирает файл дважды, а дописать
+      // поле посадка не вправе — оно меняет, как грузится каждый файл
+      // проекта. Так ложился конфиг линта. Найдено посадкой руками в проект
+      // на обычном JavaScript. Модуль ложится под `.mjs`, и вопроса нет.
+      for (const e of [
+        ...(seatMap.copy ?? []),
+        ...(seatMap.onSubject ?? []),
+        ...(seatMap.onTransition ?? []),
+      ]) {
+        if (!String(e.to ?? "").endsWith(".js")) continue;
+        const at = path.join(SHELF, e.from);
+        if (!existsSync(at)) continue;
+        if (/^\s*(?:import|export)\s/m.test(readFileSync(at, "utf8")))
+          unexplained.push(
+            e.from +
+              " — написано модулем, а ложится как " +
+              e.to +
+              ": тип модуля решит манифест проекта. Класть под .mjs",
+          );
+      }
     }
   }
   checkHead("У каждого семени есть адрес назначения", {
@@ -12308,6 +12486,135 @@ if (mode === "verify") {
       }
     }
   }
+  // 14a-7. Файлы обвязки видны git.
+  //
+  // Обвязка — файлы проекта: едут с ним коммитом и клоном. Файл полки под
+  // правилом игнорирования не едет никуда и пропадает молча: прогон на этой
+  // машине зелёный, а в клоне файла нет. Замерено в мастерской: конфиг линта
+  // переименовали вслед за семенем, а список исключений называл прежнее имя,
+  // и переименованный файл выпал из отслеживания. Свои файлы проекта внутри
+  // папки обвязки — разрешения среды — не в счёт: карта посадки называет их.
+  const shelfHidden = [];
+  const sandboxOpen = [];
+  let shelfFilesLooked = 0;
+  let shelfGitBlind = false;
+  if (SHELF !== null) {
+    const mapAt = shelfAt("seat/map.json");
+    const own = new Set(
+      (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+        .projectOwnedInsideHarness ?? [],
+    );
+    const list = [];
+    (function walkShelfFiles(dir) {
+      for (const e of readdirSync(dir)) {
+        if (OUT_OF_TREE.has(e)) continue;
+        const full = path.join(dir, e);
+        const inShelf = path.relative(SHELF, full).split(path.sep).join("/");
+        if (own.has(inShelf)) continue;
+        if (statSync(full).isDirectory()) walkShelfFiles(full);
+        else list.push(path.relative(REPO_AT, full).split(path.sep).join("/"));
+      }
+    })(SHELF);
+    shelfFilesLooked = list.length;
+    try {
+      // `--no-index`: правило спрашивается и с отслеживаемого файла. Он сам
+      // едет, но правило поджидает следующий: переименованный вслед за
+      // семенем файл новый, и под правилом он уже не отслеживается.
+      const out = execFileSync(
+        "git",
+        ["check-ignore", "--no-index", "--stdin"],
+        {
+          cwd: REPO_AT,
+          encoding: "utf8",
+          input: list.join(NEWLINE) + NEWLINE,
+          stdio: ["pipe", "pipe", "ignore"],
+        },
+      );
+      for (const one of out.split(NEWLINE).filter(Boolean))
+        shelfHidden.push(
+          one.trim() +
+            " — файл обвязки под правилом игнорирования: новый либо переименованный в клон не уедет",
+        );
+    } catch (e) {
+      // Код 1 у `check-ignore` значит «ничего не скрыто»; иное — git
+      // недоступен или репозитория нет, и тогда это слепота, а не чистота.
+      if (e.status !== 1) shelfGitBlind = true;
+    }
+    // Обратная сторона: песочницы, которые порождает сам инструмент, от git
+    // СКРЫТЫ. Каждая — полная копия дерева и живёт минутами, и коммит,
+    // сделанный в это время из соседней консоли, захватил бы копию проекта
+    // целиком. Песочница мутаций была в семени игнорирования, а песочница
+    // фальсификации — нет: замерено `git status` мастерской посреди прогона.
+    if (!shelfGitBlind)
+      for (const dir of [".проба-сверок", ".stryker-tmp"]) {
+        try {
+          execFileSync("git", ["check-ignore", "--no-index", "-q", dir], {
+            cwd: REPO_AT,
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+        } catch (e) {
+          if (e.status === 1)
+            sandboxOpen.push(
+              dir +
+                " — песочница инструмента не скрыта от git: коммит во время прогона захватит копию проекта. Дописать в .gitignore",
+            );
+        }
+      }
+  }
+  checkHead("Файлы обвязки видны git", {
+    n: shelfFilesLooked,
+    unit: "файлов обвязки",
+  });
+  console.log(
+    shelfGitBlind
+      ? "  репозитория нет либо git недоступен — не сверено"
+      : `  скрытых от git: ${shelfHidden.length}, песочниц на виду: ${sandboxOpen.length}`,
+  );
+  for (const d of [...shelfHidden, ...sandboxOpen]) console.log("    " + d);
+
+  // 14a-8. Концы строк рабочего дерева сходятся с объявленными.
+  //
+  // `.gitattributes` объявляет концы строк, а приводит он только индекс:
+  // файл, выписанный с CRLF до его появления, так и лежит с CRLF. Правка,
+  // ищущая текст по одному переводу строки, на таком файле не находит
+  // ничего — без признака и без ошибки. Замерено посадкой руками в проект,
+  // выписанный с CRLF: шаг приведения выглядел исполненным, а рабочее дерево
+  // осталось прежним целиком. Спрашивается то, что показывает сам git:
+  // `git ls-files --eol`, файл с объявленным LF и CRLF в рабочем дереве.
+  const eolDrift = [];
+  let eolLooked = 0;
+  let eolBlind = false;
+  try {
+    const rows = execFileSync("git", ["ls-files", "--eol"], {
+      cwd: REPO_AT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024,
+    }).split(NEWLINE);
+    for (const row of rows) {
+      const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\/(.*?)\t(.+)$/.exec(row);
+      if (m === null) continue;
+      if (!/eol=lf/.test(m[3])) continue;
+      eolLooked += 1;
+      if (m[2] === "crlf" || m[2] === "mixed")
+        eolDrift.push(
+          `${m[4]} — объявлен LF, а в рабочем дереве ${m[2] === "crlf" ? "CRLF" : "концы вперемешку"}: не тронутый правкой файл выписать заново из индекса`,
+        );
+    }
+  } catch {
+    eolBlind = true;
+  }
+  checkHead("Концы строк рабочего дерева сходятся с объявленными", {
+    n: eolLooked,
+    unit: "файлов с объявленным LF",
+  });
+  console.log(
+    eolBlind
+      ? "  репозитория нет либо git недоступен — не сверено"
+      : `  расходятся: ${eolDrift.length}`,
+  );
+  for (const d of eolDrift) console.log("    " + d);
+
   checkHead("Перечень папок полки полный", {
     n: shelfLists,
     unit: "перечней папок полки",
@@ -13695,6 +14002,30 @@ if (mode === "verify") {
       }
     }
   }
+  // Команда долга мутаций в правилах проекта — ровно тогда, когда мутационный
+  // прогон объявлен. Семя правил описывало эту команду абзацем, а в его
+  // таблице её не было вовсе; проект без мутаций получал абзац о команде,
+  // которой ему нечего спрашивать. Найдено ревизией правил посаженных
+  // стендов. Спрашивается в обе стороны: названа без прогона — требование
+  // без предмета; прогон есть, а команды нет — отчёт о правке её не спросит.
+  {
+    const mine = (CONFIG.rulesManifest?.rules ?? [])
+      .map((one) => path.join(BASE, one))
+      .filter((one) => existsSync(one));
+    if (mine.length) {
+      const said = mine
+        .map((one) => readFileSync(one, "utf8"))
+        .some((body) => /graph\.mjs mutated/.test(body));
+      if (said && CONFIG.mutationConfig == null)
+        unrunnable.push(
+          "правила проекта называют `graph.mjs mutated`, а мутационного прогона у проекта нет: снять строку таблицы и слова о команде",
+        );
+      if (!said && CONFIG.mutationConfig != null)
+        unrunnable.push(
+          "мутационный прогон объявлен, а правила проекта не называют `graph.mjs mutated` — команду его долга, часть каждого отчёта о правке",
+        );
+    }
+  }
   checkHead("Названное доктриной исполнимо", {
     n: runnableLooked,
     unit: "файлов прозы обвязки и базы",
@@ -13861,6 +14192,7 @@ if (mode === "verify") {
   // внутри блока, читающего карту посадки.
   const staleFrame = [];
   const emptyClaims = [];
+  const emptySlots = [];
   let emptyLooked = 0;
   let frameLaid = 0;
   let frameOwn = 0;
@@ -14001,6 +14333,19 @@ if (mode === "verify") {
             while (shut < seed.length && seed[shut].trim() !== SHUT) {
               const row = seed[shut].trim();
               if (row !== "") claim.push(row);
+              // Место под заполнение ВНУТРИ записи о пустоте — противоречие в
+              // самом семени: пометка велит снять блок целиком с первой
+              // строкой своего кода, и заполненное уйдёт вместе с ним. Так
+              // стояли сводка о проекте в карте и базовая линия в фактах:
+              // заполнив их в фазе 2, пустой проект с первой строкой кода
+              // получил бы требование их снять. Найдено посадкой руками.
+              if (/<(?!!--)[^<>]{3,}>/.test(row))
+                emptySlots.push(
+                  e.from +
+                    ":" +
+                    (shut + 1) +
+                    " — внутри записи о пустоте стоит место под заполнение: заполненное уйдёт вместе с пометкой",
+                );
               shut += 1;
             }
             i = shut;
@@ -14418,6 +14763,7 @@ if (mode === "verify") {
     console.log(
       "    " + one + ". Снять маркер вместе с текстом и написать, что есть",
     );
+  for (const one of emptySlots) console.log("    " + one);
 
   checkHead("Каркас не отстал от семени", {
     n: seedsDeclared.length,
@@ -15427,6 +15773,31 @@ if (mode === "verify") {
             rows[head].replace(/^ {2}\/\*\*\s*/, "").slice(0, 60) +
             "…» — объяснение без поля: за ним сразу другое. Поставить над полем, о котором оно",
         );
+      }
+      // Звено цепочки объясняет себя полем `why`: его печатает сверка
+      // инструментов, когда звену чего-то не хватает. Звено мутаций приехало
+      // без него, и сверка печатала «зачем: undefined» — объяснение, которого
+      // нет, выглядело объяснением. Найдено посадкой руками в проект на
+      // `jest`. Спрашивается каждое звено списка `toolchain`.
+      const from = rows.findIndex((l) => /^ {2}toolchain:\s*\[/.test(l));
+      if (from >= 0) {
+        let link = null;
+        for (let i = from + 1; i < rows.length; i += 1) {
+          if (/^ {2}\]/.test(rows[i])) break;
+          if (/^ {4}\{/.test(rows[i])) link = { script: null, why: false };
+          const s = /^ {6}script:\s*"([^"]+)"/.exec(rows[i]);
+          if (s !== null && link !== null) link.script = s[1];
+          if (/^ {6}why:\s*\S/.test(rows[i]) && link !== null) link.why = true;
+          if (/^ {4}\},?\s*$/.test(rows[i]) && link !== null) {
+            if (!link.why)
+              fieldMute.push(
+                "toolchain «" +
+                  (link.script ?? "звено без имени") +
+                  "» — звено без `why`: сверка инструментов напечатает объяснение, которого нет",
+              );
+            link = null;
+          }
+        }
       }
     }
   }

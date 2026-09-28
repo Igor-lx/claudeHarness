@@ -161,6 +161,24 @@
       }
     },
     {
+      "section": "Файлы обвязки видны git",
+      "file": ".gitignore",
+      "append": "/.claude/state/"
+    },
+    {
+      "section": "Концы строк рабочего дерева сходятся с объявленными",
+      "file": ".claude/state/todo.md",
+      "find": "# Отложенная работа по самой обвязке",
+      "replace": "# Отложенная работа по самой обвязке\r"
+    },
+    {
+      "section": "Строгость компилятора там, где проверяются типы",
+      "whenLink": ["typecheck"],
+      "file": "tsconfig.json",
+      "find": "\"noUncheckedIndexedAccess\": true,",
+      "replace": ""
+    },
+    {
       "section": "Перечень папок полки полный",
       "file": ".claude/README.md",
       "find": "`hooks/` — ворота перед коммитом,",

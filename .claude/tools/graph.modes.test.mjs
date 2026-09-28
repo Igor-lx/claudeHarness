@@ -334,3 +334,190 @@ describe("ворота и приведение формата", () => {
     }
   }, 180000);
 });
+
+/** Копия мастерской во временную папку — без пакетов и служебного. */
+const copyWorkshop = (prefix) => {
+  const home = path.join(TOOL_DIR, "..", "..");
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const skip = new Set([
+    "node_modules",
+    ".git",
+    ".проба-сверок",
+    ".stryker-tmp",
+    "reports",
+    "coverage",
+    "dist",
+  ]);
+  fs.cpSync(home, box, {
+    recursive: true,
+    filter: (src) => !skip.has(path.basename(src)),
+  });
+  return box;
+};
+/** Прогон сверки базы в копии: код возврата и строки находок по секциям. */
+const verifyIn = (box) => {
+  let out;
+  try {
+    out = execFileSync(
+      process.execPath,
+      [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+      { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (e) {
+    out = String(e.stdout ?? "");
+  }
+  const found = new Map();
+  let section = null;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("=== ")) section = line.slice(4, -4);
+    else if (/^ {4}\S/.test(line) && section !== null)
+      found.set(section, [...(found.get(section) ?? []), line.trim()]);
+  }
+  return found;
+};
+
+/**
+ * Песочница фальсификации лежит внутри репозитория минутами, и прогон рядом с
+ * ней — вторая консоль, крючок среды, ворота — обязан её не видеть. Прежде её
+ * исключала одна лишь копия, и соседний прогон краснел на десятках строк про
+ * чужую копию проекта. Держит это общий список того, что вне дерева; тест
+ * держит сам список: мусор в папке песочницы не меняет ни одной находки.
+ */
+describe("песочница фальсификации не видна прогону", () => {
+  it("мусор в папке песочницы не даёт ни одной новой находки", () => {
+    const box = copyWorkshop("pesochnica-");
+    try {
+      const before = verifyIn(box);
+      const junk = path.join(box, ".проба-сверок");
+      fs.mkdirSync(path.join(junk, "src", "app"), { recursive: true });
+      fs.mkdirSync(path.join(junk, ".claude", "rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(junk, "src", "app", "zz.ts"),
+        "// комментарий не на том языке\nexport const zz = 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(junk, ".claude", "rules", "zz.md"),
+        "# Проба\n\nСсылка [сюда](./нету.md), 7 сверок.\n",
+      );
+      fs.writeFileSync(path.join(junk, "zz.md"), "# Проза вне корпуса\n");
+      const after = verifyIn(box);
+      expect([...after.entries()]).toEqual([...before.entries()]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Долг `comments` у трёх сверок комментариев один и мерится суммой их
+ * находок. Пока каждая сравнивала поле со своим счётом, честный долг за
+ * длинный комментарий прогон называл лишним, строку реестра с именем его
+ * сверки не признавал, а долг под одну сверку прощал находки соседних.
+ * Замерено посадкой стенда с длинным комментарием.
+ */
+describe("долг комментариев — сумма находок трёх сверок", () => {
+  it("честный долг держит, лишняя находка соседней сверки краснеет", () => {
+    const box = copyWorkshop("dolg-");
+    try {
+      const code = path.join(box, "src", "app", "zzWordy.ts");
+      fs.writeFileSync(
+        code,
+        [
+          "// Этот комментарий нарочно длиннее потолка: в нём гораздо больше",
+          "// пятнадцати слов подряд, и сверка обязана назвать его длинным рядом.",
+          "export const zzWordy = 1;",
+          "",
+        ].join("\n"),
+      );
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const had = fs.readFileSync(cfg, "utf8");
+      const withDebt = had.replace(
+        /(\n {2}debt: \{[\s\S]*?\n {4})comments: null,/,
+        "$1comments: 1,",
+      );
+      expect(withDebt).not.toBe(had);
+      fs.writeFileSync(cfg, withDebt);
+      const reg = path.join(box, ".context", "16-findings.md");
+      fs.appendFileSync(
+        reg,
+        "| 9998 | «Комментарий не перерос в прозу»: `src/app/zzWordy.ts:1` — ряд длиннее потолка | проба долга |  |  | открыта |\n",
+      );
+      const held = verifyIn(box);
+      for (const s of [
+        "Комментарий не перерос в прозу",
+        "Закомментированного кода нет",
+        "Объявленный долг не больше фактического",
+        "Объявленный долг назван планом перехода",
+      ])
+        expect([s, held.get(s) ?? []]).toEqual([s, []]);
+      // Вторая находка — у СОСЕДНЕЙ сверки: сумма выше долга, и прогон
+      // обязан покраснеть, а не простить её долгом, объявленным под первую.
+      fs.appendFileSync(
+        code,
+        [
+          "// const was = useState(0);",
+          "// function Old() {",
+          "//   return null;",
+          "// }",
+          "",
+        ].join("\n"),
+      );
+      const over = verifyIn(box);
+      expect(
+        (over.get("Закомментированного кода нет") ?? []).length,
+      ).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Звенья цепочки проект вправе держать под своими именами — `types`, `fmt`, —
+ * и базовая линия пишет их теми же именами. Сверка «Красное звено названо
+ * находкой» спрашивала звенья по семенным именам: проект, назвавший по-своему
+ * все звенья, получал ложное «в базовой линии не опознано ни одного» на верно
+ * записанной линии. Замерено посадкой руками в проект со звеном `types`.
+ */
+describe("звенья под проектными именами опознаются в базовой линии", () => {
+  it("своё имя звена — не слепота, а красное под ним без строки реестра — находка", () => {
+    const box = copyWorkshop("zvenya-");
+    try {
+      const own = {
+        typecheck: "types",
+        lint: "lint:js",
+        "format:check": "fmt",
+        test: "unit",
+      };
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      const scripts = {};
+      for (const [name, body] of Object.entries(pkg.scripts))
+        scripts[own[name] ?? name] = body;
+      scripts.check = Object.entries(own).reduce(
+        (s, [from, to]) =>
+          s.split("npm run " + from + " ").join("npm run " + to + " "),
+        pkg.scripts.check.split("npm test").join("npm run unit"),
+      );
+      pkg.scripts = scripts;
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const factsAt = path.join(box, ".context", "01-facts.md");
+      let facts = fs.readFileSync(factsAt, "utf8");
+      for (const [from, to] of Object.entries(own))
+        facts = facts.split("| `" + from + "` |").join("| `" + to + "` |");
+      fs.writeFileSync(factsAt, facts);
+      const named = verifyIn(box);
+      expect(named.get("Красное звено названо находкой") ?? []).toEqual([]);
+      fs.writeFileSync(
+        factsAt,
+        facts.replace("| `types` | зелено |", "| `types` | красно, код `2` |"),
+      );
+      const red = verifyIn(box);
+      expect(
+        (red.get("Красное звено названо находкой") ?? []).join(" "),
+      ).toContain("`types` пришло красным");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
