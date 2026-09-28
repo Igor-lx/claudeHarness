@@ -470,18 +470,24 @@ const PACKAGE_MANAGER = (() => {
  * молча — связка читалась литералом `npm`, и на проекте с yarn сверка
  * «Связка проверок зовёт живые звенья» видела ноль вызовов и докладывала
  * живые звенья выпавшими. Кроме npm, менеджеры зовут скрипт и без `run`
- * (`yarn lint`), и эта форма у них основная. */
+ * (`yarn lint`), и эта форма у них основная.
+ *
+ * Имя скрипта — любое слово без пробела: менеджер принимает и кириллицу.
+ * Образцом здесь стояло `\w`, и связка, зовущая такой скрипт, читалась не
+ * зовущей ничего — сверка слепла на отсутствующей команде. Замерено
+ * фальсификацией свежей посадки. */
 function scriptCallsIn(body) {
   const pm = PACKAGE_MANAGER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const name = "([^\\s&|;]+)";
   const calls = [];
   for (const piece of String(body ?? "").split("&&")) {
     const one = piece.trim();
-    const run = new RegExp("^" + pm + "\\s+run\\s+([\\w:-]+)").exec(one);
+    const run = new RegExp("^" + pm + "\\s+run\\s+" + name).exec(one);
     if (run !== null) calls.push(run[1]);
-    else if (new RegExp("^" + pm + "\\s+test(?![\\w:-])").test(one))
+    else if (new RegExp("^" + pm + "\\s+test(?![^\\s&|;])").test(one))
       calls.push("test");
     else if (PACKAGE_MANAGER !== "npm") {
-      const bare = new RegExp("^" + pm + "\\s+([\\w:-]+)").exec(one);
+      const bare = new RegExp("^" + pm + "\\s+" + name).exec(one);
       if (bare !== null) calls.push(bare[1]);
     }
   }
