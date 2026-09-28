@@ -712,7 +712,7 @@
       }
     },
     {
-      "section": "Связи через DOM и CSS",
+      "section": "Связи мимо графа импортов",
       "file": ".context/graph.config.mjs",
       "find": "    headings: [",
       "replace": "    headings: [\n      \"| ТАКОЙ ТАБЛИЦЫ НЕТ |\","

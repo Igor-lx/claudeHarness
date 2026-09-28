@@ -1430,6 +1430,36 @@ const owedFor = (file) => {
   }
   return out;
 };
+/** Имя без приставки, которую помощник проекта дописывает сам: `cssVar("x")`
+ * даёт `--yarl__x`, и в коде стоит только `x`. Приставки объявлены полем
+ * `namePrefixes`. Без них имя, собранное помощником, не находилось в коде
+ * нигде: своя переменная объявлялась чужой связью, живой класс — мёртвым, а
+ * строка таблицы связей — описывающей то, чего нет. Замерено на библиотеке,
+ * где все переменные и классы стилей собираются помощниками. */
+const NAME_PREFIXES = Array.isArray(CONFIG.namePrefixes)
+  ? CONFIG.namePrefixes
+  : [];
+const bareNamesOf = (name) => {
+  const plain = name.replace(/^\./, "");
+  return NAME_PREFIXES.filter(
+    (p) => plain.startsWith(p) && plain.length > p.length,
+  ).map((p) => plain.slice(p.length));
+};
+/** Строки в кавычках, стоящие в исполняемом коде, без тестов. */
+let CODE_LITERALS = null;
+const codeLiterals = () => {
+  if (CODE_LITERALS !== null) return CODE_LITERALS;
+  CODE_LITERALS = new Set();
+  for (const f of files) {
+    if (isTest(f)) continue;
+    for (const m of codeOf(readFileSync(f, "utf8")).matchAll(
+      /["'`]([^"'`$\\\n]+)["'`]/g,
+    ))
+      CODE_LITERALS.add(m[1]);
+  }
+  return CODE_LITERALS;
+};
+
 const foreignLinks = () => {
   const declared = new Set();
   const used = new Map();
@@ -1455,6 +1485,9 @@ const foreignLinks = () => {
     for (const m of readFileSync(f, "utf8").matchAll(STYLE_PROP))
       declared.add(m[1]);
   }
+  // Переменная, которую код собирает помощником, — тоже своя.
+  for (const name of used.keys())
+    if (bareNamesOf(name).some((b) => codeLiterals().has(b))) declared.add(name);
   const namesIn = (list) => {
     const found = new Map();
     for (const f of list)
@@ -2688,6 +2721,166 @@ const usesWithVia = (target) => {
   return { uses, unresolved };
 };
 
+/** Файл исходников, из которого собран адрес поставки: `./dist/x/index.js` —
+ * это `src/x/index.ts`. Сопоставляется по хвосту пути: как написан, и без
+ * первой папки — папки сборки, — от корня репозитория и от каждого корня
+ * исходников. Не нашлось — `null`, и адрес называется несопоставленным: угадать
+ * исходник по имени значило бы выдумать поверхность. */
+const sourceOfShipped = (spec) => {
+  const clean = spec.replace(/^\.\//, "");
+  const isStyleSpec = /\.(css|scss|sass|less)$/.test(clean);
+  if (!isStyleSpec && !/\.(d\.[mc]?ts|[mc]?js|jsx|[mc]?ts|tsx)$/.test(clean))
+    return null;
+  const stem = clean.replace(
+    /\.(d\.[mc]?ts|[mc]?js|jsx|[mc]?ts|tsx|css|scss|sass|less)$/,
+    "",
+  );
+  const parts = stem.split("/");
+  const tails = parts.length > 1 ? [stem, parts.slice(1).join("/")] : [stem];
+  const exts = isStyleSpec
+    ? [".css", ".scss", ".sass", ".less"]
+    : [".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"];
+  for (const tail of tails)
+    for (const root of [REPO_AT, ...SRC_ROOTS])
+      for (const ext of exts)
+        for (const one of isStyleSpec
+          ? [tail + ext]
+          : [tail + ext, tail + "/index" + ext]) {
+          const at = norm(path.join(root, one));
+          if (files.includes(at) || styleFiles.includes(at)) return at;
+        }
+  return null;
+};
+
+/** Публичные входы: файлы исходников, которые пакет отдаёт наружу.
+ *
+ * Объявлены полем `publicEntries` либо выведены из манифеста ПУБЛИКУЕМОГО
+ * пакета — того, что называет `exports`, `main`, `module` или `files` и не
+ * объявлен закрытым: тот же признак, что у сверки «Поставка не несёт
+ * лишнего». У приложения публичной поверхности нет, и ответ пуст.
+ *
+ * Нужны затем, что изменение контракта правила выносят отдельно и
+ * согласуют, а видеть, что правка его меняет, было нечем. Замерено на
+ * библиотеке: хук, уходящий наружу через публичный вход, правили как
+ * внутренний — досье, план и вопрос после правки молчали о контракте. */
+let PUBLIC_CACHE = null;
+const publicEntries = () => {
+  if (PUBLIC_CACHE !== null) return PUBLIC_CACHE;
+  const found = [];
+  const unmapped = [];
+  if (Array.isArray(CONFIG.publicEntries)) {
+    for (const one of CONFIG.publicEntries) {
+      const at = norm(path.join(BASE, one));
+      if (files.includes(at) || styleFiles.includes(at)) found.push(at);
+      else unmapped.push(one);
+    }
+  } else if (CONFIG.manifest != null) {
+    const pkg = readJson(path.join(BASE, CONFIG.manifest), {});
+    const published =
+      pkg.private !== true &&
+      ["exports", "main", "module", "files"].some((k) => pkg[k] != null);
+    if (published) {
+      const specs = new Set();
+      const walk = (v) => {
+        if (typeof v === "string") specs.add(v);
+        else if (v !== null && typeof v === "object")
+          for (const x of Object.values(v)) walk(x);
+      };
+      for (const k of ["exports", "main", "module", "types", "typings"])
+        walk(pkg[k]);
+      for (const spec of specs) {
+        if (/(^|\/)package\.json$/.test(spec)) continue;
+        const at = sourceOfShipped(spec);
+        if (at === null) unmapped.push(spec);
+        else if (!found.includes(at)) found.push(at);
+      }
+    }
+  }
+  PUBLIC_CACHE = { found, unmapped };
+  return PUBLIC_CACHE;
+};
+
+/** Имена узла, которые уходят наружу через публичный вход, и сами входы. */
+const publicNamesOf = (target) => {
+  const { found } = publicEntries();
+  const names = new Set();
+  const via = new Set();
+  if (found.includes(target)) {
+    via.add(target);
+    for (const n of ownExportsOf.get(target) ?? []) names.add(n);
+    for (const n of reexportsOf.get(target)?.named.keys() ?? []) names.add(n);
+  }
+  for (const entry of found) {
+    if (entry === target) continue;
+    for (const n of ownExportsOf.get(target) ?? [])
+      if (definerOf(entry, n) === target) {
+        names.add(n);
+        via.add(entry);
+      }
+  }
+  return { names: [...names].sort(), via: [...via].map(rel).sort() };
+};
+
+/** Узлы, связанные с этим общим именем-константой, а не импортом друг
+ * друга: тема шины, тип действия, ключ хранилища. Оба конца берут константу
+ * из третьего файла и друг о друге не знают, поэтому ни граф импортов, ни
+ * граф имён их не соединяет. Константа, которую берут больше
+ * `SHARED_NAME_LIMIT` файлов, — словарь, а не связь, и называется числом.
+ * Имя, собранное вызовом во время работы, отсюда не видно — для него таблица
+ * связей через имя в коде. */
+const SHARED_NAME_LIMIT = 6;
+const sharedNamesOf = (target) => {
+  const mine = new Map();
+  for (const one of namedImportsOf.get(target) ?? []) {
+    if (!Array.isArray(one.names)) continue;
+    for (const n of one.names) {
+      if (!/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(n)) continue;
+      const d = definerOf(one.target, n);
+      if (d !== null) mine.set(n, d);
+    }
+  }
+  const groups = new Map();
+  for (const [n, d] of mine) {
+    const partners = files
+      .filter(
+        (f) =>
+          f !== target &&
+          !isTest(f) &&
+          (namedImportsOf.get(f) ?? []).some(
+            (one) =>
+              Array.isArray(one.names) &&
+              one.names.includes(n) &&
+              definerOf(one.target, n) === d,
+          ),
+      )
+      .map(rel)
+      .sort();
+    if (partners.length === 0) continue;
+    const key =
+      partners.length > SHARED_NAME_LIMIT
+        ? "широко: " + partners.length + " файлов"
+        : partners.join(", ");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(n);
+  }
+  return [...groups].map(([who, names]) => [names.sort(), who]);
+};
+
+/** Строки о публичной поверхности узла — одни на `brief` и `plan`. */
+const printPublic = (target) => {
+  const { names, via } = publicNamesOf(target);
+  if (names.length === 0) return;
+  console.log("--- публичная поверхность: уходит наружу через вход пакета ---");
+  console.log("  имена: " + names.join(", "));
+  console.log("  входы: " + via.join(", "));
+  console.log(
+    "  Правка формы или ответа на краевом входе — изменение контракта: оно",
+  );
+  console.log(
+    "  выносится отдельно и согласуется, у снятого — путь миграции.",
+  );
+};
+
 /** Кто отдаёт наружу имена, объявленные узлом: бочки по дороге к входу. */
 const reexportersOf = (target) => {
   const own = [...(ownExportsOf.get(target) ?? [])];
@@ -3270,7 +3463,7 @@ const CHECK_SECTIONS = [
   "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
   "Объявленные области существуют",
   "Обещания без опоры собираются сводкой",
-  "Связи через DOM и CSS",
+  "Связи мимо графа импортов",
   "Имена классов из кода есть в листе стилей",
   "Класс из листа стилей спрошен кодом",
   "Отступление от схемы стилизации объявлено решением",
@@ -3422,7 +3615,7 @@ const RECIPE_NEEDS = {
   "Решения адресуемы": "adr",
   // Предмет — объявленная таблица связей. Её нет — ломать нечего; она есть —
   // рецепт ломает ОБЪЯВЛЕНИЕ, а не проектное содержимое таблицы.
-  "Связи через DOM и CSS": "domTables",
+  "Связи мимо графа импортов": "domTables",
   "Находки закрыты": "findings",
   // Предмет этих трёх — сам переход, и у проекта без него ломать нечего:
   // все три печатают «перехода нет». Прежде их рецепты сами заводили план,
@@ -4600,6 +4793,7 @@ if (mode === "plan") {
               outward.join(", ") +
               " — их потребители уже в радиусе, если берут имя этого файла",
           );
+        printPublic(target);
       }
 
       // Близнец: расхождение копий законно, а вот баг, починенный в одной, —
@@ -5202,6 +5396,42 @@ if (mode === "tested") {
     }
     if (touchedCode.length && !stale.length && !naked.length)
       console.log("  каждый тронутый файл правился вместе со своими тестами");
+
+    // Публичная поверхность пакета. Спрашивается ПОСЛЕ правки, потому что
+    // тогда её и пропускают: правка хука, уходящего наружу через вход пакета,
+    // читается как внутренняя, и вопрос «это изменение контракта?» не
+    // задавался ничем. Адрес поставки, не сопоставленный исходнику,
+    // называется: поверхность, которую не нашли, иначе читалась бы пустой.
+    {
+      const outward = touchedCode
+        .map((f) => [rel(f), publicNamesOf(f)])
+        .filter(([, one]) => one.names.length > 0);
+      const { unmapped } = publicEntries();
+      if (outward.length || (touchedCode.length && unmapped.length)) {
+        console.log(NEWLINE + "=== Публичная поверхность пакета ===");
+        for (const [f, one] of outward)
+          console.log(
+            `  ${f} — наружу уходят: ${one.names.join(", ")} (через ${one.via.join(", ")})`,
+          );
+        if (outward.length)
+          console.log(
+            NEWLINE +
+              "  Правка меняет форму — имя, сигнатуру, состав экспортов — или" +
+              NEWLINE +
+              "  ответ на краевом входе? Любое из двух — изменение контракта:" +
+              NEWLINE +
+              "  выносится отдельно и согласуется, у снятого — путь миграции." +
+              NEWLINE +
+              "  Смена ответа видна хуже всего: сигнатура прежняя, поведение другое.",
+          );
+        for (const one of unmapped)
+          console.log(
+            "  адрес поставки не сопоставлен исходнику: " +
+              one +
+              " — входы объявляют полем `publicEntries`",
+          );
+      }
+    }
 
     // След прогона: какие файлы кода этот режим показал и в каком виде.
     //
@@ -6798,6 +7028,18 @@ if (mode === "brief") {
           const outward = reexportersOf(target).map(rel).sort();
           if (outward.length)
             console.log("  наружу отдают бочки: " + outward.join(", "));
+          printPublic(target);
+          const shared = sharedNamesOf(target);
+          if (shared.length) {
+            console.log(
+              "--- делят имена-константы (связь мимо импорта друг друга) ---",
+            );
+            for (const [names, who] of shared)
+              console.log("  " + names.join(", ") + " — " + who);
+            console.log(
+              "  Кто из них пишет имя, а кто читает, — таблица связей через имя в коде.",
+            );
+          }
 
           // Близнец нужен и здесь, и раньше его тут не было: объясняя файл
           // форка, легко перенести на него смысл копии — одинаковая форма
@@ -11059,7 +11301,13 @@ if (mode === "verify") {
   console.log(`  записей мимо словаря: ${mutePromises.length}`);
   for (const m of mutePromises) console.log("    " + m);
 
-  // 13h. имена связей через DOM и CSS существуют в коде.
+  // 13h. имена связей мимо графа импортов существуют в коде: атрибуты
+  // разметки, переменные и классы стилей — и имена в самом коде, которые один
+  // файл пишет, а другой читает: тема шины, тип действия, ключ хранилища.
+  // Вторые не видны даже там, где видны первые: оба конца берут константу
+  // из третьего файла и друг о друге не знают. Замерено на библиотеке с
+  // шиной событий: автопрокрутка ждала статус слайда, который публикуют два
+  // других узла, и ни досье, ни база этой связи не называли.
   const domDrift = [];
   let domNames = 0;
   if (CONFIG.domTables != null) {
@@ -11078,7 +11326,10 @@ if (mode === "verify") {
       domNames = text.filter((l) => /^\|/.test(l.trim())).length;
       for (const f of [...files, ...styleFiles])
         for (const line of readFileSync(f, "utf8").split(NEWLINE))
-          for (const hit of line.matchAll(/--[a-z-]+|data-[a-z-]+/g))
+          // Имя целиком: прежний образец не знал подчёркивания и цифр и
+          // брал от `--yarl__pull_offset` одно `--yarl`, — то есть сверял
+          // приставку, и любая переменная проекта проходила живой.
+          for (const hit of line.matchAll(/--[A-Za-z0-9_-]+|data-[a-z0-9_-]+/g))
             if (!inComment(line, hit.index)) liveDomNames.add(hit[0]);
       // Класс живёт в двух формах: в листе стилей он с точкой, в контракте —
       // строкой в кавычках. Обе засчитываются как одно имя.
@@ -11090,6 +11341,26 @@ if (mode === "verify") {
           for (const hit of line.matchAll(CODE_NAME))
             if (!inComment(line, hit.index))
               liveDomNames.add("." + (hit[1] ?? hit[2] ?? hit[3]));
+      // Имена в коде: строка в кавычках либо идентификатор — в исполняемом
+      // тексте. И обратный словарь «строка → константы, которые её несут»:
+      // конец связи пишет константу, а не строку.
+      const liveCodeNames = new Set();
+      const carriers = new Map();
+      for (const f of files.filter((one) => !isTestPath(one)))
+        for (const line of readFileSync(f, "utf8").split(NEWLINE)) {
+          for (const hit of line.matchAll(/["'`]([^"'`$\\]+)["'`]/g))
+            if (!inComment(line, hit.index)) liveCodeNames.add(hit[1]);
+          for (const hit of line.matchAll(/[A-Za-z_$][\w$]*/g))
+            if (!inComment(line, hit.index)) liveCodeNames.add(hit[0]);
+          const decl =
+            /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=[^;]*?["'`]([^"'`$\\]+)["'`]/.exec(
+              line,
+            );
+          if (decl !== null && !inComment(line, decl.index)) {
+            if (!carriers.has(decl[2])) carriers.set(decl[2], new Set());
+            carriers.get(decl[2]).add(decl[1]);
+          }
+        }
       for (const heading of CONFIG.domTables.headings) {
         const from = text.indexOf(heading);
         if (from < 0) {
@@ -11102,11 +11373,17 @@ if (mode === "verify") {
           continue;
         }
         for (const row of domRows) {
-          const named = [
-            ...row
-              .split("|")[1]
-              .matchAll(/`(--[a-z-]+|data-[a-z-]+|\.[A-Za-z][\w-]*)`/g),
-          ].map((hit) => hit[1]);
+          // Первая графа — имена связи. Форма отличает род: переменная,
+          // атрибут и класс — связь через разметку и стили; всё прочее —
+          // имя в самом коде.
+          const named = [...row.split("|")[1].matchAll(/`([^`]+)`/g)]
+            .map((hit) => hit[1])
+            .filter((one) => /^(--|data-|\.)?[A-Za-z][\w.:/-]*$/.test(one));
+          // Сборщик имени, названный той же строкой: конец связи, который
+          // собирает имя вызовом, а не пишет его строкой.
+          const builders = [...row.matchAll(/`([a-z][A-Za-z0-9]*)`/g)].map(
+            (hit) => hit[1],
+          );
           // Адреса, названные ТОЙ ЖЕ строкой: кто объявляет, кто читает.
           // Строка, не называющая файлов, проверяется как прежде.
           const where = [...row.matchAll(/`([^`]+)`/g)]
@@ -11115,7 +11392,12 @@ if (mode === "verify") {
             .map((one) => path.join(BASE, "..", one))
             .filter((one) => existsSync(one));
           for (const name of named) {
-            if (!liveDomNames.has(name)) {
+            const inCode = !/^(--|data-|\.)/.test(name);
+            const bare = bareNamesOf(name);
+            if (
+              !(inCode ? liveCodeNames : liveDomNames).has(name) &&
+              !bare.some((b) => liveCodeNames.has(b))
+            ) {
               domDrift.push(`названо в таблице, нет в коде: ${name}`);
               continue;
             }
@@ -11127,9 +11409,12 @@ if (mode === "verify") {
               // Класс в листе стилей пишется с точкой, а в контракте — без
               // неё, строкой в кавычках. Ищутся обе формы: иначе строка
               // таблицы краснела бы на законной записи контракта.
-              const forms = name.startsWith(".")
-                ? [name, name.slice(1)]
-                : [name];
+              const forms = [
+                ...(name.startsWith(".") ? [name, name.slice(1)] : [name]),
+                ...bare,
+                ...builders,
+                ...(inCode ? (carriers.get(name) ?? []) : []),
+              ];
               const here = body.some((line) =>
                 forms.some((one) => {
                   // Имя ищется ЦЕЛИКОМ, а не вхождением: `.messageEnterActive`
@@ -11371,6 +11656,9 @@ if (mode === "verify") {
       for (const name of cssClasses(text)) {
         classesSeen += 1;
         if (foreign.has(name)) continue;
+        // Имя, кончающееся разделителем, — корень вложенных имён, а не класс:
+        // `.lib_ { &_x {} }` даёт `lib__x`, и сам `lib_` не ставит никто.
+        if (/[_-]$/.test(name)) continue;
         // Имя, встреченное в коде хоть раз и хоть как, считается спрошенным.
         // Граница слова обязательна: без неё `button` нашёлся бы внутри
         // `buttonGroup`, и мёртвый класс прошёл бы как живой.
@@ -11378,6 +11666,7 @@ if (mode === "verify") {
           "\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b",
         );
         if (edge.test(haystack)) continue;
+        if (bareNamesOf(name).some((b) => codeLiterals().has(b))) continue;
         classDead.push(
           rel(sheet) + ": класс `" + name + "` не спрашивает ни один файл",
         );
@@ -12034,7 +12323,7 @@ if (mode === "verify") {
         " — компонент стилизуется не по умолчанию: своего листа не импортирует, весь вид приходит пропом. Записать решением с ценой либо привести к схеме",
     );
 
-  checkHead("Связи через DOM и CSS", {
+  checkHead("Связи мимо графа импортов", {
     n: domNames,
     unit: "строк таблицы связей",
   });

@@ -822,6 +822,113 @@ describe("разрешение адресов: раздел карты и имп
 const sectionOf = (out, head) =>
   out.split("--- " + head)[1]?.split("\n---")[0] ?? "";
 
+describe("связи мимо графа: публичная поверхность, имена в коде, приставки", () => {
+  it("вход пакета, общая константа и собранное помощником имя видны сверкам и досье", () => {
+    const box = seatEmpty("svyazi-");
+    try {
+      const lib = path.join(box, "src", "shared", "zzLib");
+      const app = path.join(box, "src", "app");
+      fs.mkdirSync(lib, { recursive: true });
+      fs.writeFileSync(
+        path.join(lib, "topics.ts"),
+        'export const ZZ_TOPIC = "zz-topic";\nexport const zzVar = (name: string) => `--zz__${name}`;\n',
+      );
+      fs.writeFileSync(
+        path.join(lib, "core.ts"),
+        'export const zzCore = () => 1;\n',
+      );
+      fs.writeFileSync(
+        path.join(lib, "index.ts"),
+        'export { zzCore } from "./core.js";\n',
+      );
+      fs.writeFileSync(
+        path.join(app, "zzPub.ts"),
+        'import { ZZ_TOPIC, zzVar } from "../shared/zzLib/topics.js";\nexport const zzPub = () => [ZZ_TOPIC, zzVar("w")];\n',
+      );
+      fs.writeFileSync(
+        path.join(app, "zzSub.ts"),
+        'import { ZZ_TOPIC } from "../shared/zzLib/topics.js";\nexport const zzSub = (t: string) => t === ZZ_TOPIC;\n',
+      );
+      fs.writeFileSync(
+        path.join(app, "zz.css"),
+        ".zzBox {\n  width: var(--zz__w);\n}\n",
+      );
+      // Пакет публикуется: адрес поставки сопоставляется исходнику.
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      delete pkg.private;
+      pkg.exports = { "./zz": { default: "./dist/shared/zzLib/index.js" } };
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2));
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfg = fs.readFileSync(cfgAt, "utf8");
+      fs.writeFileSync(
+        cfgAt,
+        cfg
+          .replace(
+            "  domTables: null,",
+            '  domTables: {\n    file: "03-graph.md",\n    headings: ["| Переменная | Кто ставит | Кто читает |", "| Имя в коде | Кто пишет | Кто читает |"],\n  },',
+          )
+          .replace("  namePrefixes: [],", '  namePrefixes: ["--zz__"],'),
+      );
+      const graphAt = path.join(box, ".context", "03-graph.md");
+      const withRows = (rows) =>
+        fs
+          .readFileSync(graphAt, "utf8")
+          .replace(
+            "| Переменная | Кто ставит | Кто читает |\n| --- | --- | --- |\n",
+            "| Переменная | Кто ставит | Кто читает |\n| --- | --- | --- |\n| `--zz__w` | `src/app/zzPub.ts` — имя собирает `zzVar` | `src/app/zz.css` |\n",
+          )
+          .replace(
+            "| Имя в коде | Кто пишет | Кто читает |\n| --- | --- | --- |\n",
+            "| Имя в коде | Кто пишет | Кто читает |\n| --- | --- | --- |\n" +
+              rows,
+          );
+      const graphSeed = fs.readFileSync(graphAt, "utf8");
+      fs.writeFileSync(
+        graphAt,
+        withRows("| `zz-topic` | `src/app/zzPub.ts` | `src/app/zzSub.ts` |\n"),
+      );
+      const links = () => verifyIn(box).get("Связи мимо графа импортов") ?? [];
+      expect(links()).toEqual([]);
+
+      // Конец связи, который имени не знает, — находка.
+      fs.writeFileSync(graphAt, graphSeed);
+      fs.writeFileSync(
+        graphAt,
+        withRows(
+          "| `zz-topic` | `src/app/zzPub.ts` | `src/shared/zzLib/core.ts` |\n",
+        ),
+      );
+      expect(links().join("\n")).toContain(
+        "zz-topic — названо строкой таблицы, но в shared/zzLib/core.ts его нет",
+      );
+
+      const run = (...args) =>
+        execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const core = run("brief", "shared/zzLib/core.ts");
+      expect(sectionOf(core, "публичная поверхность")).toContain(
+        "имена: zzCore",
+      );
+      expect(run("tested", "src/shared/zzLib/core.ts")).toContain(
+        "=== Публичная поверхность пакета ===",
+      );
+      expect(
+        sectionOf(run("brief", "app/zzPub.ts"), "делят имена-константы"),
+      ).toContain("ZZ_TOPIC — app/zzSub.ts");
+      // Переменную ставит свой помощник — чужой связью она не считается.
+      expect(run("tested", "src/app/zzPub.ts")).not.toContain(
+        "Чужих связей через разметку и стили",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 describe("граф по именам: сквозь бочку до объявления", () => {
   it("радиус, зависимости и тесты считаются по взятым именам, а не по строке импорта", () => {
     const box = seatEmpty("imena-");
