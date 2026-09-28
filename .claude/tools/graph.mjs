@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -337,6 +337,7 @@ const DEBT_KINDS = [
   "readme",
   "comments",
   "tongue",
+  "types",
 ];
 const DEBT = CONFIG.debt ?? {};
 const debtOf = (kind) => DEBT[kind] ?? 0;
@@ -436,6 +437,102 @@ for (const [field, v] of Object.entries(CONFIG)) {
   console.log("  к части уйдёт в undefined и кончится стеком вместо имени.");
   console.log("  Править: список видов в .claude/tools/graph.mjs.");
   process.exit(2);
+}
+
+// --- types: ошибки типов против их долга -------------------------------------
+//
+// Обёртка команды компилятора в живом проекте. Строгость, дописанная посадкой,
+// открывает в коде, написанном до неё, ошибки типов. Звено типов стоит в
+// связке первым, и без долга связка не доходила до второго звена: её
+// перестают запускать, а вместе с ней перестаёт работать всё, что держит
+// обвязка. Замерено на стенде: `20` ошибок, и линт, формат, тесты и сверка
+// базы связкой не запускались. Решено разработчиком: ошибки объявляются
+// долгом `types`, команда краснеет только сверх него, а починка — отдельная
+// задача после посадки.
+//
+// Храповик держится здесь же и в обе стороны: сверх долга — новая ошибка,
+// меньше долга — поле обязано сжаться. Сверка базы компилятор не зовёт: для
+// прогона, который гоняют на каждой правке, он слишком долог.
+//
+// Счёт — строки `error TS…` со снятыми цветами: ключ `--pretty` красит слово
+// `error` и без снятия давал ноль ошибок при двадцати.
+if (mode === "types") {
+  const dash = process.argv.indexOf("--");
+  const command = dash < 0 ? [] : process.argv.slice(dash + 1);
+  if (command.length === 0) {
+    console.log("=== Ошибки типов против долга: команда не названа ===");
+    sayLooked("ошибок компилятора", 0);
+    console.log(
+      "  Звать: node .claude/tools/graph.mjs types -- <команда компилятора>",
+    );
+    process.exit(2);
+  }
+  const bin = path.join(BASE, "..", "node_modules", ".bin");
+  const run = spawnSync(command[0], command.slice(1), {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    shell: process.platform === "win32",
+    env: {
+      ...process.env,
+      PATH: bin + path.delimiter + (process.env.PATH ?? ""),
+    },
+  });
+  const said = (run.stdout ?? "") + (run.stderr ?? "");
+  const plain = said.replace(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
+  const found = (plain.match(/\berror TS\d+:/g) ?? []).length;
+  const debt = debtOf("types");
+  const head = () => {
+    console.log("=== Ошибки типов против долга ===");
+    sayLooked("ошибок компилятора", found);
+  };
+  if (run.error !== undefined) {
+    head();
+    console.log("  команда не запустилась: " + run.error.message);
+    process.exit(1);
+  }
+  if (run.status !== 0 && found === 0) {
+    process.stdout.write(said);
+    head();
+    console.log(
+      "  команда завершилась кодом " +
+        (run.status ?? run.signal) +
+        ", не назвав ни одной ошибки типов: судить о долге не по чему",
+    );
+    process.exit(run.status || 1);
+  }
+  if (found > debt) {
+    process.stdout.write(said);
+    head();
+    console.log(
+      "  долг: " +
+        debt +
+        " — ошибок больше на " +
+        (found - debt) +
+        ". Новая ошибка чинится сразу, в долг она не дописывается",
+    );
+    process.exit(1);
+  }
+  head();
+  if (found < debt) {
+    console.log(
+      "  долг: " +
+        debt +
+        ", ошибок " +
+        found +
+        " — долг обязан сжиматься следом за починкой: поставить `debt.types: " +
+        found +
+        "` в .context/graph.config.mjs",
+    );
+    process.exit(1);
+  }
+  console.log(
+    debt === 0
+      ? "  долга нет, ошибок нет"
+      : "  долг: " +
+          debt +
+          " — не вырос. Починка — отдельная задача после посадки: починил — уменьшил поле",
+  );
+  process.exit(0);
 }
 
 /** Менеджер пакетов ЭТОГО проекта — тот, что объявлен его манифестом.
@@ -16599,7 +16696,7 @@ if (mode === "verify") {
   // получал «долг держится только настройкой» на долге, который планом
   // держаться и не может. Замерено переходом стенда с русским
   // комментарием в коде: план выполнен и удалён, долг по языку остался.
-  const DEBT_BY_WORK_KINDS = new Set(["comments", "tongue"]);
+  const DEBT_BY_WORK_KINDS = new Set(["comments", "tongue", "types"]);
   const debtUnplanned =
     debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
     (CONFIG.transition == null || transitionSteps === 0);
@@ -16626,6 +16723,27 @@ if (mode === "verify") {
       "Доля комментариев в файле",
     ],
     tongue: ["Язык внутри корня исходников"],
+    // Долг ошибок типов держит не сверка, а звено: его зовут и каноническим
+    // именем, и тем, под которым звено живёт в манифесте проекта.
+    types: (() => {
+      const mapAt = shelfAt("seat/map.json");
+      const link = (
+        mapAt !== null && existsSync(mapAt)
+          ? (readJson(mapAt, {}).chainScripts ?? [])
+          : []
+      ).find((e) => e.name === "typecheck");
+      const scripts =
+        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {})
+          .scripts ?? {};
+      const re = link?.recognise == null ? null : new RegExp(link.recognise);
+      return [
+        "typecheck",
+        ...Object.keys(scripts).filter(
+          (name) =>
+            re !== null && name !== "typecheck" && re.test(scripts[name]),
+        ),
+      ];
+    })(),
   };
   // Сверка ГОВОРИЛА «все стоят шагами плана», а проверяла только что план
   // вообще есть. Замерено ревизией результата: стенд объявил долг по языку,
