@@ -75,8 +75,8 @@
     },
     {
       "section": "Конфиг звена цепочки на месте",
-      "file": "eslint.config.mjs",
-      "rename": "eslint.config.mjs.hidden"
+      "file": ".prettierrc.json",
+      "rename": ".prettierrc.json.hidden"
     },
     {
       "section": "Числа в прозе базы",
@@ -645,7 +645,7 @@
       "section": "Версии установленного (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
       "find": "  verifiedVersions: {",
-      "replace": "  verifiedVersions: {\n    \"typescript-eslint\": \"0.0.1\","
+      "replace": "  verifiedVersions: {\n    \"@vitejs/plugin-react\": \"0.0.1\","
     },
     {
       "section": "Состав бочки в записи карты",
