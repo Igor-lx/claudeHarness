@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -462,6 +463,29 @@ const PACKAGE_MANAGER = (() => {
     return "npm";
   }
 })();
+
+/** Имена скриптов, которые зовёт командная строка, — именем объявленного
+ * менеджера. Один разбор на все сверки: каждая писала свой, и разошлись они
+ * молча — связка читалась литералом `npm`, и на проекте с yarn сверка
+ * «Связка проверок зовёт живые звенья» видела ноль вызовов и докладывала
+ * живые звенья выпавшими. Кроме npm, менеджеры зовут скрипт и без `run`
+ * (`yarn lint`), и эта форма у них основная. */
+function scriptCallsIn(body) {
+  const pm = PACKAGE_MANAGER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const calls = [];
+  for (const piece of String(body ?? "").split("&&")) {
+    const one = piece.trim();
+    const run = new RegExp("^" + pm + "\\s+run\\s+([\\w:-]+)").exec(one);
+    if (run !== null) calls.push(run[1]);
+    else if (new RegExp("^" + pm + "\\s+test(?![\\w:-])").test(one))
+      calls.push("test");
+    else if (PACKAGE_MANAGER !== "npm") {
+      const bare = new RegExp("^" + pm + "\\s+([\\w:-]+)").exec(one);
+      if (bare !== null) calls.push(bare[1]);
+    }
+  }
+  return calls;
+}
 
 /** Корни исходников, объявленные настройкой, и их ОБЩИЙ РОДИТЕЛЬ.
  *
@@ -1214,7 +1238,11 @@ const sandboxTree = (from, to) => {
     if (OUT_OF_TREE.has(e)) continue;
     const src = path.join(from, e);
     if (statSync(src).isDirectory()) sandboxTree(src, path.join(to, e));
-    else writeFileSync(path.join(to, e), readFileSync(src));
+    else {
+      writeFileSync(path.join(to, e), readFileSync(src));
+      // Режим — часть файла: хук без бита исполнения git пропускает молча.
+      chmodSync(path.join(to, e), statSync(src).mode & 0o777);
+    }
   }
 };
 
@@ -3662,6 +3690,9 @@ if (mode === "handoff") {
           path.join(to, e),
           readFileSync(src, "utf8").split(CRLF).join(NEWLINE),
         );
+        // Режим едет вместе с файлом: снимок, потерявший бит исполнения у
+        // хука ворот, отдаёт получателю ворота, которые git не запускает.
+        chmodSync(path.join(to, e), statSync(src).mode & 0o777);
         copied.push(rel);
       }
     }
@@ -8480,9 +8511,33 @@ if (mode === "verify") {
         // собственное сообщение — шум в отчёте инструмента.
         stdio: ["ignore", "pipe", "ignore"],
       });
+      // Дифф против HEAD не видит файлов, ещё не взятых в git: новый файл
+      // базы проходил с якорями без цитат целиком. Его строки — тоже
+      // добавленные, и они дописываются к диффу в той же форме.
+      const fresh = execSync(
+        "git ls-files --others --exclude-standard -- .context",
+        { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      );
+      for (const one of fresh.split(NEWLINE).filter(Boolean))
+        diff +=
+          NEWLINE +
+          "+++ b/" +
+          one +
+          NEWLINE +
+          readFileSync(path.join(REPO, one), "utf8")
+            .split(NEWLINE)
+            .map((l) => "+" + l)
+            .join(NEWLINE);
     } catch {
       newAnchorsChecked = false;
     }
+    // Адреса протокола свода — не записи базы, а форма режима `bar`: адрес
+    // там пишется строго «путь:строка», и существование строки сверяет сам
+    // режим при печати. Цитата у них невозможна по форме.
+    const barFile =
+      CONFIG.barProtocol == null
+        ? null
+        : norm(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
     if (diff !== null) {
       let file = "";
       for (const line of diff.split(NEWLINE)) {
@@ -8490,6 +8545,7 @@ if (mode === "verify") {
           file = line.slice(6);
           continue;
         }
+        if (file === barFile) continue;
         if (!line.startsWith("+") || line.startsWith("+++")) continue;
         const body = line.slice(1);
         NEW_ANCHOR.lastIndex = 0;
@@ -9739,12 +9795,7 @@ if (mode === "verify") {
       // стояло здесь литералом, и на проекте с другим менеджером связка
       // читалась как пустая: обратная сторона сверки не видела в ней ни
       // одного звена и молчать могла только зелено.
-      const call = new RegExp(PACKAGE_MANAGER + " run ([\\w:-]+)", "g");
-      const short = new RegExp("(^|&&)\\s*" + PACKAGE_MANAGER + " test\\b");
-      const inChain = [
-        ...[...chain.matchAll(call)].map((m) => m[1]),
-        ...(short.test(chain) ? ["test"] : []),
-      ];
+      const inChain = scriptCallsIn(chain);
       // Известными считаются и семенные имена звеньев, и те, под которыми
       // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
       // связку, докладывается как необъявленное звено.
@@ -9794,18 +9845,8 @@ if (mode === "verify") {
       //
       // Замерено посадкой в проект на обычном JavaScript: звено типов снято
       // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
-      const chainCalls = [];
-      {
-        const body = scripts.check;
-        if (typeof body === "string") {
-          for (const piece of body.split("&&")) {
-            const one = piece.trim();
-            const run = /^npm run ([^ ]+)/.exec(one);
-            if (run !== null) chainCalls.push(run[1]);
-            else if (/^npm test( |$)/.test(one)) chainCalls.push("test");
-          }
-        }
-      }
+      const chainCalls =
+        typeof scripts.check === "string" ? scriptCallsIn(scripts.check) : [];
       const chainBroken = [];
       for (const one of chainCalls)
         if (scripts[one] == null)
@@ -10165,10 +10206,16 @@ if (mode === "verify") {
         // искалось семенное имя, и конвейер, зовущий звено типов проекта,
         // объявлялся не зовущим ни одного — замерено посадкой руками. Звено
         // тестов менеджер зовёт и сокращённо, `npm test`.
+        const called = new Set(
+          body
+            .split(NEWLINE)
+            .flatMap((line) =>
+              scriptCallsIn(line.replace(/^\s*(-\s*)?(run:\s*)?/, "")),
+            ),
+        );
         const calls = names.filter((name) => {
           const own = linkOwnName(name, scripts) ?? name;
-          if (body.includes("run " + own)) return true;
-          return own === "test" && /\bnpm test\b/.test(body);
+          return body.includes("run " + own) || called.has(own);
         });
         if (body.includes("run check") || calls.length > 0) continue;
         // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
@@ -10655,12 +10702,20 @@ if (mode === "verify") {
       }
     }
   }
+  // Мёртвое правило в листе живого проекта снимает правка кода, а не посадка:
+  // до неё его держит открытая строка реестра, строка на класс.
+  const deadOpen = Math.min(
+    classDead.length,
+    openFindings().get("Класс из листа стилей спрошен кодом") ?? 0,
+  );
   checkHead("Класс из листа стилей спрошен кодом", {
     n: classesSeen,
     unit: "имён классов в листах",
   });
-  console.log("  расхождений: " + classDead.length);
-  for (const d of classDead)
+  console.log("  расхождений: " + (classDead.length - deadOpen));
+  if (deadOpen > 0)
+    console.log("  держатся открытыми строками реестра: " + deadOpen);
+  for (const d of classDead.slice(deadOpen))
     console.log(
       "    " +
         d +
@@ -11342,8 +11397,15 @@ if (mode === "verify") {
       if (!linkHasSubject(link.script)) continue;
       const installed = link.packages.every((p) => deps.includes(p));
       if (!installed) continue;
-      const at = path.join(BASE, "..", link.config);
-      if (!existsSync(at))
+      // Конфиг живого проекта часто лежит под другим именем того же
+      // предмета — `.prettierrc` вместо `.prettierrc.json`; имена объявлены
+      // картой посадки, и соседняя сверка звеньев читает их оттуда же.
+      const names = [link.config];
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt))
+        for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+          if (e.to === link.config) names.push(...(e.alsoKnownAs ?? []));
+      if (!names.some((n) => existsSync(path.join(BASE, "..", n))))
         toolchainDrift.push(
           `${link.script}: пакеты стоят, а конфига нет — ${link.config}`,
         );
@@ -13678,6 +13740,23 @@ if (mode === "verify") {
           gateGap.push(
             said.dir + "/" + one + " — объявлен картой, а файла нет",
           );
+        // Хук без бита исполнения git пропускает одной подсказкой, и коммит
+        // идёт мимо ворот. Замерено посадкой из свежего клона полки: хук
+        // лежал там с режимом `100644`, и ворота не срабатывали ни разу.
+        else if (
+          process.platform !== "win32" &&
+          (statSync(at).mode & 0o111) === 0
+        )
+          gateGap.push(
+            said.dir +
+              "/" +
+              one +
+              " — не исполняемый: git его пропускает, и коммит идёт мимо ворот. `chmod +x " +
+              said.dir +
+              "/" +
+              one +
+              "`",
+          );
       }
       // «Репозитория нет» и «настройка не задана» — разные ответы, и обе
       // команды падают одинаково. Проект без git коммитов не делает, дыры у
@@ -13879,12 +13958,20 @@ if (mode === "verify") {
       }
     }
   }
+  // Разложить узел по папкам — правка кода, а посадка код не трогает: живой
+  // проект держит свалку открытой строкой реестра, строка на узел.
+  const litterOpen = Math.min(
+    nodeLitter.length,
+    openFindings().get("В корне узла только сам узел") ?? 0,
+  );
   checkHead("В корне узла только сам узел", {
     n: nodeLooked,
     unit: "папок узлов",
   });
-  console.log("  со свалкой в корне: " + nodeLitter.length);
-  for (const one of nodeLitter) console.log("    " + one);
+  console.log("  со свалкой в корне: " + (nodeLitter.length - litterOpen));
+  if (litterOpen > 0)
+    console.log("  держатся открытыми строками реестра: " + litterOpen);
+  for (const one of nodeLitter.slice(litterOpen)) console.log("    " + one);
   // Названное доктриной ИСПОЛНИМО.
   //
   // Класс находки: требование стояло, а инструмента не было. Замерено на
@@ -14969,7 +15056,6 @@ if (mode === "verify") {
     if (existsSync(at)) {
       const body = (JSON.parse(readFileSync(at, "utf8")).scripts ?? {}).check;
       if (typeof body === "string") {
-        const mine = new RegExp(PACKAGE_MANAGER + " (run\\s+[\\w:-]+|test\\b)");
         const alien = /\b(npm|pnpm|yarn|bun)\s+(run\s+[\w:-]+|test\b)/.exec(
           body,
         );
@@ -14987,7 +15073,7 @@ if (mode === "verify") {
           chainDrift.push(
             "связка не зовёт сверку базы: цепочка будет зелёной, не проверив ничего из того, что держит обвязка",
           );
-        if (!mine.test(body) && alien !== null)
+        if (scriptCallsIn(body).length === 0 && alien !== null)
           chainDrift.push(
             "связка зовёт звенья через «" +
               alien[1] +
