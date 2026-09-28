@@ -424,6 +424,18 @@ describe("ревизия сводов по истории", () => {
       const at = rows.indexOf("=== Коммит с кодом накрыт сводом ===");
       expect(at).toBeGreaterThan(-1);
       expect(rows.slice(at + 1, at + 3)).toContain("  без свода: 0");
+      // Вторая сторона — ради неё сверка и заведена: коммит с кодом мимо
+      // свода краснеет. Рецепта у сверки нет по устройству — в песочнице
+      // фальсификации истории нет, — и здоровье её держит эта строка.
+      fs.writeFileSync(
+        path.join(app, "zzBare.ts"),
+        "export const zzBare = 1;\n",
+      );
+      git("add", "-A");
+      git("commit", "-qm", "код мимо свода", "--no-verify");
+      const later = tool("verify").split("\n");
+      const bare = later.indexOf("=== Коммит с кодом накрыт сводом ===");
+      expect(later.slice(bare + 1, bare + 3)).toContain("  без свода: 1");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
