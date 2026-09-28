@@ -1618,6 +1618,50 @@ const SEEDS_REFORMATTED = await (async () => {
   return out;
 })();
 
+/** Словарь условий `onlyWith` из карты посадки: условие → выполнено ли оно у
+ * проекта. Семя с условием кладётся только при его предмете; объяснение
+ * словаря — в самой карте, полем `_onlyWith`. */
+const SEED_CONDITIONS = new Map([
+  [
+    "cssModules",
+    () => {
+      const seeds = seedOfPath();
+      const own = [...files, ...styleFiles].filter(
+        (f) => !untouchedSeed(f, REPO_AT, seeds),
+      );
+      // Проект, который стилизует ИНАЧЕ, узнаётся по листам без модулей.
+      // Листов нет вовсе — стилизации ещё нет, и умолчание в силе.
+      return (
+        own.length === 0 ||
+        styleFiles.length === 0 ||
+        styleFiles.some((f) => /\.module\.[a-z]+$/.test(f))
+      );
+    },
+  ],
+  [
+    "runnerWithoutGlobals",
+    () =>
+      ![
+        "vitest.config.ts",
+        "vitest.config.js",
+        "vitest.config.mts",
+        "vite.config.ts",
+        "vite.config.js",
+        "vite.config.mts",
+      ].some((n) => {
+        const at = path.join(REPO_AT, n);
+        return (
+          existsSync(at) && /\bglobals:\s*true\b/.test(readFileSync(at, "utf8"))
+        );
+      }),
+  ],
+]);
+/** Выполнено ли у проекта условие семени. Семя без условия кладётся всегда;
+ * условие не из словаря называет сверка «Семя с условием не лежит без
+ * условия», а здесь оно читается выполненным — отказать молча нельзя. */
+const seedConditionHolds = (e) =>
+  e.onlyWith == null || (SEED_CONDITIONS.get(e.onlyWith)?.() ?? true);
+
 // Документы, лежащие ВНЕ исходников. Обход выше идёт по корню исходников, и
 // папка документации в корне репозитория не попадала в корпус ни одной
 // текстовой сверки: её адреса, имена из кода и ссылки не проверялись вовсе.
@@ -2893,6 +2937,7 @@ const CHECK_SECTIONS = [
   "Звену цепочки есть на чём работать",
   "Пакеты семени разобраны по звеньям",
   "Отложенное семя не положено посадкой",
+  "Семя с условием не лежит без условия",
   "Отложенное семя положено, когда предмет появился",
   "Отложенное семя слито",
   "Семена приезжают отформатированными",
@@ -3399,6 +3444,7 @@ if (mode === "falsify") {
         if (step.file === undefined) return false;
         if (existsSync(path.join(tmp, step.file))) return false;
         const e = seatCopy.find((one) => one.to === step.file);
+        if (e?.onlyWith != null && !seedConditionHolds(e)) return true;
         return e?.neededBy != null && !linkLives(e.neededBy);
       });
     };
@@ -16155,6 +16201,48 @@ if (mode === "verify") {
   });
   console.log("  положенных раньше срока: " + earlySeed.length);
   for (const d of earlySeed) console.log("    " + d);
+  // Семя с условием не лежит без своего условия.
+  //
+  // Условие стоит в карте полем `onlyWith`, и кладёт по нему посадка. Семя,
+  // положенное мимо условия, не нужно ни одной строке проекта, а выглядит его
+  // кодом: имя, кавычки и раскладка спорят с правилами линта и формата
+  // проекта. Замерено посадкой в приложение на Tailwind: помощник слияния карт
+  // классов лёг по правилу «в любой проект», и линт покраснел на имени файла.
+  // Тронутое семя не спрашивается: проект взял его в работу.
+  const idleSeeds = [];
+  let idleSeedLooked = 0;
+  {
+    const seeds = seedOfPath();
+    for (const e of seedsDeclared) {
+      if (e.onlyWith == null) continue;
+      idleSeedLooked += 1;
+      if (!SEED_CONDITIONS.has(e.onlyWith)) {
+        idleSeeds.push(
+          e.to +
+            " — условие «" +
+            e.onlyWith +
+            "» не из словаря: " +
+            [...SEED_CONDITIONS.keys()].join(", "),
+        );
+        continue;
+      }
+      const at = norm(path.join(REPO_AT, e.to));
+      if (!existsSync(at) || seedConditionHolds(e)) continue;
+      if (untouchedSeed(at, REPO_AT, seeds))
+        idleSeeds.push(
+          e.to +
+            " — лежит семенем, а условия «" +
+            e.onlyWith +
+            "» у проекта нет: снять вместе с записями базы о нём",
+        );
+    }
+  }
+  checkHead("Семя с условием не лежит без условия", {
+    n: idleSeedLooked,
+    unit: "семян с условием",
+  });
+  console.log("  лишних: " + idleSeeds.length);
+  for (const one of idleSeeds) console.log("    " + one);
   // 44-бис. Находка посадки закрыта — и закрыта доказуемо.
   //
   // Посадка существует затем, чтобы находить поломки обвязки; чинят их на

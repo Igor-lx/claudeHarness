@@ -252,6 +252,19 @@
       }
     },
     {
+      "section": "Семя с условием не лежит без условия",
+      "file": ".claude/seat/map.json",
+      "find": "\"onlyWith\": \"runnerWithoutGlobals\"",
+      "replace": "\"onlyWith\": \"zzНетТакого\""
+    },
+    {
+      "section": "Семя с условием не лежит без условия",
+      "whenLink": ["test"],
+      "file": "vite.config.ts",
+      "find": "    globals: false,",
+      "replace": "    globals: true,"
+    },
+    {
       "section": "Отложенное семя слито",
       "create": {
         "path": "zzProbe.md.seat",
