@@ -2323,7 +2323,12 @@ const baseHitsFor = (target) => {
         CODE_OR_STYLE.test(t) &&
         dir.endsWith(t.slice(0, t.lastIndexOf("/"))),
     );
-  const exact = dossierLines().base.filter(([, , line]) =>
+  // Протокол свода называет файлы как предмет прохода, а не описывает их:
+  // его строки записями о файле не считаются.
+  const records = dossierLines().base.filter(
+    ([name]) => name !== CONFIG.barProtocol,
+  );
+  const exact = records.filter(([, , line]) =>
     quotedIn(line).some(
       (t) =>
         t === r ||
@@ -2361,7 +2366,7 @@ const baseHitsFor = (target) => {
             t.endsWith("/" + rel(f)),
         ),
     );
-  const loose = dossierLines().base.filter(
+  const loose = records.filter(
     ([, , line]) =>
       line.includes(bare) &&
       !exact.some((e) => e[2] === line) &&
@@ -4693,7 +4698,9 @@ if (mode === "tested") {
             " исход в каждой строке, печать по сверенной форме.",
         );
         console.log(
-          "  Звать: node " + rel0(fileURLToPath(import.meta.url)) + " bar",
+          "  Звать: node " +
+            norm(path.relative(REPO_AT, fileURLToPath(import.meta.url))) +
+            " bar",
         );
         // Связь через разметку и стили — второй по незаметности способ: она
         // не видна ни компилятору, ни графу импортов, а новый компонент
@@ -5622,6 +5629,7 @@ if (mode === "bar") {
   const repoRoot = path.join(BASE, "..");
   let kind;
   let subject;
+  let manifestTouched = false;
   if (arg) {
     const hits = [...files, ...styleFiles]
       .filter((f) => rel(f).includes(arg))
@@ -5659,6 +5667,17 @@ if (mode === "bar") {
       process.exit(1);
     }
     kind = "на изменение";
+    // Манифест в предмет не входит — предмет только код и стили, — а
+    // критерии о зависимостях спрашивают именно с его правки. Признак, взятый
+    // из предмета, был ложен всегда: правка, добавившая пакет, получала «нет
+    // предмета» по зависимостям, и вопрос о пакете не задавался.
+    const manifestAt =
+      CONFIG.manifest == null ? null : norm(path.join(BASE, CONFIG.manifest));
+    manifestTouched =
+      manifestAt !== null &&
+      ((await changedPaths(repoRoot)) ?? []).some(
+        (f) => norm(path.join(repoRoot, f)) === manifestAt,
+      );
   }
   subject = [...new Set(subject)];
 
@@ -5690,17 +5709,24 @@ if (mode === "bar") {
       .map((f) => (existsSync(f) ? codeOf(readFileSync(f, "utf8")) : ""))
       .join(NEWLINE);
     const has = (re) => re.test(text);
-    const manifest = subject.some((f) => /package(-lock)?\.json$/.test(f));
     return {
       code: code.length > 0,
-      style: styles.length > 0,
+      // Вид задаётся и прямо в разметке — строкой классов утилит или
+      // встроенным стилем. Такой вид — тоже предмет раздела стилей, хотя листа
+      // в правке нет; ссылка на класс модуля (`styles.x`) предметом не считается:
+      // её вид лежит в листе.
+      style:
+        styles.length > 0 ||
+        has(
+          /className=\s*["'`]|className=\{\s*(cn|clsx|classnames|twMerge)\(|\bstyle=\{\{/,
+        ),
       test: tests.size > 0,
       time: has(
         /useEffect|useLayoutEffect|setTimeout|setInterval|requestAnimationFrame|addEventListener|new [A-Za-z]*Observer|\.subscribe\(/,
       ),
       async: has(/\basync\b|\bawait\b|Promise|\.then\(|AbortController/),
       list: has(/\.map\(|\.flatMap\(/),
-      manifest,
+      manifest: manifestTouched,
       forks: (CONFIG.forks ?? []).length > 0,
     };
   })();
@@ -10022,6 +10048,19 @@ if (mode === "verify") {
           const body = readFileSync(at, "utf8");
           if (!body.includes("test: {")) continue;
           if (body.includes("vitest/config")) continue;
+          // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
+          // типы — замерено компилятором на такой настройке. Для старших
+          // версий это не мерено, и они спрашиваются по-прежнему.
+          const runner = readJson(
+            path.join(BASE, "..", "node_modules", "vitest", "package.json"),
+            {},
+          );
+          const major = Number(String(runner.version ?? "0").split(".")[0]);
+          if (
+            major === 2 &&
+            /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(body)
+          )
+            continue;
           viteDrift.push(
             name +
               " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
@@ -10279,7 +10318,7 @@ if (mode === "verify") {
     else {
       const lines = readFileSync(at, "utf8").split(NEWLINE);
       const from = lines.findIndex((l) => l.trim() === CONFIG.promises.heading);
-      promiseRows = lines.filter((l) => /^s*Держится:/.test(l)).length;
+      promiseRows = lines.filter((l) => /^\s*Держится:/.test(l)).length;
       if (from < 0)
         mutePromises.push(
           `раздел объявлен и не найден: «${CONFIG.promises.heading}»`,
@@ -16064,10 +16103,20 @@ if (mode === "verify") {
       }
       {
         const mapAt = shelfAt("seat/map.json");
+        // Звено опорой называют и его ПРОЕКТНЫМ именем: звено опознаётся по
+        // тому, что скрипт зовёт, а не по имени, и строка реестра, назвавшая
+        // `unit` вместо семенного `test`, отвергалась как несуществующая опора.
+        const pkgAt =
+          CONFIG.manifest == null ? null : path.join(BASE, CONFIG.manifest);
+        const scripts =
+          pkgAt === null ? {} : (readJson(pkgAt, {}).scripts ?? {});
         if (mapAt !== null && existsSync(mapAt))
           for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
-            .chainScripts ?? [])
+            .chainScripts ?? []) {
             guards.add(e.name);
+            const own = linkOwnName(e.name, scripts);
+            if (own !== null) guards.add(own);
+          }
       }
 
       const rows = readFileSync(at, "utf8").split(NEWLINE);
