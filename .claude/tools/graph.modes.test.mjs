@@ -1035,6 +1035,165 @@ describe("база о своём: документы узла, сторона т
   }, 240000);
 });
 
+describe("свод по планке от модели предмета", () => {
+  it("модель называет ресурсы, вердикты с ней согласны, исходы переносятся, вопрос записан", () => {
+    const box = seatEmpty("model-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const at = path.join(box, "src", "app", "zzClock.ts");
+      fs.writeFileSync(
+        at,
+        [
+          'import { useEffect, useState } from "react";',
+          "export const useZzClock = (ms: number) => {",
+          "  const [now, setNow] = useState(0);",
+          "  useEffect(() => {",
+          "    const id = setInterval(() => setNow((n) => n + 1), ms);",
+          "    return () => clearInterval(id);",
+          "  }, [ms]);",
+          "  useEffect(() => {",
+          "    const onKey = () => setNow(0);",
+          '    window.addEventListener("keydown", onKey);',
+          "  }, []);",
+          "  return now;",
+          "};",
+          "",
+        ].join("\n"),
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzClock.ts");
+      const printed = fs.readFileSync(protoAt, "utf8");
+      expect(printed).toContain("## Модель предмета");
+      expect(printed).toMatch(
+        /\| П\d+ \| ресурс \| `app\/zzClock\.ts:5` \|[^\n]*\| есть: строка 6 \|/,
+      );
+      // Пустое снятие ресурса — дыра: без неё вердикт о ресурсах не на чем
+      // проверять.
+      expect(tool("bar", "app/zzClock.ts")).toMatch(
+        /П\d+: снятие ресурса не названо/,
+      );
+      // Заполнить: ресурсы — снятием, критерии — исходом, базу — ответом.
+      const fill = (release, a1, h7) =>
+        fs.writeFileSync(
+          protoAt,
+          fs
+            .readFileSync(protoAt, "utf8")
+            .split("\n")
+            .map((line) => {
+              const c = line.split("|");
+              if (c.length === 8 && /^ П\d+ $/.test(c[1]) && c[2].trim() === "ресурс") {
+                if (c[6].trim() === "")
+                  c[6] = c[3].includes(":4") ? " строка 6 " : " " + release + " ";
+                return c.join("|");
+              }
+              if (c.length !== 8 || /^\s*-+\s*$/.test(c[1])) return line;
+              const id = c[1].trim();
+              if (id === "критерий" || /^П\d+$/.test(id)) return line;
+              if (id === "A1") return "| A1 | x | " + a1 + " |";
+              if (id === "H7") return "| H7 | x | " + h7 + " |";
+              if (["F1", "F2", "E4", "C12"].includes(id))
+                return "| " + id + " | x | чисто |  | снимается, см. П3 |  |";
+              if (c[3].trim() === "") {
+                c[3] = " нет предмета ";
+                c[5] = " проба ";
+              }
+              return c.join("|");
+            })
+            .map((line) =>
+              line === "| `app/zzClock.ts` |  |  |  |"
+                ? "| `app/zzClock.ts` | не требуется | не требуется | проба |"
+                : line,
+            )
+            .join("\n"),
+        );
+      fill("нет", "чисто |  | П1 — узел отвечает на один вопрос | ", "нет предмета |  | проба | ");
+      const refused = tool("bar", "app/zzClock.ts");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toMatch(/F2: чисто, а снятия нет у ресурса П\d+/);
+
+      // Снятие названо — вердикт с моделью согласен, печать ставится.
+      fs.writeFileSync(
+        protoAt,
+        fs
+          .readFileSync(protoAt, "utf8")
+          .replace(/\| нет \|$/gm, "| не нужно: проба |"),
+      );
+      expect(tool("bar", "app/zzClock.ts")).toContain("печать поставлена");
+
+      // Правка кода: исходы переносятся, «чисто» ядра сбрасывается.
+      fs.appendFileSync(at, "export const zzTick = 1;\n");
+      const moved = tool("bar", "app/zzClock.ts");
+      expect(moved).toContain("исходы перенесены");
+      expect(moved).toContain("«чисто» ядра сброшено: 1");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain("| H7 | ");
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/\| H7 \|[^\n]*\| нет предмета \|/);
+
+      // Находка-развилка: судьба «вопрос» требует записи в списке вопросов.
+      fill(
+        "не нужно: проба",
+        "чисто |  | П1 — узел отвечает на один вопрос | ",
+        "нашлось | src/app/zzClock.ts:5 | число без имени | вопрос",
+      );
+      expect(tool("bar", "app/zzClock.ts")).toContain(
+        "H7: «вопрос», а список вопросов",
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\nВопрос о `src/app/zzClock.ts`.\n",
+      );
+      expect(tool("bar", "app/zzClock.ts")).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+describe("предложенное сводом держит строка о критерии и файле", () => {
+  it("строка реестра о том же критерии в другом файле находку не закрывает", () => {
+    const box = seatEmpty("predlozheno-");
+    try {
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzA.ts"),
+        "export const zzA = 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(box, ".context", "bar-protocol.md"),
+        "# Свод\n\n| критерий | о чём | исход | адрес | что | судьба |\n| --- | --- | --- | --- | --- | --- |\n| E1 | проба | нашлось | src/app/zzA.ts:1 | проба | предложено |\n",
+      );
+      const regAt = path.join(box, ".context", "16-findings.md");
+      const reg = fs.readFileSync(regAt, "utf8");
+      const withRow = (where) =>
+        fs.writeFileSync(
+          regAt,
+          reg.replace(
+            "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n",
+            "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n| 1 | «E1» в `" +
+              where +
+              "` | проба | — | нечем | открыта |\n",
+          ),
+        );
+      const loose = () =>
+        (verifyIn(box).get("Предложенное сводом названо находкой") ?? []).join("\n");
+      withRow("src/app/zzB.ts");
+      expect(loose()).toContain("E1 — предложено сводом и не названо");
+      withRow("src/app/zzA.ts");
+      expect(loose()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("граф по именам: сквозь бочку до объявления", () => {
   it("радиус, зависимости и тесты считаются по взятым именам, а не по строке импорта", () => {
     const box = seatEmpty("imena-");

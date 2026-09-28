@@ -24,6 +24,7 @@ import {
   barRowFault,
   barNoSubject,
   barCoreCriterion,
+  barModelFault,
   codeOf,
   inComment,
   isCodePath,
@@ -127,6 +128,18 @@ const namedFindings = () => {
 };
 /** Находок этой сверки, не покрытых открытой строкой реестра. */
 const overOpen = (name, n) => Math.max(0, n - (openFindings().get(name) ?? 0));
+/** Тексты ОТКРЫТЫХ строк реестра: что найдено и чем держится. Нужны там,
+ * где строку узнают не по одному имени, а по имени и адресу вместе. */
+const openFindingRows = () => {
+  if (CONFIG.findings == null) return [];
+  const at = path.join(BASE, CONFIG.findings.file);
+  if (!existsSync(at)) return [];
+  return readFileSync(at, "utf8")
+    .split(String.fromCharCode(10))
+    .map((line) => line.split("|").map((c) => c.trim()))
+    .filter((cell) => cell.length >= 7 && cell[6] === "открыта")
+    .map((cell) => cell[2] + " " + cell[5]);
+};
 
 const SPOILED = [];
 /** Диапазон среды не объявлен вовсе: опоры нет, и это роняет прогон. */
@@ -6500,6 +6513,167 @@ if (mode === "bar-probe") {
 // закрыт; у находки есть адрес, существующий на диске, слова и судьба; судьба
 // согласна роду задачи; протокол сделан на ТОМ ЖЕ виде предмета, что лежит
 // сейчас. Верность самого исхода машине недоступна и здесь не изображается.
+// --- модель предмета свода --------------------------------------------------
+// Свод по планке опирается на модель того, что в предмете ЕСТЬ: зависимости,
+// потребители, выход наружу, состояние, ресурсы, связи мимо импорта. Модель
+// собирает инструмент из кода и базы, сессия дописывает недостающее и ставит
+// снятие ресурсов, а архитектурные вердикты называют строку модели, на
+// которой стоят. Без модели вердикт «чисто» по форме целого писался не глядя
+// в код, и отличить его от проверенного было нечем: замерено разбором узла,
+// где у каждого из этих видов была находка, закрытая словом «чисто».
+//
+// Виды строк общие для любого кода и не знают ни фреймворка, ни проекта.
+// Распознаватели ниже — данные, а не логика: у другого окружения другие
+// вызовы, и дописывают их сюда, а не ветку в разбор.
+
+/** Захват ресурса и его снятие: пара образцов на род. */
+const RESOURCE_KINDS = [
+  { take: /\baddEventListener\s*\(/, give: /\bremoveEventListener\s*\(/ },
+  { take: /\bsetTimeout\s*\(/, give: /\bclearTimeout\s*\(/ },
+  { take: /\bsetInterval\s*\(/, give: /\bclearInterval\s*\(/ },
+  {
+    take: /\brequestAnimationFrame\s*\(/,
+    give: /\bcancelAnimationFrame\s*\(/,
+  },
+  { take: /\.subscribe\s*\(/, give: /\bunsubscribe\b/ },
+  { take: /\bnew\s+\w*Observer\s*\(/, give: /\.disconnect\s*\(|\.unobserve\s*\(/ },
+  { take: /\bnew\s+(?:WebSocket|EventSource|Worker)\s*\(/, give: /\.close\s*\(|\.terminate\s*\(/ },
+  { take: /\bnew\s+AbortController\s*\(/, give: /\.abort\s*\(/ },
+  // Эффект фреймворка: снятие — возвращаемая им функция, и опознать её
+  // по строке нельзя; клетку ставит сессия.
+  { take: /\buse(?:Layout|Insertion)?Effect\s*\(/, give: null },
+];
+
+/** Внутренность чужой единицы: файл в папке другого компонента, не её вход.
+ * Единица — папка под объявленным слоем компонентов (`componentsAt`): её
+ * переносят копированием, и берут у неё только вход. */
+const foreignInside = (from, to) => {
+  for (const layer of CONFIG.componentsAt ?? ["components"]) {
+    const m = new RegExp("^" + layer + "/([^/]+)/(.+)$").exec(rel(to));
+    if (m === null) continue;
+    const unit = layer + "/" + m[1] + "/";
+    if (rel(from).startsWith(unit)) return false;
+    return !/^index\.[cm]?[jt]sx?$/.test(m[2]);
+  }
+  return false;
+};
+
+/** Модель предмета: строки `{ sort, where, what, base, release }` по узлам
+ * `focus`. Связь двух узлов модели между собой строки не даёт: обе стороны
+ * уже в модели. */
+const barModelOf = (focus) => {
+  const out = [];
+  const inFocus = new Set(focus);
+  const graphAt = path.join(
+    BASE,
+    CONFIG.domTables?.file ?? "03-graph.md",
+  );
+  const graphText = existsSync(graphAt) ? readFileSync(graphAt, "utf8") : "";
+  for (const f of focus) {
+    if (!files.includes(f) || isTest(f)) continue;
+    const where = rel(f);
+    const { uses } = usesWithVia(f);
+    const written = importsOf.get(f) ?? new Set();
+    for (const [d, via] of uses) {
+      if (inFocus.has(d)) continue;
+      const foreign = [...written].some(
+        (t) => (t === d || via.has(t)) && foreignInside(f, t),
+      );
+      out.push({
+        sort: "зависит",
+        where,
+        what: rel(d) + (via.size ? " через " + [...via].map(rel).join(", ") : ""),
+        base: foreign ? "чужое" : "",
+        release: "",
+      });
+    }
+    for (const u of dependentsOf(f))
+      if (!inFocus.has(u) && !isTest(u))
+        out.push({ sort: "пользуется", where, what: rel(u), base: "", release: "" });
+    const outward = publicNamesOf(f);
+    if (outward.names.length)
+      out.push({
+        sort: "наружу",
+        where,
+        what: outward.names.join(", ") + " через " + outward.via.join(", "),
+        base: "",
+        release: "",
+      });
+    const lines = readFileSync(f, "utf8").split(LF);
+    const owesState = owedFor(f).some((one) => one.subject === "state");
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      if (BRIEF_SUBJECTS.state.test(line))
+        out.push({
+          sort: "состояние",
+          where: where + ":" + (i + 1),
+          what: line.trim().slice(0, 70),
+          base: owesState ? "нет" : "да",
+          release: "",
+        });
+      for (const kind of RESOURCE_KINDS) {
+        if (!kind.take.test(line)) continue;
+        const given =
+          kind.give === null
+            ? -1
+            : lines.findIndex((l, k) => k !== i && kind.give.test(l));
+        out.push({
+          sort: "ресурс",
+          where: where + ":" + (i + 1),
+          what: line.trim().slice(0, 70),
+          base: "",
+          release: given >= 0 ? "есть: строка " + (given + 1) : "",
+        });
+      }
+    });
+    for (const [names, who] of sharedNamesOf(f)) {
+      const recorded = names.some((n) => {
+        if (graphText.includes("`" + n + "`")) return true;
+        const def = codeLiteralOf(n);
+        return def !== null && graphText.includes("`" + def + "`");
+      });
+      out.push({
+        sort: "связь",
+        where,
+        what: names.join(", ") + " — " + who,
+        base: recorded ? "да" : "нет",
+        release: "",
+      });
+    }
+  }
+  return out.map((row, k) => ({ id: "П" + (k + 1), ...row }));
+};
+
+/** Значение строковой константы по её имени — там, где оно объявлено. */
+const codeLiteralOf = (name) => {
+  for (const f of files) {
+    if (isTest(f) || !(ownExportsOf.get(f) ?? new Set()).has(name)) continue;
+    const m = new RegExp(
+      "\\b" + name + "\\s*(?::[^=]+)?=[^;\\n]*?[\"'`]([^\"'`]+)[\"'`]",
+    ).exec(readFileSync(f, "utf8"));
+    if (m !== null) return m[1];
+  }
+  return null;
+};
+
+/** Модель одной строкой для словаря: `П1:вид:пометка;…`. Пометка ресурса —
+ * `нет`, когда снятия нет, иначе `есть`. */
+const barModelCode = (model) =>
+  model
+    .map(
+      (m) =>
+        m.id +
+        ":" +
+        m.sort +
+        ":" +
+        (m.sort === "ресурс"
+          ? m.release.trim() === "нет"
+            ? "нет"
+            : "есть"
+          : m.base),
+    )
+    .join(";");
+
 if (mode === "bar") {
   {
     const all = liveBarCriteria();
@@ -6536,6 +6710,10 @@ if (mode === "bar") {
   const repoRoot = path.join(BASE, "..");
   let kind;
   let subject;
+  // Узлы, чья модель собирается: на задаче чтения — сам адрес, а не его
+  // соседи (у общего соседа потребителей десятки, и модель тонула бы в
+  // них), на задаче изменения — каждый правленый файл.
+  let focus = null;
   let manifestTouched = false;
   if (arg) {
     const hits = [...files, ...styleFiles]
@@ -6546,6 +6724,7 @@ if (mode === "bar") {
       process.exit(1);
     }
     const target = hits[0];
+    focus = [target];
     // Область чтения — та же, что очерчивает досье: сам узел, то, что он
     // берёт, то, что берёт его, и листы стилей, которых граф не видит.
     const near = isStylePath(rel(target))
@@ -6646,9 +6825,17 @@ if (mode === "bar") {
     .map(([k, v]) => k + "=" + (v ? "1" : "0"))
     .join(",");
   const marks = barMarks(subject);
+  const model = barModelOf(focus ?? subject);
   const HEAD = "| критерий | о чём | исход | адрес | что | судьба |";
   const BASE_HEAD = "| файл | база | документация | чем это объяснено |";
-  const skeleton = () => {
+  const MODEL_HEAD = "| модель | вид | где | что | в базе | снятие |";
+  // Ключ строки модели без номера и без снятия: по нему прежний протокол
+  // узнаёт свою строку в новом, когда номера сдвинулись.
+  const modelKey = (m) => [m.sort, m.where, m.what].join("|");
+  const skeleton = (carried) => {
+    const said0 = carried?.said ?? new Map();
+    const release0 = carried?.releases ?? new Map();
+    const base0 = carried?.baseRows ?? new Map();
     const rows = [
       "# Свод по планке — протокол текущей работы",
       "",
@@ -6670,6 +6857,38 @@ if (mode === "bar") {
         (m) => "| " + barQuoted(m.file) + " | " + barQuoted(m.mark) + " |",
       ),
       "",
+      "## Модель предмета",
+      "",
+      "Строки собрал инструмент из кода и базы: зависимости по взятым именам,",
+      "потребители, выход наружу, состояние, ресурсы, связи мимо импорта.",
+      "Собранное не правят — оно пересобирается; недостающее дописывают строкой",
+      "со своим номером. Снятие ресурса ставит сессия: " +
+        barQuoted("строка N") +
+        ", " +
+        barQuoted("нет") +
+        " либо",
+      barQuoted("не нужно: причина") +
+        ". Вердикт ядра «чисто» называет номер строки модели, на которой стоит.",
+      "",
+      MODEL_HEAD,
+      "| --- | --- | --- | --- | --- | --- |",
+      ...model.map(
+        (m) =>
+          "| " +
+          m.id +
+          " | " +
+          m.sort +
+          " | " +
+          barQuoted(m.where) +
+          " | " +
+          m.what.split("|").join("\\|") +
+          " | " +
+          m.base +
+          " | " +
+          (release0.get(modelKey(m)) ?? m.release) +
+          " |",
+      ),
+      "",
       "## Исходы",
       "",
       "Исход: " +
@@ -6687,7 +6906,10 @@ if (mode === "bar") {
       "— только на задаче чтения; " +
         barQuoted("отложено") +
         " — после ответа разработчика, и список",
-      "отложенного называет файл находки.",
+      "отложенного называет файл находки; " +
+        barQuoted("вопрос") +
+        " — развилка разработчика, и список",
+      "вопросов называет файл находки.",
       "",
       HEAD,
       "| --- | --- | --- | --- | --- | --- |",
@@ -6697,7 +6919,17 @@ if (mode === "bar") {
       // руками никто не мешает.
       ...live.all.map((c) => {
         const none = c.slogan ? "" : barNoSubject(c.id + "|" + subjectRow);
-        const outcome = c.slogan ? "лозунг" : none === "" ? "" : "нет предмета";
+        // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
+        // замеренная беспредметность берутся заново, остальное — прежнее.
+        const was = said0.get(c.id);
+        const keep = !c.slogan && none === "" && was !== undefined;
+        const outcome = c.slogan
+          ? "лозунг"
+          : none !== ""
+            ? "нет предмета"
+            : keep
+              ? was.outcome
+              : "";
         return (
           "| " +
           c.id +
@@ -6709,9 +6941,13 @@ if (mode === "bar") {
           c.title +
           " | " +
           outcome +
-          " |  | " +
-          none +
-          " |  |"
+          " | " +
+          (keep ? was.addr : "") +
+          " | " +
+          (keep ? was.what : none) +
+          " | " +
+          (keep ? was.fate : "") +
+          " |"
         );
       }),
       "",
@@ -6729,35 +6965,139 @@ if (mode === "bar") {
       "",
       BASE_HEAD,
       "| --- | --- | --- | --- |",
-      ...marks.map((m) => "| " + barQuoted(m.file) + " |  |  |  |"),
+      ...marks.map(
+        (m) =>
+          "| " +
+          barQuoted(m.file) +
+          " | " +
+          (base0.get(m.file) ?? ["", "", ""]).join(" | ") +
+          " |",
+      ),
       "",
     ];
     writeFileSync(at, rows.join(NEWLINE));
   };
 
   const was = barHeader(at);
-  const sameSubject =
+  // Разбор протокола — один на перенос исходов и на сверку формы.
+  const barParse = (body) => {
+    const said = new Map();
+    const twice = [];
+    const rows = [];
+    const baseRows = new Map();
+    const unTick = (x) => x.split(BAR_TICK).join("");
+    for (const line of body.split(/\r?\n/)) {
+      if (!line.startsWith("| ")) continue;
+      if (line === HEAD || line === MODEL_HEAD || line === BASE_HEAD) continue;
+      const cells = line
+        .split(/(?<!\\)\|/)
+        .slice(1, -1)
+        .map((c) => c.trim());
+      if (cells.length === 6 && /^П[0-9]+$/.test(cells[0])) {
+        const [id, sort, where, what, base, release] = cells;
+        rows.push({
+          id,
+          sort,
+          where: unTick(where),
+          what: what.split("\\|").join("|"),
+          base,
+          release,
+        });
+        continue;
+      }
+      if (cells.length === 6 && !/^-+$/.test(cells[0])) {
+        const [id, , outcome, addr, what, fate] = cells;
+        if (said.has(id)) twice.push(id);
+        said.set(id, { outcome, addr, what, fate });
+        continue;
+      }
+      if (cells.length === 4 && cells[0].startsWith(BAR_TICK))
+        baseRows.set(unTick(cells[0]), cells.slice(1));
+    }
+    return { said, twice, rows, baseRows };
+  };
+  // Собранные инструментом строки модели совпадают с тем, что он соберёт
+  // сейчас: номер, вид, место, суть, пометка базы. Снятие — клетка сессии.
+  const sameModel = (rows) =>
+    model.every((m, k) => {
+      const r = rows[k];
+      return (
+        r !== undefined &&
+        r.id === m.id &&
+        r.sort === m.sort &&
+        r.where === m.where &&
+        r.what === m.what &&
+        r.base === m.base
+      );
+    });
+  const parsedWas = was === null ? null : barParse(was.body);
+  const sameMarks =
     was !== null && was.kind === kind && barSameMarks(was.marks, marks);
+  const sameSubject = sameMarks && sameModel(parsedWas.rows);
 
   if (!sameSubject) {
-    // Сказать, что прежние исходы ОТБРОШЕНЫ. Скелет печатается поверх, и
-    // сотня заполненных строк исчезает без слова — а исчезают они законно
-    // (исходы были про другой вид файлов), и потому молчание тут дороже
-    // всего: человек ищет свою работу, а не причину. Найдено сессией,
-    // затёршей строку шапки: предмет «изменился», и 152 строки ушли.
+    // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
+    // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
+    // форматтера по новому тесту стирал сто восемьдесят исходов разом —
+    // замерено на стенде. Сбрасывается только «чисто» ядра, когда правлен
+    // код: вердикт о форме целого стоит на том коде, которого больше нет.
+    // Род задачи сменился — переносить нечего: законные судьбы другие.
+    const carry =
+      was !== null && was.kind === kind
+        ? {
+            said: new Map(parsedWas.said),
+            releases: new Map(
+              parsedWas.rows.map((r) => [
+                [r.sort, r.where, r.what].join("|"),
+                r.release,
+              ]),
+            ),
+            baseRows: parsedWas.baseRows,
+          }
+        : null;
+    const edited = [];
+    if (was !== null) {
+      const before = new Map(was.marks.map((m) => [m.file, m.mark]));
+      for (const m of marks) if (before.get(m.file) !== m.mark) edited.push(m.file);
+    }
+    let reset = 0;
+    if (carry !== null && edited.length > 0)
+      for (const [id, one] of carry.said)
+        if (one.outcome === "чисто" && barCoreCriterion(id)) {
+          carry.said.delete(id);
+          reset += 1;
+        }
     const lost =
-      was === null
+      was === null || carry !== null
         ? 0
-        : readFileSync(at, "utf8")
-            .split(NEWLINE)
-            .filter((l) => /^\| [A-Z][^|]*\|[^|]*\|\s*\S/.test(l)).length;
-    skeleton();
+        : [...parsedWas.said.values()].filter((one) => one.outcome !== "")
+            .length;
+    skeleton(carry);
     console.log("=== Свод по планке: протокол напечатан ===");
+    if (carry !== null && carry.said.size > 0)
+      console.log(
+        "  исходы перенесены: " +
+          [...carry.said.values()].filter((one) => one.outcome !== "").length +
+          ", печать снята — предмет или модель изменились",
+      );
+    if (reset > 0)
+      console.log(
+        "  «чисто» ядра сброшено: " +
+          reset +
+          " — правлен код: " +
+          edited.join(", "),
+      );
+    if (edited.length > 0 && carry !== null)
+      console.log(
+        "  Пересмотреть строки по правленым файлам до печати: перенесённый",
+      );
+    if (edited.length > 0 && carry !== null)
+      console.log("  исход описывает прежний вид кода, пока его не подтвердили.");
     if (lost > 0)
       console.log(
         "  ПРЕЖНИЕ ИСХОДЫ ОТБРОШЕНЫ: их было " +
           lost +
-          ". Предмет свода не тот, на котором они ставились",
+          ". Род задачи не тот, на котором они ставились",
       );
     console.log("  " + rel0(at));
     console.log(
@@ -6766,7 +7106,9 @@ if (mode === "bar") {
         ", файлов в предмете: " +
         marks.length +
         ", критериев: " +
-        live.all.length,
+        live.all.length +
+        ", строк модели: " +
+        model.length,
     );
     console.log("");
     console.log("  По КАЖДОМУ критерию поставить исход, читая политику, а не");
@@ -6777,22 +7119,8 @@ if (mode === "bar") {
     process.exit(1);
   }
 
-  // Разбор исходов. Строка таблицы — шесть колонок, и всё прочее пропускается
-  // молча: полупонятая строка хуже непонятой.
   const body = was.body;
-  const said = new Map();
-  const twice = [];
-  for (const line of body.split(/\r?\n/)) {
-    if (!line.startsWith("| ") || line === HEAD) continue;
-    const cells = line
-      .split("|")
-      .slice(1, -1)
-      .map((c) => c.trim());
-    if (cells.length !== 6 || /^-+$/.test(cells[0])) continue;
-    const [id, , outcome, addr, what, fate] = cells;
-    if (said.has(id)) twice.push(id);
-    said.set(id, { outcome, addr, what, fate });
-  }
+  const { said, twice, rows: modelRows } = parsedWas;
 
   // Адрес находки принимается в обеих ходовых формах: от корня репозитория
   // (так печатают git, редактор и отчёт) и от корня исходников (так печатает
@@ -6871,6 +7199,30 @@ if (mode === "bar") {
     //
     // Спрашивается самое слабое, что проверяемо: список отложенного называет
     // файл находки в одной из ходовых форм пути.
+    // «Вопрос» — развилка разработчика: список вопросов называет файл
+    // находки, иначе вопрос живёт только в протоколе и исчезнет с ним.
+    if (one.fate === "вопрос") {
+      const askAt =
+        CONFIG.questions == null ? null : path.join(BASE, CONFIG.questions);
+      const asked =
+        askAt !== null && existsSync(askAt) ? readFileSync(askAt, "utf8") : null;
+      const forms = [
+        spot[1],
+        norm(path.relative(repoRoot, abs)),
+        norm(path.relative(ROOT, abs)),
+      ];
+      if (asked === null || !forms.some((f) => asked.includes(f)))
+        holes.push(
+          c.id +
+            ": «вопрос», а " +
+            (asked === null
+              ? "списка вопросов нет (поле `questions`)"
+              : "список вопросов " +
+                barQuoted(CONFIG.questions) +
+                " не называет " +
+                barQuoted(spot[1])),
+        );
+    }
     if (one.fate === "отложено") {
       const todoAt = CONFIG.todo == null ? null : path.join(BASE, CONFIG.todo);
       const todo =
@@ -6893,6 +7245,28 @@ if (mode === "bar") {
                 " не называет " +
                 barQuoted(spot[1])),
         );
+    }
+  }
+  // Модель предмета: снятие у каждого ресурса названо, и вердикты с моделью
+  // согласны. Правила — в словаре области (`barModelFault`): они про виды
+  // строк, общие любому коду, и гоняются его самопроверкой.
+  {
+    const RELEASE = /^(нет|строка [0-9]+|есть: строка [0-9]+|не нужно: .+)$/;
+    for (const r of modelRows) {
+      if (r.sort !== "ресурс") continue;
+      if (r.release === "")
+        holes.push(r.id + ": снятие ресурса не названо (" + r.where + ")");
+      else if (!RELEASE.test(r.release))
+        holes.push(r.id + ": снятие не из словаря: «" + r.release + "»");
+    }
+    const code = barModelCode(modelRows);
+    for (const c of live.all) {
+      const one = said.get(c.id);
+      if (one === undefined) continue;
+      const fault = barModelFault(
+        [c.id, one.outcome, one.what, kind, code].join("|"),
+      );
+      if (fault !== "") holes.push(c.id + ": " + fault);
     }
   }
   const extra = [...said.keys()].filter(
@@ -14758,10 +15132,24 @@ if (mode === "verify") {
         if (cell.length < 7) continue;
         if (cell[3] !== "нашлось" || cell[6] !== "предложено") continue;
         barProposed += 1;
-        if (overOpen(cell[1], 1) > 0)
+        // Строка реестра отвечает за находку, только если называет и
+        // критерий, и её файл. Прежде хватало критерия: одна открытая строка
+        // «E1» закрывала любую будущую находку E1 в любом файле — замерено на
+        // стенде, где строка об одном узле гасила находку о другом.
+        const file = cell[4].split(BAR_TICK).join("").replace(/:[0-9]+$/, "");
+        const tail = file.slice(file.lastIndexOf("/") + 1);
+        const named = openFindingRows().some(
+          (row) =>
+            row.includes("«" + cell[1] + "»") &&
+            (row.includes(file) ||
+              (row.includes(tail) &&
+                [...files, ...styleFiles].filter((f) => f.endsWith("/" + tail))
+                  .length === 1)),
+        );
+        if (!named)
           barLoose.push(
             cell[1] +
-              " — предложено сводом и не названо открытой строкой реестра: адрес " +
+              " — предложено сводом и не названо открытой строкой реестра с его файлом: адрес " +
               cell[4],
           );
       }
