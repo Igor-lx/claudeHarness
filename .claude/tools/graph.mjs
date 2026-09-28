@@ -1181,7 +1181,10 @@ const untouchedSeed = (at, repoRoot, seeds) => {
   const to = norm(path.relative(repoRoot, at));
   const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
   if (from === null || !existsSync(from) || !existsSync(at)) return false;
-  return sameAsSeed(readFileSync(at, "utf8"), readFileSync(from, "utf8"));
+  return (
+    SEEDS_REFORMATTED.has(to) ||
+    sameAsSeed(readFileSync(at, "utf8"), readFileSync(from, "utf8"))
+  );
 };
 /** ПОКРЫТ ЛИ набор файлов кода запечатанным сводом. Пустая строка — покрыт,
  * иначе причина словами.
@@ -1591,6 +1594,29 @@ for (const one of SRC_ROOTS) collect(one);
 // НЕВИДИМОСТЬ и НЕСОГЛАСИЕ — разные вещи, и вторая лучше первой: несогласие
 // печатается, невидимость молчит.
 for (const one of CONFIG.testDirs ?? []) collect(norm(path.join(BASE, one)));
+
+// Семена, которые переписал ОДИН форматтер проекта: пути от корня репозитория.
+//
+// Проект со своим форматом приводит к нему и привезённое — и семя переставало
+// быть семенем: ворота требовали свода по всей планке на самой посадке, а
+// корпус своего кода получал файлы обвязки. Признак тот же, что у приведения
+// формата: форматтер проекта по семени даёт ровно лежащее. Считается один
+// раз и только по расходящимся семенам кода: у проекта, где их нет,
+// форматтер не грузится вовсе.
+const SEEDS_REFORMATTED = await (async () => {
+  const out = new Set();
+  for (const [to, from] of seedOfPath()) {
+    const abs = norm(path.join(REPO_AT, to));
+    if (!files.includes(abs) && !styleFiles.includes(abs)) continue;
+    const at = shelfAt(from);
+    if (at === null || !existsSync(at) || !existsSync(abs)) continue;
+    const seed = readFileSync(at, "utf8");
+    const now = readFileSync(abs, "utf8");
+    if (!sameAsSeed(now, seed) && (await formatOnly(seed, now, abs)))
+      out.add(to);
+  }
+  return out;
+})();
 
 // Документы, лежащие ВНЕ исходников. Обход выше идёт по корню исходников, и
 // папка документации в корне репозитория не попадала в корпус ни одной
@@ -4365,7 +4391,10 @@ if (mode === "gate") {
       seedAt !== null && existsSync(seedAt)
         ? readFileSync(seedAt, "utf8")
         : null;
-    if (sameAsSeed(body, seedBody)) {
+    if (
+      sameAsSeed(body, seedBody) ||
+      (await formatOnly(seedBody, body, abs))
+    ) {
       fromShelf += 1;
       continue;
     }
@@ -13776,7 +13805,11 @@ if (mode === "verify") {
                 seedWas = null;
               }
             }
-            if (sameAsSeed(was, seedWas)) continue;
+            if (
+              sameAsSeed(was, seedWas) ||
+              (await formatOnly(seedWas, was, abs))
+            )
+              continue;
             want.push({ file: rel(abs), mark: barDigest(was), one, abs, was });
           }
           if (!want.length) continue;
@@ -13869,6 +13902,25 @@ if (mode === "verify") {
       const repo = gitSays(["rev-parse", "--git-dir"]);
       const where =
         repo === null ? null : gitSays(["config", "core.hooksPath"]);
+      // Проект со своим менеджером хуков держит `core.hooksPath` за собой и
+      // возвращает его при каждой установке пакетов: husky делает это
+      // сценарием `prepare`. Направить git к нам там нельзя — следующая
+      // установка молча вернёт своё. Ворота тогда зовутся ИЗ его хука, и
+      // сверка принимает это, найдя вызов режима в хуке, который git
+      // исполнит: у husky девятой версии это хук папкой выше служебной `_`.
+      // Замерено посадкой в проект на husky: после установки пакетов ворота
+      // молчали, а сверка требовала настройки, которая не держится.
+      const callsGate = (dir) =>
+        [
+          path.join(REPO_AT, dir, "pre-commit"),
+          ...(path.basename(dir) === "_"
+            ? [path.join(REPO_AT, path.dirname(dir), "pre-commit")]
+            : []),
+        ].some(
+          (at) =>
+            existsSync(at) &&
+            /graph\.mjs["']?\s+gate\b/.test(readFileSync(at, "utf8")),
+        );
       if (repo === null)
         gateNote = "репозитория нет: коммитов не делают, и ворота не нужны";
       else if (where === null)
@@ -13877,12 +13929,16 @@ if (mode === "verify") {
             said.dir +
             "`",
         );
-      else if (norm(where) !== norm(said.dir))
+      else if (norm(where) !== norm(said.dir) && !callsGate(where))
         gateGap.push(
           "`core.hooksPath` ведёт в " +
             where +
             ", а ворота лежат в " +
-            said.dir,
+            said.dir +
+            ", и хук " +
+            where +
+            " ворот не зовёт. Свой менеджер хуков — вызов " +
+            "`node .claude/tools/graph.mjs gate` в его хуке перед коммитом",
         );
     }
   }
@@ -13974,6 +14030,7 @@ if (mode === "verify") {
             const to = norm(path.relative(path.join(BASE, ".."), f));
             const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
             if (from === null || !existsSync(from)) return true;
+            if (SEEDS_REFORMATTED.has(to)) return false;
             return !sameAsSeed(
               readFileSync(f, "utf8"),
               readFileSync(from, "utf8"),
