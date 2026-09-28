@@ -148,6 +148,25 @@
       "replace": "| Строка таблицы по ширине шапки | проба |"
     },
     {
+      "section": "Ссылка на критерий планки несёт его заголовок",
+      "file": ".claude/rules/glossary.md",
+      "find": "H6 «Один термин — одна концепция»",
+      "replace": "H6"
+    },
+    {
+      "section": "Таблица состава лежит в одном месте",
+      "create": {
+        "path": ".context/zz-kopiya.md",
+        "text": "# Проба\n\n| Скилл | Где лежит |\n| --- | --- |\n| `task` | `.claude/skills/task/SKILL.md` |"
+      }
+    },
+    {
+      "section": "Перечень папок полки полный",
+      "file": ".claude/README.md",
+      "find": "`hooks/` — ворота перед коммитом,",
+      "replace": ""
+    },
+    {
       "section": "Заготовки обвязки не разбираются линтом проекта",
       "file": "eslint.config.mjs",
       "find": "      \".claude\",",

@@ -631,6 +631,14 @@ const SHELF = CONFIG.shelf == null ? null : path.join(BASE, CONFIG.shelf);
  */
 const REPO_AT = path.join(BASE, "..");
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
+/** Это МАСТЕРСКАЯ — репозиторий, где полку пишут и откуда её раздают.
+ *
+ * Узнаётся по списку публикации `.gitexclude-self`: он лежит в корне
+ * репозитория раздачи и в проект не уезжает — посадка копирует одну папку
+ * обвязки. Нужен сверкам, чей предмет — описание полки её же словами: в
+ * посаженном проекте в `.claude` законно лежат и свои папки проекта, и
+ * сверять с ними описание обвязки значило бы краснеть на чужом. */
+const IN_WORKSHOP = existsSync(path.join(REPO_AT, ".gitexclude-self"));
 /** Справочник режимов — лежит рядом с инструментом и читается из работы.
  *
  * Побайтовых пар здесь больше нет, и это следствие раскладки: доктрина,
@@ -2678,6 +2686,9 @@ const CHECK_SECTIONS = [
   "Ссылки markdown",
   "Проза целиком попадает в корпус сверок",
   "Строка таблицы по ширине шапки",
+  "Ссылка на критерий планки несёт его заголовок",
+  "Таблица состава лежит в одном месте",
+  "Перечень папок полки полный",
   "Исключения сверок используются",
   "Списки исключений не разрослись (предупреждение, прогон не роняет)",
   "Имена из кода в тексте",
@@ -2824,6 +2835,8 @@ const RECIPE_NEEDS = {
 const IDLE_NOTES = {
   "Каркас не отстал от семени":
     "  у проекта свой код: каркас спрашивает соседняя сверка",
+  "Перечень папок полки полный":
+    "  не мастерская: описание полки сверяется там, где его пишут",
 };
 
 // --- falsify: сверки ещё ловят -----------------------------------------------
@@ -11313,6 +11326,29 @@ if (mode === "verify") {
             doctrineDrift.push(`назван в ${where}, но на полке нет: ${m[1]}`);
         }
       }
+      // Состав соседнего файла доктрины описывается ОДИН раз — здесь, в
+      // указателе. Пересказ рядом со ссылкой («`close.md` — коммиты,
+      // необратимые действия, отчёт») никто не сверяет, и он пережил переезд
+      // правил о коммитах в `safety.md`: порядок работы отправлял за ними
+      // туда, где их давно нет. Найдено чтением полки со стороны. Форма
+      // пересказа — ссылка на соседний файл, тире и описание строчными.
+      const index = path.basename(at);
+      for (const name of doctrine) {
+        if (name === index) continue;
+        const body = unfenced(
+          readFileSync(path.join(doctrineDir, name), "utf8"),
+        );
+        for (const para of body.split(/\r?\n\s*\r?\n/)) {
+          const one = para.split(/\r?\n/).join(" ");
+          for (const m of one.matchAll(
+            /\[`?[\w.-]+\.md`?\]\(\.\/([\w.-]+\.md)\)\s+—\s+[а-яё]/g,
+          ))
+            if (doctrine.includes(m[1]))
+              doctrineDrift.push(
+                `${name}: состав \`${m[1]}\` пересказан рядом со ссылкой — описание файла живёт в указателе ${index}`,
+              );
+        }
+      }
     }
   }
   // Синоним термина словаря.
@@ -11369,6 +11405,40 @@ if (mode === "verify") {
             );
           }
         }
+      }
+      // Тот же термин, определённый в словаре ДВАЖДЫ. Два определения одного
+      // слова — две концепции под одним именем, только спрятанные в одном
+      // файле: читают первое найденное, и какое — дело случая. Найдено
+      // чтением полки со стороны: фальсификация была определена в одной
+      // таблице дважды — процедурой и значением слова. Спрашивается внутри
+      // одной таблицы: краткая таблица в начале словаря законно повторяет
+      // слова полной.
+      const glossaryAt = shelfAt("rules/glossary.md");
+      if (glossaryAt !== null && existsSync(glossaryAt)) {
+        const rows = unfenced(readFileSync(glossaryAt, "utf8")).split(NEWLINE);
+        let seen = null;
+        rows.forEach((line, i) => {
+          if (!line.trimStart().startsWith("|")) {
+            seen = null;
+            return;
+          }
+          if (seen === null) seen = new Map();
+          const term = /^\|\s*\*\*([^*]+)\*\*\s*\|/.exec(line.trim());
+          if (term === null) return;
+          const key = term[1].trim().toLowerCase();
+          if (seen.has(key))
+            bannedWords.push(
+              rel0(glossaryAt) +
+                ":" +
+                (i + 1) +
+                " — «" +
+                term[1].trim() +
+                "» определён второй раз, первый — строкой " +
+                seen.get(key) +
+                ", а в словаре это одна строка",
+            );
+          else seen.set(key, i + 1);
+        });
       }
       if (bannedWords.length === 0)
         bannedSaid =
@@ -12049,6 +12119,206 @@ if (mode === "verify") {
   console.log(`  ширина разошлась с шапкой: ${tableWidthDrift.length}`);
   for (const d of tableWidthDrift) console.log("    " + d);
 
+  // 14a-4. Ссылка на критерий планки несёт его заголовок.
+  //
+  // Голое обозначение критерия переживает перенумерацию политики молча: раздел
+  // тестов уехал из `F` в `J`, а свод, скилл входа в задачу и семя правил
+  // продолжали звать «тест обязан уметь падать» критерием F1 — о
+  // владельце ресурса. Ссылку никто не разрешал: сверка адресов читает пути, а
+  // не обозначения. Найдено чтением полки со стороны.
+  //
+  // Форма одна — обозначение и сразу за ним заголовок ёлочками, дословно или
+  // его началом: `J1 «Тест обязан уметь падать»`. Тогда перенумерация
+  // краснеет на каждой ссылке, а не проходит, потому что обозначение
+  // по-прежнему существует. Корпус — проза полки и правила проекта; сама
+  // политика ссылается на свои критерии свободно, а база проекта — нет: в ней
+  // обозначения вроде `P5` бывают именами, а не критериями.
+  const critRefDrift = [];
+  let critRefs = 0;
+  {
+    const policyFiles = ["rules/quality.md", "rules/quality-scoped.md"]
+      .map((one) => shelfAt(one))
+      .filter((one) => one !== null && existsSync(one));
+    const titles = new Map();
+    for (const f of policyFiles)
+      for (const c of barCriteria(f)) titles.set(c.id, c.title);
+    const plain = (s) =>
+      s
+        .toLowerCase()
+        .split("ё")
+        .join("е")
+        .replace(/[^a-zа-я0-9]+/g, " ")
+        .trim();
+    const policy = new Set(policyFiles.map((one) => norm(one)));
+    const rulesMine = new Set(
+      (CONFIG.rulesManifest?.rules ?? []).map((r) => norm(path.join(BASE, r))),
+    );
+    const ID =
+      /(?<![\wА-Яа-яЁё`-])([A-Z]\d{1,2}(?:-(?:бис|тер))?)(?![\wА-Яа-яЁё-])/g;
+    for (const [name, at, fromShelf] of docSources) {
+      if (policy.has(norm(at))) continue;
+      if (fromShelf !== true && !rulesMine.has(norm(at))) continue;
+      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      // Единица — абзац: заголовок ёлочками законно переносится на строку ниже.
+      for (let i = 0; i < rows.length;) {
+        if (rows[i].trim() === "") {
+          i += 1;
+          continue;
+        }
+        const from = i;
+        const para = [];
+        while (i < rows.length && rows[i].trim() !== "") para.push(rows[i++]);
+        const text = para.join(" ");
+        for (const m of text.matchAll(ID)) {
+          const title = titles.get(m[1]);
+          if (title === undefined) continue;
+          critRefs += 1;
+          const quote = /^\s+«([^»]+)»/.exec(text.slice(m.index + m[0].length));
+          const said = quote === null ? "" : plain(quote[1]);
+          if (said.split(" ").length >= 2 && plain(title).startsWith(said))
+            continue;
+          critRefDrift.push(
+            `${name}:${from + 1} — ${m[1]} ` +
+              (quote === null
+                ? "без заголовка ёлочками"
+                : `с заголовком «${quote[1]}», а в политике он «${title}»`) +
+              `. Писать: ${m[1]} «${title}»`,
+          );
+        }
+      }
+    }
+  }
+  checkHead("Ссылка на критерий планки несёт его заголовок", {
+    n: critRefs,
+    unit: "ссылок на критерии в прозе полки и правил",
+  });
+  console.log(`  без своего заголовка: ${critRefDrift.length}`);
+  for (const d of critRefDrift) console.log("    " + d);
+
+  // 14a-5. Таблица состава лежит в одном месте.
+  //
+  // Таблица, объявленная полем настройки, — данные: её читает сверка, по ней
+  // судят о составе проекта. Копия рядом не читается никем и расходится
+  // молча. Замерено чтением полки со стороны: доктрина держала таблицу
+  // скиллов второй копией, и в копии не было одного скилла. Узнаётся по
+  // шапке: та же строка шапки вне своего файла — копия. Семена не в счёт:
+  // семя и есть источник таблицы, а не её двойник. План перехода не
+  // объявляется здесь намеренно: его форму законно повторяет план приведения.
+  const tableTwin = [];
+  const declaredTables = [];
+  if (CONFIG.skills != null) {
+    declaredTables.push([CONFIG.skills.heading, CONFIG.skills.table]);
+    if (CONFIG.skills.memoHeading != null && CONFIG.skills.memo != null)
+      declaredTables.push([
+        CONFIG.skills.memoHeading,
+        path.join(CONFIG.skills.dir, CONFIG.skills.memo),
+      ]);
+  }
+  if (CONFIG.qualityScope != null)
+    declaredTables.push([
+      CONFIG.qualityScope.heading,
+      CONFIG.qualityScope.table,
+    ]);
+  if (CONFIG.checksTable != null)
+    declaredTables.push([CONFIG.checksTable.heading, CONFIG.checksTable.file]);
+  if (CONFIG.findings != null)
+    declaredTables.push([CONFIG.findings.heading, CONFIG.findings.file]);
+  for (const [head, file] of declaredTables) {
+    const home = norm(path.join(BASE, file));
+    for (const [name, at] of docSources) {
+      if (norm(at) === home || fromTemplates(at)) continue;
+      unfenced(readFileSync(at, "utf8"))
+        .split(NEWLINE)
+        .forEach((line, i) => {
+          if (line.trim() === head.trim())
+            tableTwin.push(
+              `${name}:${i + 1} — копия таблицы, объявленной в ${rel0(home)}. Сослаться на неё, а не повторять`,
+            );
+        });
+    }
+  }
+  checkHead("Таблица состава лежит в одном месте", {
+    n: declaredTables.length,
+    unit: "таблиц, объявленных настройкой",
+  });
+  console.log(`  копий вне своего файла: ${tableTwin.length}`);
+  for (const d of tableTwin) console.log("    " + d);
+
+  // 14a-6. Перечень папок полки полный.
+  //
+  // Состав обвязки описан её же словами в нескольких местах — витрина
+  // репозитория, памятка папки, её таблица «что читают когда», — и каждое
+  // перечисление стареет от первой новой папки. Папка ворот перед коммитом
+  // появилась и не попала ни в одно из них. Замерено чтением полки со
+  // стороны. Перечнем считается таблица целиком либо абзац, называющие
+  // папки полки путём в обратных кавычках — `rules/`, `.claude/rules/` или
+  // адресом внутри неё, `seat/seat.md`;
+  // назвавший хотя бы три обязан назвать все.
+  //
+  // Спрашивается только в мастерской: в посаженном проекте в `.claude`
+  // законно лежат и папки самого проекта, а описание обвязки их знать не
+  // обязано и не может.
+  const shelfListGap = [];
+  let shelfLists = 0;
+  if (IN_WORKSHOP && SHELF !== null) {
+    const mapAt = shelfAt("seat/map.json");
+    const skipOwn = new Set(
+      (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+        .projectOwnedInsideHarness ?? [],
+    );
+    const tops = readdirSync(SHELF)
+      .filter((e) => !OUT_OF_TREE.has(e) && !skipOwn.has(e))
+      .filter((e) => statSync(path.join(SHELF, e)).isDirectory())
+      .sort();
+    for (const [name, at] of docSources) {
+      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      const units = [];
+      let unit = null;
+      rows.forEach((line, i) => {
+        const bare = line.trim();
+        const kind = bare === "" ? null : bare.startsWith("|") ? "t" : "p";
+        if (unit !== null && kind !== unit.kind) {
+          units.push(unit);
+          unit = null;
+        }
+        if (kind === null) return;
+        if (unit === null) unit = { kind, from: i, text: "" };
+        unit.text += " " + line;
+      });
+      if (unit !== null) units.push(unit);
+      for (const u of units) {
+        // Папка считается пунктом перечня, когда за её адресом идёт описание —
+        // тире либо граница ячейки. Упоминание внутри определения перечнем не
+        // является: словарь называет папку доктрины, определяя доктрину.
+        const said = tops.filter((t) =>
+          new RegExp("`(?:\\.claude/)?" + t + "/[^`]*`\\s*(?:—|\\|)").test(
+            u.text,
+          ),
+        );
+        if (said.length < 3) continue;
+        shelfLists += 1;
+        if (said.length < tops.length)
+          shelfListGap.push(
+            `${name}:${u.from + 1} — перечень папок полки без ` +
+              tops
+                .filter((t) => !said.includes(t))
+                .map((t) => "`" + t + "/`")
+                .join(", "),
+          );
+      }
+    }
+  }
+  checkHead("Перечень папок полки полный", {
+    n: shelfLists,
+    unit: "перечней папок полки",
+  });
+  console.log(
+    IN_WORKSHOP
+      ? `  неполных: ${shelfListGap.length}`
+      : "  не мастерская: описание полки сверяется там, где его пишут",
+  );
+  for (const d of shelfListGap) console.log("    " + d);
+
   // Тесты, которым решением разрешено лежать вне своей папки. Считается ЗДЕСЬ,
   // а печатается сверкой «Тесты лежат в `tests/`» ниже: мёртвое исключение
   // называет сверка, которая идёт раньше, и посчитанное после неё она бы уже не
@@ -12299,7 +12569,7 @@ if (mode === "verify") {
   // стоял словоформой «слоёв», и «три слоя» проходило тоже. Замерено
   // ревизией результата посадки: план приведения назвал слои счётом.
   const NUM_NOUN =
-    "файл|бочк|бочек|сверк|сверок|режим|провер|тест|правил|экспорт|строк|исключен|папк|папок|модул|пункт|запис|констант|слайд|мутант|раздел|команд|хук|сло(?:й|я|ю|ем|е|ёв|ям|ями|ях)(?![а-яё])|секунд|минут|мс(?![а-яё])|px|обещан|критери|принцип|проп";
+    "файл|бочк|бочек|сверк|сверок|рецепт|слов(?!ар)|режим|провер|тест|правил|экспорт|строк|исключен|папк|папок|модул|пункт|запис|констант|слайд|мутант|раздел|команд|хук|сло(?:й|я|ю|ем|е|ёв|ям|ями|ях)(?![а-яё])|секунд|минут|мс(?![а-яё])|px|обещан|критери|принцип|проп";
   // Стем ищется и ВНУТРИ слова, а не только в начале: «14 реэкспортов» — тот же
   // счёт, что «14 экспортов», и привязка к началу слова пропускала его молча.
   // Найдено пробой. Расширение измерено на всей базе: новых попаданий ровно
@@ -12391,9 +12661,39 @@ if (mode === "verify") {
         frozenNumbers.push(`${name}:${i + 1} — ${hit.join(" | ")}`);
     }
   }
+  // Записи полки О САМОЙ СЕБЕ — отложенное и вопросы в `state/`, памятка
+  // папки и витрина репозитория раздачи — того же рода, что база: они
+  // описывают, что есть сейчас, и счёт в них застывает так же. Доктрина под
+  // правило не идёт: числа в ней — иллюстрации. Замерено чтением полки со
+  // стороны: отложенное держало «рецептов 23, сверок 54, без рецепта 31» при
+  // единицах без рецепта, витрина — «восемь слов» при девяти, памятка — «два
+  // файла репозитория» при трёх. Витрина корня спрашивается только в
+  // мастерской: в проекте корневая витрина — проектная.
+  let shelfNumLines = 0;
+  {
+    const own = [];
+    const stateDir = shelfAt("state");
+    if (stateDir !== null && existsSync(stateDir))
+      for (const e of readdirSync(stateDir))
+        if (e.endsWith(".md")) own.push(path.join(stateDir, e));
+    const memo = shelfAt("README.md");
+    if (memo !== null && existsSync(memo)) own.push(memo);
+    if (IN_WORKSHOP && existsSync(path.join(REPO_AT, "README.md")))
+      own.push(path.join(REPO_AT, "README.md"));
+    for (const at of own) {
+      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      shelfNumLines += rows.length;
+      rows.forEach((line, i) => {
+        const bare = outsideTicks(line).replace(NUMBERING, " ");
+        const hit = bare.match(PROSE_NUM);
+        if (hit !== null)
+          frozenNumbers.push(`${rel0(at)}:${i + 1} — ${hit.join(" | ")}`);
+      });
+    }
+  }
   checkHead("Числа в прозе базы", {
-    n: dossierLines().base.length,
-    unit: "строк прозы базы",
+    n: dossierLines().base.length + shelfNumLines,
+    unit: "строк прозы базы и записей полки о себе",
   });
   console.log(`  счётов вне формы: ${frozenNumbers.length}`);
   for (const f of frozenNumbers) console.log("    " + f);
