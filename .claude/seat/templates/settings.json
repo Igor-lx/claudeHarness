@@ -144,7 +144,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/tools/graph.mjs transition"
+            "command": "node .claude/tools/graph.mjs transition --hook"
           }
         ]
       }

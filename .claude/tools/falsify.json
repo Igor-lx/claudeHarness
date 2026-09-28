@@ -301,6 +301,12 @@
     },
     {
       "section": "Напоминание о переходе включено",
+      "file": ".claude/settings.json",
+      "find": "graph.mjs transition --hook",
+      "replace": "graph.mjs transition"
+    },
+    {
+      "section": "Напоминание о переходе включено",
       "edits": [
         {
           "file": ".claude/settings.json",
