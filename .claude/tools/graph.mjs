@@ -2199,6 +2199,12 @@ const specsOf = new Map(); // файл -> спецификаторы как на
 const namesPulledBy = new Map(); // файл -> имена, которые он сам тянет откуда угодно
 
 const NAME_RE = /^[A-Za-z_$][\w$]*$/;
+/** Имя, объявленное экспортом в самом файле. Одна форма на оба разбора —
+ * экспортов и объявлений: прежний список слов не знал `async`, `let`, `var`,
+ * `declare` и `function*`, и асинхронная функция не числилась экспортом
+ * вовсе — ни мёртвым, ни взятым. */
+const OWN_EXPORT =
+  /export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|abstract\s+class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
 
 /** Переменная листа стилей: объявление и чтение. Связь через них не видна
  * графу импортов — её пишет один файл, а читает другой. */
@@ -2240,6 +2246,94 @@ const cssClasses = (text) => {
  * стилей часто передают целиком, как данные, и обращения к нему в коде нет
  * вовсе — тогда имя живёт строкой в контракте. */
 const CODE_NAME = /"([A-Za-z][\w-]*)"|'([A-Za-z][\w-]*)'|\.([A-Za-z][\w-]*)\b/g;
+
+// Имена, взятые и отданные файлом: из них собираются настоящие зависимости —
+// см. `definerOf` ниже. Читаются тем же проходом, что и граф импортов: второй
+// проход по всем файлам был бы той же работой дважды.
+const ownExportsOf = new Map(); // файл -> имена, объявленные в нём самом
+const reexportsOf = new Map(); // файл -> { named: имя наружу -> [{target, name}], stars: [target] }
+const namedImportsOf = new Map(); // файл -> [{ target, names: [имя там] | "*" | null }]
+
+const readNames = (f, src) => {
+  const own = new Set();
+  const named = new Map();
+  const stars = [];
+  const imports = [];
+  // Привязки, пришедшие импортом: `export default X` и `export { X }` без
+  // `from` отдают наружу чужое имя, и идти за ним надо туда, откуда оно взято.
+  const bound = new Map();
+  const addNamed = (outName, target, name) => {
+    if (!named.has(outName)) named.set(outName, []);
+    named.get(outName).push({ target, name });
+  };
+  const clauseNames = (clause) => {
+    const out = [];
+    const braces = clause.match(/\{([\s\S]*)\}/);
+    if (braces)
+      for (let part of braces[1].split(",")) {
+        part = part.trim().replace(/^type\s+/, "");
+        if (!part) continue;
+        const [there, here] = part.split(/\s+as\s+/).map((x) => x.trim());
+        if (NAME_RE.test(there)) out.push([there, here ?? there]);
+      }
+    const def = clause
+      .replace(/\{[\s\S]*\}/, "")
+      .replace(/^type\s+/, "")
+      .split(",")[0]
+      .trim();
+    if (def && NAME_RE.test(def)) out.push(["default", def]);
+    return out;
+  };
+  for (const m of src.matchAll(
+    /(?:^|\n)\s*(import|export)\s+([^;"']*?)\s*from\s*["']([^"']+)["']/g,
+  )) {
+    const target = resolve(f, m[3]);
+    if (!target) continue;
+    const clause = m[2];
+    if (m[1] === "export") {
+      if (/^\*$/.test(clause.trim())) stars.push(target);
+      else if (clause.includes("*"))
+        addNamed(clause.split(/\s+as\s+/)[1]?.trim() ?? "*", target, "*");
+      else
+        for (const [there, here] of clauseNames(clause))
+          addNamed(here, target, there);
+      continue;
+    }
+    if (clause.includes("*")) {
+      imports.push({ target, names: "*" });
+      continue;
+    }
+    const pairs = clauseNames(clause);
+    for (const [there, here] of pairs) bound.set(here, { target, name: there });
+    imports.push({ target, names: pairs.map(([there]) => there) });
+  }
+  for (const m of src.matchAll(/(?:^|\n)\s*import\s*["']([^"']+)["']/g)) {
+    const target = resolve(f, m[1]);
+    if (target) imports.push({ target, names: null });
+  }
+  for (const m of src.matchAll(OWN_EXPORT)) own.add(m[1]);
+  const defaultName = /export\s+default\s+([A-Za-z_$][\w$]*)\s*;/.exec(src);
+  if (defaultName !== null && bound.has(defaultName[1])) {
+    const b = bound.get(defaultName[1]);
+    addNamed("default", b.target, b.name);
+  } else if (/export\s+default\s/.test(src)) own.add("default");
+  for (const m of src.matchAll(
+    /export\s*(?:type\s*)?\{([^}]*)\}(?!\s*from)/g,
+  ))
+    for (let part of m[1].split(",")) {
+      part = part.trim().replace(/^type\s+/, "");
+      if (!part) continue;
+      const [here, out] = part.split(/\s+as\s+/).map((x) => x.trim());
+      const name = out ?? here;
+      if (!NAME_RE.test(name)) continue;
+      if (bound.has(here))
+        addNamed(name, bound.get(here).target, bound.get(here).name);
+      else own.add(name);
+    }
+  ownExportsOf.set(f, own);
+  reexportsOf.set(f, { named, stars });
+  namedImportsOf.set(f, imports);
+};
 
 for (const f of files) {
   // Комментарии снимаются ДО разбора: ребро графа из комментария — не
@@ -2312,10 +2406,7 @@ for (const f of files) {
 
   // экспорты, объявленные в самом файле
   const ex = new Set();
-  for (const mm of src.matchAll(
-    /export\s+(?:const|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g,
-  ))
-    ex.add(mm[1]);
+  for (const mm of src.matchAll(OWN_EXPORT)) ex.add(mm[1]);
   if (/export\s+default\s/.test(src)) ex.add("default");
   // `export type { … }` — тоже экспорт, и раньше он не считался вовсе: разбор
   // требовал скобку сразу за словом `export`. Тип, ушедший наружу только так,
@@ -2332,6 +2423,7 @@ for (const f of files) {
     }
   }
   exportsOf.set(f, ex);
+  readNames(f, src);
 }
 
 // --- обратный граф: кто кого импортирует ------------------------------------
@@ -2342,6 +2434,74 @@ for (const [f, deps] of importsOf) {
     importedBy.get(d).add(f);
   }
 }
+
+// --- настоящие зависимости: имя, пройденное через бочки до объявления --------
+//
+// Граф импортов отвечает, что файл НАПИСАЛ в строке импорта. Узел, берущий всё
+// из публичного входа, пишет один адрес — бочку, — и досье называло его
+// зависимостью бочку, а не то, чем он пользуется. Импортёры такого узла,
+// взявшие его имя через бочку, не числились вовсе, и тест, гоняющий узел через
+// композицию, назывался «транзитивным» без имени. Замерено на библиотеке, где
+// каждый плагин берёт всё из публичного входа: досье плагина называло одну
+// зависимость — `index.ts`, собственный тест плагина не назывался, а у хука с
+// тремя потребителями радиус был «два: бочка и один файл».
+//
+// Здесь каждое взятое имя проходит реэкспорты до файла, где оно объявлено.
+// Граф импортов при этом не заменяется: правила направления судят строку
+// импорта — то, что файл написал, — и судят верно.
+
+/** Файл, где объявлено имя, взятое из `file`: реэкспорты проходятся по имени,
+ * звёздочки — насквозь. Не найдено — `null`: имя может прийти из пакета или
+ * из разметки, которую разбор не видит, и выдумывать ему адрес нельзя. */
+const definerOf = (file, name, seen = new Set()) => {
+  const key = file + "\u0000" + name;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const re = reexportsOf.get(file);
+  for (const via of re?.named.get(name) ?? []) {
+    const hit =
+      via.name === "*" ? via.target : definerOf(via.target, via.name, seen);
+    if (hit !== null) return hit;
+  }
+  if ((ownExportsOf.get(file) ?? new Set()).has(name)) return file;
+  if (name !== "default")
+    for (const t of re?.stars ?? []) {
+      const hit = definerOf(t, name, seen);
+      if (hit !== null) return hit;
+    }
+  return null;
+};
+
+/** Чем файл пользуется на деле: объявления взятых имён. Реэкспорт ребром не
+ * считается — бочка ничем не пользуется, она только отдаёт. */
+const usesOf = new Map();
+for (const f of files) {
+  const out = new Set();
+  for (const one of namedImportsOf.get(f) ?? []) {
+    if (one.names === null || one.names === "*") {
+      out.add(one.target);
+      continue;
+    }
+    for (const n of one.names) out.add(definerOf(one.target, n) ?? one.target);
+  }
+  out.delete(f);
+  usesOf.set(f, out);
+}
+const usedBy = new Map();
+for (const [f, deps] of usesOf)
+  for (const d of deps) {
+    if (!usedBy.has(d)) usedBy.set(d, new Set());
+    usedBy.get(d).add(f);
+  }
+/** Бочка: файл, который отдаёт наружу чужое и сам ничего не объявляет. */
+const isBarrel = (f) => {
+  const re = reexportsOf.get(f);
+  return (
+    (ownExportsOf.get(f) ?? new Set()).size === 0 &&
+    re !== undefined &&
+    (re.stars.length > 0 || re.named.size > 0)
+  );
+};
 
 // --- общие части досье ------------------------------------------------------
 // Их спрашивают два режима: `brief` («что это такое») и `plan` («что придётся
@@ -2419,13 +2579,127 @@ const testsFor = (target) => {
   const byName = all.filter(
     (t) =>
       !direct.includes(t) &&
-      [...(namesPulledBy.get(t) ?? [])].some((n) => exported.has(n)),
+      ((usesOf.get(t) ?? new Set()).has(target) ||
+        [...(namesPulledBy.get(t) ?? [])].some((n) => exported.has(n))),
   );
+  // Ближние: дошли до узла ПО ИМЕНАМ через узлы, которыми пользуются, — так
+  // тест плагина гоняет поставщика плагина через сам плагин. Прежде такой тест
+  // стоял числом «транзитивно» без имени, и собственный тест узла не
+  // назывался вовсе. Ближние первыми: шаг — это узел, пройденный по дороге.
+  const near = [...(nameReach().get(target) ?? [])]
+    .filter(([t]) => !direct.includes(t) && !byName.includes(t))
+    .sort(
+      (x, y) => x[1].length - y[1].length || (rel(x[0]) < rel(y[0]) ? -1 : 1),
+    );
+  const named = new Set([...direct, ...byName, ...near.map(([t]) => t)]);
   return {
     direct,
     byName,
-    transitive: all.length - direct.length - byName.length,
+    near,
+    transitive: all.filter((t) => !named.has(t)).length,
   };
+};
+
+/** Кто из тестов доходит до узла по именам и через какие узлы. Граф —
+ * `usesOf`: бочка шагом не считается, она только отдаёт. Хранится
+ * предшественник, а не только счёт: «гоняет через три узла» без имён этих
+ * узлов не отвечает, какой из них держит проверку. */
+let NAME_REACH_CACHE = null;
+const nameReach = () => {
+  if (NAME_REACH_CACHE !== null) return NAME_REACH_CACHE;
+  const reach = new Map();
+  for (const t of files.filter(isTest)) {
+    const from = new Map();
+    let wave = [...(usesOf.get(t) ?? [])].map((d) => [d, t]);
+    while (wave.length > 0) {
+      const next = [];
+      for (const [d, prev] of wave) {
+        if (from.has(d) || d === t) continue;
+        from.set(d, prev);
+        for (const n of usesOf.get(d) ?? []) next.push([n, d]);
+      }
+      wave = next;
+    }
+    for (const d of from.keys()) {
+      const chain = [];
+      for (let at = from.get(d); at !== t; at = from.get(at)) chain.unshift(at);
+      if (!reach.has(d)) reach.set(d, new Map());
+      reach.get(d).set(t, chain);
+    }
+  }
+  NAME_REACH_CACHE = reach;
+  return reach;
+};
+
+/** Тесты, которые гоняют файл, — одним списком и одним разбором на все
+ * режимы. Прежде `plan` спрашивал граф вместе с бочками, а `tested` — одну
+ * строку импорта, и в одной правке первый называл тест, а второй объявлял
+ * «ни один тест на это не смотрит». Замерено на стенде: две строки о том же
+ * файле противоречили друг другу. */
+const runnersOf = (target) => {
+  const { direct, byName, near } = testsFor(target);
+  return [...direct, ...byName, ...near.map(([t]) => t)];
+};
+
+/** Ближние тесты: кто гоняет узел через узлы, которыми пользуется, и через
+ * какие. Список длинный у всего, что лежит под корневым узлом, поэтому
+ * показывается голова: ближние первыми. */
+const NEAR_SHOWN = 12;
+const printNear = (near) => {
+  if (near.length === 0) return;
+  console.log("--- гоняют через узлы, которыми пользуются (ближние первыми) ---");
+  for (const [t, chain] of near.slice(0, NEAR_SHOWN))
+    console.log(
+      "  " +
+        rel(t) +
+        "  → " +
+        (chain.length > 2
+          ? [chain[0], chain.at(-1)].map(rel).join(" → … → ")
+          : chain.map(rel).join(" → ")),
+    );
+  if (near.length > NEAR_SHOWN)
+    console.log(`  …и ещё ${near.length - NEAR_SHOWN}`);
+};
+
+/** Чем узел пользуется на деле и через какую бочку взято каждое имя.
+ *
+ * Имя, объявления которого разбор не нашёл, остаётся за бочкой и называется
+ * поимённо: так бывает с типом, дописанным в чужой модуль расширением
+ * (`declare module`), и с именем, пришедшим из пакета. Молча оставить бочку
+ * значило бы назвать зависимостью пустой вход и не сказать почему. */
+const usesWithVia = (target) => {
+  const uses = new Map();
+  const unresolved = new Map();
+  for (const one of namedImportsOf.get(target) ?? []) {
+    const names =
+      one.names === null || one.names === "*" ? [null] : one.names;
+    for (const n of names) {
+      const found = n === null ? one.target : definerOf(one.target, n);
+      const d = found ?? one.target;
+      if (d === target) continue;
+      if (!uses.has(d)) uses.set(d, new Set());
+      if (d !== one.target) uses.get(d).add(one.target);
+      if (found === null && isBarrel(one.target)) {
+        if (!unresolved.has(d)) unresolved.set(d, []);
+        unresolved.get(d).push(n);
+      }
+    }
+  }
+  return { uses, unresolved };
+};
+
+/** Кто отдаёт наружу имена, объявленные узлом: бочки по дороге к входу. */
+const reexportersOf = (target) => {
+  const own = [...(ownExportsOf.get(target) ?? [])];
+  return files.filter((b) => {
+    if (b === target) return false;
+    const re = reexportsOf.get(b);
+    if (re === undefined || (re.named.size === 0 && re.stars.length === 0))
+      return false;
+    for (const out of re.named.keys())
+      if (definerOf(b, out) === target) return true;
+    return own.some((n) => n !== "default" && definerOf(b, n) === target);
+  });
 };
 
 // Стиль в графе импортов не участвует: его подключают побочным импортом
@@ -2572,11 +2846,23 @@ const baseHitsFor = (target) => {
 // называть это радиусом значит показывать дешёвую правку там, где она
 // дорогая, — а правило проекта берёт масштаб именно отсюда. Спрашивают двое:
 // `blast` и `plan`.
+//
+// Сквозь бочку радиус идёт по ИМЕНАМ, а не по строкам импорта: дальше
+// проходят только те, кто берёт из бочки имя, объявленное этим файлом. По
+// строкам импорта радиус забирал всех, кто берёт из бочки хоть что-нибудь, —
+// у хука с тремя потребителями через публичный вход выходила половина
+// проекта, то есть та же ошибка масштаба, только в другую сторону.
+//
+// У самой бочки потребителей по именам нет — она только отдаёт, — и её
+// зависимые те, кто написал её в строке импорта: снятый реэкспорт ломает
+// именно их.
+const dependentsOf = (f) =>
+  (isBarrel(f) ? importedBy.get(f) : usedBy.get(f)) ?? new Set();
 const transitiveUsers = (start) => {
   const seen = new Set();
   const queue = [start];
   while (queue.length) {
-    for (const u of importedBy.get(queue.pop()) ?? []) {
+    for (const u of dependentsOf(queue.pop())) {
       if (isTest(u) || seen.has(u)) continue;
       seen.add(u);
       queue.push(u);
@@ -4212,10 +4498,9 @@ if (mode === "blast") {
   for (const f of files) {
     if (isTest(f)) continue;
     if (arg && !rel(f).includes(arg)) continue;
-    const users = [...(importedBy.get(f) ?? [])].filter((u) => !isTest(u));
+    const users = [...dependentsOf(f)].filter((u) => !isTest(u));
     rows.push([rel(f), users.length, users.map(rel).sort(), f]);
   }
-  const isBarrel = (f) => /[\\/]index\.tsx?$/.test(f);
   rows.sort((a, b) => b[1] - a[1]);
   if (arg && rows.length === 0) {
     console.log(`Ничего не нашлось по ${arg}.`);
@@ -4224,18 +4509,17 @@ if (mode === "blast") {
     console.log(`=== Радиус поражения: ${arg} ===\n`);
     for (const [f, n, users, abs] of rows) {
       const all = transitiveUsers(abs);
-      const bridges = [...(importedBy.get(abs) ?? [])]
-        .filter((u) => !isTest(u) && isBarrel(u))
-        .map(rel)
-        .sort();
+      const bridges = reexportersOf(abs).map(rel).sort();
       console.log(`${String(n).padStart(3)}  ${f}  (прямых)`);
       if (n > 0) console.log(`      ${users.join("\n      ")}`);
       console.log(`      всего транзитивно: ${all.size}`);
       if (bridges.length > 0)
-        console.log(`      наружу ведёт бочка: ${bridges.join(", ")}`);
+        console.log(`      наружу отдают бочки: ${bridges.join(", ")}`);
     }
   } else {
-    console.log("=== Радиус поражения: не-тестовых импортёров на файл ===\n");
+    console.log(
+      "=== Радиус поражения: не-тестовых потребителей на файл (по именам, сквозь бочки) ===\n",
+    );
     for (const [f, n, users] of rows.slice(0, 30)) {
       console.log(`${String(n).padStart(3)}  ${f}`);
       if (n <= 6) console.log(`      ${users.join("\n      ")}`);
@@ -4297,7 +4581,7 @@ if (mode === "plan") {
       const direct = (
         isStyle
           ? styleUsers(target).modules
-          : [...(importedBy.get(target) ?? [])].filter((u) => !isTest(u))
+          : [...dependentsOf(target)].filter((u) => !isTest(u))
       )
         .map(rel)
         .sort();
@@ -4308,6 +4592,15 @@ if (mode === "plan") {
           : `--- радиус: прямых ${direct.length}, транзитивно ${all.size} ---`,
       );
       for (const d of direct) console.log("  " + d);
+      if (!isStyle) {
+        const outward = reexportersOf(target).map(rel).sort();
+        if (outward.length)
+          console.log(
+            "  наружу отдают бочки: " +
+              outward.join(", ") +
+              " — их потребители уже в радиусе, если берут имя этого файла",
+          );
+      }
 
       // Близнец: расхождение копий законно, а вот баг, починенный в одной, —
       // нет. Поэтому пара называется ДО правки, а не после неё.
@@ -4322,19 +4615,28 @@ if (mode === "plan") {
       const {
         direct: td,
         byName,
+        near,
         transitive,
       } = isStyle
-        ? { direct: styleUsers(target).tests, byName: [], transitive: 0 }
+        ? {
+            direct: styleUsers(target).tests,
+            byName: [],
+            near: [],
+            transitive: 0,
+          }
         : testsFor(target);
       console.log("--- тесты, которые обязаны покраснеть на сломе ---");
       const runners = [...td, ...byName].map(rel).sort();
       console.log(
         runners.length
           ? "  " + runners.join(LF + "  ")
-          : transitive === 0
-            ? "  НЕТ НИ ОДНОГО — правку проверять руками, и это пункт отчёта"
-            : "  напрямую никто; проверь тех, кто дотягивается транзитивно",
+          : near.length > 0
+            ? "  напрямую никто; гоняют через узлы, которыми пользуются, — ниже"
+            : transitive === 0
+              ? "  НЕТ НИ ОДНОГО — правку проверять руками, и это пункт отчёта"
+              : "  никто: дотягиваются только сквозь бочки, имён этого файла не берут",
       );
+      printNear(near);
 
       const { exact } = baseHitsFor(target);
       console.log("--- записи базы, которые придётся обновить ---");
@@ -4809,16 +5111,16 @@ if (mode === "tested") {
     const naked = [];
     const stale = [];
     let covered = 0;
+    // Тот же разбор, что у `plan` и `brief`, — `runnersOf`: один вопрос,
+    // один ответ.
     for (const f of touchedCode) {
-      const tests = files.filter(
-        (t) => isTest(t) && (importsOf.get(t) ?? new Set()).has(f),
-      );
+      const tests = runnersOf(f);
       if (tests.length === 0) {
         naked.push(rel(f));
         continue;
       }
       if (tests.some((t) => touched.has(t))) covered++;
-      else stale.push([rel(f), tests.map(rel).sort()]);
+      else stale.push([rel(f), tests.map(rel)]);
     }
 
     // Удалённый файл в граф не попадает: его больше нет на диске. А записи о
@@ -4872,7 +5174,10 @@ if (mode === "tested") {
       console.log(NEWLINE + "  Тесты есть, но в правку не попали:");
       for (const [f, tests] of stale)
         console.log(
-          `    ${f}${NEWLINE}      ${tests.join(NEWLINE + "      ")}`,
+          `    ${f}${NEWLINE}      ${tests.slice(0, NEAR_SHOWN).join(NEWLINE + "      ")}` +
+            (tests.length > NEAR_SHOWN
+              ? `${NEWLINE}      …и ещё ${tests.length - NEAR_SHOWN}, дальше по цепочке узлов`
+              : ""),
         );
       console.log(
         NEWLINE +
@@ -5246,13 +5551,13 @@ if (mode === "tested") {
 
       const neighbours = new Set();
       for (const f of touchedDescribed)
-        for (const u of importedBy.get(f) ?? [])
+        for (const u of dependentsOf(f))
           if (!isTest(u) && !touchedDescribed.includes(u)) neighbours.add(u);
       if (neighbours.size > 0) {
         const shown = [...neighbours].slice(0, 8);
         console.log(
           NEWLINE +
-            "  Соседи, чьё описание могло измениться (кто импортирует):",
+            "  Соседи, чьё описание могло измениться (кто берёт его имена):",
         );
         for (const n of shown)
           console.log(
@@ -5910,15 +6215,20 @@ if (mode === "bar") {
       ? { own: [], viaUsers: [] }
       : stylesNear(target);
     kind = "на чтение";
+    // Соседи — по ИМЕНАМ, сквозь бочки, как у досье: по строке импорта в
+    // предмет попадал публичный вход, пустой по смыслу, а настоящие
+    // партнёры узла оставались снаружи.
     subject = [
-      target,
-      ...(importsOf.get(target) ?? []),
-      ...(importedBy.get(target) ?? []),
-      ...near.own,
-      ...near.viaUsers,
-    ]
-      .map(norm)
-      .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+      ...new Set(
+        [
+          target,
+          ...usesWithVia(target).uses.keys(),
+          ...dependentsOf(target),
+          ...near.own,
+          ...near.viaUsers,
+        ].map(norm),
+      ),
+    ].sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
   } else {
     subject = await barChangedSubject(repoRoot);
     if (subject === null) {
@@ -6413,7 +6723,21 @@ if (mode === "brief") {
         const bare = base.replace(BARE_EXT, "");
         console.log(`${NEWLINE}=== ${r} ===`);
 
-        const down = [...(importsOf.get(target) ?? [])].map(rel).sort();
+        // Зависимости — по ИМЕНАМ, сквозь бочки: узел, берущий всё из
+        // публичного входа, иначе называл одну зависимость — сам вход.
+        const { uses: via, unresolved } = usesWithVia(target);
+        const down = [...via.keys()]
+          .sort((x, y) => (rel(x) < rel(y) ? -1 : 1))
+          .map((d) =>
+            via.get(d).size
+              ? rel(d) + "  (через " + [...via.get(d)].map(rel).join(", ") + ")"
+              : unresolved.has(d)
+                ? rel(d) +
+                  "  (объявление не найдено: " +
+                  unresolved.get(d).join(", ") +
+                  ")"
+                : rel(d),
+          );
         // У теста спрашивать «что его накрывает» бессмысленно: он и есть
         // проверка. Тревога «его не гоняет ни один тест» на тестовом файле —
         // не предупреждение, а шум, который учит не читать эту строку.
@@ -6461,19 +6785,19 @@ if (mode === "brief") {
             down.length ? "  " + down.join(NEWLINE + "  ") : "  ничего своего",
           );
 
-          const up = files.filter((f) =>
-            (importsOf.get(f) ?? new Set()).has(target),
-          );
-          const upCode = up
+          const upCode = [...dependentsOf(target)]
             .filter((f) => !isTest(f))
             .map(rel)
             .sort();
-          console.log("--- импортируют (радиус поражения) ---");
+          console.log("--- пользуются им (радиус поражения, сквозь бочки) ---");
           console.log(
             upCode.length
               ? "  " + upCode.join(NEWLINE + "  ")
-              : "  никто — ни один файл проекта его не импортирует",
+              : "  никто — ни один файл проекта его имён не берёт",
           );
+          const outward = reexportersOf(target).map(rel).sort();
+          if (outward.length)
+            console.log("  наружу отдают бочки: " + outward.join(", "));
 
           // Близнец нужен и здесь, и раньше его тут не было: объясняя файл
           // форка, легко перенести на него смысл копии — одинаковая форма
@@ -6493,7 +6817,7 @@ if (mode === "brief") {
           // взявший `useImageResourceStore` из бочки слоя, гоняет файл, который
           // это имя определяет; тест, взявший из той же бочки соседнее имя, —
           // нет. Разбор общий с `plan`, см. `testsFor`.
-          const { direct, byName, transitive } = testsFor(target);
+          const { direct, byName, near, transitive } = testsFor(target);
           console.log("--- тесты, называющие файл сами ---");
           console.log(
             direct.length
@@ -6516,18 +6840,19 @@ if (mode === "brief") {
                     .join(NEWLINE + "  ")
               : "  нет",
           );
-          // Тревога поднимается, только когда пусты ВСЕ три уровня. Если файл
-          // достают транзитивно, тест на него может существовать и гонять его
-          // через композицию — так закрыт BrowserChromeSync через ThemeProvider.
-          // Кричать «не гоняет никто» в этом случае значит врать.
-          if (direct.length + byName.length === 0)
+          printNear(near);
+          // Тревога поднимается, только когда пусты ВСЕ уровни. Файл, который
+          // гоняют через композицию, названный «не гоняет никто», — ложь;
+          // файл, до которого дотягиваются только сквозь бочки, не беря его
+          // имён, — не гоняет никто по-настоящему.
+          if (direct.length + byName.length + near.length === 0)
             console.log(
               transitive === 0
                 ? "  ВНИМАНИЕ: файл не гоняет ни один тест — правку проверять руками"
-                : "  напрямую никто; проверь, гоняют ли его те, кто дотягивается ниже",
+                : "  ВНИМАНИЕ: имён файла не берёт ни один тест — его достают только сквозь бочки",
             );
           console.log(
-            `--- дотягиваются транзитивно, через обычные модули: ${transitive} ---`,
+            `--- дотягиваются только сквозь бочки, имён файла не беря: ${transitive} ---`,
           );
         }
 

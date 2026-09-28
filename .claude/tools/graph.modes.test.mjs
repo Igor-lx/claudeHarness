@@ -810,8 +810,79 @@ describe("разрешение адресов: раздел карты и имп
         { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
       );
       const importers =
-        brief.split("--- импортируют")[1]?.split("---")[1] ?? "";
+        brief.split("--- пользуются им")[1]?.split("---")[1] ?? "";
       expect(importers).toContain("app/zzUser.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/** Секция досье — строки между её заголовком и следующим. */
+const sectionOf = (out, head) =>
+  out.split("--- " + head)[1]?.split("\n---")[0] ?? "";
+
+describe("граф по именам: сквозь бочку до объявления", () => {
+  it("радиус, зависимости и тесты считаются по взятым именам, а не по строке импорта", () => {
+    const box = seatEmpty("imena-");
+    try {
+      const kit = path.join(box, "src", "shared", "zzKit");
+      const app = path.join(box, "src", "app");
+      fs.mkdirSync(kit, { recursive: true });
+      fs.mkdirSync(path.join(app, "tests"), { recursive: true });
+      fs.writeFileSync(
+        path.join(kit, "core.ts"),
+        "export async function zzCore() {\n  return 1;\n}\n",
+      );
+      fs.writeFileSync(
+        path.join(kit, "other.ts"),
+        "export const zzOther = () => 2;\n",
+      );
+      // Бочка отдаёт оба имени: одно звёздочкой, второе поимённо.
+      fs.writeFileSync(
+        path.join(kit, "index.ts"),
+        'export * from "./core.js";\nexport { zzOther } from "./other.js";\n',
+      );
+      fs.writeFileSync(
+        path.join(app, "zzUse.ts"),
+        'import { zzCore } from "../shared/zzKit/index.js";\nexport const zzUse = () => zzCore();\n',
+      );
+      // Берёт из той же бочки СОСЕДНЕЕ имя — от `core.ts` не зависит.
+      fs.writeFileSync(
+        path.join(app, "zzSide.ts"),
+        'import { zzOther } from "../shared/zzKit/index.js";\nexport const zzSide = () => zzOther();\n',
+      );
+      fs.writeFileSync(
+        path.join(app, "tests", "zzUse.test.ts"),
+        'import { expect, it } from "vitest";\nimport { zzUse } from "../zzUse.js";\nit("zz", async () => expect(await zzUse()).toBe(1));\n',
+      );
+      const run = (...args) =>
+        execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+
+      const core = run("brief", "shared/zzKit/core.ts");
+      const users = sectionOf(core, "пользуются им");
+      expect(users).toContain("app/zzUse.ts");
+      expect(users).not.toContain("app/zzSide.ts");
+      expect(users).toContain("наружу отдают бочки: shared/zzKit/index.ts");
+      expect(sectionOf(core, "гоняют через узлы")).toContain(
+        "app/tests/zzUse.test.ts  → app/zzUse.ts",
+      );
+
+      const use = run("brief", "app/zzUse.ts");
+      expect(sectionOf(use, "импортирует")).toContain(
+        "shared/zzKit/core.ts  (через shared/zzKit/index.ts)",
+      );
+
+      expect(run("plan", "shared/zzKit/core.ts")).toContain(
+        "--- радиус: прямых 1, транзитивно 1 ---",
+      );
+      const tested = run("tested", "src/shared/zzKit/core.ts");
+      expect(tested).not.toContain("ни один тест на это не смотрит");
+      expect(tested).toContain("app/tests/zzUse.test.ts");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
