@@ -1425,8 +1425,40 @@ const owedFor = (file) => {
       out.push({ to: one.to, subject: one.subject, why: "нет файла" });
       continue;
     }
-    if (readFileSync(at, "utf8").includes(rel(file))) continue;
-    out.push({ to: one.to, subject: one.subject, why: "не назван" });
+    // Назван — значит назван ДЕРЖАТЕЛЕМ предмета, в графе, которую объявляет
+    // карта посадки: владелец состояния, событие порядка. Прежде годилось
+    // упоминание где угодно, и файл со своим состоянием проходил, будучи
+    // названным читателем чужого. Замерено переходом библиотеки: запись о
+    // состоянии называла файл в графе «Кто читает», а своё состояние того же
+    // файла не описывала ни одна строка.
+    const lines = readFileSync(at, "utf8").split(LF);
+    const r = rel(file);
+    const holds = (cell) =>
+      quotedIn(cell).some((t) => t === r || t.endsWith("/" + r));
+    let named = false;
+    let column = -1;
+    for (const line of lines) {
+      if (!line.startsWith("|")) {
+        column = -1;
+        continue;
+      }
+      const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+      if (one.column !== undefined && cells.includes(one.column)) {
+        column = cells.indexOf(one.column);
+        continue;
+      }
+      if (/^[-:\s|]+$/.test(line)) continue;
+      if (one.column === undefined ? holds(line) : column >= 0 && holds(cells[column] ?? "")) {
+        named = true;
+        break;
+      }
+    }
+    if (named) continue;
+    out.push({
+      to: one.to,
+      subject: one.subject,
+      why: one.column === undefined ? "не назван" : "не назван в графе «" + one.column + "»",
+    });
   }
   return out;
 };
@@ -1838,7 +1870,17 @@ const walkNear = (dir) => {
 };
 for (const one of SRC_ROOTS) walkNear(one);
 
-const isTest = isTestPath;
+/** Файл стороны тестов: по форме пути либо по месту — в объявленной папке
+ * тестов. Второе — подготовка прогона и общие помощники тестов: они не тест и
+ * упасть не могут, но и кодом проекта не являются, и правила кода зовут их в
+ * реестр тестов, а не в карту. Прежде признак был только формой пути, и
+ * `test/unit/setup.ts` карта требовала описать как код. Замерено переходом
+ * библиотеки с папкой `test/`. */
+const TEST_DIRS = (CONFIG.testDirs ?? []).map((one) =>
+  norm(path.join(BASE, one)),
+);
+const isTest = (f) =>
+  isTestPath(f) || TEST_DIRS.some((d) => f.startsWith(d + "/"));
 
 /** Образцы ПРЕДМЕТА файлов базы, кладущихся по находке: состояние и порядок.
  *
@@ -1849,9 +1891,11 @@ const isTest = isTestPath;
  */
 const BRIEF_SUBJECTS = {
   // Имён СТОЛЬКО ЖЕ, сколько их в определении состояния из файла базы:
-  // «всё, что переживает отрисовку». Идентификатор, значение контекста и
-  // подписка на внешнее хранилище переживают её наравне с хуком состояния и
-  // ссылкой. Замерено чтением стенда кнопки: всё её состояние — один `useId`,
+  // «всё, что переживает отрисовку». Идентификатор и подписка на внешнее
+  // хранилище переживают её наравне с хуком состояния и ссылкой. Чтение
+  // контекста — не своё состояние: им владеет тот, кто кладёт значение в
+  // поставщика, а читающий назван в его строке. Помощник, читающий любой
+  // контекст, иначе требовал себе строку о состоянии, которого у него нет. Замерено чтением стенда кнопки: всё её состояние — один `useId`,
   // файла базы под предмет не завелось, и сверка промолчала — предмета для
   // неё не было вовсе.
   // Имя, за которым идёт круглая ИЛИ угловая скобка: `useState<Set<string>>(`
@@ -1865,7 +1909,7 @@ const BRIEF_SUBJECTS = {
   // него переживает не отрисовку, а весь сеанс. Требование стояло, ловца не
   // было: тот же класс, что у мутационной настройки и у таблицы связей.
   state: new RegExp(
-    "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]|\\buseId\\s*[\\(<]|\\buseContext\\s*[\\(<]|\\buseSyncExternalStore\\s*[\\(<]|\\blocalStorage\\b|\\bsessionStorage\\b|\\bindexedDB\\b",
+    "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]|\\buseId\\s*[\\(<]|\\buseSyncExternalStore\\s*[\\(<]|\\blocalStorage\\b|\\bsessionStorage\\b|\\bindexedDB\\b",
   ),
   timing: new RegExp(
     "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
@@ -2574,6 +2618,79 @@ const dossierLines = () => {
       .forEach((line, i) => base.push([name, i + 1, line]));
   LINES_CACHE = { base, docs };
   return LINES_CACHE;
+};
+
+/** Документация узла — один разбор на `brief` и `tested`.
+ *
+ * Четыре ответа, и доверие к ним разное:
+ * - `own` — ссылки, которые файл ставит сам;
+ * - `exact` — строки документов, называющие файл путём;
+ * - `door` — ближняя дверь папки: `README.md` либо `docs/README.md` по пути
+ *   вверх от файла до корня исходников. Её пишут тому, кто пришёл к папке, и
+ *   файла она обычно не называет;
+ * - `loose` — по имени, может промахнуться: строки, называющие голое имя
+ *   файла, если оно в проекте одно, и документы, названные именем ЕДИНИЦЫ —
+ *   папки файла: `docs/plugins/slideshow.md` о `plugins/slideshow/`.
+ *
+ * Прежде досье знало только первые два и голое имя без условия: `index.ts`
+ * приносил чужие README, а документ продукта о плагине и дверь его папки не
+ * находились вовсе. Замерено правкой плагина на библиотеке: оба документа
+ * описывали поведение, которое правка меняла, и ни один режим их не назвал. */
+const docsFor = (target) => {
+  const r = rel(target);
+  const base = r.slice(r.lastIndexOf("/") + 1);
+  const bare = base.replace(BARE_EXT, "");
+  const unique =
+    [...files, ...styleFiles].filter((f) => rel(f).endsWith("/" + base) || rel(f) === base)
+      .length === 1;
+  const lines = dossierLines().docs;
+  const exact = lines.filter(([, , line]) =>
+    quotedIn(line).some(
+      (t) =>
+        t === r ||
+        (t.includes("/") && r.endsWith("/" + t)) ||
+        (t.includes("/") && t.endsWith("/" + r)),
+    ),
+  );
+  const loose = unique
+    ? lines.filter(
+        ([, , line]) =>
+          !exact.some((e) => e[2] === line) &&
+          quotedIn(line).some((t) => t === base || t === bare),
+      )
+    : [];
+  let door = null;
+  const top = SRC_ROOTS.find((one) => target.startsWith(one + "/")) ?? ROOT;
+  for (
+    let dir = path.posix.dirname(target);
+    door === null && (dir === top || dir.startsWith(top + "/"));
+    dir = path.posix.dirname(dir)
+  )
+    for (const one of [dir + "/README.md", dir + "/docs/README.md"])
+      if (door === null && docFiles.includes(one)) door = one;
+  // Единица — папка файла, а у файла в корне исходников — сам файл. Имя
+  // единицы засчитывается, только если оно в проекте одно: папок `hooks`
+  // бывает несколько, и документ `hooks.md` о какой-то одной из них.
+  const folder = path.posix.dirname(target);
+  const dirs = new Set([...files, ...styleFiles].map((f) => path.posix.dirname(f)));
+  const unit = folder === top ? bare : path.posix.basename(folder);
+  const unitUnique =
+    folder === top
+      ? unique
+      : [...dirs].filter((d) => path.posix.basename(d) === unit).length === 1;
+  const unitDocs = unitUnique
+    ? docFiles.filter(
+        (d) =>
+          d !== door && path.posix.basename(d).replace(/\.md$/, "") === unit,
+      )
+    : [];
+  return {
+    own: [...new Set(docRefsIn(readFileSync(target, "utf8")))],
+    exact,
+    door,
+    loose,
+    unitDocs,
+  };
 };
 
 // Обратная достижимость: какой тест дотягивается до файла ПО ГРАФУ, а не по
@@ -5813,45 +5930,35 @@ if (mode === "tested") {
     // список печатается здесь — это второй вопрос того же момента, и задавать
     // его надо машиной, а не памятью.
     if (touchedCode.length) {
-      const TICK = String.fromCharCode(96);
-      const DOC_LINES = [];
-      for (const d of docFiles) {
-        const body = readFileSync(d, "utf8").split(NEWLINE);
-        body.forEach((line, i) => DOC_LINES.push([rel(d), i + 1, line]));
-      }
-      const quoted = (line) =>
-        line
-          .split(TICK)
-          .filter((_, i) => i % 2 === 1)
-          .flatMap((t) => t.split(",").map((x) => x.trim()));
-
+      // Тот же разбор, что у досье, — `docsFor`: два сканера одного вопроса
+      // расходятся, и расходились — голое имя без условия приносило чужие
+      // README, а дверь папки и документ единицы не находил ни один.
       const described = [];
       for (const f of touchedCode) {
-        const r = rel(f);
-        const base = r.slice(r.lastIndexOf("/") + 1);
-        const bare = base.replace(BARE_EXT, "");
+        const docs = docsFor(f);
         const named = [
           ...new Set(
-            DOC_LINES.filter(([, , line]) =>
-              quoted(line).some(
-                (t) =>
-                  t === r || r.endsWith("/" + t) || t === base || t === bare,
-              ),
-            ).map(([n, i]) => n + ":" + i),
+            [...docs.exact, ...docs.loose].map(([n, i]) => n + ":" + i),
           ),
         ];
-        const own = [...new Set(docRefsIn(readFileSync(f, "utf8")))];
-        if (named.length || own.length) described.push([r, own, named]);
+        const near = [
+          ...(docs.door === null ? [] : [docs.door]),
+          ...docs.unitDocs,
+        ].map(rel);
+        if (named.length || docs.own.length || near.length)
+          described.push([rel(f), docs.own, named, near]);
       }
 
       console.log(NEWLINE + "=== Документация тронутых файлов ===");
       if (!described.length)
         console.log("  ни один тронутый файл не описан документацией");
-      for (const [r, own, named] of described) {
+      for (const [r, own, named, near] of described) {
         console.log("  " + r);
         if (own.length) console.log("    ссылается сам: " + own.join(", "));
         if (named.length)
           console.log("    назван в: " + named.slice(0, 8).join(", "));
+        if (near.length)
+          console.log("    дверь папки и документ единицы: " + near.join(", "));
       }
       if (described.length)
         console.log(
@@ -5866,7 +5973,7 @@ if (mode === "tested") {
 
     // Якорь съезжает ровно от одного — вставки или удаления строк ВЫШЕ него,
     // то есть от правки того самого файла. Значит сверять его надо не всегда,
-    // а именно сейчас. Якорь с цитатой чинит себя сам (`verify`), без цитаты —
+    // а именно сейчас. Якорь с цитатой переставляет `repoint`, без цитаты —
     // только глазами, и вот их список. Приговора нет намеренно: правка ниже
     // якоря его не двигает, и падать на этом значило бы врать через раз.
     const ANCHOR = /`([\w./{}-]*):(\d+)(?:-\d+)?`(\s*`[^`]+`)?/g;
@@ -6941,12 +7048,11 @@ if (mode === "brief") {
       console.log(outOfScope(arg));
       process.exitCode = 1;
     } else {
-      // Достижимость тестов, строки базы и разбор записей — общие с `plan`,
-      // живут на уровне модуля. Документация отвечает на другой вопрос, чем
-      // база: не «что и где», а «почему так». Для рефактора это половина, без
-      // которой ломают концепцию, ничего не нарушив формально.
-      const DOC_LINES = dossierLines().docs;
-
+      // Достижимость тестов, строки базы, разбор записей и документов — общие
+      // с `plan` и `tested`, живут на уровне модуля. Документация отвечает на
+      // другой вопрос, чем база: не «что и где», а «почему так». Для рефактора
+      // это половина, без которой ломают концепцию, ничего не нарушив
+      // формально.
       for (const target of hits.slice(0, 12)) {
         const r = rel(target);
         const base = r.slice(r.lastIndexOf("/") + 1);
@@ -7130,7 +7236,9 @@ if (mode === "brief") {
             one.why === "нет файла"
               ? one.to + " — файла базы нет вовсе"
               : one.to +
-                " — файл не назван, а предмет «" +
+                " — файл " +
+                one.why +
+                ", а предмет «" +
                 one.subject +
                 "» в нём есть",
           );
@@ -7172,15 +7280,19 @@ if (mode === "brief") {
               : "  якоря нет — «почему» этого файла нигде не объявлено",
         );
 
-        const docHits = DOC_LINES.filter(([, , line]) =>
-          quotedIn(line).some(
-            (t) => t === r || r.endsWith("/" + t) || t === base || t === bare,
-          ),
-        );
-        console.log("--- документация: где он назван ---");
-        for (const [n, i, line] of docHits.slice(0, 20))
+        const docs = docsFor(target);
+        console.log("--- документация: где он назван путём ---");
+        for (const [n, i, line] of docs.exact.slice(0, 20))
           console.log(`  ${n}:${i}  ${line.trim().slice(0, 110)}`);
-        if (!docHits.length) console.log("  нет");
+        if (!docs.exact.length) console.log("  нет");
+        console.log("--- документация: дверь папки и документ единицы ---");
+        if (docs.door !== null) console.log("  дверь папки: " + rel(docs.door));
+        for (const d of docs.unitDocs)
+          console.log("  документ по имени единицы: " + rel(d));
+        for (const [n, i, line] of docs.loose.slice(0, 10))
+          console.log(`  по имени (проверить, тот ли): ${n}:${i}  ${line.trim().slice(0, 90)}`);
+        if (docs.door === null && !docs.unitDocs.length && !docs.loose.length)
+          console.log("  нет");
       }
       if (hits.length > 12)
         console.log(
@@ -7353,6 +7465,194 @@ if (mode === "tiers") {
       "«Порядок цены», в обратных кавычках. Пересчитывают той же командой.",
   );
 }
+// --- адреса базы: разрешение и якоря -----------------------------------------
+// Один разбор на `verify` и `repoint`: пока он жил внутри сверки, второму
+// режиму оставалось завести свою копию, а копия расходится первой.
+const bare = (q) => q.replace(/[*]+$/, "").replace(/[/]+$/, "");
+
+// Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу
+// раздела, затем по однозначному суффиксу.
+// Сокращения объявлены НАСТРОЙКОЙ, а не зашиты сюда. Прежде здесь стояла
+// раскладка одного конкретного проекта: префиксы его папок разрешались в его
+// же адреса. В любом другом проекте те же префиксы указывали в несуществующие
+// места — и делали это молча, потому что неразрешённый адрес просто уходил
+// дальше по цепочке разрешения. Найдено поиском следов проекта в обвязке.
+const expand = (q) => {
+  if (q.startsWith("src/")) return path.join(REPO_AT, q);
+  for (const [prefix, base] of CONFIG.pathShortcuts ?? [])
+    if (q.startsWith(prefix)) return path.join(REPO_AT, base, q);
+  // Адрес ОТ КОРНЯ ИСХОДНИКОВ — та форма, в которой инструмент сам их и
+  // печатает: `components/CheckboxPanel/domain/selection.ts`. Ветка выше
+  // знает один литерал `src/`, и проект, зовущий корень иначе, не разрешал
+  // ни одного адреса с косой чертой — а признака у этого не было: сверка
+  // слоёв краснела строкой «слоя нет на диске» про папку, которая есть.
+  // Слой без косой черты при этом проходил зелёным по другой ветке, и
+  // расхождение выглядело случайным. Найдено посадкой в проект со слоями.
+  const atRoot = path.join(ROOT, q);
+  if (existsSync(atRoot)) return atRoot;
+  return null;
+};
+
+// Два списка, и смешивать их нельзя: размеры папок считаются по коду
+// (`everyFile`), а якоря указывают ещё и на доки (`everyPath`).
+const everyFile = [];
+const everyPath = [];
+const walkAll = (dir) => {
+  if (!walkable(dir)) return;
+  for (const e of readdirSync(dir)) {
+    const full = path.join(dir, e);
+    if (outOfTree(e, full)) continue;
+    if (statSync(full).isDirectory()) walkAll(full);
+    else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
+      everyPath.push(full.split(path.sep).join("/"));
+      if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
+    }
+  }
+  // Корень исходников берётся ИЗ НАСТРОЙКИ, а не зашит именем `src`.
+  //
+  // Поле настройки существует именно затем, что корень бывает другой:
+  // библиотеки зовут его `lib`, каркасы — `app`. Пока имя стояло здесь
+  // строкой, у такого проекта этот обход возвращал ПУСТО, и всё, что на нём
+  // стоит, молчало — в первую очередь покрытие карты по файлам стилей.
+  // Заметить это было нечем: соседний список собирается другим обходом, тоже
+  // молча, и сверка печатала правдоподобное число. Найдено сверкой двух
+  // замеров одного и того же проекта, разошедшихся на единицу. Деревьев
+  // бывает несколько, и обход зовётся по каждому.
+};
+for (const one of SRC_ROOTS) walkAll(one);
+
+// Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
+// хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
+//
+// Префикс раздела пробуется ПЕРВЫМ. Голое имя разрешается ещё и от корня
+// исходников, и в обратном порядке `index.ts` под заголовком папки плагина
+// засчитывался корневому `index.ts`: строки карты стояли, а тридцать файлов
+// числились неописанными, корневые же — описанными чужими строками. Замерено
+// переходом библиотеки, где у каждой папки свои `index.ts` и `props.ts`.
+const locate = (q, prefix) => {
+  for (const candidate of prefix === null ? [q] : [prefix + q, q]) {
+    const expanded = expand(candidate);
+    if (expanded !== null && existsSync(expanded)) return norm(expanded);
+    const atRepo = path.join(REPO_AT, candidate);
+    if (existsSync(atRepo) && statSync(atRepo).isFile()) return norm(atRepo);
+  }
+  const hits = everyPath.filter((f) => f.endsWith("/" + q));
+  return hits.length === 1 ? hits[0] : null;
+};
+
+// База пишет группы вида `{a,b}/tests`: раскрываем их в отдельные пути.
+const variants = (q) => {
+  const group = /\{([^}]*)\}/.exec(q);
+  if (group === null) return [q];
+  const head = q.slice(0, group.index);
+  const tail = q.slice(group.index + group[0].length);
+  return group[1]
+    .split(",")
+    .flatMap((one) => variants(head + one.trim() + tail));
+};
+
+const HEAD_RE = /^#{2,4}[^`]*`([^`]+)`/;
+const HEAD_FILES_RE = new RegExp(
+  "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
+  "g",
+);
+const ANCHOR_TAIL = new RegExp("\\.(" + CODE_STYLE_ALT + "|md|json|html)$");
+// Якорь с цитатой: номер строки плюс сама конструкция в кавычках. Номер съедет
+// от любой вставки выше, цитата — нет, поэтому проверяется именно она.
+//
+// Цитата есть у единиц, а номер съезжает у всех. Поэтому у якоря без цитаты
+// проверяется то немногое, что проверить можно: строка, на которую он
+// указывает, обязана быть содержательной. Якорь ставят на объявление, а не
+// на закрывающую скобку и не на пустоту — если он туда попал, он съехал.
+// Только для кода: в прозе пустая строка внутри диапазона законна.
+// Хвост комментария — та же пустота, что и закрывающая скобка: строка `*/`,
+// одинокая `*` и голый `//` содержания не несут, и якорь, попавший туда,
+// съехал ровно так же. Найдено пробой: запись про стенд указывала на строку,
+// закрывающую блок комментария, а описывала конструкцию двумя строками ниже.
+const JUNK_ANCHOR = /^\s*(?:[)\]}]+[;,]?|\{|,|\*+\/|\*|\/\/|)\s*$/;
+// Цитата принадлежит якорю тем, что стоит сразу за ним; круглые скобки вокруг
+// — вёрстка, а не форма. Требование закрывающей скобки вплотную к цитате
+// выбрасывало из проверки всё, где дальше шла точка с запятой, продолжение
+// фразы или вторая ссылка, — тридцать пять записей против тридцати девяти
+// разобранных. Они выглядели проверяемыми и не проверялись; найдено пробой.
+// Цитатой не считается второй адрес подряд: перечисление из двух якорей — это
+// два якоря, а не якорь с цитатой. Образец такой пары в комментарии не
+// приводится: сверки читают собственные описания как настоящие записи, и это
+// уже срабатывало трижды.
+const CITED_RE = /`([^`]*):(\d+)(?:-(\d+))?` `([^`]+)`/g;
+
+// --- repoint: переставить номера якорей, цитата которых съехала ------------
+// Номер якоря съезжает от любой вставки выше, цитата — нет. Сверка держит
+// номер на месте цитаты: читатель открывает файл по номеру, и номер, ведущий
+// не туда, отправляет его читать чужую конструкцию. Переставлять руками
+// нечего и незачем: одна вставленная строка сдвигает все якоря файла —
+// замерено правкой узла на библиотеке, шестнадцать якорей за одну правку.
+//
+// Переставляется только однозначное: цитата стоит в файле ровно на одной
+// строке. Нет её вовсе либо она на нескольких — номер ставят глазами, и режим
+// это называет. Длина диапазона сохраняется.
+if (mode === "repoint") {
+  const names = readdirSync(BASE).filter((n) => n.endsWith(".md"));
+  sayLooked("файлов базы", names.length);
+  const moved = [];
+  const left = [];
+  for (const name of names) {
+    const at = path.join(BASE, name);
+    const lines = readFileSync(at, "utf8").split(LF);
+    let current = null;
+    let prefix = null;
+    let changed = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const head = HEAD_RE.exec(lines[i]);
+      if (head !== null) {
+        const token = head[1];
+        prefix = !token.includes("/")
+          ? null
+          : CODE_OR_STYLE.test(token)
+            ? token.slice(0, token.lastIndexOf("/") + 1)
+            : bare(token) + "/";
+        const named = lines[i].match(HEAD_FILES_RE) ?? [];
+        current =
+          named.length === 1
+            ? locate(named[0].split(String.fromCharCode(96)).join(""), prefix)
+            : null;
+      }
+      lines[i] = lines[i].replace(CITED_RE, (whole, where, from, to, quote) => {
+        if (/^[^\s]*:\d+(-\d+)?$/.test(quote)) return whole;
+        const file = where === "" ? current : locate(where, prefix);
+        if (file === null || !existsSync(file)) return whole;
+        const body = readFileSync(file, "utf8").split(LF);
+        const a = Number(from);
+        const b = Number(to ?? from);
+        if (body.slice(a - 1, b).some((l) => l.includes(quote))) return whole;
+        const now = body
+          .map((l, k) => (l.includes(quote) ? k + 1 : 0))
+          .filter((n) => n > 0);
+        if (now.length !== 1) {
+          left.push(
+            `${name}:${i + 1} ${where}:${from} «${quote}» — ` +
+              (now.length === 0 ? "цитаты в файле нет" : "цитата неоднозначна"),
+          );
+          return whole;
+        }
+        const span =
+          to === undefined ? `${now[0]}` : `${now[0]}-${now[0] + (b - a)}`;
+        changed = true;
+        moved.push(`${name}:${i + 1} ${where}:${from} → ${where}:${span}`);
+        return whole.replace(`${where}:${from}${to === undefined ? "" : "-" + to}`, `${where}:${span}`);
+      });
+    }
+    if (changed) writeFileSync(at, lines.join(LF));
+  }
+  console.log("=== Якоря переставлены ===");
+  console.log("  переставлено: " + moved.length);
+  for (const one of moved) console.log("    " + one);
+  console.log("=== Якоря, которые режим не тронул ===");
+  console.log("  номер ставится глазами: " + left.length);
+  for (const one of left) console.log("    " + one);
+  process.exit(0);
+}
+
 if (mode === "verify") {
   // Прогон запоминает свой вывод, потому что по нему же и судит: красное —
   // это НАПЕЧАТАННАЯ находка, а не имя переменной в перечне.
@@ -7500,97 +7800,6 @@ if (mode === "verify") {
     return subjectCode.some((f) => ext.has(f.slice(f.lastIndexOf("."))));
   };
 
-  const bare = (q) => q.replace(/[*]+$/, "").replace(/[/]+$/, "");
-
-  // Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу
-  // раздела, затем по однозначному суффиксу.
-  // Сокращения объявлены НАСТРОЙКОЙ, а не зашиты сюда. Прежде здесь стояла
-  // раскладка одного конкретного проекта: префиксы его папок разрешались в его
-  // же адреса. В любом другом проекте те же префиксы указывали в несуществующие
-  // места — и делали это молча, потому что неразрешённый адрес просто уходил
-  // дальше по цепочке разрешения. Найдено поиском следов проекта в обвязке.
-  const expand = (q) => {
-    if (q.startsWith("src/")) return path.join(REPO, q);
-    for (const [prefix, base] of CONFIG.pathShortcuts ?? [])
-      if (q.startsWith(prefix)) return path.join(REPO, base, q);
-    // Адрес ОТ КОРНЯ ИСХОДНИКОВ — та форма, в которой инструмент сам их и
-    // печатает: `components/CheckboxPanel/domain/selection.ts`. Ветка выше
-    // знает один литерал `src/`, и проект, зовущий корень иначе, не разрешал
-    // ни одного адреса с косой чертой — а признака у этого не было: сверка
-    // слоёв краснела строкой «слоя нет на диске» про папку, которая есть.
-    // Слой без косой черты при этом проходил зелёным по другой ветке, и
-    // расхождение выглядело случайным. Найдено посадкой в проект со слоями.
-    const atRoot = path.join(ROOT, q);
-    if (existsSync(atRoot)) return atRoot;
-    return null;
-  };
-
-  // Два списка, и смешивать их нельзя: размеры папок считаются по коду
-  // (`everyFile`), а якоря указывают ещё и на доки (`everyPath`).
-  const everyFile = [];
-  const everyPath = [];
-  const walkAll = (dir) => {
-    if (!walkable(dir)) return;
-    for (const e of readdirSync(dir)) {
-      const full = path.join(dir, e);
-      if (outOfTree(e, full)) continue;
-      if (statSync(full).isDirectory()) walkAll(full);
-      else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
-        everyPath.push(full.split(path.sep).join("/"));
-        if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
-      }
-    }
-    // Корень исходников берётся ИЗ НАСТРОЙКИ, а не зашит именем `src`.
-    //
-    // Поле настройки существует именно затем, что корень бывает другой:
-    // библиотеки зовут его `lib`, каркасы — `app`. Пока имя стояло здесь
-    // строкой, у такого проекта этот обход возвращал ПУСТО, и всё, что на нём
-    // стоит, молчало — в первую очередь покрытие карты по файлам стилей.
-    // Заметить это было нечем: соседний список собирается другим обходом, тоже
-    // молча, и сверка печатала правдоподобное число. Найдено сверкой двух
-    // замеров одного и того же проекта, разошедшихся на единицу. Деревьев
-    // бывает несколько, и обход зовётся по каждому.
-  };
-  for (const one of SRC_ROOTS) walkAll(one);
-
-  // Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
-  // хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
-  //
-  // Префикс раздела пробуется ПЕРВЫМ. Голое имя разрешается ещё и от корня
-  // исходников, и в обратном порядке `index.ts` под заголовком папки плагина
-  // засчитывался корневому `index.ts`: строки карты стояли, а тридцать файлов
-  // числились неописанными, корневые же — описанными чужими строками. Замерено
-  // переходом библиотеки, где у каждой папки свои `index.ts` и `props.ts`.
-  const locate = (q, prefix) => {
-    for (const candidate of prefix === null ? [q] : [prefix + q, q]) {
-      const expanded = expand(candidate);
-      if (expanded !== null && existsSync(expanded)) return norm(expanded);
-      // Полки база пишет и без ведущего `shared/` — `engines/motion/tests/…`.
-      // Только для путей с папкой: голое имя обязано разрешаться префиксом
-      // раздела, иначе `index.ts` уедет в `shared/index.ts`.
-      if (candidate.includes("/")) {
-        const atShelf = path.join(REPO, "src/shared", candidate);
-        if (existsSync(atShelf) && statSync(atShelf).isFile())
-          return norm(atShelf);
-      }
-      const atRepo = path.join(REPO, candidate);
-      if (existsSync(atRepo) && statSync(atRepo).isFile()) return norm(atRepo);
-    }
-    const hits = everyPath.filter((f) => f.endsWith("/" + q));
-    return hits.length === 1 ? hits[0] : null;
-  };
-
-  // База пишет группы вида `{a,b}/tests`: раскрываем их в отдельные пути.
-  const variants = (q) => {
-    const group = /\{([^}]*)\}/.exec(q);
-    if (group === null) return [q];
-    const head = q.slice(0, group.index);
-    const tail = q.slice(group.index + group[0].length);
-    return group[1]
-      .split(",")
-      .flatMap((one) => variants(head + one.trim() + tail));
-  };
-
   // Звёздочки — «сколько угодно сегментов, в том числе ноль»; путь без них
   // означает «всё, что лежит под ним».
   const BACKSLASH = String.fromCharCode(92);
@@ -7618,11 +7827,10 @@ if (mode === "verify") {
       const shapes = [];
       for (const pattern of variants(raw)) {
         const head = pattern.split("*")[0];
-        // Тот же сокращённый вид полки, что понимает `locate`.
-        const shelf = path.join(REPO, "src/shared", head);
-        const root =
-          expand(head) ??
-          (head.includes("/") && existsSync(shelf) ? shelf : null);
+        // Сокращённые адреса разрешает `expand` по объявленным сокращениям.
+        // Прежде здесь и в `locate` был зашит `src/shared` одного проекта: в
+        // любом другом он указывал в пустоту либо в чужую папку.
+        const root = expand(head);
         if (root === null) continue;
         const slash = head.endsWith("/") ? "/" : "";
         shapes.push(asRegExp(norm(root) + slash + pattern.slice(head.length)));
@@ -7658,35 +7866,6 @@ if (mode === "verify") {
     "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
     "g",
   );
-  const HEAD_RE = /^#{2,4}[^`]*`([^`]+)`/;
-  const HEAD_FILES_RE = new RegExp(
-    "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
-    "g",
-  );
-  const ANCHOR_TAIL = new RegExp("\\.(" + CODE_STYLE_ALT + "|md|json|html)$");
-  // Якорь с цитатой: номер строки плюс сама конструкция в кавычках. Номер съедет
-  // от любой вставки выше, цитата — нет, поэтому проверяется именно она.
-  //
-  // Цитата есть у единиц, а номер съезжает у всех. Поэтому у якоря без цитаты
-  // проверяется то немногое, что проверить можно: строка, на которую он
-  // указывает, обязана быть содержательной. Якорь ставят на объявление, а не
-  // на закрывающую скобку и не на пустоту — если он туда попал, он съехал.
-  // Только для кода: в прозе пустая строка внутри диапазона законна.
-  // Хвост комментария — та же пустота, что и закрывающая скобка: строка `*/`,
-  // одинокая `*` и голый `//` содержания не несут, и якорь, попавший туда,
-  // съехал ровно так же. Найдено пробой: запись про стенд указывала на строку,
-  // закрывающую блок комментария, а описывала конструкцию двумя строками ниже.
-  const JUNK_ANCHOR = /^\s*(?:[)\]}]+[;,]?|\{|,|\*+\/|\*|\/\/|)\s*$/;
-  // Цитата принадлежит якорю тем, что стоит сразу за ним; круглые скобки вокруг
-  // — вёрстка, а не форма. Требование закрывающей скобки вплотную к цитате
-  // выбрасывало из проверки всё, где дальше шла точка с запятой, продолжение
-  // фразы или вторая ссылка, — тридцать пять записей против тридцати девяти
-  // разобранных. Они выглядели проверяемыми и не проверялись; найдено пробой.
-  // Цитатой не считается второй адрес подряд: перечисление из двух якорей — это
-  // два якоря, а не якорь с цитатой. Образец такой пары в комментарии не
-  // приводится: сверки читают собственные описания как настоящие записи, и это
-  // уже срабатывало трижды.
-  const CITED_RE = /`([^`]*):(\d+)(?:-(\d+))?` `([^`]+)`/g;
 
   let anchors = 0;
   let cited = 0;
@@ -7930,10 +8109,22 @@ if (mode === "verify") {
         const body = readFileSync(file, "utf8").split(NEWLINE);
         const from = Number(m[2]);
         const to = Number(m[3] ?? m[2]);
-        if (!body.slice(from - 1, to).some((l) => l.includes(m[4])))
+        if (!body.slice(from - 1, to).some((l) => l.includes(m[4]))) {
+          // Где цитата теперь: одна строка — номер съехал, и его переставит
+          // `repoint`; ни одной — конструкции больше нет; несколько — цитата
+          // не называет конструкцию, и номер ставят глазами.
+          const now = body
+            .map((l, i) => (l.includes(m[4]) ? i + 1 : 0))
+            .filter((n) => n > 0);
           broken.push(
-            `${name}: ${m[1]}:${m[2]} — цитаты «${m[4]}» на этих строках нет`,
+            `${name}: ${m[1]}:${m[2]} — цитаты «${m[4]}» на этих строках нет` +
+              (now.length === 1
+                ? `: съехала на строку ${now[0]}, номер переставит режим repoint`
+                : now.length === 0
+                  ? ": в файле её нет вовсе"
+                  : `: цитата неоднозначна, строки ${now.join(", ")}`),
           );
+        }
       }
       DIR_RE.lastIndex = 0;
       while ((m = DIR_RE.exec(line)) !== null)
@@ -10405,7 +10596,7 @@ if (mode === "verify") {
       // Предмет ищется в исполняемом тексте прод-кода: `fetch` в комментарии и
       // адрес пространства имён в разметке значка предметом не являются, и на
       // них сверка кричала бы — а крикливой проверке перестают верить (J4).
-      const code = files.filter((f) => !isMachinery(f) && !isTestPath(f));
+      const code = files.filter((f) => !isMachinery(f) && !isTest(f));
       const hasCode = (re) =>
         code.some((f) =>
           readFileSync(f, "utf8")
@@ -11336,7 +11527,7 @@ if (mode === "verify") {
       for (const f of styleFiles)
         for (const one of cssClasses(readFileSync(f, "utf8")))
           liveDomNames.add("." + one);
-      for (const f of files.filter((one) => !isTestPath(one)))
+      for (const f of files.filter((one) => !isTest(one)))
         for (const line of readFileSync(f, "utf8").split(NEWLINE))
           for (const hit of line.matchAll(CODE_NAME))
             if (!inComment(line, hit.index))
@@ -11346,7 +11537,7 @@ if (mode === "verify") {
       // конец связи пишет константу, а не строку.
       const liveCodeNames = new Set();
       const carriers = new Map();
-      for (const f of files.filter((one) => !isTestPath(one)))
+      for (const f of files.filter((one) => !isTest(one)))
         for (const line of readFileSync(f, "utf8").split(NEWLINE)) {
           for (const hit of line.matchAll(/["'`]([^"'`$\\]+)["'`]/g))
             if (!inComment(line, hit.index)) liveCodeNames.add(hit[1]);
@@ -15234,41 +15425,36 @@ if (mode === "verify") {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt !== null && existsSync(mapAt)) {
       const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      const body = files
-        .filter((f) => !isTest(f))
-        .map((f) => readFileSync(f, "utf8"))
-        .join(NEWLINE);
-      for (const one of seatMap.onSubject ?? []) {
-        const re = SUBJECTS[one.subject];
-        if (re === undefined) {
+      for (const one of seatMap.onSubject ?? [])
+        if (SUBJECTS[one.subject] === undefined)
           baseGap.push(one.to + " — предмет «" + one.subject + "» неизвестен");
-          continue;
-        }
-        if (!re.test(body)) continue;
-        const at = path.join(REPO, one.to);
-        if (!existsSync(at)) {
-          baseGap.push(
-            one.to + " — предмет в коде есть, а файла базы нет: " + one.subject,
-          );
-          continue;
-        }
-        // Вторая сторона: файл заведён и молчит. Спрашивается НАЗВАН ЛИ
-        // АДРЕС — самое слабое, что вообще проверяемо, и этого довольно:
-        // пустая таблица не называет ни одного.
-        const said = readFileSync(at, "utf8");
-        for (const f of files) {
-          if (isTest(f)) continue;
-          if (!re.test(readFileSync(f, "utf8"))) continue;
-          if (said.includes(rel(f))) continue;
+      // Пофайловый разбор — тот же, что у досье, `owedFor`: второй сканер
+      // одного вопроса здесь уже стоял и принимал упоминание где угодно,
+      // когда досье спрашивало точнее.
+      const gaps = new Set();
+      for (const f of files) {
+        if (isTest(f)) continue;
+        for (const one of owedFor(f)) {
+          if (one.why === "нет файла") {
+            gaps.add(
+              one.to +
+                " — предмет в коде есть, а файла базы нет: " +
+                one.subject,
+            );
+            continue;
+          }
           baseMute.push(
             one.to +
-              " — не назван " +
+              " — " +
+              one.why +
+              " " +
               rel(f) +
               ", а предмет в нём есть: " +
               one.subject,
           );
         }
       }
+      baseGap.push(...gaps);
     }
   }
   checkHead("Файлы базы заведены под свой предмет", {

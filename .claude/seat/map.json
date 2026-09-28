@@ -203,12 +203,14 @@
     {
       "from": "seat/templates/04-state.md",
       "to": ".context/04-state.md",
-      "subject": "state"
+      "subject": "state",
+    "column": "Владелец"
     },
     {
       "from": "seat/templates/06-timing.md",
       "to": ".context/06-timing.md",
-      "subject": "timing"
+      "subject": "timing",
+    "column": "Что происходит"
     }
   ],
   "onTransition": [

@@ -929,6 +929,112 @@ describe("связи мимо графа: публичная поверхнос�
   }, 240000);
 });
 
+describe("база о своём: документы узла, сторона тестов, держатель, якоря", () => {
+  const toolIn = (box) => (...args) =>
+    execFileSync(
+      process.execPath,
+      [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+      { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+  it("досье находит дверь папки и документ единицы, а не чужие README по имени", () => {
+    const box = seatEmpty("doki-");
+    try {
+      const unit = path.join(box, "src", "app", "zzWidget");
+      fs.mkdirSync(path.join(unit, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(unit, "index.ts"), "export const zzWidget = 1;\n");
+      fs.writeFileSync(path.join(unit, "docs", "README.md"), "# zzWidget\n");
+      fs.mkdirSync(path.join(box, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(box, "docs", "zzWidget.md"), "# виджет\n");
+      // Чужой README, называющий голое имя, которое в проекте не одно.
+      fs.writeFileSync(path.join(box, "src", "index.ts"), "export const zzRoot = 1;\n");
+      fs.writeFileSync(path.join(box, "docs", "other.md"), "Вход — `index.ts`.\n");
+      const docs = sectionOf(toolIn(box)("brief", "app/zzWidget/index.ts"), "документация: дверь папки");
+      expect(docs).toContain("дверь папки: app/zzWidget/docs/README.md");
+      expect(docs).toContain("документ по имени единицы: docs/zzWidget.md");
+      expect(docs).not.toContain("other.md");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("файл объявленной папки тестов — сторона тестов, а не код карты", () => {
+    const box = seatEmpty("testdir-");
+    try {
+      fs.mkdirSync(path.join(box, "zztests"), { recursive: true });
+      fs.writeFileSync(path.join(box, "zztests", "helpers.ts"), "export const zzHelp = 1;\n");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs.readFileSync(cfgAt, "utf8").replace("  testDirs: null,", '  testDirs: ["../zztests"],'),
+      );
+      const found = verifyIn(box);
+      expect((found.get("Покрытие карты") ?? []).join("\n")).not.toContain("helpers.ts");
+      expect((found.get("Покрытие тестов") ?? []).join("\n")).toContain("helpers.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("файл со своим состоянием назван владельцем, а чтение контекста состоянием не считается", () => {
+    const box = seatEmpty("derzhatel-");
+    try {
+      const app = path.join(box, "src", "app");
+      fs.writeFileSync(
+        path.join(app, "zzHolder.ts"),
+        'import { useState } from "react";\nexport const useZzHolder = () => useState(0);\n',
+      );
+      fs.writeFileSync(
+        path.join(app, "zzReader.ts"),
+        'import { useContext, createContext } from "react";\nconst Zz = createContext(0);\nexport const useZzReader = () => useContext(Zz);\n',
+      );
+      const stateAt = path.join(box, ".context", "04-state.md");
+      fs.copyFileSync(
+        path.join(box, ".claude", "seat", "templates", "04-state.md"),
+        stateAt,
+      );
+      const seed = fs.readFileSync(stateAt, "utf8");
+      const withRow = (row) =>
+        fs.writeFileSync(
+          stateAt,
+          seed.replace(
+            "| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n",
+            "| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n" + row,
+          ),
+        );
+      const mute = () =>
+        (verifyIn(box).get("Предмет из кода назван в своём файле базы") ?? []).join("\n");
+      withRow("| счёт | `src/app/App.tsx` | он же | `src/app/zzHolder.ts` | всегда |\n");
+      expect(mute()).toContain("не назван в графе «Владелец» app/zzHolder.ts");
+      expect(mute()).not.toContain("zzReader.ts");
+      withRow("| счёт | `src/app/zzHolder.ts` | он же | он же | всегда |\n");
+      expect(mute()).not.toContain("zzHolder.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("съехавший якорь называется со строкой, где цитата теперь, и repoint его переставляет", () => {
+    const box = seatEmpty("yakor-");
+    try {
+      const at = path.join(box, "src", "app", "zzAnchored.ts");
+      fs.writeFileSync(at, "export const zzOne = 1;\nexport const zzTarget = 2;\n");
+      const idioms = path.join(box, ".context", "10-idioms.md");
+      fs.appendFileSync(idioms, "\nПроба: `src/app/zzAnchored.ts:2` `zzTarget`.\n");
+      expect((verifyIn(box).get("Якоря") ?? []).join("\n")).not.toContain("zzAnchored");
+      fs.writeFileSync(at, "// shifted\n" + fs.readFileSync(at, "utf8"));
+      expect((verifyIn(box).get("Якоря") ?? []).join("\n")).toContain(
+        "съехала на строку 3, номер переставит режим repoint",
+      );
+      expect(toolIn(box)("repoint")).toContain("переставлено: 1");
+      expect(fs.readFileSync(idioms, "utf8")).toContain("`src/app/zzAnchored.ts:3` `zzTarget`");
+      expect((verifyIn(box).get("Якоря") ?? []).join("\n")).not.toContain("zzAnchored");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 describe("граф по именам: сквозь бочку до объявления", () => {
   it("радиус, зависимости и тесты считаются по взятым именам, а не по строке импорта", () => {
     const box = seatEmpty("imena-");
