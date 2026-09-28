@@ -220,7 +220,7 @@
   "chainScripts": [
     {
       "name": "typecheck",
-      "recognise": "^\\s*tsc\\b[^&|]*$",
+      "recognise": "^\\s*(?:node\\s+\\S*graph\\.mjs\\s+types\\s+--\\s+)?tsc\\b[^&|]*$",
       "needsFiles": ["ts", "tsx"]
     },
     {

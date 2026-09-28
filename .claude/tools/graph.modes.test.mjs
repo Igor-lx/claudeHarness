@@ -634,3 +634,119 @@ describe("звенья под проектными именами опознаю
     }
   }, 180000);
 });
+
+/**
+ * Долг ошибок типов держит обёртка команды компилятора, а не сверка базы:
+ * она сравнивает счёт `error TS…` с полем `debt.types` в обе стороны. Без
+ * долга звено типов стояло в связке первым и не пускало её дальше себя —
+ * замерено на стенде с `20` ошибками от строгости, дописанной посадкой.
+ * Счёт идёт по выводу со снятыми цветами: ключ `--pretty` красит `error`.
+ */
+describe("долг ошибок типов держит обёртка компилятора", () => {
+  it("столько же — зелено, больше и меньше — красно, цвет не мешает счёту", () => {
+    const box = seatEmpty("tipy-");
+    try {
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const had = fs.readFileSync(cfg, "utf8");
+      const withDebt = had.replace(
+        /(\n {2}debt: \{[\s\S]*?\n {4})types: null,/,
+        "$1types: 2,",
+      );
+      expect(withDebt).not.toBe(had);
+      fs.writeFileSync(cfg, withDebt);
+      const esc = String.fromCharCode(27);
+      const colored =
+        "a.ts:1:1 - " +
+        esc +
+        "[91merror" +
+        esc +
+        "[0m" +
+        esc +
+        "[90m TS2322: " +
+        esc +
+        "[0mx";
+      const tool = path.join(box, ".claude", "tools", "graph.mjs");
+      const statusOf = (command) => {
+        try {
+          execFileSync(process.execPath, [tool, "types", "--", ...command], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          return 0;
+        } catch (e) {
+          return e.status;
+        }
+      };
+      const printing = (lines) => [
+        process.execPath,
+        "-e",
+        lines.map((l) => "console.log(" + JSON.stringify(l) + ");").join("") +
+          "process.exit(" +
+          (lines.length ? 2 : 0) +
+          ");",
+      ];
+      const plain = "b.ts(1,1): error TS2322: x";
+      expect(statusOf(printing([colored, plain]))).toBe(0);
+      expect(statusOf(printing([colored, plain, plain]))).toBe(1);
+      expect(statusOf(printing([plain]))).toBe(1);
+      // Команда упала, не назвав ни одной ошибки типов: её код уходит
+      // наружу, а не подменяется вердиктом о долге.
+      expect(statusOf([process.execPath, "-e", "process.exit(3)"])).toBe(3);
+      expect(statusOf(["zz-no-such-command"])).toBe(1);
+      // Долг кода держит открытая строка реестра, называющая звено типов.
+      const said = () =>
+        verifyIn(box).get("Объявленный долг назван планом перехода") ?? [];
+      expect(said().join(" ")).toContain("typecheck");
+      fs.appendFileSync(
+        path.join(box, ".context", "16-findings.md"),
+        "| 9997 | Звено «typecheck»: ошибки типов от строгости посадки объявлены долгом | проба долга |  |  | открыта |\n",
+      );
+      expect(said()).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Описанием файла в карте считается только ЕГО запись: строка таблицы с путём
+ * первой графой либо заголовок, называющий один этот файл. Упоминание прозой
+ * или в чужой строке засчитывалось, и файл без своей строки считался
+ * описанным — замерено на стенде, где из `восьми` «описанных» файлов своя
+ * строка была у `одного`.
+ */
+describe("карта засчитывает только свою запись файла", () => {
+  it("строка и заголовок описывают, упоминание в чужой строке — нет", () => {
+    const box = seatEmpty("karta-");
+    try {
+      for (const name of ["zzRow", "zzHead", "zzProse"])
+        fs.writeFileSync(
+          path.join(box, "src", "app", name + ".ts"),
+          "export const " + name + " = 1;\n",
+        );
+      fs.appendFileSync(
+        path.join(box, ".context", "00-map.md"),
+        [
+          "",
+          "## Проба своей записи",
+          "",
+          "| Файл | Отвечает за | Состояние | Эффекты |",
+          "| --- | --- | --- | --- |",
+          "| `src/app/zzRow.ts` | проба, зовёт `src/app/zzProse.ts` | нет | нет |",
+          "",
+          "### `src/app/zzHead.ts`",
+          "",
+          "Проба заголовка.",
+          "",
+        ].join("\n"),
+      );
+      const missing = verifyIn(box).get("Покрытие карты") ?? [];
+      expect(missing.some((l) => l.includes("zzProse"))).toBe(true);
+      expect(missing.some((l) => l.includes("zzRow"))).toBe(false);
+      expect(missing.some((l) => l.includes("zzHead"))).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
