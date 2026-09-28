@@ -335,23 +335,31 @@ describe("ворота и приведение формата", () => {
   }, 180000);
 });
 
-/** Копия мастерской во временную папку — без пакетов и служебного. */
-const copyWorkshop = (prefix) => {
-  const home = path.join(TOOL_DIR, "..", "..");
+/** Обвязка, посаженная в пустую папку, — образец, одинаковый в любом проекте.
+ *
+ * Прежде образцом была копия проекта-хозяина, и тесты верили, что у хозяина
+ * нет ни одной находки, а звенья названы семенными именами. Так было только
+ * в мастерской: в живом проекте со своими находками два теста падали, и
+ * звено тестов проекта краснело из-за обвязки. Сажается тем же порядком,
+ * что и самопроверка снимка. */
+const seatEmpty = (prefix) => {
+  const shelf = path.join(TOOL_DIR, "..");
+  const map = JSON.parse(
+    fs.readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
+  );
+  const own = new Set(map.projectOwnedInsideHarness ?? []);
   const box = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const skip = new Set([
-    "node_modules",
-    ".git",
-    ".проба-сверок",
-    ".stryker-tmp",
-    "reports",
-    "coverage",
-    "dist",
-  ]);
-  fs.cpSync(home, box, {
+  for (const d of map.dirs) fs.mkdirSync(path.join(box, d), { recursive: true });
+  fs.cpSync(shelf, path.join(box, ".claude"), {
     recursive: true,
-    filter: (src) => !skip.has(path.basename(src)),
+    filter: (src) => path.dirname(src) !== shelf || !own.has(path.basename(src)),
   });
+  for (const one of map.copy) {
+    if (one.notAtSeating !== undefined) continue;
+    const dst = path.join(box, one.to);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(path.join(shelf, one.from), dst);
+  }
   return box;
 };
 /** Прогон сверки базы в копии: код возврата и строки находок по секциям. */
@@ -385,7 +393,7 @@ const verifyIn = (box) => {
  */
 describe("песочница фальсификации не видна прогону", () => {
   it("мусор в папке песочницы не даёт ни одной новой находки", () => {
-    const box = copyWorkshop("pesochnica-");
+    const box = seatEmpty("pesochnica-");
     try {
       const before = verifyIn(box);
       const junk = path.join(box, ".проба-сверок");
@@ -417,7 +425,7 @@ describe("песочница фальсификации не видна прог
  */
 describe("долг комментариев — сумма находок трёх сверок", () => {
   it("честный долг держит, лишняя находка соседней сверки краснеет", () => {
-    const box = copyWorkshop("dolg-");
+    const box = seatEmpty("dolg-");
     try {
       const code = path.join(box, "src", "app", "zzWordy.ts");
       fs.writeFileSync(
@@ -481,7 +489,7 @@ describe("долг комментариев — сумма находок трё
  */
 describe("звенья под проектными именами опознаются в базовой линии", () => {
   it("своё имя звена — не слепота, а красное под ним без строки реестра — находка", () => {
-    const box = copyWorkshop("zvenya-");
+    const box = seatEmpty("zvenya-");
     try {
       const own = {
         typecheck: "types",
@@ -502,7 +510,17 @@ describe("звенья под проектными именами опознаю
       pkg.scripts = scripts;
       fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
       const factsAt = path.join(box, ".context", "01-facts.md");
-      let facts = fs.readFileSync(factsAt, "utf8");
+      let facts = fs.readFileSync(factsAt, "utf8").replace(
+        /<!-- ПУСТО -->[\s\S]*?<!-- \/ПУСТО -->/,
+        [
+          "| Звено | Исход | Чем получено |",
+          "| --- | --- | --- |",
+          "| `typecheck` | зелено | `npm run typecheck` |",
+          "| `lint` | зелено | `npm run lint` |",
+          "| `format:check` | зелено | `npm run format:check` |",
+          "| `test` | зелено | `npm test` |",
+        ].join("\n"),
+      );
       for (const [from, to] of Object.entries(own))
         facts = facts.split("| `" + from + "` |").join("| `" + to + "` |");
       fs.writeFileSync(factsAt, facts);
