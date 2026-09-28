@@ -2552,10 +2552,10 @@ const transitionOpen = () => {
  * Печатается баннером рядом с планом перехода и по той же причине: замер,
  * сделанный один раз и не доложенный больше никогда, забывается в тот же
  * день. Закрыли находку — удалили строку. */
-const printFindings = () => {
-  if (CONFIG.findings == null) return false;
+const findingsOpen = () => {
+  if (CONFIG.findings == null) return [];
   const at = path.join(BASE, CONFIG.findings.file);
-  if (!existsSync(at)) return false;
+  if (!existsSync(at)) return [];
   const open = [];
   for (const line of readFileSync(at, "utf8").split(String.fromCharCode(10))) {
     const cell = line.split("|").map((c) => c.trim());
@@ -2563,6 +2563,10 @@ const printFindings = () => {
     if (cell[6] !== "открыта") continue;
     open.push(cell[1] + ". " + cell[2].slice(0, 90));
   }
+  return open;
+};
+const printFindings = () => {
+  const open = findingsOpen();
   if (open.length === 0) return false;
   banner("ПРОЕКТ ПРИШЁЛ С НАХОДКАМИ, ОНИ НЕ ЗАКРЫТЫ");
   console.log(
@@ -3697,6 +3701,50 @@ if (mode === "falsify") {
 // сверка базы для этого слишком долгая. Читает один файл и выходит нулём
 // всегда — напоминание не может ронять чужую работу.
 if (mode === "transition") {
+  // Хук среды на событии правки печатал баннер в журнал отладки: обычный вывод
+  // такого события модель не видит, в её контекст попадает только вывод начала
+  // сессии и отправки запроса. Напоминание при правке не доходило ни разу.
+  // Видимым его делает ответ формой JSON с полем `additionalContext` — одной
+  // строкой, а не баннером: правок за сессию десятки, и перечень шагов на
+  // каждой съедал бы контекст. Перечень печатает начало сессии.
+  if (process.argv.includes("--hook")) {
+    let event = "PreToolUse";
+    if (!process.stdin.isTTY)
+      try {
+        const said = JSON.parse(readFileSync(0, "utf8"));
+        if (typeof said.hook_event_name === "string")
+          event = said.hook_event_name;
+      } catch {
+        // Вход пуст или не JSON — событие остаётся по умолчанию.
+      }
+    const steps = transitionOpen();
+    const found = findingsOpen();
+    const parts = [];
+    if (steps !== null)
+      parts.push(
+        "переход не завершён, открытых шагов " +
+          steps.length +
+          ", план " +
+          CONFIG.transition.file,
+      );
+    if (found.length)
+      parts.push(
+        "открытых находок " + found.length + ", реестр " + CONFIG.findings.file,
+      );
+    if (parts.length)
+      console.log(
+        JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: event,
+            additionalContext:
+              "Обвязка: " +
+              parts.join("; ") +
+              ". Перечень — `node .claude/tools/graph.mjs transition`.",
+          },
+        }),
+      );
+    process.exit(0);
+  }
   // Корпус — сам файл плана: есть он или нет. Шаги считает `printTransition`,
   // и второй счёт разошёлся бы с ним молча.
   sayLooked(
@@ -16717,6 +16765,32 @@ if (mode === "verify") {
           hookOff.push(
             "переход объявлен, а хук среды режим `transition` не зовёт: напоминания не будет",
           );
+        // Зовёт — но видит ли модель? Обычный вывод доходит до неё только у
+        // начала сессии и отправки запроса; у прочих событий он уходит в
+        // журнал отладки, и напоминание печатается в никуда. Там режим
+        // зовётся с ключом `--hook` и отвечает формой, которую среда кладёт
+        // в контекст. Замерено по документации среды: хук на правку файла
+        // стоял с посадки и не дошёл до модели ни разу.
+        const shown = new Set([
+          "SessionStart",
+          "UserPromptSubmit",
+          "UserPromptExpansion",
+          "PostModelSwitch",
+        ]);
+        for (const [event, groups] of Object.entries(parsed.hooks ?? {})) {
+          if (shown.has(event) || !Array.isArray(groups)) continue;
+          for (const g of groups)
+            for (const h of g?.hooks ?? [])
+              if (
+                typeof h?.command === "string" &&
+                h.command.includes("graph.mjs transition") &&
+                !h.command.includes("--hook")
+              )
+                hookOff.push(
+                  event +
+                    ": режим зовётся без `--hook` — вывод этого события уходит в журнал отладки, и модель напоминания не видит",
+                );
+        }
       }
     }
   }
