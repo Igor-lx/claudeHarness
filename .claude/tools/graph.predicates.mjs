@@ -328,6 +328,26 @@ export const namesAddress = (row) => {
   ).test(row.slice(cut + 1));
 };
 
+/** Первая графа строки таблицы; не строка таблицы — пусто.
+ *
+ * Черта делит так же, как её считает разметка: экранированная не делит.
+ * Описанием файла карта считает ЕГО строку, где путь стоит первой графой,
+ * а не упоминание в чужой: упомянутый файл считался описанным, и долг
+ * описания убывал без описания.
+ */
+export const firstCellOf = (line) => {
+  const bare = line.trim();
+  if (!bare.startsWith("|")) return "";
+  for (let i = 1; i < bare.length; i += 1) {
+    if (bare[i] === "\\") {
+      i += 1;
+      continue;
+    }
+    if (bare[i] === "|") return bare.slice(1, i).trim();
+  }
+  return bare.slice(1).trim();
+};
+
 /** Входит ли критерий в архитектурное ядро. Наружу — для свода: он печатает
  * такие строки помеченными, чтобы клетка основания не выглядела лишней. */
 export const barCoreCriterion = (id) => BAR_CORE.has(id);
@@ -481,6 +501,16 @@ export const PREDICATE_CASES = [
       " */",
     "block:1:2:4",
   ],
+  // --- firstCellOf: первая графа строки таблицы ---
+  ["firstCellOf", "| `src/a.ts` | монтирование |", "`src/a.ts`"],
+  ["firstCellOf", "  | `src/a.ts` | x |", "`src/a.ts`"],
+  // дефект: упоминание в чужой строке засчитывало файл описанным
+  ["firstCellOf", "| `src/b.ts` | зовёт `src/a.ts` |", "`src/b.ts`"],
+  ["firstCellOf", "проза про `src/a.ts`", ""],
+  ["firstCellOf", "## `src/a.ts`", ""],
+  // экранированная черта графу не делит
+  ["firstCellOf", "| `a` \\| `src/a.ts` | x |", "`a` \\| `src/a.ts`"],
+  ["firstCellOf", "| `src/a.ts`", "`src/a.ts`"],
   // --- barCoreCriterion: входит ли критерий в архитектурное ядро ---
   ["barCoreCriterion", "A1", true],
   ["barCoreCriterion", "C7-бис", true],

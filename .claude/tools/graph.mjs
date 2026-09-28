@@ -33,6 +33,7 @@ import {
   isStylePath,
   isTestPath,
   commentRunsOf,
+  firstCellOf,
   namesAddress,
   printedIsRed,
   sectionsOf,
@@ -7149,6 +7150,9 @@ if (mode === "verify") {
           named.length === 1
             ? locate(named[0].split(String.fromCharCode(96)).join(""), prefix)
             : null;
+        // Заголовок, называющий один файл, — его собственная запись: форма
+        // «единица — файл, заголовок — путь».
+        if (name === MAP && current !== null) mapMentions.add(current);
       }
       if (line.startsWith("#")) {
         inRules = RULES_HEAD.test(line);
@@ -7241,8 +7245,13 @@ if (mode === "verify") {
       IMPORTERS_RE.lastIndex = 0;
       while ((m = IMPORTERS_RE.exec(line)) !== null)
         claimImporters(name, m[1], prefix, m[2], m[3]);
+      // Описанием карта считает только СОБСТВЕННУЮ запись файла: путь первой
+      // графой, заголовок выше, объявленную папку (`claimDir`). Решено
+      // разработчиком: упоминание в чужой строке ничего о файле не описывает.
+      const ownCell = firstCellOf(line);
       PATH_RE.lastIndex = 0;
       while ((m = PATH_RE.exec(line)) !== null) {
+        const ownRow = ownCell.includes(m[0]);
         for (const one of variants(m[1])) {
           const hit = locate(one, prefix);
           // Реестр тестов сверялся в одну сторону: каждый тест с диска обязан
@@ -7273,7 +7282,7 @@ if (mode === "verify") {
               goneMapped.push(`${name}: ${one}`);
             continue;
           }
-          if (name === MAP) mapMentions.add(hit);
+          if (name === MAP && ownRow) mapMentions.add(hit);
           if (name === TESTS) testMentions.add(hit);
         }
       }
@@ -7458,7 +7467,7 @@ if (mode === "verify") {
     unit: "файлов кода и стилей (без тестов)",
   });
   console.log(
-    `  не упомянуто: ${missing.length}` +
+    `  без своей записи: ${missing.length}` +
       debtTail("map") +
       (goneMapped.length
         ? `, названо и не существует: ${goneMapped.length}`

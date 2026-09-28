@@ -9,6 +9,21 @@
       }
     },
     {
+      "section": "Покрытие карты",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzProbe.ts",
+            "text": "export const zzProbe = 1;"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "append": "Упоминание `src/zzProbe.ts` в прозе описанием не является."
+        }
+      ]
+    },
+    {
       "section": "Покрытие тестов",
       "create": {
         "path": "src/zzProbe.test.tsx",
