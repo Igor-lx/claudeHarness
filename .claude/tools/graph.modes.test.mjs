@@ -335,6 +335,101 @@ describe("ворота и приведение формата", () => {
   }, 180000);
 });
 
+describe("ревизия сводов по истории", () => {
+  it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
+    const box = seatEmpty("istoriya-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=istoriya",
+            "-c",
+            "user.email=istoriya@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const base = git("rev-parse", "HEAD").trim();
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs
+          .readFileSync(cfgAt, "utf8")
+          .replace("  barSince: null,", '  barSince: "' + base + '",'),
+      );
+      git("commit", "-qam", "основание сводов", "--no-verify");
+      // Коммит трогает ДВА своих файла, и снесён потом будет один: свод
+      // называет оба, а корпус после сноса — только оставшийся.
+      const app = path.join(box, "src", "app");
+      fs.writeFileSync(
+        path.join(app, "zzGone.ts"),
+        "export const zzGone = (n: number): number => n + 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(app, "zzKept.ts"),
+        "export const zzKept = (n: number): number => n - 1;\n",
+      );
+      tool("bar");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const filled = fs
+        .readFileSync(protoAt, "utf8")
+        .split("\n")
+        .map((line) => {
+          const c = line.split("|");
+          if (
+            c.length === 8 &&
+            c[3].trim() === "" &&
+            !/^\s*-+\s*$/.test(c[1]) &&
+            c[1].trim() !== "критерий"
+          ) {
+            c[3] = " нет предмета ";
+            c[5] = " проба ревизии ";
+            return c.join("|");
+          }
+          if (c.length === 6 && /zzGone|zzKept/.test(c[1]))
+            return (
+              "| `" +
+              c[1].trim().replace(/`/g, "") +
+              "` | не требуется | не требуется | проба ревизии |"
+            );
+          return line;
+        })
+        .join("\n");
+      fs.writeFileSync(protoAt, filled);
+      expect(tool("bar")).toContain("печать поставлена");
+      git("add", "-A");
+      git("commit", "-qm", "свой код со сводом", "--no-verify");
+      fs.rmSync(path.join(app, "zzGone.ts"));
+      git("add", "-A");
+      git("commit", "-qm", "снос узла", "--no-verify");
+      const rows = tool("verify").split("\n");
+      const at = rows.indexOf("=== Коммит с кодом накрыт сводом ===");
+      expect(at).toBeGreaterThan(-1);
+      expect(rows.slice(at + 1, at + 3)).toContain("  без свода: 0");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 /** Обвязка, посаженная в пустую папку, — образец, одинаковый в любом проекте.
  *
  * Прежде образцом была копия проекта-хозяина, и тесты верили, что у хозяина
