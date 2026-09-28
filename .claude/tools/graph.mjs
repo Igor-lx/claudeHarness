@@ -508,6 +508,9 @@ const ROOT = (() => {
  * кода в форме записи карты, однозначный по хвосту: рецепт про запись о
  * файле не может называть файл раскладки умолчания — у проекта без
  * `main.tsx` запись о нём принимала сверка покрытия карты, а не своя.
+ * `{конфиг типов}` — первый конфиг, по которому звено типов реально
+ * проверяет код: в монорепозитории и в раскладке со ссылками это не конфиг
+ * корня.
  * `fresh` — ответ свежей посадки, по которой рецепт сверяется статически. */
 const recipeVars = (fresh) => {
   if (fresh)
@@ -515,6 +518,7 @@ const recipeVars = (fresh) => {
       "{узлы}": "src/components",
       "{исходники}": "src",
       "{файл кода}": "app/main.tsx",
+      "{конфиг типов}": "tsconfig.json",
     };
   const repo = norm(path.join(BASE, ".."));
   const layer = (CONFIG.componentsAt ?? ["components"])[0];
@@ -534,6 +538,10 @@ const recipeVars = (fresh) => {
     "{узлы}": fromRepo(path.join(ROOT, layer)),
     "{исходники}": fromRepo(SRC_ROOTS[0]),
     "{файл кода}": single[0] ?? "app/main.tsx",
+    "{конфиг типов}": (() => {
+      const first = typeCheckOptions()[0];
+      return first === undefined ? "tsconfig.json" : fromRepo(first[0]);
+    })(),
   };
 };
 /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые
@@ -1815,6 +1823,90 @@ const parseJsonc = (raw) => {
  * сборщик и раннер повторяют объявленное. Читается он вместе с тем, что
  * продолжает: раскладка со ссылками держит общие опции в отдельном файле.
  */
+/** Конфиги компилятора, по которым звено типов РЕАЛЬНО проверяет код, — с
+ * опциями, прочитанными вместе с тем, что конфиг продолжает. Пары
+ * `[адрес, опции]`.
+ *
+ * Берутся по тому, что звено зовёт: `-p` и `--project` — названный файл,
+ * иначе конфиг корня вызова; конфиг-решение со ссылками — его ссылки;
+ * делегирование пакетам — те же вызовы в каждом пакете. Спрашивают его
+ * сверка строгости и рецепт её фальсификации: рецепт, ломавший конфиг
+ * корня, в монорепозитории не доходил ни до одной сверки — проверку типов
+ * там ведут конфиги пакетов. Замерено фальсификацией стенда-монорепозитория. */
+const typeCheckOptions = () => {
+  const mapAt = shelfAt("seat/map.json");
+  const link = (
+    mapAt !== null && existsSync(mapAt)
+      ? (readJson(mapAt, {}).chainScripts ?? [])
+      : []
+  ).find((e) => e.name === "typecheck");
+  const manifestAt = path.join(BASE, CONFIG.manifest ?? "../package.json");
+  const rootScripts = readJson(manifestAt, {}).scripts ?? {};
+  const calls = [];
+  if (link?.recognise != null) {
+    const re = new RegExp(link.recognise);
+    for (const body of Object.values(rootScripts))
+      if (re.test(body)) calls.push([path.dirname(manifestAt), body]);
+    // Делегирование: корневой скрипт раздаёт одноимённые скрипты пакетам.
+    const handed = delegatedLink(re, rootScripts);
+    if (handed !== null) {
+      const m = /\bnpm run ([\w:-]+)/.exec(rootScripts[handed]);
+      const globs = readJson(manifestAt, {}).workspaces ?? [];
+      const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
+      for (const g of list) {
+        const dir = path.join(
+          path.dirname(manifestAt),
+          String(g).replace(/\/\*$/, ""),
+        );
+        if (!existsSync(dir)) continue;
+        const dirs = String(g).endsWith("/*")
+          ? readdirSync(dir).map((e) => path.join(dir, e))
+          : [dir];
+        for (const d of dirs) {
+          const body = readJson(path.join(d, "package.json"), {}).scripts?.[
+            m?.[1] ?? ""
+          ];
+          if (body !== undefined && re.test(body)) calls.push([d, body]);
+        }
+      }
+    }
+  }
+  const optionsOf = (at, seen = new Set()) => {
+    if (seen.has(at) || !existsSync(at)) return null;
+    seen.add(at);
+    const parsed = parseJsonc(readFileSync(at, "utf8"));
+    if (parsed === null) return null;
+    let out = {};
+    for (const ext of [parsed.extends ?? []].flat()) {
+      if (!String(ext).startsWith(".")) continue;
+      let to = path.resolve(path.dirname(at), ext);
+      if (!existsSync(to) && existsSync(to + ".json")) to += ".json";
+      out = { ...out, ...(optionsOf(to, seen)?.options ?? {}) };
+    }
+    return { options: { ...out, ...(parsed.compilerOptions ?? {}) }, parsed };
+  };
+  const configs = new Set();
+  for (const [dir, body] of calls) {
+    const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
+    configs.add(path.resolve(dir, p === null ? "tsconfig.json" : p[1]));
+  }
+  const out = [];
+  for (const at of configs) {
+    const got = optionsOf(at);
+    if (got === null) continue;
+    const refs = got.parsed.references ?? [];
+    if (got.parsed.compilerOptions == null && refs.length)
+      for (const r of refs) {
+        let to = path.resolve(path.dirname(at), r.path);
+        if (existsSync(to) && statSync(to).isDirectory())
+          to = path.join(to, "tsconfig.json");
+        const opts = optionsOf(to)?.options;
+        if (opts != null) out.push([to, opts]);
+      }
+    else out.push([at, got.options]);
+  }
+  return out;
+};
 const ALIASES = (() => {
   const named = (CONFIG.toolchain ?? []).find((l) => l.script === "typecheck");
   const start = named?.config ?? "tsconfig.json";
@@ -2846,6 +2938,12 @@ const IDLE_NOTES = {
     "  у проекта свой код: каркас спрашивает соседняя сверка",
   "Перечень папок полки полный":
     "  не мастерская: описание полки сверяется там, где его пишут",
+  // Раскладка своя и объявлена решением — сверка раскладку намеренно не
+  // спрашивает, и узел, положенный рецептом мимо слоёв, будит только
+  // соседей. Замерено фальсификацией стенда после фазы 2: рецепт записался
+  // «ушедшим не туда», и прогон режима покраснел на законном устройстве.
+  "Новый узел лежит по раскладке":
+    "  отступление объявлено решением: раскладка проекта своя",
 };
 
 // --- falsify: сверки ещё ловят -----------------------------------------------
@@ -9994,92 +10092,16 @@ if (mode === "verify") {
               v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
           )
           .map(([k]) => k);
-        const mapAt = shelfAt("seat/map.json");
-        const link = (
-          mapAt !== null && existsSync(mapAt)
-            ? (readJson(mapAt, {}).chainScripts ?? [])
-            : []
-        ).find((e) => e.name === "typecheck");
-        const manifestAt = path.join(
-          BASE,
-          CONFIG.manifest ?? "../package.json",
-        );
-        const rootScripts = readJson(manifestAt, {}).scripts ?? {};
-        const calls = [];
-        if (link?.recognise != null) {
-          const re = new RegExp(link.recognise);
-          for (const body of Object.values(rootScripts))
-            if (re.test(body)) calls.push([path.dirname(manifestAt), body]);
-          // Делегирование: корневой скрипт раздаёт одноимённые скрипты пакетам.
-          const handed = delegatedLink(re, rootScripts);
-          if (handed !== null) {
-            const m = /\bnpm run ([\w:-]+)/.exec(rootScripts[handed]);
-            const globs = readJson(manifestAt, {}).workspaces ?? [];
-            const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
-            for (const g of list) {
-              const dir = path.join(
-                path.dirname(manifestAt),
-                String(g).replace(/\/\*$/, ""),
-              );
-              if (!existsSync(dir)) continue;
-              const dirs = String(g).endsWith("/*")
-                ? readdirSync(dir).map((e) => path.join(dir, e))
-                : [dir];
-              for (const d of dirs) {
-                const body = readJson(path.join(d, "package.json"), {})
-                  .scripts?.[m?.[1] ?? ""];
-                if (body !== undefined && re.test(body)) calls.push([d, body]);
-              }
-            }
-          }
-        }
-        const optionsOf = (at, seen = new Set()) => {
-          if (seen.has(at) || !existsSync(at)) return null;
-          seen.add(at);
-          const parsed = parseJsonc(readFileSync(at, "utf8"));
-          if (parsed === null) return null;
-          let out = {};
-          for (const ext of [parsed.extends ?? []].flat()) {
-            if (!String(ext).startsWith(".")) continue;
-            let to = path.resolve(path.dirname(at), ext);
-            if (!existsSync(to) && existsSync(to + ".json")) to += ".json";
-            out = { ...out, ...(optionsOf(to, seen)?.options ?? {}) };
-          }
-          return {
-            options: { ...out, ...(parsed.compilerOptions ?? {}) },
-            parsed,
-          };
-        };
-        const configs = new Set();
-        for (const [dir, body] of calls) {
-          const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
-          configs.add(path.resolve(dir, p === null ? "tsconfig.json" : p[1]));
-        }
-        for (const at of configs) {
-          const got = optionsOf(at);
-          if (got === null) continue;
-          const refs = got.parsed.references ?? [];
-          const targets =
-            got.parsed.compilerOptions == null && refs.length
-              ? refs.map((r) => {
-                  const to = path.resolve(path.dirname(at), r.path);
-                  return existsSync(to) && statSync(to).isDirectory()
-                    ? path.join(to, "tsconfig.json")
-                    : to;
-                })
-              : [at];
-          for (const one of targets) {
-            const opts = one === at ? got.options : optionsOf(one)?.options;
-            if (opts == null) continue;
-            strictLooked += 1;
-            const lax = want.filter((k) => opts[k] !== true);
-            if (lax.length)
-              strictGap.push(
-                path.relative(REPO, one).split(path.sep).join("/") +
-                  " — звено типов проверяет по нему, а строгости семени нет: " +
-                  lax.join(", "),
-              );
-          }
+        for (const [one, opts] of typeCheckOptions()) {
+          if (opts == null) continue;
+          strictLooked += 1;
+          const lax = want.filter((k) => opts[k] !== true);
+          if (lax.length)
+            strictGap.push(
+              path.relative(REPO, one).split(path.sep).join("/") +
+                " — звено типов проверяет по нему, а строгости семени нет: " +
+                lax.join(", "),
+            );
         }
       }
       checkHead("Строгость компилятора там, где проверяются типы", {
