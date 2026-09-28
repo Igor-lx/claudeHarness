@@ -248,29 +248,18 @@ describe("снимок обвязки собирается", () => {
  * отдельный коммит формата, которого требует посадка, не проходил их ни в
  * одном проекте, чей код форматтер переписывает. Замерено на копии стенда.
  *
- * Мастерская копируется во временную папку со своим репозиторием, и с ней —
- * один пакет форматтера: инструменту из пакетов нужен только он. Ссылкой на
+ * Обвязка сажается в пустую папку со своим репозиторием, и с ней едет один
+ * пакет форматтера хозяина: инструменту из пакетов нужен только он. Ссылкой на
  * папку пакетов не обходятся намеренно — рекурсивное удаление временной папки
- * не должно иметь дороги в живые пакеты мастерской.
+ * не должно иметь дороги в живые пакеты хозяина.
  */
 describe("ворота и приведение формата", () => {
   it("коммит одного формата проходит, смысл под видом формата — нет", async () => {
     const home = path.join(TOOL_DIR, "..", "..");
-    const box = fs.mkdtempSync(path.join(os.tmpdir(), "vorota-"));
-    const skip = new Set([
-      "node_modules",
-      ".git",
-      ".проба-сверок",
-      ".stryker-tmp",
-      "reports",
-      "coverage",
-      "dist",
-    ]);
+    // Посаженный пустой проект, а не копия хозяина: копия зависела от его
+    // раскладки и падала в любом проекте без `src/app/`.
+    const box = seatEmpty("vorota-");
     try {
-      fs.cpSync(home, box, {
-        recursive: true,
-        filter: (src) => !skip.has(path.basename(src)),
-      });
       fs.cpSync(
         path.join(home, "node_modules", "prettier"),
         path.join(box, "node_modules", "prettier"),
@@ -456,10 +445,12 @@ const seatEmpty = (prefix) => {
   );
   const own = new Set(map.projectOwnedInsideHarness ?? []);
   const box = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  for (const d of map.dirs) fs.mkdirSync(path.join(box, d), { recursive: true });
+  for (const d of map.dirs)
+    fs.mkdirSync(path.join(box, d), { recursive: true });
   fs.cpSync(shelf, path.join(box, ".claude"), {
     recursive: true,
-    filter: (src) => path.dirname(src) !== shelf || !own.has(path.basename(src)),
+    filter: (src) =>
+      path.dirname(src) !== shelf || !own.has(path.basename(src)),
   });
   for (const one of map.copy) {
     if (one.notAtSeating !== undefined) continue;
@@ -617,17 +608,19 @@ describe("звенья под проектными именами опознаю
       pkg.scripts = scripts;
       fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
       const factsAt = path.join(box, ".context", "01-facts.md");
-      let facts = fs.readFileSync(factsAt, "utf8").replace(
-        /<!-- ПУСТО -->[\s\S]*?<!-- \/ПУСТО -->/,
-        [
-          "| Звено | Исход | Чем получено |",
-          "| --- | --- | --- |",
-          "| `typecheck` | зелено | `npm run typecheck` |",
-          "| `lint` | зелено | `npm run lint` |",
-          "| `format:check` | зелено | `npm run format:check` |",
-          "| `test` | зелено | `npm test` |",
-        ].join("\n"),
-      );
+      let facts = fs
+        .readFileSync(factsAt, "utf8")
+        .replace(
+          /<!-- ПУСТО -->[\s\S]*?<!-- \/ПУСТО -->/,
+          [
+            "| Звено | Исход | Чем получено |",
+            "| --- | --- | --- |",
+            "| `typecheck` | зелено | `npm run typecheck` |",
+            "| `lint` | зелено | `npm run lint` |",
+            "| `format:check` | зелено | `npm run format:check` |",
+            "| `test` | зелено | `npm test` |",
+          ].join("\n"),
+        );
       for (const [from, to] of Object.entries(own))
         facts = facts.split("| `" + from + "` |").join("| `" + to + "` |");
       fs.writeFileSync(factsAt, facts);
@@ -757,6 +750,68 @@ describe("карта засчитывает только свою запись �
       expect(missing.some((l) => l.includes("zzProse"))).toBe(true);
       expect(missing.some((l) => l.includes("zzRow"))).toBe(false);
       expect(missing.some((l) => l.includes("zzHead"))).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Имя в разделе карты принадлежит папке раздела, а не одноимённому файлу в
+ * корне исходников. Замерено переходом библиотеки: у каждой папки свои
+ * `index.ts` и `props.ts`, и строки под заголовками папок засчитывались
+ * корневым файлам — тридцать файлов числились неописанными при стоящих строках.
+ *
+ * Импорт ESM пишет расширение выходного файла, `./x.js` при исходнике
+ * `./x.ts`, — и граф такого проекта был пуст: у узла не было ни импортёров,
+ * ни тестов.
+ */
+describe("разрешение адресов: раздел карты и импорт ESM", () => {
+  it("голое имя под заголовком папки — файл этой папки; импорт .js — исходник .ts", () => {
+    const box = seatEmpty("adresa-");
+    try {
+      const app = path.join(box, "src", "app");
+      fs.mkdirSync(path.join(app, "zzPart"), { recursive: true });
+      fs.writeFileSync(
+        path.join(app, "zzPart", "index.ts"),
+        "export const zzPart = 1;\n",
+      );
+      // Одноимённый файл в корне исходников: голое имя, разрешённое от корня
+      // раньше префикса раздела, досталось бы ему.
+      fs.writeFileSync(
+        path.join(box, "src", "index.ts"),
+        "export const zzRoot = 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(app, "zzUser.ts"),
+        'import { zzPart } from "./zzPart/index.js";\nexport const zzUser = zzPart;\n',
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "00-map.md"),
+        [
+          "",
+          "## `src/app/zzPart`",
+          "",
+          "| Файл | Отвечает за | Состояние | Эффекты |",
+          "| --- | --- | --- | --- |",
+          "| `index.ts` | проба | pure | нет |",
+          "",
+        ].join("\n"),
+      );
+      const missing = verifyIn(box).get("Покрытие карты") ?? [];
+      expect(missing.some((l) => l.includes("zzPart/index.ts"))).toBe(false);
+      const brief = execFileSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "brief",
+          "app/zzPart/index.ts",
+        ],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const importers =
+        brief.split("--- импортируют")[1]?.split("---")[1] ?? "";
+      expect(importers).toContain("app/zzUser.ts");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

@@ -2170,9 +2170,25 @@ const resolve = (fromFile, spec) => {
     base + "/index.tsx",
     base + "/index.js",
     base + "/index.jsx",
+    // Импорт ESM на машинописном коде пишет расширение ВЫХОДНОГО файла:
+    // `./index.js` при исходнике `./index.ts`. Так разрешает сам компилятор,
+    // и без этой подстановки граф библиотеки в таком стиле пуст: досье
+    // объявляло узел ничьим и не тестированным. Замерено посадкой в
+    // библиотеку, где так написан каждый импорт.
+    ...(TS_OF_JS[path.extname(base)] ?? []).map(
+      (ext) => base.slice(0, -path.extname(base).length) + ext,
+    ),
   ];
   for (const c of cands) if (files.includes(c)) return c;
   return null;
+};
+/** Расширение выходного файла → расширения исходника, как их сопоставляет
+ * компилятор при разрешении модуля. */
+const TS_OF_JS = {
+  ".js": [".ts", ".tsx"],
+  ".jsx": [".tsx"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
 };
 
 // --- разбор импортов и экспортов ---------------------------------------------
@@ -6972,8 +6988,14 @@ if (mode === "verify") {
 
   // Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
   // хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
+  //
+  // Префикс раздела пробуется ПЕРВЫМ. Голое имя разрешается ещё и от корня
+  // исходников, и в обратном порядке `index.ts` под заголовком папки плагина
+  // засчитывался корневому `index.ts`: строки карты стояли, а тридцать файлов
+  // числились неописанными, корневые же — описанными чужими строками. Замерено
+  // переходом библиотеки, где у каждой папки свои `index.ts` и `props.ts`.
   const locate = (q, prefix) => {
-    for (const candidate of prefix === null ? [q] : [q, prefix + q]) {
+    for (const candidate of prefix === null ? [q] : [prefix + q, q]) {
       const expanded = expand(candidate);
       if (expanded !== null && existsSync(expanded)) return norm(expanded);
       // Полки база пишет и без ведущего `shared/` — `engines/motion/tests/…`.
@@ -7025,7 +7047,7 @@ if (mode === "verify") {
 
   // Всё, что лежит под путём, тесты включительно.
   const inside = (q, prefix) => {
-    for (const raw of prefix === null ? [q] : [q, prefix + q]) {
+    for (const raw of prefix === null ? [q] : [prefix + q, q]) {
       const shapes = [];
       for (const pattern of variants(raw)) {
         const head = pattern.split("*")[0];
