@@ -714,6 +714,87 @@ describe("долг ошибок типов держит обёртка комп�
   }, 180000);
 });
 
+describe("ошибка настройки звена долгом не гасится, линт держит свой долг", () => {
+  it("TS5xxx и код 2 линтера красны при любом долге; линт сверх долга красен", () => {
+    const box = seatEmpty("lintdolg-");
+    try {
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const had = fs.readFileSync(cfg, "utf8");
+      fs.writeFileSync(
+        cfg,
+        had
+          .replace(/(\n {2}debt: \{[\s\S]*?\n {4})types: null,/, "$1types: 5,")
+          .replace(/(\n {2}debt: \{[\s\S]*?\n {4})lint: null,/, "$1lint: 2,"),
+      );
+      const tool = path.join(box, ".claude", "tools", "graph.mjs");
+      const run = (mode, lines, code) => {
+        const command = [
+          process.execPath,
+          "-e",
+          lines.map((l) => "console.log(" + JSON.stringify(l) + ");").join("") +
+            "process.exit(" +
+            code +
+            ");",
+        ];
+        try {
+          return {
+            status: 0,
+            out: execFileSync(process.execPath, [tool, mode, "--", ...command], {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            }),
+          };
+        } catch (e) {
+          return { status: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      // Ошибка настройки компилятора: одна строка при долге пять — красно.
+      const setup = run("types", ["tsconfig.json(3,5): error TS5107: x"], 1);
+      expect(setup.status).toBe(1);
+      expect(setup.out).toContain("ошибка НАСТРОЙКИ");
+      // Линт: итог линтера — счёт; столько же, сколько долг, — зелено.
+      expect(run("lint", ["✖ 3 problems (2 errors, 1 warning)"], 1).status).toBe(0);
+      expect(run("lint", ["✖ 4 problems (3 errors, 1 warning)"], 1).status).toBe(1);
+      // Код возврата 2 у линтера — настройка, а не находки.
+      const broken = run("lint", ["Oops! Something went wrong! :("], 2);
+      expect(broken.status).toBe(1);
+      expect(broken.out).toContain("ошибка НАСТРОЙКИ");
+      // Долг линта держит открытая строка реестра, называющая звено линта.
+      const said = () =>
+        (verifyIn(box).get("Объявленный долг назван планом перехода") ?? []).join(" ");
+      expect(said()).toContain("lint — долг КОДА");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+describe("связка проверок: прогон с покрытием и запуск списком", () => {
+  it("тесты только с покрытием и связка через run-s — звенья живы и зовутся", () => {
+    const box = seatEmpty("svyazka-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      delete pkg.scripts.test;
+      delete pkg.scripts["test:coverage"];
+      pkg.scripts["test:unit"] = "vitest run --coverage";
+      pkg.scripts.check =
+        'run-s typecheck lint "format:*" test:unit && node .claude/tools/graph.mjs verify';
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2));
+      const found = verifyIn(box);
+      const bundle = (found.get("Связка проверок зовёт живые звенья") ?? []).join("\n");
+      expect(bundle).not.toContain("не зовёт");
+      expect(bundle).not.toContain("которой в манифесте нет");
+      expect(
+        (found.get("Звену цепочки есть на чём работать") ?? []).join("\n"),
+      ).not.toContain("звено-спутник написано");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 /**
  * Описанием файла в карте считается только ЕГО запись: строка таблицы с путём
  * первой графой либо заголовок, называющий один этот файл. Упоминание прозой
@@ -1188,6 +1269,66 @@ describe("предложенное сводом держит строка о к�
       expect(loose()).toContain("E1 — предложено сводом и не названо");
       withRow("src/app/zzA.ts");
       expect(loose()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+describe("мутационный отчёт без исполненных тестов — не замер", () => {
+  it("выживший под покрытием при нуле исполненных тестов в реестр не пишется", () => {
+    const box = seatEmpty("mutslep-");
+    try {
+      const at = path.join(box, "src", "app", "zzMut.ts");
+      fs.writeFileSync(at, "export const zzMut = (n: number) => n + 1;\n");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfg = fs.readFileSync(cfgAt, "utf8");
+      const reportAt = cfg.match(/mutationReport: "([^"]+)"/)[1];
+      const stryAt = cfg.match(/mutationConfig: "([^"]+)"/)[1];
+      fs.writeFileSync(
+        path.join(box, ".context", stryAt),
+        JSON.stringify({ mutate: ["src/app/zzMut.ts"] }),
+      );
+      const report = (testsCompleted) => ({
+        config: { mutate: ["src/app/zzMut.ts"] },
+        files: {
+          "src/app/zzMut.ts": {
+            mutants: [
+              { status: "Survived", coveredBy: ["t1"], testsCompleted },
+            ],
+          },
+        },
+      });
+      const write = (r) => {
+        const out = path.join(box, ".context", reportAt);
+        fs.mkdirSync(path.dirname(out), { recursive: true });
+        fs.writeFileSync(
+          out,
+          "<script>app.report = " + JSON.stringify(r) + ";</script>",
+        );
+      };
+      const tool = () => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "mutated"],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const ledgerAt = path.join(
+        box,
+        ".context",
+        cfg.match(/mutationLedger: "([^"]+)"/)[1],
+      );
+      write(report(0));
+      expect(tool()).toContain("Отчёт мутационного прогона — не замер");
+      expect(fs.existsSync(ledgerAt) ? fs.readFileSync(ledgerAt, "utf8") : "").not.toContain("zzMut");
+      write(report(3));
+      expect(tool()).not.toContain("не замер");
+      expect(fs.readFileSync(ledgerAt, "utf8")).toContain("zzMut");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

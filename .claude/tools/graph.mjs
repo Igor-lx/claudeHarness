@@ -351,6 +351,8 @@ const DEBT_KINDS = [
   "comments",
   "tongue",
   "types",
+  "lint",
+  "markers",
 ];
 const DEBT = CONFIG.debt ?? {};
 const debtOf = (kind) => DEBT[kind] ?? 0;
@@ -469,14 +471,62 @@ for (const [field, v] of Object.entries(CONFIG)) {
 //
 // Счёт — строки `error TS…` со снятыми цветами: ключ `--pretty` красит слово
 // `error` и без снятия давал ноль ошибок при двадцати.
-if (mode === "types") {
+// --- lint: находки линтера против их долга ------------------------------------
+//
+// То же для звена линта: правила, привезённые обвязкой, открывают находки в
+// коде, написанном до посадки, и звено линта, стоящее в связке вторым, не
+// пускало её дальше себя. Замерено посадкой в библиотеку: `26` находок
+// правил с проверкой типов, и формат, тесты и сверка базы связкой не
+// запускались.
+//
+// Ошибка НАСТРОЙКИ долгом не гасится ни у одного из двух. Компилятор, не
+// принявший настройку, и линтер, не нашедший плагина, кода не проверяли
+// вовсе, и их «одна ошибка» — не долг, а слепое звено: замерено посадкой, где
+// устаревшая опция настройки дала одну ошибку вместо пятидесяти шести, и
+// посаженная в код ошибка типа прошла незамеченной.
+const DEBT_WRAPPERS = {
+  types: {
+    title: "Ошибки типов против долга",
+    unit: "ошибок компилятора",
+    what: "ошибки типов",
+    count: (plain) =>
+      (plain.match(/\berror TS\d+:/g) ?? []).length,
+    // Опции и сам файл настройки, отсутствие входов, сломанная ссылка
+    // проекта: компилятор при них кода не проверял.
+    setup: (plain) =>
+      (plain.match(/\berror TS(5\d{3}|6053|6059|6305|6306|6307|18003):/g) ??
+        [])[0] ?? null,
+  },
+  lint: {
+    title: "Находки линтера против долга",
+    unit: "ошибок линтера",
+    what: "ошибки линтера",
+    count: (plain) => {
+      const total = /\(\s*(\d+) errors?\b/.exec(plain);
+      if (total !== null) return Number(total[1]);
+      return (plain.match(/^\s+\d+:\d+\s+error\s/gm) ?? []).length;
+    },
+    // Код возврата `2` у ESLint — ошибка настройки или падение: разбора
+    // кода не было.
+    setup: (plain, status) =>
+      status === 2
+        ? "код возврата 2"
+        : (/Oops! Something went wrong|Failed to load (plugin|config)|Cannot find module/.exec(
+            plain,
+          ) ?? [])[0] ?? null,
+  },
+};
+if (mode === "types" || mode === "lint") {
+  const wrap = DEBT_WRAPPERS[mode];
   const dash = process.argv.indexOf("--");
   const command = dash < 0 ? [] : process.argv.slice(dash + 1);
   if (command.length === 0) {
-    console.log("=== Ошибки типов против долга: команда не названа ===");
-    sayLooked("ошибок компилятора", 0);
+    console.log("=== " + wrap.title + ": команда не названа ===");
+    sayLooked(wrap.unit, 0);
     console.log(
-      "  Звать: node .claude/tools/graph.mjs types -- <команда компилятора>",
+      "  Звать: node .claude/tools/graph.mjs " +
+        mode +
+        " -- <команда звена>",
     );
     process.exit(2);
   }
@@ -492,15 +542,26 @@ if (mode === "types") {
   });
   const said = (run.stdout ?? "") + (run.stderr ?? "");
   const plain = said.replace(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
-  const found = (plain.match(/\berror TS\d+:/g) ?? []).length;
-  const debt = debtOf("types");
+  const found = wrap.count(plain);
+  const debt = debtOf(mode);
   const head = () => {
-    console.log("=== Ошибки типов против долга ===");
-    sayLooked("ошибок компилятора", found);
+    console.log("=== " + wrap.title + " ===");
+    sayLooked(wrap.unit, found);
   };
   if (run.error !== undefined) {
     head();
     console.log("  команда не запустилась: " + run.error.message);
+    process.exit(1);
+  }
+  const setup = wrap.setup(plain, run.status);
+  if (setup !== null) {
+    process.stdout.write(said);
+    head();
+    console.log(
+      "  ошибка НАСТРОЙКИ (" +
+        setup +
+        "): звено кода не проверяло, и долгом это не гасится. Чинится настройка",
+    );
     process.exit(1);
   }
   if (run.status !== 0 && found === 0) {
@@ -509,7 +570,7 @@ if (mode === "types") {
     console.log(
       "  команда завершилась кодом " +
         (run.status ?? run.signal) +
-        ", не назвав ни одной ошибки типов: судить о долге не по чему",
+        ", не назвав ни одной ошибки: судить о долге не по чему",
     );
     process.exit(run.status || 1);
   }
@@ -532,7 +593,9 @@ if (mode === "types") {
         debt +
         ", ошибок " +
         found +
-        " — долг обязан сжиматься следом за починкой: поставить `debt.types: " +
+        " — долг обязан сжиматься следом за починкой: поставить `debt." +
+        mode +
+        ": " +
         found +
         "` в .context/graph.config.mjs",
     );
@@ -587,12 +650,39 @@ const PACKAGE_MANAGER = (() => {
  * Образцом здесь стояло `\w`, и связка, зовущая такой скрипт, читалась не
  * зовущей ничего — сверка слепла на отсутствующей команде. Замерено
  * фальсификацией свежей посадки. */
-function scriptCallsIn(body) {
+function scriptCallsIn(body, scripts = null) {
   const pm = PACKAGE_MANAGER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const name = "([^\\s&|;]+)";
   const calls = [];
   for (const piece of String(body ?? "").split("&&")) {
     const one = piece.trim();
+    // Запуск списком: `npm-run-all a b`, `run-s a b`, `run-p a "b:*"`. Имя
+    // со звёздочкой — образец, и раскрывается он по скриптам манифеста.
+    // Прежде связка, написанная так, читалась не зовущей ничего — замерено
+    // посадкой в проект, где проверки собраны `npm-run-all`.
+    const listed = /^(?:npm-run-all|run-s|run-p)\b(.*)$/.exec(one);
+    if (listed !== null) {
+      const words = (listed[1].match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((w) =>
+        w.replace(/^["']|["']$/g, "").split(/\s+--\s+/)[0].trim(),
+      );
+      for (const w of words) {
+        if (w === "" || w.startsWith("-")) continue;
+        if (!w.includes("*")) {
+          calls.push(w);
+          continue;
+        }
+        const glob = new RegExp(
+          "^" +
+            w
+              .split("*")
+              .map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+              .join("[^:]*") +
+            "$",
+        );
+        for (const k of Object.keys(scripts ?? {})) if (glob.test(k)) calls.push(k);
+      }
+      continue;
+    }
     const run = new RegExp("^" + pm + "\\s+run\\s+" + name).exec(one);
     if (run !== null) calls.push(run[1]);
     else if (new RegExp("^" + pm + "\\s+test(?![^\\s&|;])").test(one))
@@ -717,6 +807,23 @@ const delegatedLink = (re, scripts) => {
 const linkCalled = (re, scripts) =>
   Object.values(scripts).some((body) => re.test(body)) ||
   delegatedLink(re, scripts) !== null;
+
+/** Образцы, которыми звено опознаётся: свой и — когда своего скрипта нет —
+ * образец звена, названного полем `or`. Нужно звену тестов: прогон с
+ * покрытием гоняет весь набор, и проект, у которого другого прогона нет,
+ * звено тестов имеет. Прежде такой проект числился без тестов: связка
+ * «не звала» их, а спутники тестов стояли «без ведущего» — замерено
+ * посадкой в библиотеку, где тесты идут только с покрытием. */
+const linkPatterns = (e, chain) => {
+  if (e?.recognise == null) return [];
+  const out = [new RegExp(e.recognise)];
+  const alt = e.or == null ? undefined : chain.find((c) => c.name === e.or);
+  if (alt?.recognise != null) out.push(new RegExp(alt.recognise));
+  return out;
+};
+/** Зовётся ли звено: своим образцом, а без своего скрипта — запасным. */
+const linkCalledAny = (e, chain, scripts) =>
+  linkPatterns(e, chain).some((re) => linkCalled(re, scripts));
 
 /** Рецепт с подставленными путями — глубокой заменой по всем строкам. */
 const recipeSubst = (recipe, vars) =>
@@ -6112,6 +6219,45 @@ if (mode === "mutated") {
         .replace(/;$/, "");
       const reportedAt = statSync(reportPath).mtimeMs;
       const parsed = new Function("return " + body)();
+      // Отчёт, где тесты на мутантов не исполнялись, — не замер. Выживший,
+      // которого покрывают тесты (`coveredBy`), а исполнено против него ноль
+      // (`testsCompleted`), выжил не потому, что сеть слаба: против него
+      // никто не бежал. Так бывает, когда связка мутатора и раннера
+      // разъехалась по версиям — замерено: раннер Stryker для vitest при
+      // мажоре раннера новее проверенного ставил мутантов и не гонял ни
+      // одного теста, а реестр записал это как замер «0 %, живых 10». Тот же
+      // файл командным раннером: убиты все десять. Доктрина требует
+      // фальсифицировать прогон до того, как его числам верят; здесь это
+      // требование исполняет машина: такой отчёт в реестр не пишется.
+      const blind = Object.entries(parsed.files ?? {})
+        .filter(([, d]) =>
+          (d.mutants ?? []).some(
+            (m) =>
+              m.status === "Survived" &&
+              (m.coveredBy ?? []).length > 0 &&
+              (m.testsCompleted ?? 0) === 0,
+          ),
+        )
+        .map(([k]) => k);
+      if (blind.length > 0) {
+        console.log("=== Отчёт мутационного прогона — не замер ===");
+        console.log(
+          "  выжившие, которых покрывают тесты, а тестов против них исполнено ноль:",
+        );
+        for (const k of blind.slice(0, 8)) console.log("    " + k);
+        console.log(
+          "  Связка мутатора и раннера не гоняет тесты: числа не пишутся в реестр.",
+        );
+        console.log(
+          "  Проверить версии раннера и мутатора либо взять командный раннер,",
+        );
+        console.log(
+          "  посадить заведомо смертельную поломку и убедиться, что прогон её убил.",
+        );
+        process.exitCode = 1;
+        parsed.files = {};
+        parsed.config = null;
+      }
       // Отчёт несёт СВОЮ область (`config.mutate`). Совпала с конфигом —
       // прогон был полным, и тогда файл в области, которого в отчёте нет,
       // доказанно не дал ни одного мутанта: мутировать в нём нечего. Без этой
@@ -8095,13 +8241,17 @@ if (mode === "verify") {
     if (script == null) return null;
     const mapAt = shelfAt("seat/map.json");
     if (mapAt === null || !existsSync(mapAt)) return null;
-    const one = (
-      JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? []
-    ).find((e) => e.name === script);
+    const chain = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
+    const one = chain.find((e) => e.name === script);
     if (one === undefined || one.recognise == null) return null;
-    const re = new RegExp(one.recognise);
-    const hit = Object.entries(scripts).find(([, body]) => re.test(body));
-    if (hit !== undefined) return hit[0];
+    const patterns = linkPatterns(one, chain);
+    const re = patterns[0];
+    for (const pattern of patterns) {
+      const hit = Object.entries(scripts).find(([, body]) =>
+        pattern.test(body),
+      );
+      if (hit !== undefined) return hit[0];
+    }
     // Звено, ДЕЛЕГИРОВАННОЕ пакетам: корневой скрипт зовёт одноимённые
     // скрипты воркспейсов, а уже они — инструмент звена. Опознаётся по тому,
     // что зовут пакеты. Прежде корень монорепозитория с `types`, раздающим
@@ -8155,8 +8305,7 @@ if (mode === "verify") {
     const chain = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
     const one = chain.find((e) => e.name === script);
     if (one === undefined) return false;
-    const called = (e) =>
-      e?.recognise != null && linkCalled(new RegExp(e.recognise), scripts);
+    const called = (e) => linkCalledAny(e, chain, scripts);
     if (one.follows != null) {
       const master = chain.find((e) => e.name === one.follows);
       if (master?.recognise != null && !called(master)) return true;
@@ -9092,7 +9241,10 @@ if (mode === "verify") {
   // 9c. каждое точечное исключение линта объяснено, и каждое объяснение живо.
   const lintDrift = [];
   if (CONFIG.lintExceptions != null) {
-    const DIRECTIVE = /^\s*(?:\/\/|\/\*)\s*eslint-disable/;
+    // Директива бывает и комментарием разметки — `{/* eslint-disable… */}`:
+    // в разметке другого комментария нет. Прежде она не опознавалась, и
+    // таблица, объясняющая такое исключение, числилась объясняющей пустоту.
+    const DIRECTIVE = /^\s*\{?\s*(?:\/\/|\/\*)\s*eslint-disable/;
     const withDirective = new Set();
     for (const f of files) {
       const hit = readFileSync(f, "utf8")
@@ -9120,8 +9272,10 @@ if (mode === "verify") {
       for (let i = start + 2; i < text.length && text[i].startsWith("|"); i++) {
         const cell = text[i].split("|")[1] ?? "";
         for (const tok of quotedIn(cell)) {
+          // Адрес принимается в обеих ходовых формах: от корня исходников и
+          // от корня репозитория, с `src/` впереди.
           const found = [...withDirective].find(
-            (f) => f === tok || f.endsWith("/" + tok),
+            (f) => f === tok || f.endsWith("/" + tok) || tok.endsWith("/" + f),
           );
           named.add(found ?? tok);
         }
@@ -10056,6 +10210,10 @@ if (mode === "verify") {
   // Что проверка НЕ ловит: молчание. Находку, которую просто не записали,
   // машина увидеть не может — это остаётся на ревью и на честности отчёта.
   const parked = [];
+  // Маркеры в коде, пришедшем до посадки, — долг кода `markers`: переход код
+  // не трогает, и без долга сверка краснела навсегда. Прозы свода и базы
+  // долг не касается — там маркер пишет сама работа под обвязкой.
+  const parkedInCode = [];
   {
     const CODE_MARK =
       /(^|[^A-Za-zА-Яа-я])(TODO|FIXME|HACK|XXX|ВРЕМЕННО|ПОТОМ|ПОЧИНИТЬ)([^A-Za-zА-Яа-я]|$)/;
@@ -10067,7 +10225,9 @@ if (mode === "verify") {
       const body = readFileSync(f, "utf8").split(NEWLINE);
       body.forEach((line, i) => {
         if (CODE_MARK.test(line))
-          parked.push(`${rel(f)}:${i + 1} — маркер отложенной работы в коде`);
+          parkedInCode.push(
+            `${rel(f)}:${i + 1} — маркер отложенной работы в коде`,
+          );
       });
     }
 
@@ -10204,8 +10364,13 @@ if (mode === "verify") {
     n: files.length,
     unit: "файлов кода",
   });
-  console.log(`  отложенного без решения: ${parked.length}`);
-  for (const p of parked) console.log("    " + p);
+  console.log(
+    `  отложенного без решения: ${parked.length + parkedInCode.length}` +
+      debtTail("markers"),
+  );
+  debtNote("markers", parkedInCode.length);
+  for (const p of [...debtList("markers", parkedInCode), ...parked])
+    console.log("    " + p);
 
   // 13b. Каждый раздел правил проекта КЛАССИФИЦИРОВАН: либо назван его адрес
   // на полке, либо он помечен проектным. Сверять заголовки проекта с
@@ -11317,7 +11482,9 @@ if (mode === "verify") {
       // Замерено посадкой в проект на обычном JavaScript: звено типов снято
       // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
       const chainCalls =
-        typeof scripts.check === "string" ? scriptCallsIn(scripts.check) : [];
+        typeof scripts.check === "string"
+          ? scriptCallsIn(scripts.check, scripts)
+          : [];
       const chainBroken = [];
       for (const one of chainCalls)
         if (scripts[one] == null)
@@ -16988,8 +17155,7 @@ if (mode === "verify") {
       if (scripts[e.name] == null) continue;
       const master = chain.find((c) => c.name === e.follows);
       if (master === undefined || master.recognise == null) continue;
-      const re = new RegExp(master.recognise);
-      if (linkCalled(re, scripts)) continue;
+      if (linkCalledAny(master, chain, scripts)) continue;
       idleConfig.push(
         e.name +
           " — звено-спутник написано, а звена «" +
@@ -17919,7 +18085,13 @@ if (mode === "verify") {
   // получал «долг держится только настройкой» на долге, который планом
   // держаться и не может. Замерено переходом стенда с русским
   // комментарием в коде: план выполнен и удалён, долг по языку остался.
-  const DEBT_BY_WORK_KINDS = new Set(["comments", "tongue", "types"]);
+  const DEBT_BY_WORK_KINDS = new Set([
+    "comments",
+    "tongue",
+    "types",
+    "lint",
+    "markers",
+  ]);
   const debtUnplanned =
     debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
     (CONFIG.transition == null || transitionSteps === 0);
@@ -17932,6 +18104,24 @@ if (mode === "verify") {
   // у которого красен только длинный комментарий, не мог держать долг
   // честно: строку реестра, называющую именно его находку, сверка не
   // признавала и требовала назвать соседнюю, у него зелёную.
+  function linkGuard(canonical) {
+    const mapAt = shelfAt("seat/map.json");
+    const link = (
+      mapAt !== null && existsSync(mapAt)
+        ? (readJson(mapAt, {}).chainScripts ?? [])
+        : []
+    ).find((e) => e.name === canonical);
+    const scripts =
+      readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {})
+        .scripts ?? {};
+    const re = link?.recognise == null ? null : new RegExp(link.recognise);
+    return [
+      canonical,
+      ...Object.keys(scripts).filter(
+        (name) => re !== null && name !== canonical && re.test(scripts[name]),
+      ),
+    ];
+  }
   const DEBT_GUARD = {
     map: ["Покрытие карты"],
     tests: ["Покрытие тестов"],
@@ -17946,27 +18136,12 @@ if (mode === "verify") {
       "Доля комментариев в файле",
     ],
     tongue: ["Язык внутри корня исходников"],
-    // Долг ошибок типов держит не сверка, а звено: его зовут и каноническим
-    // именем, и тем, под которым звено живёт в манифесте проекта.
-    types: (() => {
-      const mapAt = shelfAt("seat/map.json");
-      const link = (
-        mapAt !== null && existsSync(mapAt)
-          ? (readJson(mapAt, {}).chainScripts ?? [])
-          : []
-      ).find((e) => e.name === "typecheck");
-      const scripts =
-        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {})
-          .scripts ?? {};
-      const re = link?.recognise == null ? null : new RegExp(link.recognise);
-      return [
-        "typecheck",
-        ...Object.keys(scripts).filter(
-          (name) =>
-            re !== null && name !== "typecheck" && re.test(scripts[name]),
-        ),
-      ];
-    })(),
+    markers: ["Найденное — исправлено, а не отложено"],
+    // Долг ошибок типов и находок линтера держит не сверка, а звено: его
+    // зовут и каноническим именем, и тем, под которым звено живёт в
+    // манифесте проекта.
+    types: linkGuard("typecheck"),
+    lint: linkGuard("lint"),
   };
   // Сверка ГОВОРИЛА «все стоят шагами плана», а проверяла только что план
   // вообще есть. Замерено ревизией результата: стенд объявил долг по языку,

@@ -238,7 +238,8 @@
     {
       "name": "test",
       "recognise": "^\\s*vitest(?:\\s+run)?(?![^&|]*(?:--coverage|--watch|--ui|\\s-w\\b))(?!\\s+(?:watch|dev|bench|related|list|init)\\b)(?:\\s[^&|]*)?$",
-      "needsFiles": null
+      "needsFiles": null,
+      "or": "test:coverage"
     },
     {
       "name": "test:coverage",
