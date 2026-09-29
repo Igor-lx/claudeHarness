@@ -227,6 +227,13 @@
       "replace": "    \"prettier\": \"^3.9.6\",\n    \"пакет-которого-никто-не-объявлял\": \"^1.0.0\","
     },
     {
+      "section": "Пакет платформы не второй ответ",
+      "whenLink": ["typecheck", "test"],
+      "file": ".claude/seat/map.json",
+      "find": "\"alternatives\": {",
+      "replace": "\"alternatives\": {\n      \"typescript\": [\"vitest\"],"
+    },
+    {
       "section": "Отложенное семя положено, когда предмет появился",
       "own": true,
       "file": "stryker.config.json",

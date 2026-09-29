@@ -888,6 +888,21 @@ const SHELF = CONFIG.shelf == null ? null : path.join(BASE, CONFIG.shelf);
  */
 const REPO_AT = path.join(BASE, "..");
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
+/** Имена конфига, который читает раннер тестов, в порядке его чтения: свой
+ * конфиг раннера затеняет конфиг сборщика. Источник — запись семени в карте
+ * посадки: прежде инструмент держал три своих списка, и наборы разошлись. */
+const runnerConfigNames = () => {
+  const at = shelfAt("seat/map.json");
+  const entry =
+    at !== null && existsSync(at)
+      ? (readJson(at, {}).copy ?? []).find(
+          (e) => e.neededBy === "test" && Array.isArray(e.shadowedBy),
+        )
+      : undefined;
+  return entry === undefined
+    ? []
+    : [...entry.shadowedBy, entry.to, ...(entry.alsoKnownAs ?? [])];
+};
 /** Это МАСТЕРСКАЯ — репозиторий, где полку пишут и откуда её раздают.
  *
  * Узнаётся по списку публикации `.gitexclude-self`: он лежит в корне
@@ -1930,14 +1945,7 @@ const SEED_CONDITIONS = new Map([
   [
     "runnerWithoutGlobals",
     () =>
-      ![
-        "vitest.config.ts",
-        "vitest.config.js",
-        "vitest.config.mts",
-        "vite.config.ts",
-        "vite.config.js",
-        "vite.config.mts",
-      ].some((n) => {
+      !runnerConfigNames().some((n) => {
         const at = path.join(REPO_AT, n);
         return (
           existsSync(at) && /\bglobals:\s*true\b/.test(readFileSync(at, "utf8"))
@@ -3776,6 +3784,7 @@ const CHECK_SECTIONS = [
   "Заготовки обвязки не разбираются линтом проекта",
   "Звену цепочки есть на чём работать",
   "Пакеты семени разобраны по звеньям",
+  "Пакет платформы не второй ответ",
   "Отложенное семя не положено посадкой",
   "Семя с условием не лежит без условия",
   "Отложенное семя положено, когда предмет появился",
@@ -4255,11 +4264,11 @@ if (mode === "falsify") {
     const vars = recipeVars(false);
     const seatCopy = seatMapOf().copy ?? [];
     const otherName = (file) => {
-      if (existsSync(path.join(tmp, file))) return file;
       const e = seatCopy.find((one) => one.to === file);
       return (
-        (e?.alsoKnownAs ?? []).find((n) => existsSync(path.join(tmp, n))) ??
-        file
+        [...(e?.shadowedBy ?? []), file, ...(e?.alsoKnownAs ?? [])].find((n) =>
+          existsSync(path.join(tmp, n)),
+        ) ?? file
       );
     };
     const localise = (r0) => {
@@ -11653,7 +11662,7 @@ if (mode === "verify") {
       // откуда угодно — раннер читает секцию тестов в любом случае, и
       // требовать тут `vitest/config` значило бы краснеть на законном.
       if (linkHasSubject("typecheck")) {
-        for (const name of ["vite.config.ts", "vite.config.js"]) {
+        for (const name of runnerConfigNames()) {
           const at = path.join(BASE, "..", name);
           if (!existsSync(at)) continue;
           viteLooked += 1;
@@ -11697,14 +11706,7 @@ if (mode === "verify") {
           setupSeed !== undefined &&
           existsSync(path.join(REPO, setupSeed.to))
         ) {
-          const runnerConf = [
-            "vitest.config.ts",
-            "vitest.config.js",
-            "vitest.config.mts",
-            "vite.config.ts",
-            "vite.config.js",
-            "vite.config.mts",
-          ]
+          const runnerConf = runnerConfigNames()
             .map((n) => path.join(BASE, "..", n))
             .filter((at) => existsSync(at))
             .map((at) => readFileSync(at, "utf8"))
@@ -13107,7 +13109,8 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt))
         for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
-          if (e.to === link.config) names.push(...(e.alsoKnownAs ?? []));
+          if (e.to === link.config)
+            names.push(...(e.alsoKnownAs ?? []), ...(e.shadowedBy ?? []));
       if (!names.some((n) => existsSync(path.join(BASE, "..", n))))
         toolchainDrift.push(
           `${link.script}: пакеты стоят, а конфига нет — ${link.config}`,
@@ -16628,6 +16631,27 @@ if (mode === "verify") {
               e.to + " и " + other + " — один предмет, два файла настройки",
             );
       }
+      // Затеняющий файл — другой случай: сборка в одном, тесты в другом, и
+      // пара у проекта законна. Дефект одно — нетронутое семя рядом с ним:
+      // инструмент его не читает. Замерено посадкой в библиотеку со своим
+      // `vitest.config.ts`: семя сборщика легло рядом мёртвым.
+      for (const e of seatMap.copy ?? []) {
+        if (!Array.isArray(e.shadowedBy)) continue;
+        const at = path.join(REPO, e.to);
+        const seedAt = shelfAt(e.from);
+        if (!existsSync(at) || seedAt === null || !existsSync(seedAt)) continue;
+        if (readFileSync(at, "utf8") !== readFileSync(seedAt, "utf8")) continue;
+        const reader = e.shadowedBy.find((n) => existsSync(path.join(REPO, n)));
+        if (reader !== undefined)
+          twinConfigs.push(
+            e.to +
+              " лежит семенем, а читают " +
+              reader +
+              " — семя не действует: слить его в " +
+              reader +
+              " и снять",
+          );
+      }
     }
   }
   checkHead("Запись о пустоте не пережила появление кода", {
@@ -17023,7 +17047,10 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt))
         for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
-          if (e.to === link.config) names.push(...(e.alsoKnownAs ?? []));
+          if (e.to === link.config) {
+            names.unshift(...(e.shadowedBy ?? []));
+            names.push(...(e.alsoKnownAs ?? []));
+          }
       const at = names
         .map((n) => path.join(REPO, n))
         .find((one) => existsSync(one));
@@ -17286,6 +17313,46 @@ if (mode === "verify") {
   });
   console.log("  неразобранных: " + packDrift.length);
   for (const d of packDrift) console.log("    " + d);
+
+  // 44-в-бис. Пакет платформы не второй ответ.
+  //
+  // Слияние манифеста дописывает пакет платформы, которого у проекта нет ПО
+  // ИМЕНИ, — а тот же вопрос проект уже решил другим пакетом. Замерено
+  // посадкой в библиотеку на `sass`: ей дописали `sass-embedded`, и какой
+  // компилятор в силе, решал сборщик, а не проект. Замены объявлены картой
+  // посадки, а не здесь: список растёт вместе с платформой.
+  const secondAnswers = [];
+  let alternativesDeclared = 0;
+  {
+    const mapAt = shelfAt("seat/map.json");
+    const alternatives =
+      mapAt !== null && existsSync(mapAt)
+        ? (readJson(mapAt, {}).platformPackages?.alternatives ?? {})
+        : {};
+    const manifest = readJson(path.join(REPO_AT, "package.json"), {});
+    const held = new Set([
+      ...Object.keys(manifest.dependencies ?? {}),
+      ...Object.keys(manifest.devDependencies ?? {}),
+    ]);
+    for (const [one, others] of Object.entries(alternatives)) {
+      alternativesDeclared += 1;
+      if (!held.has(one)) continue;
+      const other = others.find((n) => held.has(n));
+      if (other !== undefined)
+        secondAnswers.push(
+          one +
+            " рядом с " +
+            other +
+            " — два пакета на один вопрос. Оставить тот, что проект выбрал сам",
+        );
+    }
+  }
+  checkHead("Пакет платформы не второй ответ", {
+    n: alternativesDeclared,
+    unit: "пакетов платформы с объявленной заменой",
+  });
+  console.log("  вторых ответов: " + secondAnswers.length);
+  for (const d of secondAnswers) console.log("    " + d);
 
   // 44-г. Семя, которое кладут НЕ на посадке, посадкой не положено.
   //

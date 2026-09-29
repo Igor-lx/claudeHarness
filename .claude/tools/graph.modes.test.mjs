@@ -1401,3 +1401,42 @@ describe("граф по именам: сквозь бочку до объявл�
     }
   }, 180000);
 });
+
+/**
+ * Один вопрос — один ответ, и для файлов, и для пакетов. Свой конфиг раннера
+ * затеняет конфиг сборщика: семя, легшее рядом нетронутым, не действует. Пакет
+ * платформы рядом со своей заменой — два компилятора на один вопрос. Замерено
+ * посадкой в библиотеку на `sass` со своим `vitest.config.ts`.
+ */
+describe("семя рядом с затеняющим конфигом и пакет платформы рядом с заменой", () => {
+  it("нетронутое семя и вторая замена красны, законная пара — нет", () => {
+    const box = seatEmpty("zatenen-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      fs.writeFileSync(
+        path.join(box, "vitest.config.ts"),
+        'import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: {} });\n',
+      );
+      pkg.devDependencies.sass = "^1.89.2";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2));
+      const red = verifyIn(box);
+      expect(
+        (red.get("Один предмет — один файл настройки") ?? []).join("\n"),
+      ).toContain("vite.config.ts лежит семенем, а читают vitest.config.ts");
+      expect(
+        (red.get("Пакет платформы не второй ответ") ?? []).join("\n"),
+      ).toContain("sass-embedded рядом с sass");
+
+      const vite = path.join(box, "vite.config.ts");
+      fs.writeFileSync(vite, fs.readFileSync(vite, "utf8") + "// build\n");
+      delete pkg.devDependencies["sass-embedded"];
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2));
+      const green = verifyIn(box);
+      expect(green.get("Один предмет — один файл настройки")).toBeUndefined();
+      expect(green.get("Пакет платформы не второй ответ")).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
