@@ -85,7 +85,8 @@ import {
 let OPEN_CACHE = null;
 const openFindings = () => {
   if (OPEN_CACHE !== null) return OPEN_CACHE;
-  const out = new Map();
+  const out = debtHeld();
+  OPEN_CACHE = out;
   if (CONFIG.findings == null) return out;
   const at = path.join(BASE, CONFIG.findings.file);
   if (!existsSync(at)) return out;
@@ -96,7 +97,6 @@ const openFindings = () => {
     for (const m of (cell[2] + cell[5]).matchAll(/«([^»]+)»/g))
       out.set(m[1], (out.get(m[1]) ?? 0) + 1);
   }
-  OPEN_CACHE = out;
   return out;
 };
 /** Имена, названные ЛЮБОЙ строкой реестра — открытой либо закрытой.
@@ -113,7 +113,7 @@ const openFindings = () => {
  * после посадки в пустой проект: формат чинился, строка закрывалась, и
  * прогон краснел на том же месте. */
 const namedFindings = () => {
-  const out = new Map();
+  const out = debtHeld();
   if (CONFIG.findings == null) return out;
   const at = path.join(BASE, CONFIG.findings.file);
   if (!existsSync(at)) return out;
@@ -131,14 +131,83 @@ const overOpen = (name, n) => Math.max(0, n - (openFindings().get(name) ?? 0));
 /** Тексты ОТКРЫТЫХ строк реестра: что найдено и чем держится. Нужны там,
  * где строку узнают не по одному имени, а по имени и адресу вместе. */
 const openFindingRows = () => {
-  if (CONFIG.findings == null) return [];
+  const debt = transitionDebt().map(
+    (row) => row.what + " " + row.holds + " " + row.plan,
+  );
+  if (CONFIG.findings == null) return debt;
   const at = path.join(BASE, CONFIG.findings.file);
-  if (!existsSync(at)) return [];
+  if (!existsSync(at)) return debt;
   return readFileSync(at, "utf8")
     .split(String.fromCharCode(10))
     .map((line) => line.split("|").map((c) => c.trim()))
     .filter((cell) => cell.length >= 7 && cell[6] === "открыта")
-    .map((cell) => cell[2] + " " + cell[5]);
+    .map((cell) => cell[2] + " " + cell[5])
+    .concat(debt);
+};
+
+/** Пункты ДОЛГА ПЕРЕХОДА: в чём проект расходится с правилами обвязки. Их
+ * находит переход, читая код целиком, и записывает с планом приведения, а
+ * чинит потом работа. Таблица стоит в файле плана под шапкой
+ * `transition.debtHeading`, планы — разделами под ней.
+ *
+ * Пункт держит находки сверки, которую называет ёлочками: столько, сколько
+ * сказано первым числом графы «Сейчас», а без числа — одну. Прежде долг кода
+ * и находки чтения лежали строками реестра вперемешку с поломками обвязки и
+ * без плана: замерено переходом библиотеки — двенадцать открытых строк, ни у
+ * одной плана. */
+let DEBT_CACHE = null;
+const transitionDebt = () => {
+  if (DEBT_CACHE !== null) return DEBT_CACHE;
+  DEBT_CACHE = [];
+  const plan = CONFIG.transition;
+  if (plan == null || plan.debtHeading == null) return DEBT_CACHE;
+  const at = path.join(BASE, plan.file);
+  if (!existsSync(at)) return DEBT_CACHE;
+  const lines = readFileSync(at, "utf8").split(/\r?\n/);
+  const head = lines.findIndex((l) => l.startsWith(plan.debtHeading));
+  if (head < 0) return DEBT_CACHE;
+  for (let i = head + 2; i < lines.length; i += 1) {
+    if (!lines[i].startsWith("|")) break;
+    const cells = lines[i]
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (cells.length < 6) continue;
+    const [no, what, now, holds, planText, price] = cells;
+    const n = /`(\d+)/.exec(now);
+    DEBT_CACHE.push({
+      no,
+      what,
+      now,
+      holds,
+      plan: planText,
+      price,
+      count: n === null ? null : Number(n[1]),
+      names: [...(what + " " + holds).matchAll(/«([^»]+)»/g)].map((m) => m[1]),
+    });
+  }
+  return DEBT_CACHE;
+};
+/** Сколько находок каждой сверки держат пункты долга перехода. */
+const debtHeld = () => {
+  const out = new Map();
+  for (const row of transitionDebt())
+    for (const name of row.names)
+      out.set(name, (out.get(name) ?? 0) + (row.count ?? 1));
+  return out;
+};
+/** Текст долга перехода — таблица и планы под ней. По нему отступление от
+ * умолчания узнаётся так же, как по реестру решений: адресом либо словами
+ * оси. Отступление по умолчанию — долг; решением оно становится, когда
+ * разработчик сказал «оставляем». */
+const debtPlanText = () => {
+  const plan = CONFIG.transition;
+  if (plan == null || plan.debtHeading == null) return "";
+  const at = path.join(BASE, plan.file);
+  if (!existsSync(at)) return "";
+  const body = readFileSync(at, "utf8");
+  const from = body.indexOf(plan.debtHeading);
+  return from < 0 ? "" : body.slice(from);
 };
 
 const SPOILED = [];
@@ -3468,17 +3537,40 @@ const printFindings = () => {
   return true;
 };
 
+/** Строка пункта долга для отчёта: номер, что расходится, сколько сейчас. */
+const debtLine = (row) =>
+  row.no +
+  " — " +
+  row.what
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .split(/[.:]\s/)[0]
+    .trim() +
+  " — сейчас: " +
+  row.now.replace(/`/g, "");
+
 const printTransition = () => {
   const steps = transitionOpen();
-  if (steps === null) return false;
-  banner("ОБВЯЗКА ПОСАЖЕНА, ПЕРЕХОД НЕ ЗАВЕРШЁН");
-  console.log(
-    "  Открытых шагов: " + steps.length + ". План: " + CONFIG.transition.file,
-  );
-  for (const st of steps) console.log("  " + st.no + ". " + st.what);
-  console.log("  Закрыли шаг — удалили строку. Таблица пуста — удалить файл");
-  console.log("  и обнулить поле настройки: переход закончен.");
-  console.log("");
+  const debt = transitionDebt();
+  if (steps === null && debt.length === 0) return false;
+  if (steps !== null) {
+    banner("ПЕРЕХОД НЕ ЗАВЕРШЁН: ЗНАНИЕ О ПРОЕКТЕ НЕ СОБРАНО");
+    console.log(
+      "  Открытых шагов: " + steps.length + ". План: " + CONFIG.transition.file,
+    );
+    for (const st of steps) console.log("  " + st.no + ". " + st.what);
+    console.log("  Закрыли шаг — удалили строку. Шагов не осталось — знание");
+    console.log("  собрано, и в файле остаётся только долг перехода.");
+    console.log("");
+  }
+  if (debt.length) {
+    banner("ДОЛГ ПЕРЕХОДА");
+    for (const row of debt) console.log("  " + debtLine(row));
+    console.log("  Планы — " + CONFIG.transition.file + ". Этот список идёт в каждый");
+    console.log("  отчёт отдельным блоком. Пункт приведён — строку удаляют;");
+    console.log("  оставить как есть навсегда — решение в реестре решений.");
+    console.log("");
+  }
   return true;
 };
 
@@ -3807,6 +3899,7 @@ const CHECK_SECTIONS = [
   "Предложенное сводом названо находкой",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
+  "Запись карты не спорит с кодом",
   "Каркас обвязки не лежит в живом проекте",
   "Раздел планки объявлен по своему замеру",
   "Файл базы о живом коде назвал его адрес",
@@ -3985,6 +4078,20 @@ if (mode === "falsify") {
     process.exit(1);
   }
   const recipes = JSON.parse(readFileSync(recipesAt, "utf8")).recipes ?? [];
+  // Рецепты ПРОЕКТА — там, где предмет сверки проектный: свой конфиг
+  // линтера, свои таблицы. Лежат в базе, той же формы, и обязаны находить
+  // своё место всегда: проект их писал под себя. Прежде перенацелить рецепт
+  // было некуда — файл обвязки общий, и правка его расходилась с раздачей.
+  // Замерено переходом библиотеки: шаг «перенацелить рецепты» не имел места.
+  const projectRecipesAt = path.join(BASE, "falsify.json");
+  const projectRecipes = existsSync(projectRecipesAt)
+    ? (readJson(projectRecipesAt, {}).recipes ?? []).map((r) => ({
+        ...r,
+        project: true,
+      }))
+    : [];
+  recipes.push(...projectRecipes);
+  const retargeted = new Set(projectRecipes.map((r) => r.section));
   sayLooked("рецептов опровержения", recipes.length);
   const REPO_ROOT = REPO_AT;
   const tmp = path.join(REPO_ROOT, ".проба-сверок");
@@ -4385,7 +4492,7 @@ if (mode === "falsify") {
         if (failed !== undefined) {
           (subjectless(r.section)
             ? idle
-            : r.own === true || stepsFromSeed(r)
+            : r.project !== true && (r.own === true || stepsFromSeed(r))
               ? foreign
               : broken
           ).push(r.section + " — " + failed);
@@ -4416,7 +4523,7 @@ if (mode === "falsify") {
       if (!existsSync(at)) {
         (subjectless(r.section)
           ? idle
-          : r.own === true || fromSeed(r.file)
+          : r.project !== true && (r.own === true || fromSeed(r.file))
             ? foreign
             : broken
         ).push(r.section + " — файла нет: " + r.file);
@@ -4456,7 +4563,7 @@ if (mode === "falsify") {
           if (at0 < 0) {
             (subjectless(r.section)
               ? idle
-              : r.own === true || fromSeed(r.file)
+              : r.project !== true && (r.own === true || fromSeed(r.file))
                 ? foreign
                 : broken
             ).push(r.section + " — якорь дописывания не найден: " + r.after);
@@ -4472,7 +4579,7 @@ if (mode === "falsify") {
         if (!before.includes(r.find.split("\n").join(NEWLINE))) {
           (subjectless(r.section)
             ? idle
-            : r.own === true || fromSeed(r.file)
+            : r.project !== true && (r.own === true || fromSeed(r.file))
               ? foreign
               : broken
           ).push(r.section + " — рецепт не находит своего места");
@@ -4549,19 +4656,28 @@ if (mode === "falsify") {
   }
 
   console.log("");
-  if (foreign.length) {
+  // Рецепт обвязки, чью сверку проект уже держит СВОИМ рецептом, перенацелен:
+  // долгом он больше не является.
+  const foreignLeft = foreign.filter(
+    (f) => !retargeted.has(f.split(" — ")[0]),
+  );
+  if (foreignLeft.length) {
     console.log("");
     console.log("=== РЕЦЕПТЫ НАПИСАНЫ ПОД СВОЙ ПРОЕКТ ===");
     console.log(
       "  их " +
-        foreign.length +
+        foreignLeft.length +
         ": ломают файлы того проекта, где написаны, и в этом места не нашли.",
     );
-    for (const f of foreign) console.log("    " + f);
+    for (const f of foreignLeft) console.log("    " + f);
     console.log(
-      "  Это НЕ порча: перенацелить их на свои файлы — работа проекта,",
+      "  Это НЕ порча: перенацелить — записать рецепт под свои файлы в",
     );
-    console.log("  и она стоит шагом плана перехода.");
+    console.log(
+      "  " +
+        path.relative(REPO_ROOT, projectRecipesAt).split(path.sep).join("/") +
+        ", той же формы. Работа перехода, шаг знания.",
+    );
   }
 
   console.log("=== ДОЛГ: СВЕРКИ БЕЗ РЕЦЕПТА ===");
@@ -4629,6 +4745,7 @@ if (mode === "transition") {
         // Вход пуст или не JSON — событие остаётся по умолчанию.
       }
     const steps = transitionOpen();
+    const debt = transitionDebt();
     const found = findingsOpen();
     const parts = [];
     if (steps !== null)
@@ -4637,6 +4754,12 @@ if (mode === "transition") {
           steps.length +
           ", план " +
           CONFIG.transition.file,
+      );
+    if (debt.length)
+      parts.push(
+        "долг перехода: " +
+          debt.length +
+          " пунктов, список — в каждый отчёт отдельным блоком",
       );
     if (found.length)
       parts.push(
@@ -7481,6 +7604,22 @@ if (mode === "bar") {
   // витрина остались от посадки. База заполняется по форме своего ловца.
   {
     const want = new Set(marks.map((m) => m.file));
+    // Файл, которого карта не называет своей записью, базу не освобождает:
+    // «не требуется» у него неверно без суждения — прочитанное в области
+    // обязано лечь в базу, иначе следующий заход читает его заново. Имя
+    // сличается хвостом: снисходительно, ложного отказа это не даёт.
+    const mapAt = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
+    const mapLines =
+      mapAt !== null && existsSync(mapAt)
+        ? readFileSync(mapAt, "utf8").split(/\r?\n/)
+        : [];
+    const owned = mapLines
+      .filter((l) => l.startsWith("#"))
+      .concat(mapLines.filter((l) => l.startsWith("|")).map(firstCellOf));
+    const unmapped = (file) => {
+      const tail = file.slice(file.lastIndexOf("/") + 1);
+      return !owned.some((cell) => cell.includes(tail));
+    };
     const rows = new Map();
     for (const line of body.split(/\r?\n/)) {
       if (!line.startsWith("| ")) continue;
@@ -7514,6 +7653,13 @@ if (mode === "bar") {
           );
           continue;
         }
+        if (i === 1 && one === "не требуется" && unmapped(file))
+          holes.push(
+            file +
+              ", база: " +
+              barQuoted("не требуется") +
+              " у файла без своей записи в карте — прочитанное ложится в базу",
+          );
         if (c[3] === "")
           holes.push(
             file +
@@ -8508,6 +8654,15 @@ if (mode === "verify") {
   // совпадению имени файла — иначе одноимённые файлы засчитывают друг друга.
   const mapMentions = new Set();
   const testMentions = new Set();
+  // Запись карты не спорит с кодом. Сверки перехода спрашивали НАЛИЧИЕ строки,
+  // а не её правду, и переход закрывался любым текстом при зелёном прогоне —
+  // замерено оценкой перехода библиотеки. Правды машине не узнать, кроме той,
+  // что она видит сама: состояние и эффекты. Строка, сказавшая «нет» там, где
+  // инструмент их находит, неверна без всякого суждения.
+  const mapLies = [];
+  let mapClaims = 0;
+  const DENIAL = /^(?:нет|—|-|no|none)$/i;
+  const mapClaimSeen = new Set();
 
   // Строки таблицы «Правила направления»: слой, запреты, разрешённые исключения.
   // Заголовок из настройки — ТЕКСТ, а не образец, и подставляется он
@@ -8559,6 +8714,7 @@ if (mode === "verify") {
     let current = null;
     let inRules = false;
     let inIsolation = false;
+    let mapCols = null;
     // Огороженный блок — ПРИМЕР, а не заявление о проекте.
     //
     // Разбор читал строки базы подряд, не отличая примера от записи. Пока
@@ -8712,6 +8868,20 @@ if (mode === "verify") {
       IMPORTERS_RE.lastIndex = 0;
       while ((m = IMPORTERS_RE.exec(line)) !== null)
         claimImporters(name, m[1], prefix, m[2], m[3]);
+      if (name === MAP) {
+        const cells = line.startsWith("|")
+          ? line
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim())
+          : null;
+        if (cells === null) mapCols = null;
+        else if (cells.includes("Состояние") || cells.includes("Эффекты"))
+          mapCols = {
+            state: cells.indexOf("Состояние"),
+            effects: cells.indexOf("Эффекты"),
+          };
+      }
       // Описанием карта считает только СОБСТВЕННУЮ запись файла: путь первой
       // графой, заголовок выше, объявленную папку (`claimDir`). Решено
       // разработчиком: упоминание в чужой строке ничего о файле не описывает.
@@ -8750,6 +8920,36 @@ if (mode === "verify") {
             continue;
           }
           if (name === MAP && ownRow) mapMentions.add(hit);
+          if (
+            name === MAP &&
+            ownRow &&
+            mapCols !== null &&
+            !mapClaimSeen.has(lineAt + ":" + hit)
+          ) {
+            mapClaimSeen.add(lineAt + ":" + hit);
+            const cells = line
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim());
+            const body = codeOf(readFileSync(hit, "utf8"));
+            for (const [col, subject, word] of [
+              [mapCols.state, "state", "состояния"],
+              [mapCols.effects, "timing", "эффектов"],
+            ]) {
+              const said = (cells[col] ?? "").replace(/`/g, "");
+              if (col < 0 || !DENIAL.test(said)) continue;
+              mapClaims += 1;
+              if (BRIEF_SUBJECTS[subject].test(body))
+                mapLies.push(
+                  rel(hit) +
+                    ": карта говорит «" +
+                    said +
+                    "» в графе " +
+                    word +
+                    ", а в коде они есть",
+                );
+            }
+          }
           if (name === TESTS) testMentions.add(hit);
         }
       }
@@ -12565,9 +12765,12 @@ if (mode === "verify") {
   const decidedAt =
     CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
   if (decidedAt !== null) {
-    const decided = existsSync(decidedAt)
-      ? readFileSync(decidedAt, "utf8")
-      : "";
+    // Отступление объявляет запись решения либо пункт долга перехода с
+    // планом приведения: по умолчанию оно долг, решением становится, когда
+    // разработчик сказал «оставляем».
+    const decided =
+      (existsSync(decidedAt) ? readFileSync(decidedAt, "utf8") : "") +
+      debtPlanText();
     // Единица — ПАПКА компонента: в ней и он сам, и его тип, и его лист.
     // Пофайловый разбор называл файл типов — адрес, по которому чинить
     // нечего, потому что лист импортирует не тип, а компонент рядом.
@@ -12635,14 +12838,15 @@ if (mode === "verify") {
     const decidedAt2 =
       CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
     const decided2 =
-      decidedAt2 !== null && existsSync(decidedAt2)
+      (decidedAt2 !== null && existsSync(decidedAt2)
         ? readFileSync(decidedAt2, "utf8")
-        : "";
+        : "") + debtPlanText();
     // Регистр не спрашивается: слова пишут в начале предложения с заглавной,
     // и посадка начисто на этом и споткнулась — решение записано, сверка его
     // не увидела.
     if (decided2.toLowerCase().includes("раскладка проекта"))
-      layoutSaid = "отступление объявлено решением: раскладка проекта своя";
+      layoutSaid =
+        "отступление объявлено решением либо долгом перехода: раскладка проекта своя";
     else {
       // Слой УЗЛОВ берётся из объявления, а не из умолчания: проект уже
       // сказал обвязке, где они лежат, полем componentsAt — им пользуются и
@@ -12925,10 +13129,11 @@ if (mode === "verify") {
     const seedAt = shelfAt("seat/templates/CLAUDE.md");
     const decidedAt3 =
       CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-    const decided3 =
-      decidedAt3 !== null && existsSync(decidedAt3)
-        ? readFileSync(decidedAt3, "utf8").toLowerCase()
-        : "";
+    const decided3 = (
+      (decidedAt3 !== null && existsSync(decidedAt3)
+        ? readFileSync(decidedAt3, "utf8")
+        : "") + debtPlanText()
+    ).toLowerCase();
     const mine = (CONFIG.rulesManifest?.rules ?? []).map((r) =>
       path.join(BASE, r),
     );
@@ -12958,9 +13163,9 @@ if (mode === "verify") {
             rel0(at) +
               " — утверждает " +
               axis.what +
-              ", а отступление от неё объявлено решением. Решение опознаётся ПО СЛОВАМ «" +
+              ", а отступление от неё объявлено решением либо долгом перехода. Объявление опознаётся ПО СЛОВАМ «" +
               axis.decided +
-              "»: при совпадении с умолчанием этих слов в реестре решений не пишут",
+              "»: при совпадении с умолчанием этих слов ни в решениях, ни в долге не пишут",
           );
         }
       }
@@ -13147,7 +13352,7 @@ if (mode === "verify") {
     );
   if (layoutStray.length)
     console.log(
-      "  Раскладка проекта своя — объявить решением со словами «раскладка проекта» и завести план в 17-conversion.md",
+      "  Раскладка проекта своя — записать пунктом долга перехода со словами «раскладка проекта» и планом приведения; оставить навсегда — решением с теми же словами",
     );
   checkHead("Отступление от схемы стилизации объявлено решением", {
     n: files.length,
@@ -13960,26 +14165,14 @@ if (mode === "verify") {
   // предписанный шаг и получала «путь ведёт в никуда» на собственном плане.
   // Молча такие адреса пропускать нельзя — опечатка в плане невидима, — и
   // потому они считаются и печатаются своей строкой, не роняя прогон.
-  // План ПРИВЕДЕНИЯ того же рода: он переносит код туда, где его ещё нет, и
-  // называет новые адреса по построению. Пока освобождался один план
-  // перехода, шаг «перенести поверхность пакета в `src/app/`» ронял прогон
-  // строкой «ведёт в никуда» на плане, который семя велит написать. Замерено
-  // посадкой руками в библиотеку. Адрес плана берётся из карты посадки — там
-  // же, откуда его кладёт посадка.
+  // Планы ПРИВЕДЕНИЯ того же рода и лежат в том же файле, под долгом
+  // перехода: они переносят код туда, где его ещё нет, и называют новые
+  // адреса по построению. Замерено посадкой руками в библиотеку: шаг
+  // «перенести поверхность пакета в `src/app/`» ронял прогон строкой «ведёт
+  // в никуда» на плане, который семя велит написать.
   const plannedPaths = [];
   const planName = CONFIG.transition == null ? null : CONFIG.transition.file;
-  const conversionName = (() => {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt === null || !existsSync(mapAt)) return null;
-    const e = (readJson(mapAt, {}).copy ?? []).find((one) =>
-      one.from.endsWith("/17-conversion.md"),
-    );
-    return e === undefined
-      ? null
-      : path.relative(BASE, path.join(REPO, e.to)).split(path.sep).join("/");
-  })();
-  const isPlan = (name) =>
-    (planName !== null && name === planName) || name === conversionName;
+  const isPlan = (name) => planName !== null && name === planName;
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
     const dir = norm(path.dirname(at));
@@ -14970,9 +15163,9 @@ if (mode === "verify") {
     const decidedAt =
       CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
     const decided =
-      decidedAt !== null && existsSync(decidedAt)
+      (decidedAt !== null && existsSync(decidedAt)
         ? readFileSync(decidedAt, "utf8")
-        : "";
+        : "") + debtPlanText();
     for (const f of testsOutsideUsed) {
       const own = path.relative(REPO, f).split(path.sep).join("/");
       const said = [
@@ -14983,7 +15176,7 @@ if (mode === "verify") {
       if (!said.some((one) => namesAddress(one + "|" + decided)))
         reasonlessTests.push(
           own +
-            " — объявлен вне папки, а записи решения ни с его адресом, ни с адресом его папки нет",
+            " — объявлен вне папки, а ни решение, ни пункт долга перехода не называет ни его адреса, ни адреса его папки",
         );
     }
   }
@@ -16565,6 +16758,13 @@ if (mode === "verify") {
     console.log(
       "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
     );
+  checkHead("Запись карты не спорит с кодом", {
+    n: mapClaims,
+    unit: "отрицаний в графах состояния и эффектов",
+  });
+  console.log("  опровергнуто кодом: " + mapLies.length);
+  for (const one of mapLies)
+    console.log("    " + one + ". Переписать строку по тому, что код делает");
 
   // Файл базы о живом коде обязан назвать из него хоть один адрес.
   //
@@ -18240,6 +18440,13 @@ if (mode === "verify") {
         if (problem !== null) transitionDrift.push(problem);
         transitionSteps = stepRows.length;
       }
+      if (
+        CONFIG.transition.debtHeading != null &&
+        !rows.some((l) => l.startsWith(CONFIG.transition.debtHeading))
+      )
+        transitionDrift.push(
+          "таблицы долга перехода не нашли: " + CONFIG.transition.debtHeading,
+        );
     }
   }
   // Долг описания — не кнопка «выключить сверку». Объявленное число
@@ -18268,8 +18475,10 @@ if (mode === "verify") {
     "markers",
   ]);
   const debtUnplanned =
-    debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
-    (CONFIG.transition == null || transitionSteps === 0);
+    (debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
+      (CONFIG.transition == null || transitionSteps === 0)) ||
+    (debtDeclared.some((one) => DEBT_BY_WORK_KINDS.has(one)) &&
+      CONFIG.transition == null);
   /** Какая сверка гаснет, когда долг этого вида закрыт. Пара «вид долга —
    * сверка» и есть то, чем шаг плана опознаётся: шаг обязан назвать её в графе
    * «чем проверяется», и форма этой графы уже сверяется дословно. */
@@ -18347,18 +18556,34 @@ if (mode === "verify") {
         ? null
         : path.join(BASE, CONFIG.transition.file);
     const plan = at !== null && existsSync(at) ? readFileSync(at, "utf8") : "";
-    const open = openFindings();
     for (const kind of debtDeclared) {
       const guards = DEBT_GUARD[kind];
       if (guards === undefined) continue;
       const named = "«" + guards.join("» либо «") + "»";
       if (DEBT_BY_WORK.has(kind)) {
-        if (guards.some((g) => (open.get(g) ?? 0) > 0)) continue;
-        debtStepless.push(
-          kind +
-            " — долг КОДА: закрывается правкой кода, а переход её не делает. Держать его обязана открытая строка реестра, называющая " +
-            named,
+        // Долг кода держит ПУНКТ ДОЛГА ПЕРЕХОДА с планом приведения, и число
+        // в нём то же, что в поле храповика: список идёт в каждый отчёт, и
+        // разошедшееся число врало бы там, где его читают.
+        const row = transitionDebt().find((r) =>
+          guards.some((g) => r.names.includes(g)),
         );
+        if (row === undefined)
+          debtStepless.push(
+            kind +
+              " — долг КОДА: закрывается правкой кода, и держит его пункт долга перехода с планом приведения, называющий " +
+              named,
+          );
+        else if (row.count !== debtOf(kind))
+          debtStepless.push(
+            kind +
+              " — пункт " +
+              row.no +
+              " говорит `" +
+              (row.count ?? "без числа") +
+              "`, а поле долга — " +
+              debtOf(kind) +
+              ": число пункта и храповик обязаны совпадать",
+          );
         continue;
       }
       if (!guards.some((g) => plan.includes("«" + g + "»")))
@@ -18452,19 +18677,41 @@ if (mode === "verify") {
                 "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
             );
         }
+        // Пункт долга называет то, что его ДЕРЖИТ: сверку, звено или режим,
+        // которые не дают ему расти и покажут, что он закрыт. Пункт без
+        // держателя — обещание, которое ничем не проверить.
+        for (const row of transitionDebt()) {
+          const words = (text) =>
+            text.split(/[^A-Za-z0-9:._-]+/).filter(Boolean);
+          const held =
+            [...row.holds.matchAll(/«([^»]+)»/g)].some((m) =>
+              measures.has(m[1]),
+            ) ||
+            [...row.holds.matchAll(/`([^`]+)`/g)].some((m) =>
+              words(m[1]).some((w) => measures.has(w)),
+            );
+          if (!held)
+            stepsAdrift.push(
+              "пункт долга " +
+                row.no +
+                " не называет, что его держит: «" +
+                row.holds +
+                "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
+            );
+        }
       }
     }
   }
   checkHead("Шаги перехода закрывают измерение", {
-    n: transitionSteps,
-    unit: "шагов плана перехода",
+    n: transitionSteps + transitionDebt().length,
+    unit: "шагов знания и пунктов долга перехода",
   });
   console.log(
     CONFIG.transition == null
       ? "  перехода нет: проверять нечего"
       : stepsAdrift.length
-        ? "  шагов мимо измерения: " + stepsAdrift.length
-        : "  каждый шаг называет сверку или звено цепочки",
+        ? "  мимо измерения: " + stepsAdrift.length
+        : "  каждый шаг и каждый пункт долга называет сверку, звено или режим",
   );
   for (const a of stepsAdrift) console.log("    " + a);
 
@@ -18592,10 +18839,10 @@ if (mode === "verify") {
             " по видам " +
             debtDeclared.join(", ") +
             (debtDeclared.every((k) => DEBT_BY_WORK.has(k))
-              ? " — все держатся открытыми строками реестра"
+              ? " — все стоят пунктами долга перехода"
               : debtDeclared.some((k) => DEBT_BY_WORK.has(k))
-                ? " — все названы: долг базы шагами плана, долг кода открытыми строками реестра"
-                : " — все стоят шагами плана"),
+                ? " — все названы: долг базы шагами знания, долг кода пунктами долга перехода"
+                : " — все стоят шагами знания"),
   );
   for (const one of debtStepless) console.log("    " + one);
   if (debtUnplanned)
@@ -18605,17 +18852,19 @@ if (mode === "verify") {
     );
 
   checkHead("План перехода не потерялся", {
-    n: transitionSteps,
-    unit: "шагов плана перехода",
+    n: transitionSteps + transitionDebt().length,
+    unit: "шагов знания и пунктов долга перехода",
   });
   console.log(
     CONFIG.transition == null
       ? "  перехода нет: проект родился под обвязкой либо переход закончен"
       : transitionDrift.length
         ? "  расхождений: " + transitionDrift.length
-        : "  шагов перехода открыто: " +
+        : "  шагов знания открыто: " +
           transitionSteps +
-          " — закрытый шаг из таблицы удаляют; таблица опустела, файл удаляют целиком",
+          ", пунктов долга перехода: " +
+          transitionDebt().length +
+          " — закрытое из таблиц удаляют; обе опустели — файл удаляют целиком",
   );
   for (const d of transitionDrift) console.log("    " + d);
 

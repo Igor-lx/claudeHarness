@@ -227,6 +227,22 @@
       "replace": "    \"prettier\": \"^3.9.6\",\n    \"пакет-которого-никто-не-объявлял\": \"^1.0.0\","
     },
     {
+      "section": "Запись карты не спорит с кодом",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzState.ts",
+            "text": "export const zzState = () => useState(0);"
+          }
+        },
+        {
+          "file": ".context/00-map.md",
+          "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzState.ts` | проба | нет | нет |"
+        }
+      ]
+    },
+    {
       "section": "Пакет платформы не второй ответ",
       "whenLink": ["typecheck", "test"],
       "file": ".claude/seat/map.json",

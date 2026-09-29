@@ -397,7 +397,7 @@ describe("ревизия сводов по истории", () => {
             return (
               "| `" +
               c[1].trim().replace(/`/g, "") +
-              "` | не требуется | не требуется | проба ревизии |"
+              "` | правлено | не требуется | `.context/00-map.md` — проба ревизии |"
             );
           return line;
         })
@@ -459,6 +459,27 @@ const seatEmpty = (prefix) => {
     fs.copyFileSync(path.join(shelf, one.from), dst);
   }
   return box;
+};
+/** Файл перехода из семени, поле настройки под него и пункты долга. */
+const withTransitionDebt = (box, rows) => {
+  const shelf = path.join(TOOL_DIR, "..");
+  const plan = path.join(box, ".context", "15-transition.md");
+  if (!fs.existsSync(plan))
+    fs.copyFileSync(
+      path.join(shelf, "seat", "templates", "15-transition.md"),
+      plan,
+    );
+  fs.appendFileSync(plan, rows.map((r) => r + "\n").join(""));
+  const cfg = path.join(box, ".context", "graph.config.mjs");
+  const had = fs.readFileSync(cfg, "utf8");
+  if (had.includes("\n  transition: null,"))
+    fs.writeFileSync(
+      cfg,
+      had.replace(
+        "\n  transition: null,",
+        '\n  transition: { file: "15-transition.md", heading: "| № | Шаг | Объём | Чем проверяется |", debtHeading: "| № | Расхождение | Сейчас | Держит | План | Цена |" },',
+      ),
+    );
 };
 /** Прогон сверки базы в копии: код возврата и строки находок по секциям. */
 const verifyIn = (box) => {
@@ -543,11 +564,9 @@ describe("долг комментариев — сумма находок трё
       );
       expect(withDebt).not.toBe(had);
       fs.writeFileSync(cfg, withDebt);
-      const reg = path.join(box, ".context", "16-findings.md");
-      fs.appendFileSync(
-        reg,
-        "| 9998 | «Комментарий не перерос в прозу»: `src/app/zzWordy.ts:1` — ряд длиннее потолка | проба долга |  |  | открыта |\n",
-      );
+      withTransitionDebt(box, [
+        "| 1 | Длинный комментарий кода, написанного до посадки | `1` | «Комментарий не перерос в прозу» | сократить ряд в `src/app/zzWordy.ts:1` | `1` место |",
+      ]);
       const held = verifyIn(box);
       for (const s of [
         "Комментарий не перерос в прозу",
@@ -699,13 +718,24 @@ describe("долг ошибок типов держит обёртка комп�
       // наружу, а не подменяется вердиктом о долге.
       expect(statusOf([process.execPath, "-e", "process.exit(3)"])).toBe(3);
       expect(statusOf(["zz-no-such-command"])).toBe(1);
-      // Долг кода держит открытая строка реестра, называющая звено типов.
+      // Долг кода держит ПУНКТ ДОЛГА ПЕРЕХОДА с тем же числом, а не строка
+      // реестра: реестр для поломок обвязки и находок работы.
       const said = () =>
         verifyIn(box).get("Объявленный долг назван планом перехода") ?? [];
       expect(said().join(" ")).toContain("typecheck");
       fs.appendFileSync(
         path.join(box, ".context", "16-findings.md"),
         "| 9997 | Звено «typecheck»: ошибки типов от строгости посадки объявлены долгом | проба долга |  |  | открыта |\n",
+      );
+      expect(said().join(" ")).toContain("typecheck");
+      withTransitionDebt(box, [
+        "| 1 | Ошибки типов под строгостью обвязки | `3` | звено «typecheck» | разобрать `a.ts`, `b.ts` | `3` места |",
+      ]);
+      expect(said().join(" ")).toContain("пункт 1 говорит `3`");
+      const plan = path.join(box, ".context", "15-transition.md");
+      fs.writeFileSync(
+        plan,
+        fs.readFileSync(plan, "utf8").replace("| `3` | звено", "| `2` | звено"),
       );
       expect(said()).toEqual([]);
     } finally {
@@ -1192,7 +1222,7 @@ describe("свод по планке от модели предмета", () => 
             })
             .map((line) =>
               line === "| `app/zzClock.ts` |  |  |  |"
-                ? "| `app/zzClock.ts` | не требуется | не требуется | проба |"
+                ? "| `app/zzClock.ts` | правлено | не требуется | `.context/00-map.md` — проба |"
                 : line,
             )
             .join("\n"),
@@ -1533,6 +1563,89 @@ describe("конвейер спрашивается только с описан
       ).join("\n");
       expect(found).toContain("build.yml");
       expect(found).not.toContain("lock.yml");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Сверки перехода спрашивали НАЛИЧИЕ записи, а не её правду. Правды машине не
+ * узнать, кроме той, что она видит сама: строка карты, сказавшая «нет» в графе
+ * состояния или эффектов у файла, где они есть, неверна без суждения.
+ * Замерено на карте библиотеки, собранной переходом: `3` отрицания из `104`.
+ */
+describe("запись карты не спорит с кодом", () => {
+  it("отрицание состояния у файла с состоянием красно, описание — нет", () => {
+    const box = seatEmpty("karta-");
+    try {
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzCounter.ts"),
+        'import { useState } from "react";\nexport const useZz = () => useState(0);\n',
+      );
+      const map = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      const had = fs.readFileSync(map, "utf8");
+      expect(had).toContain(head);
+      fs.writeFileSync(
+        map,
+        had.replace(
+          head,
+          head + "\n| `src/app/zzCounter.ts` | счётчик | нет | нет |",
+        ),
+      );
+      expect(
+        (verifyIn(box).get("Запись карты не спорит с кодом") ?? []).join("\n"),
+      ).toContain("zzCounter.ts: карта говорит «нет» в графе состояния");
+      fs.writeFileSync(
+        map,
+        had.replace(
+          head,
+          head + "\n| `src/app/zzCounter.ts` | счётчик | число нажатий | нет |",
+        ),
+      );
+      expect(verifyIn(box).get("Запись карты не спорит с кодом")).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Переход читает весь код и сразу собирает знание, а расхождения проекта с
+ * правилами обвязки записывает долгом перехода с планом. Долг печатается
+ * списком для каждого отчёта, у каждого пункта есть держатель, и отступление
+ * от умолчания пункт объявляет наравне с решением.
+ */
+describe("долг перехода: список, держатель, отступление долгом", () => {
+  it("режим печатает список, пункт без держателя красен, раскладка долгом объявлена", () => {
+    const box = seatEmpty("dolgperehoda-");
+    try {
+      fs.mkdirSync(path.join(box, "src", "zzOwn"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "zzOwn", "zzThing.ts"),
+        "export const zzThing = 1;\n",
+      );
+      const stray = () =>
+        (verifyIn(box).get("Новый узел лежит по раскладке") ?? []).join("\n");
+      expect(stray()).toContain("zzThing.ts");
+      withTransitionDebt(box, [
+        "| 1 | Раскладка проекта своя: код в `src/zzOwn/` | `1` | «Новый узел лежит по раскладке» | перенести `src/zzOwn/zzThing.ts` в `src/shared/own/` | `1` файл |",
+        "| 2 | Проба без держателя | `1` | когда-нибудь | ничего | `0` |",
+      ]);
+      const found = verifyIn(box);
+      expect(found.get("Новый узел лежит по раскладке")).toBeUndefined();
+      expect(
+        (found.get("Шаги перехода закрывают измерение") ?? []).join("\n"),
+      ).toContain("пункт долга 2 не называет, что его держит");
+      const said = execFileSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "transition"],
+        { cwd: box, encoding: "utf8" },
+      );
+      expect(said).toContain("ДОЛГ ПЕРЕХОДА");
+      expect(said).toContain("1 — Раскладка проекта своя — сейчас: 1");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

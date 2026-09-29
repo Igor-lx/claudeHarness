@@ -196,10 +196,6 @@
       "to": ".context/16-findings.md"
     },
     {
-      "from": "seat/templates/17-conversion.md",
-      "to": ".context/17-conversion.md"
-    },
-    {
       "from": "seat/templates/.gitignore",
       "to": ".gitignore"
     }
