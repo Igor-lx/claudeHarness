@@ -605,7 +605,7 @@ describe("долг комментариев — сумма находок трё
  * записанной линии. Замерено посадкой руками в проект со звеном `types`.
  */
 describe("звенья под проектными именами опознаются в базовой линии", () => {
-  it("своё имя звена — не слепота, а красное под ним без строки реестра — находка", () => {
+  it("своё имя звена — не слепота, а красное под ним без записи — находка", () => {
     const box = seatEmpty("zvenya-");
     try {
       const own = {
@@ -790,10 +790,33 @@ describe("ошибка настройки звена долгом не гаси�
       const broken = run("lint", ["Oops! Something went wrong! :("], 2);
       expect(broken.status).toBe(1);
       expect(broken.out).toContain("ошибка НАСТРОЙКИ");
-      // Долг линта держит открытая строка реестра, называющая звено линта.
+      // Долг линта держит пункт долга перехода, называющий звено линта.
       const said = () =>
         (verifyIn(box).get("Объявленный долг назван планом перехода") ?? []).join(" ");
       expect(said()).toContain("lint — долг КОДА");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  // Храповик линта живёт обёрткой команды, и звено, обёрнутое им, остаётся
+  // звеном линта. Образец опознания знал обёртку только у звена типов:
+  // обёрнутый линт не опознавался, и конфиг линтера объявлялся лежащим без
+  // вызова. Замерено переводом библиотеки на долг линта.
+  it("звено линта, обёрнутое храповиком, опознаётся как звено линта", () => {
+    const box = seatEmpty("lintobyortka-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts.lint = "node .claude/tools/graph.mjs lint -- " + pkg.scripts.lint;
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const found = verifyIn(box);
+      for (const s of [
+        "Звену цепочки есть на чём работать",
+        "Связка проверок зовёт живые звенья",
+        "Звено цепочки не задвоено",
+      ])
+        expect([s, found.get(s) ?? []]).toEqual([s, []]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -1650,4 +1673,161 @@ describe("долг перехода: список, держатель, отст�
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+});
+
+/**
+ * Цена ярусов входа считается по КАЖДОМУ классу таблицы ярусов доктрины.
+ * Список классов в режиме был зашит, и ярус удаления, дописанный в доктрину,
+ * остался без цены и в режиме, и в семени фактов — замерено замером цены на
+ * стенде-библиотеке.
+ */
+describe("цена ярусов: классы берутся из таблицы доктрины", () => {
+  it("каждый класс посчитан; неизвестный класс роняет режим", () => {
+    const box = seatEmpty("yarusy-");
+    try {
+      const tool = path.join(box, ".claude", "tools", "graph.mjs");
+      const run = () => {
+        try {
+          return {
+            status: 0,
+            out: execFileSync(process.execPath, [tool, "tiers"], {
+              cwd: box,
+              encoding: "utf8",
+            }),
+          };
+        } catch (e) {
+          return { status: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      const loopAt = path.join(box, ".claude", "rules", "loop.md");
+      const loop = fs.readFileSync(loopAt, "utf8");
+      const lines = loop.split("\n");
+      const head = lines.findIndex((l) => l.startsWith("| Класс задачи |"));
+      const classes = [];
+      for (let i = head + 2; lines[i].startsWith("|"); i += 1)
+        classes.push(lines[i].split("|")[1].trim());
+      expect(classes.length).toBeGreaterThan(5);
+      const clean = run();
+      expect(clean.status).toBe(0);
+      for (const one of classes) expect(clean.out).toContain(one + " — ");
+      expect(clean.out).not.toContain("В таблице фактов нет строки");
+      const at = head + 2 + classes.length;
+      lines.splice(at, 0, "| Проба нового класса | что-то | то же |");
+      fs.writeFileSync(loopAt, lines.join("\n"));
+      const extra = run();
+      expect(extra.status).toBe(1);
+      expect(extra.out).toContain("Состав яруса инструменту не известен: Проба нового класса");
+      expect(extra.out).toContain("В таблице фактов нет строки: Проба нового класса");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Файл узла держит модульным объявлением только сам узел. Правило стояло в
+ * доктрине без крючка, и переход живого проекта не мог записать такой долг:
+ * держать пункт было нечем — замерено переходом библиотеки.
+ */
+describe("файл узла держит только сам узел", () => {
+  it("объявление рядом с узлом названо, обёрнутая функция и типы — нет, долг держит числом", () => {
+    const box = seatEmpty("uzelfayl-");
+    try {
+      const dir = path.join(box, "src", "components", "ZzLone");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "ZzLone.tsx"),
+        [
+          'import { memo } from "react";',
+          "type ZzProps = { size: number };",
+          "const zzExtra = 1;",
+          "function ZzLoneInner(props: ZzProps) {",
+          "  return props.size + zzExtra;",
+          "}",
+          "export const ZzLone = memo(ZzLoneInner);",
+          "",
+        ].join("\n"),
+      );
+      const said = () =>
+        (verifyIn(box).get("В файле узла только сам узел") ?? []).join("\n");
+      const found = said();
+      expect(found).toContain("`zzExtra`");
+      expect(found).not.toContain("ZzLoneInner");
+      expect(found).not.toContain("ZzProps");
+      withTransitionDebt(box, [
+        "| 1 | Объявления рядом с узлом | `1` | «В файле узла только сам узел» | перенести `zzExtra` в `src/components/ZzLone/constants/` | `1` объявление |",
+      ]);
+      expect(said()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Конфиг звена у живого проекта лежит под своим именем, а линт обёрнут
+ * храповиком долга. Сверка опоры звена искала конфиг только семенным именем,
+ * а сверка заготовок брала область у обёртки, а не у линтера, — обе молчали
+ * на поломке. Замерено прогоном рецептов на стенде-библиотеке.
+ */
+describe("конфиг звена под своим именем и линт под храповиком", () => {
+  it("опора звена и исключение заготовок спрашиваются и тогда", () => {
+    const box = seatEmpty("svoeimya-");
+    try {
+      fs.renameSync(
+        path.join(box, "eslint.config.mjs"),
+        path.join(box, "eslint.config.js"),
+      );
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts.lint = "node .claude/tools/graph.mjs lint -- " + pkg.scripts.lint;
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const clean = verifyIn(box);
+      for (const s of [
+        "Звену цепочки есть на чём работать",
+        "Заготовки обвязки не разбираются линтом проекта",
+      ])
+        expect([s, clean.get(s) ?? []]).toEqual([s, []]);
+      const cfgAt = path.join(box, "eslint.config.js");
+      fs.writeFileSync(
+        cfgAt,
+        fs.readFileSync(cfgAt, "utf8").replace('      ".claude",\n', ""),
+      );
+      expect(
+        (verifyIn(box).get("Заготовки обвязки не разбираются линтом проекта") ?? []).join("\n"),
+      ).toContain("eslint.config.js");
+      pkg.scripts.lint = "npm run lint --workspaces --if-present";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      expect(
+        (verifyIn(box).get("Звену цепочки есть на чём работать") ?? []).join("\n"),
+      ).toContain("eslint.config.js — конфиг звена «lint»");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Номер записи в заголовке — «### Пункт 10. …», «## Вопрос 12. …» — нумерация,
+ * а не счёт, и ссылка на такой раздел ёлочками тоже. Двузначный номер со
+ * словом из списка счёта за ним краснел — замерено планом перехода стенда.
+ */
+describe("номер записи в заголовке не счёт", () => {
+  it("заголовок и ссылка на него молчат, счёт в прозе краснеет", () => {
+    const box = seatEmpty("nomer-");
+    try {
+      const todo = path.join(box, ".context", "02-todo.md");
+      fs.appendFileSync(
+        todo,
+        "\n### Пункт 10. Файл узла\n\nПлан — раздел «Пункт 10. Файл узла».\n",
+      );
+      const said = () =>
+        (verifyIn(box).get("Числа в прозе базы") ?? []).join("\n");
+      expect(said()).toBe("");
+      fs.appendFileSync(todo, "\nОсталось 10 файлов.\n");
+      expect(said()).toContain("02-todo.md");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });

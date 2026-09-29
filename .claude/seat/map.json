@@ -237,7 +237,7 @@
     },
     {
       "name": "lint",
-      "recognise": "^\\s*eslint\\b(?![^&|]*--fix)[^&|]*$",
+      "recognise": "^\\s*(?:node\\s+\\S*graph\\.mjs\\s+lint\\s+--\\s+)?eslint\\b(?![^&|]*--fix)[^&|]*$",
       "needsFiles": ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
     },
     {

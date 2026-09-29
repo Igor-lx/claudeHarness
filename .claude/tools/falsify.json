@@ -114,8 +114,7 @@
     {
       "section": "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
       "file": ".context/13-questions.md",
-      "find": "Открытых вопросов нет.",
-      "replace": "## Вопрос 1. Проба\n\n**Задан:** пробой.\n\n**Что решить.** Ничего.\n\n**Последствие отсутствия ответа.** Нет."
+      "append": "## Вопрос 900. Проба\n\n**Задан:** пробой.\n\n**Что решить.** Ничего.\n\n**Последствие отсутствия ответа.** Нет."
     },
     {
       "section": "Списки исключений не разрослись (предупреждение, прогон не роняет)",
@@ -662,6 +661,13 @@
       "after": "## Обещания обвязки, которые не держит машина"
     },
     {
+      "section": "Точечные исключения линта",
+      "create": {
+        "path": "src/zzDirective.ts",
+        "text": "// eslint-disable-next-line no-console\nconsole.log(1);"
+      }
+    },
+    {
       "section": "Выключения правил линта",
       "file": "eslint.config.mjs",
       "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };",
@@ -1011,9 +1017,15 @@
           }
         },
         {
+          "create": {
+            "path": ".context/zzSilent.md",
+            "text": "# Проба\n\nЗдесь пока нечего описывать."
+          }
+        },
+        {
           "file": ".claude/seat/map.json",
           "find": "\"namesOwnCode\": [",
-          "replace": "\"namesOwnCode\": [\".context/02-todo.md\", "
+          "replace": "\"namesOwnCode\": [\".context/zzSilent.md\", "
         }
       ]
     },
@@ -1117,6 +1129,17 @@
           "create": {
             "path": "{узлы}/ZzNode/zzTwo.ts",
             "text": "export const zzTwo = 2;"
+          }
+        }
+      ]
+    },
+    {
+      "section": "В файле узла только сам узел",
+      "edits": [
+        {
+          "create": {
+            "path": "{узлы}/ZzLone/ZzLone.tsx",
+            "text": "const zzExtra = 1;\nexport const ZzLone = () => zzExtra;"
           }
         }
       ]
