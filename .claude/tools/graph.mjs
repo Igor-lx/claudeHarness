@@ -1865,10 +1865,51 @@ const ROOT_SEEDS = (() => {
   return out;
 })();
 
+/** Что git игнорирует: сгенерированное сборкой, кэши, местное. Проекту это не
+ * принадлежит — в другом клоне его нет. Замерено на библиотеке, чья сборка
+ * пишет листы стилей рядом с исходниками: `44` ложных «мёртвых класса».
+ * Без репозитория список пуст, и обход берёт всё, как прежде. */
+const GIT_IGNORED = (() => {
+  const out = { files: new Set(), dirs: [] };
+  let listing = "";
+  try {
+    listing = execFileSync(
+      "git",
+      [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "-z",
+      ],
+      {
+        cwd: REPO_AT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+  } catch {
+    return out;
+  }
+  for (const one of listing.split("\0")) {
+    if (one === "") continue;
+    const full = norm(path.join(REPO_AT, one));
+    if (one.endsWith("/")) out.dirs.push(full + "/");
+    else out.files.add(full);
+  }
+  return out;
+})();
+const gitIgnored = (full) =>
+  GIT_IGNORED.files.has(full) ||
+  GIT_IGNORED.dirs.some((d) => (full + "/").startsWith(d));
+
 const outOfTree = (name, full) =>
   OUT_OF_TREE.has(name) ||
   insideShelf(norm(full)) ||
-  ROOT_SEEDS.has(norm(full));
+  ROOT_SEEDS.has(norm(full)) ||
+  gitIgnored(norm(full));
 
 const collect = (dir) => {
   if (!walkable(dir)) return;
@@ -2432,19 +2473,23 @@ const STYLE_IMPORT =
  * видел НОЛЬ классов: там каждый класс с отступом. Замерено на эталонном
  * проекте — все пять его листов читались как пустые.
  *
- * Строка свойства кончается точкой с запятой, строка селектора — фигурной
- * скобкой или запятой. Этого различения довольно, чтобы в набор не попали
- * значения свойств, и оно не требует разбора CSS.
+ * Селектор — текст перед открывающей скобкой после предыдущей скобки или
+ * точки с запятой; значения свойств туда не попадают, и разбора CSS это не
+ * требует. Прежде селектором считалась СТРОКА, кончающаяся скобкой, и
+ * однострочное правило `.a { color: red; }` не давало класса вовсе:
+ * замерено на стенде, где лист с такими правилами читался пустым.
  *
  * Составной селектор отдаёт ВСЕ свои классы: `.a .b` — это объявление
  * обоих, и прежний образец брал только первый. */
 const cssClasses = (text) => {
   const out = new Set();
-  for (const line of text.split(/\r?\n/)) {
-    const body = line.split("//")[0];
-    if (!/[{,]\s*$/.test(body)) continue;
-    for (const m of body.matchAll(/[.&]([A-Za-z][\w-]*)/g)) out.add(m[1]);
-  }
+  const bare = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split(/\r?\n/)
+    .map((line) => line.split("//")[0])
+    .join("\n");
+  for (const rule of bare.matchAll(/([^{};]*)\{/g))
+    for (const m of rule[1].matchAll(/[.&]([A-Za-z][\w-]*)/g)) out.add(m[1]);
   return out;
 };
 /** Имя, НАЗВАННОЕ кодом: строкой в кавычках либо обращением к полю. Модуль
@@ -11285,7 +11330,14 @@ if (mode === "verify") {
       }
     }
   }
-  // 13f. каждый документ назван в указателе.
+  // 13f. каждый документ находится от указателя.
+  //
+  // Документ найден, если его называет указатель либо на него ведёт ссылка из
+  // документа, до которого указатель доводит: читатель, идущий от указателя,
+  // до него дойдёт. Прежде смотрелся один верхний уровень папки, и вложенные
+  // документы не проверялись ничем — замерено на библиотеке, где так лежали
+  // `16` документов из `23`. Ссылка разрешается и как файл, и как МАРШРУТ
+  // сайта документации: маршрут /plugins/zoom ведёт в документ zoom.md папки plugins.
   const indexDrift = [];
   let indexDocs = 0;
   if (CONFIG.docsIndex != null) {
@@ -11296,11 +11348,50 @@ if (mode === "verify") {
       if (!text.includes(CONFIG.docsIndex.heading))
         indexDrift.push(`таблицы указателя нет: «${CONFIG.docsIndex.heading}»`);
       else {
-        const named = readdirSync(dir).filter((n) => n.endsWith(".md"));
-        indexDocs = named.length;
-        for (const name of named)
-          if (!text.includes(name))
-            indexDrift.push(`документа нет в указателе: ${name}`);
+        const all = [];
+        (function walkIndexed(at) {
+          for (const e of readdirSync(at)) {
+            const full = norm(path.join(at, e));
+            if (outOfTree(e, full)) continue;
+            if (statSync(full).isDirectory()) walkIndexed(full);
+            else if (e.endsWith(".md")) all.push(full);
+          }
+        })(dir);
+        indexDocs = all.length;
+        const inDocs = (full) =>
+          path.relative(dir, full).split(path.sep).join("/");
+        const reached = new Set(all.filter((f) => text.includes(inDocs(f))));
+        const queue = [...reached];
+        const LINK = /\]\(([^)\s#?]+)[^)]*\)/g;
+        while (queue.length > 0) {
+          const from = queue.shift();
+          for (const m of readFileSync(from, "utf8").matchAll(LINK)) {
+            if (/^[a-z][a-z0-9+.-]*:/i.test(m[1])) continue;
+            const tail = m[1].replace(/^\//, "");
+            const bases = m[1].startsWith("/") ? [dir] : [path.dirname(from), dir];
+            for (const one of bases) {
+              const at = norm(path.join(one, tail));
+              const hit = (
+                /\.md$/.test(at)
+                  ? [at]
+                  : [at + ".md", at + "/index.md", at + "/README.md"]
+              ).find((c) => all.includes(c));
+              if (hit === undefined) continue;
+              if (!reached.has(hit)) {
+                reached.add(hit);
+                queue.push(hit);
+              }
+              break;
+            }
+          }
+        }
+        for (const f of all)
+          if (!reached.has(f))
+            indexDrift.push(
+              "документ не находится от указателя: " +
+                inDocs(f) +
+                ". Назвать строкой указателя либо ссылкой из документа, который он называет",
+            );
       }
     }
   }
@@ -11850,8 +11941,21 @@ if (mode === "verify") {
         }
       }
       const ciMute = [];
+      const ciAside = [];
+      // Описание, которое не зовёт менеджер пакетов проекта, проекта не
+      // собирает и воротами не является: публикация документации запросом,
+      // запирание старых обсуждений чужим действием. Замерено на библиотеке:
+      // из пяти описаний два проекта не касались, и прогон требовал от них
+      // проверок. Ищется вызов командой, а не слово: `cache: npm` в
+      // настройке шага вызовом не является.
+      const PM_CALL =
+        /(?:^|[;&|]|run:)\s*(?:-\s+)?(?:npm|pnpm|yarn|bun)(?:[ \t]+\S|[ \t]*$)/m;
       for (const one of ciFiles) {
         const body = readFileSync(path.join(BASE, "..", one), "utf8");
+        if (!PM_CALL.test(body)) {
+          ciAside.push(one);
+          continue;
+        }
         const names = CONFIG.toolchain
           .map((link) => link.script)
           .filter((name) => name != null)
@@ -11891,6 +11995,10 @@ if (mode === "verify") {
         unit: "описаний сборки на сервере",
       });
       console.log("  не зовут цепочку: " + ciMute.length);
+      if (ciAside.length)
+        console.log(
+          "  проекта не собирают, вопрос не задаётся: " + ciAside.join(", "),
+        );
       for (const one of ciMute) console.log("    " + one);
       checkHead("Связка проверок зовёт живые звенья", {
         n: chainCalls.length,

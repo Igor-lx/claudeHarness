@@ -1440,3 +1440,101 @@ describe("семя рядом с затеняющим конфигом и пак
     }
   }, 240000);
 });
+
+/**
+ * Что git игнорирует, проекту не принадлежит: сгенерированный сборкой лист
+ * стилей в корпусе давал ложные «мёртвые классы». Замерено на библиотеке,
+ * чья сборка пишет листы рядом с исходниками: `44` ложных находки.
+ */
+describe("игнорируемое git в корпус сверок не входит", () => {
+  it("однострочное правило читается, а игнорируемый git лист в корпус не входит", () => {
+    const box = seatEmpty("ignored-");
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: box });
+      fs.mkdirSync(path.join(box, "src", "gen"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "gen", "zzGen.css"),
+        ".zzGenerated { color: red; }\n",
+      );
+      const seen = verifyIn(box);
+      expect(
+        (seen.get("Класс из листа стилей спрошен кодом") ?? []).join("\n"),
+      ).toContain("zzGenerated");
+      fs.appendFileSync(path.join(box, ".gitignore"), "\nsrc/gen/\n");
+      const hidden = verifyIn(box);
+      expect(
+        (hidden.get("Класс из листа стилей спрошен кодом") ?? []).join("\n"),
+      ).not.toContain("zzGenerated");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Документ находится от указателя: его называет указатель либо на него ведёт
+ * ссылка из документа, до которого указатель доводит, — в том числе маршрутом
+ * сайта документации. Прежде смотрелся один верхний уровень папки, и вложенные
+ * документы не проверялись ничем: замерено на библиотеке, где так лежали `16`
+ * документов из `23`, и один из них не находился ниоткуда.
+ */
+describe("указатель документации доводит и до вложенных документов", () => {
+  it("вложенный документ без пути к нему назван, с маршрутом из названного — нет", () => {
+    const box = seatEmpty("ukazatel-");
+    try {
+      fs.mkdirSync(path.join(box, "docs", "guide"), { recursive: true });
+      fs.writeFileSync(path.join(box, "docs", "guide", "deep.md"), "# Deep\n");
+      const lost = verifyIn(box);
+      expect(
+        (lost.get("Документы названы в указателе") ?? []).join("\n"),
+      ).toContain("guide/deep.md");
+      fs.writeFileSync(
+        path.join(box, "docs", "guide.md"),
+        "# Guide\n\n- [Deep](/guide/deep) - one level down\n",
+      );
+      const facts = path.join(box, ".context", "01-facts.md");
+      const row = "| что продукт умеет — списком возможностей | `FEATURES.md` |";
+      fs.writeFileSync(
+        facts,
+        fs
+          .readFileSync(facts, "utf8")
+          .replace(row, row + "\n| как пройти по шагам | `guide.md` |"),
+      );
+      const found = verifyIn(box);
+      expect(found.get("Документы названы в указателе")).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Воротами служит описание, которое собирает проект, то есть зовёт его
+ * менеджер пакетов. Публикация документации запросом и запирание обсуждений
+ * чужим действием проекта не касаются, и проверок с них не спрашивают.
+ * Замерено на библиотеке: из пяти описаний два проекта не собирали.
+ */
+describe("конвейер спрашивается только с описаний, собирающих проект", () => {
+  it("описание без менеджера пакетов в стороне, сборка без проверок красна", () => {
+    const box = seatEmpty("konveier-");
+    try {
+      const wf = path.join(box, ".github", "workflows");
+      fs.mkdirSync(wf, { recursive: true });
+      fs.writeFileSync(
+        path.join(wf, "lock.yml"),
+        "on:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n  lock:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: dessant/lock-threads@v6\n",
+      );
+      fs.writeFileSync(
+        path.join(wf, "build.yml"),
+        "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          cache: npm\n      - run: npm ci\n      - run: npm run build\n",
+      );
+      const found = (
+        verifyIn(box).get("Конвейер зовёт проверки") ?? []
+      ).join("\n");
+      expect(found).toContain("build.yml");
+      expect(found).not.toContain("lock.yml");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
