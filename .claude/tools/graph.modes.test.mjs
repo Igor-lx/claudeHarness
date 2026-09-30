@@ -1950,6 +1950,10 @@ describe("факты по уровням без протокола", () => {
       expect(two.out).toMatch(
         /писатель: хранилище «zz\.count»: запись стоит в shared\/zzStore\/zzStore\.ts; решают components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — НЕ НАЗВАН/,
       );
+      // Перехода нет — факт без записи роняет и прогон сверки базы.
+      const loose = () =>
+        (verifyIn(box).get("Архитектурный факт назван записью") ?? []).join("\n");
+      expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
       // Ключ доводом у каждого вызова свой, а хук решает сам: писателей
       // у них по одному, факта нет.
       expect(two.out).not.toMatch(/«key»[^\n]*решают components/);
@@ -1960,6 +1964,18 @@ describe("факты по уровням без протокола", () => {
         "\nПроба: `src/shared/zzStore/zzStore.ts`, `src/components/ZzA/ZzA.tsx` и `src/components/ZzB/ZzB.tsx` пишут один ключ — порядок записи объявлен.\n",
       );
       expect(tool("levels").out).toMatch(/«zz\.count»[^\n]*— назван: /);
+      expect(loose()).not.toMatch(/«zz\.count»/);
+      // Внутренность папки без входа называют одной записью о папке, а не по
+      // записи на каждого, кто в неё ходит.
+      put("components/ZzC/zzInner.ts", "export const zzInner = 1;\n");
+      put("components/ZzD/ZzD.tsx", 'import { zzInner } from "../ZzC/zzInner";\n\nexport const ZzD = () => zzInner;\n');
+      put("components/ZzE/ZzE.tsx", 'import { zzInner } from "../ZzC/zzInner";\n\nexport const ZzE = () => zzInner;\n');
+      expect(loose()).toMatch(/ZzD\.tsx → components\/ZzC\/zzInner\.ts — внутренность единицы переноса components\/ZzC, у которой входа нет/);
+      fs.appendFileSync(
+        path.join(box, ".context", "09-decisions.md"),
+        "\nПроба: у папки `src/components/ZzC/` входа нет — берут внутренность.\n",
+      );
+      expect(loose()).not.toMatch(/ZzC/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

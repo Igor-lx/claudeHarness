@@ -1074,6 +1074,24 @@
       ]
     },
     {
+      "section": "Архитектурный факт назван записью",
+      "unlessStepOpen": "\\blevels\\b|bar\\s+--transition",
+      "edits": [
+        {
+          "create": {
+            "path": "{исходники}/zzCycleA.ts",
+            "text": "import { zzB } from \"./zzCycleB\";\n\nexport const zzA = (): number => zzB() + 1;\n"
+          }
+        },
+        {
+          "create": {
+            "path": "{исходники}/zzCycleB.ts",
+            "text": "import { zzA } from \"./zzCycleA\";\n\nexport const zzB = (): number => (zzA.length > 0 ? 1 : 0);\n"
+          }
+        }
+      ]
+    },
+    {
       "section": "Ворота перед коммитом установлены",
       "edits": [
         {

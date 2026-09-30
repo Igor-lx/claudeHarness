@@ -4063,6 +4063,7 @@ const CHECK_SECTIONS = [
   "В файле узла только сам узел",
   "Предложенное сводом названо находкой",
   "Архитектурный проход перехода запечатан",
+  "Архитектурный факт назван записью",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
   "Запись карты не спорит с кодом",
@@ -4636,11 +4637,14 @@ if (mode === "falsify") {
     // шаг открыт и когда он закрыт, и одним рецептом его не сломать. Прежде
     // рецепт был один, под открытый шаг, и закрытый переход — обычное его
     // окончание — печатал «рецепт устарел». Замерено переходом стенда.
+    // `unlessStepOpen` — сверка, которая краснеет всегда, кроме открытого
+    // шага: проект без перехода ей не мешает, в отличие от `whenStepClosed`.
     const stepIdle = (r) => {
-      const pattern = r.whenStepOpen ?? r.whenStepClosed;
+      const pattern = r.whenStepOpen ?? r.whenStepClosed ?? r.unlessStepOpen;
       if (pattern === undefined) return false;
       const steps = transitionOpen();
       const open = (steps ?? []).some((one) => new RegExp(pattern).test(one.line));
+      if (r.unlessStepOpen !== undefined) return open;
       return r.whenStepOpen !== undefined ? !open : steps === null || open;
     };
     const idleByDesign = (r) => {
@@ -7528,6 +7532,36 @@ const heldBy = (ends, names = []) =>
       ends.every((f) => namesFileIn(text, f)) &&
       names.every((n) => quotedIn(text).includes(n)),
   )?.[0] ?? null;
+/** Где назван архитектурный факт: запись долга перехода, решения, реестра
+ * находок либо вопроса разработчику, называющая путём все его файлы. Один
+ * ответ на режим `levels` и на сверку: два разошлись бы при первой новой
+ * записи. */
+const factNamedBy = (fact) => {
+  const at =
+    CONFIG.questions == null ? null : path.join(BASE, CONFIG.questions);
+  const asked =
+    at !== null && existsSync(at)
+      ? readFileSync(at, "utf8")
+          .split(/\r?\n\s*\r?\n/)
+          .map((text) => [rel0(at), text])
+      : [];
+  // Внутренность единицы без входа — вопрос к самой единице: её называют и
+  // одной записью о папке, а не по записи на каждого, кто в неё ходит.
+  const namesUnit = (text) =>
+    fact.unit != null &&
+    quotedIn(text).some((t) => {
+      const bare = t.replace(/\/+$/, "");
+      return bare === fact.unit || bare.endsWith("/" + fact.unit);
+    });
+  return (
+    [...heldRecords(), ...asked].find(
+      ([, text]) =>
+        namesUnit(text) ||
+        (fact.where.every((f) => namesFileIn(text, f)) &&
+          fact.names.every((n) => quotedIn(text).includes(n))),
+    )?.[0] ?? null
+  );
+};
 /** Известный дефект: факт держит пункт долга перехода либо открытая строка
  * реестра находок, а решение — нет. Решение пометку снимает: разработчик
  * сказал «не сейчас» либо «оставляем», и «чисто» с опорой на него законно.
@@ -7602,6 +7636,7 @@ const levelFacts = () => {
           kind: "граница",
           where: [f, t],
           names: [],
+          unit: unitHasEntry(t) ? null : unitOf(t),
           text: rel(f) + " → " + rel(t) + " — " + insideText(t),
         });
   for (const [key, entry] of storeWrites()) {
@@ -10012,9 +10047,9 @@ if (mode === "levels") {
   const own = files.filter((f) => !isTest(f));
   sayLooked("файлов кода", own.length);
   const facts = levelFacts();
-  // Где факт назван: долг перехода, реестр решений, реестр находок — одной
-  // записью, называющей ВСЕ его файлы (`heldBy`).
-  const namedBy = (fact) => heldBy(fact.where, fact.names);
+  // Где факт назван: долг перехода, реестр решений, реестр находок, вопрос
+  // разработчику — одной записью, называющей ВСЕ его файлы.
+  const namedBy = factNamedBy;
   let loose = 0;
   console.log("=== Архитектурные факты проекта ===");
   if (facts.length === 0) console.log("  фактов нет");
@@ -10058,7 +10093,7 @@ if (mode === "levels") {
       "  Каждый факт называют по адресу: пунктом долга перехода с планом,",
     );
     console.log(
-      "  решением в реестре решений либо строкой реестра находок — одной",
+      "  решением, строкой реестра находок либо вопросом разработчику — одной",
     );
     console.log("  записью, называющей путём все его файлы.");
     process.exit(1);
@@ -17961,6 +17996,48 @@ if (mode === "verify") {
   });
   if (archSaid !== null) console.log("  " + archSaid);
   for (const one of archGaps) console.log("    " + one);
+  // Архитектурный факт назван записью.
+  //
+  // Факт, который машина видит сама, — ребро против правила, цикл, обход
+  // входа, второй писатель ключа, — стоит записью: пунктом долга перехода,
+  // решением, строкой реестра находок либо вопросом разработчику, называющими
+  // путём ВСЕ его файлы. Режим `levels` требовал этого и прежде, но зовут его
+  // переходом и до письма нового узла; факт, принятый коммитом при слабом
+  // своде либо ставший видимым с обновлением инструмента, не говорил о себе
+  // ничем. Замерено кривой кнопкой на мини-стенде: коммит с обходом входа и
+  // вторым писателем лёг зелёным, и обновлённый инструмент видел оба факта
+  // только в `levels`. Пока шаг архитектурного прохода открыт, сверка
+  // печатает ход: называть факты — работа этого шага.
+  const factLoose = [];
+  let factsLooked = 0;
+  let factsSaid = null;
+  {
+    const facts = levelFacts();
+    factsLooked = facts.length;
+    const loose = facts.filter((fact) => factNamedBy(fact) === null);
+    const stepOpen = (transitionOpen() ?? []).some((one) =>
+      /\blevels\b|bar\s+--transition/.test(one.line),
+    );
+    if (stepOpen)
+      factsSaid =
+        "шаг архитектурного прохода открыт: не названо " +
+        loose.length +
+        " — их называет переход";
+    else
+      for (const fact of loose)
+        factLoose.push(
+          fact.kind +
+            ": " +
+            fact.text +
+            ". Назвать пунктом долга, решением, строкой реестра либо вопросом — путём все файлы факта",
+        );
+  }
+  checkHead("Архитектурный факт назван записью", {
+    n: factsLooked,
+    unit: "архитектурных фактов",
+  });
+  console.log(factsSaid !== null ? "  " + factsSaid : "  не названо: " + factLoose.length);
+  for (const one of factLoose) console.log("    " + one);
   // Коммит с кодом накрыт запечатанным сводом — ревизия по ИСТОРИИ.
   //
   // Соседняя сверка спрашивает свод с правленого, то есть с рабочего дерева.
