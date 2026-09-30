@@ -383,14 +383,16 @@ describe("ревизия сводов по истории", () => {
         .split("\n")
         .map((line) => {
           const c = line.split("|");
+          // строка исхода: критерий, предмет, о чём, исход, адрес, что, судьба
           if (
-            c.length === 8 &&
-            c[3].trim() === "" &&
+            c.length === 9 &&
+            !/^ П\d+ $/.test(c[1]) &&
+            c[4].trim() === "" &&
             !/^\s*-+\s*$/.test(c[1]) &&
             c[1].trim() !== "критерий"
           ) {
-            c[3] = " нет предмета ";
-            c[5] = " проба ревизии ";
+            c[4] = " нет предмета ";
+            c[6] = " проба ревизии ";
             return c.join("|");
           }
           if (c.length === 6 && /zzGone|zzKept/.test(c[1]))
@@ -399,10 +401,10 @@ describe("ревизия сводов по истории", () => {
               c[1].trim().replace(/`/g, "") +
               "` | правлено | не требуется | `.context/00-map.md` — проба ревизии |"
             );
-          // Итог по уровням: строка на уровень, диапазоном называет все
-          // строки модели — и сдвиги в их числе.
-          if (c.length === 6 && ["узел", "слой", "приложение"].includes(c[1].trim()))
-            return "| " + c[1].trim() + " | П1–П99 проба ревизии | да | П1–П99 |";
+          // Итог по уровням: строка на предмет уровня, диапазоном называет
+          // все строки модели — и сдвиги в их числе.
+          if (c.length === 7 && ["узел", "слой", "приложение"].includes(c[1].trim()))
+            return "| " + c[1].trim() + " | " + c[2].trim() + " | П1–П99 проба ревизии | да | П1–П99 |";
           return line;
         })
         .join("\n");
@@ -1075,7 +1077,7 @@ describe("база о своём: документы узла, сторона т
       { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
 
-  it("досье находит дверь папки и документ единицы, а не чужие README по имени", () => {
+  it("досье находит дверь папки и документ по её имени, а не чужие README по имени", () => {
     const box = seatEmpty("doki-");
     try {
       const unit = path.join(box, "src", "app", "zzWidget");
@@ -1089,7 +1091,7 @@ describe("база о своём: документы узла, сторона т
       fs.writeFileSync(path.join(box, "docs", "other.md"), "Вход — `index.ts`.\n");
       const docs = sectionOf(toolIn(box)("brief", "app/zzWidget/index.ts"), "документация: дверь папки");
       expect(docs).toContain("дверь папки: app/zzWidget/docs/README.md");
-      expect(docs).toContain("документ по имени единицы: docs/zzWidget.md");
+      expect(docs).toContain("документ по имени папки: docs/zzWidget.md");
       expect(docs).not.toContain("other.md");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
@@ -1175,8 +1177,10 @@ describe("база о своём: документы узла, сторона т
 
 /** Заполнить протокол свода, как заполнила бы его сессия: снятие ресурсов,
  * исходы по умолчанию, база, итог по уровням. `pick` задаёт исход критерия
- * строкой «исход | адрес | что | судьба»; основание ядра по умолчанию
- * называет диапазоном все строки модели — и сдвиги в их числе. */
+ * строкой «исход | адрес | что | судьба» — ключом `критерий` на все его
+ * строки либо `критерий@предмет` на одну; `holds` — одно слово на все
+ * итоги либо ключами `уровень` и `уровень@предмет`. Основание ядра по
+ * умолчанию называет диапазоном все строки модели — и сдвиги в их числе. */
 const fillBar = (protoAt, { release, pick = {}, holds = "да" }) =>
   fs.writeFileSync(
     protoAt,
@@ -1193,27 +1197,34 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) =>
               : " " + release + " ";
           return c.join("|");
         }
-        // итог по уровням; `holds` — одно слово на все уровни либо по уровню
-        if (c.length === 6 && ["узел", "слой", "приложение"].includes(c[1].trim())) {
+        // итог по уровням: уровень, предмет, что, держится, опора
+        if (c.length === 7 && ["узел", "слой", "приложение"].includes(c[1].trim())) {
           const level = c[1].trim();
-          const said = typeof holds === "string" ? holds : (holds[level] ?? "да");
-          return "| " + level + " | П1–П99 разобраны | " + said + " | П1–П99 |";
+          const subject = c[2].trim().replace(/`/g, "");
+          const said =
+            typeof holds === "string"
+              ? holds
+              : (holds[level + "@" + subject] ?? holds[level] ?? "да");
+          return "| " + level + " | " + c[2].trim() + " | П1–П99 разобраны | " + said + " | П1–П99 |";
         }
         // база и документация: строка на файл предмета
         if (c.length === 6 && /^\s*`[^`]+`\s*$/.test(c[1]))
           return c[2].trim() !== ""
             ? line
             : "| " + c[1].trim() + " | правлено | не требуется | `.context/00-map.md` — проба |";
-        if (c.length !== 8 || /^\s*-+\s*$/.test(c[1])) return line;
+        // строка исхода: критерий, предмет, о чём, исход, адрес, что, судьба
+        if (c.length !== 9 || /^\s*-+\s*$/.test(c[1])) return line;
         const id = c[1].trim();
         if (id === "критерий") return line;
-        if (pick[id] !== undefined) return "| " + id + " | x | " + pick[id] + " |";
+        const subject = c[2].trim();
+        const chosen = pick[id + "@" + subject.replace(/`/g, "")] ?? pick[id];
+        if (chosen !== undefined) return "| " + id + " | " + subject + " | x | " + chosen + " |";
         if (["F1", "F2", "E4", "C12"].includes(id))
-          return "| " + id + " | x | чисто |  | снимается, см. П1–П99 |  |";
-        if (c[3].trim() === "") {
-          const core = c[2].includes("**ядро.**");
-          c[3] = core ? " чисто " : " нет предмета ";
-          c[5] = core ? " П1–П99 проба " : " проба ";
+          return "| " + id + " | " + subject + " | x | чисто |  | снимается, см. П1–П99 |  |";
+        if (c[4].trim() === "") {
+          const core = c[3].includes("**ядро.**");
+          c[4] = core ? " чисто " : " нет предмета ";
+          c[6] = core ? " П1–П99 проба " : " проба ";
         }
         return c.join("|");
       })
@@ -1268,7 +1279,7 @@ describe("свод по планке от модели предмета", () => 
       // проверять. Пустой итог уровня — тоже.
       const empty = tool("bar", "app/zzClock.ts");
       expect(empty).toMatch(/П\d+: снятие ресурса не названо/);
-      expect(empty).toContain("итог, узел: не сказано");
+      expect(empty).toContain("итог, узел `app/zzClock.ts`: не сказано");
       fillBar(protoAt, {
         release: "нет",
         pick: { H7: "нет предмета |  | проба | " },
@@ -1286,7 +1297,9 @@ describe("свод по планке от модели предмета", () => 
       );
       const sealed = tool("bar", "app/zzClock.ts");
       expect(sealed).toContain("печать поставлена");
-      expect(sealed).toContain("уровни: узел — держится; слой — держится; приложение — держится");
+      expect(sealed).toContain(
+        "уровни: узел `app/zzClock.ts` — держится; слой `app` — держится; приложение — держится",
+      );
 
       // Правка кода: исходы переносятся, «чисто» ядра и итог уровней
       // сбрасываются — они о коде, которого больше нет.
@@ -1366,11 +1379,11 @@ describe("свод по планке от модели предмета", () => 
       fs.writeFileSync(protoAt, lazy);
       const refused = tool("bar");
       expect(refused).not.toContain("печать поставлена");
-      expect(refused).toMatch(/A5: чисто, а ребро идёт против правила направления: П\d+/);
-      expect(refused).toMatch(/A9-бис: чисто, а правка завела цикл: П\d+/);
+      expect(refused).toMatch(/A5 для `shared`: чисто, а ребро идёт против правила направления: П\d+/);
+      expect(refused).toMatch(/A9-бис для `app`: чисто, а правка завела цикл: П\d+/);
       expect(refused).toMatch(/C6-бис: чисто, а у источника больше одного писателя/);
       expect(refused).toMatch(/чисто без опоры на модель своего уровня: назвать строку уровня «приложение»/);
-      expect(refused).toMatch(/итог, узел: опора не называет ни одной строки модели этого уровня/);
+      expect(refused).toMatch(/итог, узел `[^`]+`: опора не называет ни одной строки модели этого уровня/);
       expect(refused).toMatch(/сдвиг без ответа: П\d+/);
       // «Починено», а модель по нынешнему коду показывает то же: не принято.
       // Протокол начинается заново: ленивые основания иначе переехали бы.
@@ -1379,10 +1392,10 @@ describe("свод по планке от модели предмета", () => 
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: {
-          A5: "нашлось | src/shared/zzPrefs/zzPrefs.ts:1 | общее берёт из приложения | починено",
+          "A5@shared": "нашлось | src/shared/zzPrefs/zzPrefs.ts:1 | общее берёт из приложения | починено",
         },
       });
-      expect(tool("bar")).toMatch(/A5: починено, а ребро против правила в модели осталось/);
+      expect(tool("bar")).toMatch(/A5 для `shared`: починено, а ребро против правила в модели осталось/);
       // Честный ответ: развилки вынесены вопросом, уровни не держатся.
       fs.rmSync(protoAt);
       tool("bar");
@@ -1392,22 +1405,254 @@ describe("свод по планке от модели предмета", () => 
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
-        holds: "нет",
+        // Предмет у каждого ответа свой: узел заголовка не держится, узел
+        // общего — держится, оба слоя и приложение — нет.
+        holds: { узел: "нет", "узел@shared/zzPrefs": "да", слой: "нет", приложение: "нет" },
         pick: {
-          A5: "нашлось | src/shared/zzPrefs/zzPrefs.ts:1 | общее берёт из приложения | вопрос",
-          "A9-бис": "нашлось | src/app/zzTitle.ts:1 | цикл общего и приложения | вопрос",
+          "A5@shared": "нашлось | src/shared/zzPrefs/zzPrefs.ts:1 | общее берёт из приложения | вопрос",
+          "A9-бис@app": "нашлось | src/app/zzTitle.ts:1 | цикл общего и приложения | вопрос",
           "C6-бис": "нашлось | src/app/zzTitle.ts:6 | второй писатель ключа | вопрос",
-          A1: "нашлось | src/app/zzTitle.ts:3 | узел и держит заголовок, и пишет хранилище | вопрос",
+          "A1@app/zzTitle.ts": "нашлось | src/app/zzTitle.ts:3 | узел и держит заголовок, и пишет хранилище | вопрос",
         },
       });
       const sealed = tool("bar");
       expect(sealed).toContain("печать поставлена");
-      expect(sealed).toContain("уровни: узел — не держится; слой — не держится; приложение — не держится");
+      expect(sealed).toContain(
+        "уровни: узел `app/zzTitle.ts` — не держится; узел `shared/zzPrefs` — держится; слой `app` — не держится; слой `shared` — не держится; приложение — не держится",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
 });
+
+describe("ядро по предметам уровня: правка, чтение, переход", () => {
+  const toolAt = (box) => (...args) => {
+    try {
+      return execFileSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } catch (e) {
+      return String(e.stdout ?? "");
+    }
+  };
+  // Два компонента: корзина держит состояние и отдаёт лишнее имя, панель
+  // зовёт корзину.
+  const twoUnits = (box) => {
+    const cart = path.join(box, "src", "components", "zzCart");
+    const bar = path.join(box, "src", "components", "zzBar");
+    fs.mkdirSync(cart, { recursive: true });
+    fs.mkdirSync(bar, { recursive: true });
+    fs.writeFileSync(
+      path.join(cart, "zzCart.tsx"),
+      'import { useState } from "react";\n\nexport const ZZ_CART_KEY = "cart";\n\nexport const ZzCart = ({ items }: { items: number[] }) => {\n  const [total, setTotal] = useState(items.length);\n  return <button onClick={() => setTotal(0)}>{total}</button>;\n};\n',
+    );
+    fs.writeFileSync(
+      path.join(cart, "zzTotal.ts"),
+      "export const zzTotal = (items: number[]): number => items.length;\n",
+    );
+    fs.writeFileSync(
+      path.join(bar, "zzBar.tsx"),
+      'import { ZzCart } from "../zzCart/zzCart";\n\nexport const ZzBar = () => <ZzCart items={[1]} />;\n',
+    );
+  };
+  const modelIdOf = (protoAt, sort, where) =>
+    new RegExp("\\| (П\\d+) \\| " + sort + " \\| `" + where.replace(/[/.]/g, "\\$&"))
+      .exec(fs.readFileSync(protoAt, "utf8"))?.[1] ?? null;
+
+  it("правка двух узлов: ядро узла — по каждому, ответ про один не закрывает другой", () => {
+    const box = seatEmpty("predmety-");
+    try {
+      const tool = toolAt(box);
+      execFileSync("git", ["init", "-q"], { cwd: box });
+      execFileSync(
+        "git",
+        ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", "add", "-A"],
+        { cwd: box },
+      );
+      execFileSync(
+        "git",
+        ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", "commit", "-qm", "посадка", "--no-verify"],
+        { cwd: box },
+      );
+      twoUnits(box);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      expect(tool("bar")).toContain("единиц переноса: components/zzBar, components/zzCart");
+      const printed = fs.readFileSync(protoAt, "utf8");
+      expect(printed).toContain("| A1 | `components/zzBar` |");
+      expect(printed).toContain("| A1 | `components/zzCart` |");
+      // Деталь не раскладывается: одна строка на правку.
+      expect(printed.match(/^\| H7 \|/gm)).toHaveLength(1);
+      // Ответ про панель, опёртый на строку о корзине, и находка про корзину
+      // с адресом в панели — обе не принимаются.
+      const cartRow = modelIdOf(protoAt, "ответственность", "components/zzCart/zzCart.tsx");
+      expect(cartRow).not.toBeNull();
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          "A1@components/zzBar": "чисто |  | один вопрос: " + cartRow + " | ",
+          "A1@components/zzCart": "нашлось | src/components/zzBar/zzBar.tsx:1 | две ответственности | починено",
+        },
+      });
+      const refused = tool("bar");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toMatch(
+        /A1 для `components\/zzBar`: чисто без опоры на модель своего уровня: назвать строку уровня «узел»/,
+      );
+      expect(refused).toContain(
+        "A1 для `components/zzCart`: находка называет `src/components/zzBar/zzBar.tsx` — вне этого предмета",
+      );
+      // Лишнее имя корзины — вопрос к её поверхности.
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { "B7@components/zzCart": "чисто |  | внутреннее не уходит | " },
+      });
+      expect(tool("bar")).toMatch(
+        /B7 для `components\/zzCart`: чисто, а поверхность узла сдвинулась[^\n]*|B7 для `components\/zzCart`: чисто, а в поверхности есть имена/,
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const sealed = tool("bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain(
+        "уровни: узел `components/zzBar` — держится; узел `components/zzCart` — держится; слой `components` — держится; приложение — держится",
+      );
+      // Повторный зов по нетронутому протоколу — не «правлен после печати».
+      expect(tool("bar")).toContain("печать уже стоит");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("чтение: адрес-папка берёт весь узел, и о состоянии спрашивают, хоть оно и не новое", () => {
+    const box = seatEmpty("chtenie-");
+    try {
+      const tool = toolAt(box);
+      twoUnits(box);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      expect(tool("bar", "components/zzCart")).toContain("единиц переноса: components/zzCart;");
+      const printed = fs.readFileSync(protoAt, "utf8");
+      expect(printed).toContain("| `components/zzCart/zzCart.tsx` |");
+      expect(printed).toContain("| `components/zzCart/zzTotal.ts` |");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { A6: "чисто |  | источник один | ", C7: "нет предмета |  | хранить нечего | " },
+      });
+      const refused = tool("bar", "components/zzCart");
+      expect(refused).toMatch(/A6: чисто, а в предмете есть состояние, и в основании не сказано, почему это не второй источник: П\d+/);
+      expect(refused).toMatch(/C7: нет предмета, а в модели он есть: П\d+/);
+      // Набор сузился — политика потеряла критерий: протокол пересобирается,
+      // а не держит строку, которой в своде больше нет.
+      const policy = path.join(box, ".claude", "rules", "quality.md");
+      fs.writeFileSync(
+        policy,
+        fs.readFileSync(policy, "utf8").replace("**H7. Магических чисел нет.** (единица)\n", ""),
+      );
+      expect(tool("bar", "components/zzCart")).toContain("протокол напечатан");
+      expect(fs.readFileSync(protoAt, "utf8")).not.toMatch(/^\| H7 \|/m);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("переход: протокол ядра на каждый предмет, находка — долгом, шаг не закрыть без печати", () => {
+    const box = seatEmpty("perehod-");
+    try {
+      const tool = toolAt(box);
+      twoUnits(box);
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs
+          .readFileSync(cfgAt, "utf8")
+          .replace(
+            "  transition: null,",
+            '  transition: {\n    file: "15-transition.md",\n    heading: "| № | Шаг | Объём | Чем проверяется |",\n    debtHeading: "| № | Расхождение | Сейчас | Держит | План | Цена |",\n  },',
+          ),
+      );
+      const planAt = path.join(box, ".context", "15-transition.md");
+      fs.copyFileSync(path.join(box, ".claude", "seat", "templates", "15-transition.md"), planAt);
+      const step = /\| [0-9]+ \| Архитектурный проход[^\n]*\n/;
+      expect(fs.readFileSync(planAt, "utf8")).toMatch(step);
+      // Бочка слоя — своя единица переноса, но сама ничего не делает.
+      fs.writeFileSync(
+        path.join(box, "src", "components", "index.ts"),
+        'export { ZzCart } from "./zzCart/zzCart";\n',
+      );
+      // Пустой проход: протоколы напечатаны, код не ноль.
+      const first = tool("bar", "--transition");
+      expect(first).toContain("предметов: 5 (единиц переноса 3, слоёв 1, приложение 1)");
+      const dir = path.join(box, ".context", "15-transition-bar");
+      for (const one of [
+        "node--components--zzCart.md",
+        "node--components--zzBar.md",
+        "node--components--index.ts.md",
+        "layer--components.md",
+        "app.md",
+      ])
+        expect(fs.existsSync(path.join(dir, one))).toBe(true);
+      // Ядро одного уровня — и только оно.
+      const cart = fs.readFileSync(path.join(dir, "node--components--zzCart.md"), "utf8");
+      expect(cart).toContain("- род: `на переход`");
+      expect(cart).toContain("| A1 | `components/zzCart` |");
+      expect(cart).not.toMatch(/^\| H7 \|/m);
+      expect(cart).not.toMatch(/^\| A6 \|/m);
+      // У бочки из ядра узла предмет есть только у вопроса о поверхности.
+      const barrel = fs.readFileSync(path.join(dir, "node--components--index.ts.md"), "utf8");
+      expect(barrel).toContain("| B7 | `components/index.ts` |");
+      expect(barrel).not.toMatch(/^\| A1 \|/m);
+      // Находка ложится долгом, и план обязан её назвать.
+      for (const one of readdirOf(dir))
+        fillBar(path.join(dir, one), {
+          release: "не нужно: проба",
+          holds: { "узел@components/zzCart": "нет" },
+          pick: { "B7@components/zzCart": "нашлось | src/components/zzCart/zzCart.tsx:3 | лишнее имя | долг" },
+        });
+      expect(tool("bar", "--transition")).toContain(
+        "«долг», а файл перехода `15-transition.md` не называет `src/components/zzCart/zzCart.tsx`",
+      );
+      fs.writeFileSync(
+        planAt,
+        fs
+          .readFileSync(planAt, "utf8")
+          .replace(
+            "| № | Расхождение | Сейчас | Держит | План | Цена |\n| --- | --- | --- | --- | --- | --- |\n",
+            "| № | Расхождение | Сейчас | Держит | План | Цена |\n| --- | --- | --- | --- | --- | --- |\n| 1 | Лишняя поверхность «B7» | `1` | `graph.mjs bar` | снять имя в `src/components/zzCart/zzCart.tsx` | `1` строка |\n",
+          ),
+      );
+      const done = tool("bar", "--transition");
+      expect(done).toContain("запечатано: 5, с дырами: 0");
+      // Сверка: шаг открыт — ход; закрыт — печати; протоколов нет — красное.
+      const section = () => {
+        let out;
+        try {
+          out = execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          out = String(e.stdout ?? "");
+        }
+        return out.split("=== Архитектурный проход перехода запечатан ===")[1].split("\n===")[0];
+      };
+      expect(section()).toContain("шаг открыт: запечатано на нынешнем коде 5 из 5 предметов");
+      fs.writeFileSync(planAt, fs.readFileSync(planAt, "utf8").replace(step, ""));
+      expect(section()).toContain("шаг закрыт: протоколов 5, все запечатаны");
+      fs.rmSync(dir, { recursive: true, force: true });
+      expect(section()).toContain("    шаг «архитектурный проход» закрыт, а протоколов нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+const readdirOf = (dir) => fs.readdirSync(dir).filter((n) => n.endsWith(".md"));
 
 describe("проба планки из нескольких файлов", () => {
   it("посаженное против направления слоёв свод называет, суд засчитывает", () => {
@@ -1449,9 +1694,9 @@ describe("проба планки из нескольких файлов", () =>
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
-        holds: { слой: "нет" },
+        holds: { "слой@shared": "нет" },
         pick: {
-          A5: "нашлось | src/shared/zzPlantLabel/zzPlantLabel.ts:1 | общий слой берёт из приложения | вопрос",
+          "A5@shared": "нашлось | src/shared/zzPlantLabel/zzPlantLabel.ts:1 | общий слой берёт из приложения | вопрос",
         },
       });
       expect(run(sandbox, "bar")).toContain("печать поставлена");

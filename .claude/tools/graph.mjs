@@ -27,6 +27,7 @@ import {
   barModelFault,
   barLevelFault,
   barDeltaFault,
+  barSplitOf,
   MODEL_LEVEL,
   LEVEL_ORDER,
   codeOf,
@@ -1414,6 +1415,91 @@ const barHeaderOf = (body) => {
 };
 const barHeader = (at) =>
   at === null || !existsSync(at) ? null : barHeaderOf(readFileSync(at, "utf8"));
+
+/** Строки протокола, разобранные: исходы, модель, итог по уровням, база.
+ *
+ * Разбор один на всех, кто протокол читает: режим, две сверки и суд пробы
+ * планки. Их было четыре, и считали графы они по-своему: сверка предложенного
+ * делила строку по любой черте и сбивалась на экранированной внутри клетки.
+ *
+ * Прежняя форма — строка исхода и строка итога без графы предмета — читается
+ * с пустым предметом: протокол, начатый до раскладки ядра по предметам,
+ * переносит исходы, а не теряет их. */
+const BAR_SUMMED = ["узел", "слой", "приложение"];
+const BAR_NO_SUBJECT = "—";
+const barCellsOf = (line) =>
+  line
+    .split(/(?<!\\)\|/)
+    .slice(1, -1)
+    .map((c) => c.trim());
+const barUnTick = (x) => x.split(BAR_TICK).join("");
+const barSubjectCell = (cell) => {
+  const s = barUnTick(cell).trim();
+  return s === BAR_NO_SUBJECT ? "" : s;
+};
+const barKey = (id, subject) => id + "|" + subject;
+const barRowsOf = (body) => {
+  const outcomes = [];
+  const model = [];
+  const levels = [];
+  const base = new Map();
+  for (const line of body.split(/\r?\n/)) {
+    if (!line.startsWith("| ")) continue;
+    const cells = barCellsOf(line);
+    if (cells.length < 4 || /^-+$/.test(cells[0])) continue;
+    if (["критерий", "модель", "уровень", "файл"].includes(cells[0])) continue;
+    if (/^П[0-9]+$/.test(cells[0])) {
+      // Строка модели прежней формы исходом не считается: иначе её номер
+      // читался бы критерием, которого в политике нет.
+      if (cells.length !== 7) continue;
+      const [id, sort, where, what, delta, mark, release] = cells;
+      model.push({
+        id,
+        sort,
+        where: barUnTick(where),
+        what: what.split("\\|").join("|"),
+        delta,
+        mark,
+        release,
+      });
+      continue;
+    }
+    if (BAR_SUMMED.includes(cells[0])) {
+      if (cells.length === 5)
+        levels.push({
+          level: cells[0],
+          subject: barSubjectCell(cells[1]),
+          cells: cells.slice(2),
+        });
+      else if (cells.length === 4)
+        levels.push({ level: cells[0], subject: "", cells: cells.slice(1) });
+      continue;
+    }
+    if (cells[0].startsWith(BAR_TICK)) {
+      if (cells.length === 4) base.set(barUnTick(cells[0]), cells.slice(1));
+      continue;
+    }
+    if (cells.length === 7)
+      outcomes.push({
+        id: cells[0],
+        subject: barSubjectCell(cells[1]),
+        outcome: cells[3],
+        addr: cells[4],
+        what: cells[5],
+        fate: cells[6],
+      });
+    else if (cells.length === 6)
+      outcomes.push({
+        id: cells[0],
+        subject: "",
+        outcome: cells[2],
+        addr: cells[3],
+        what: cells[4],
+        fate: cells[5],
+      });
+  }
+  return { outcomes, model, levels, base };
+};
 
 /** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
 const seedOfPath = () => {
@@ -2970,8 +3056,8 @@ const docsFor = (target) => {
   )
     for (const one of [dir + "/README.md", dir + "/docs/README.md"])
       if (door === null && docFiles.includes(one)) door = one;
-  // Единица — папка файла, а у файла в корне исходников — сам файл. Имя
-  // единицы засчитывается, только если оно в проекте одно: папок `hooks`
+  // Имя — папки файла, а у файла в корне исходников — самого файла. Имя
+  // засчитывается, только если оно в проекте одно: папок `hooks`
   // бывает несколько, и документ `hooks.md` о какой-то одной из них.
   const folder = path.posix.dirname(target);
   const dirs = new Set([...files, ...styleFiles].map((f) => path.posix.dirname(f)));
@@ -3552,7 +3638,7 @@ const transitionOpen = () => {
       .split(/[.:]\s/)[0]
       .replace(/`/g, "")
       .trim();
-    steps.push({ no: cells[0], what: short });
+    steps.push({ no: cells[0], what: short, line });
   }
   return steps.length ? steps : null;
 };
@@ -3958,6 +4044,7 @@ const CHECK_SECTIONS = [
   "В корне узла только сам узел",
   "В файле узла только сам узел",
   "Предложенное сводом названо находкой",
+  "Архитектурный проход перехода запечатан",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
   "Запись карты не спорит с кодом",
@@ -4062,8 +4149,8 @@ const RECIPE_NEEDS = {
   // рецепт ломает ОБЪЯВЛЕНИЕ, а не проектное содержимое таблицы.
   "Связи мимо графа импортов": "domTables",
   "Находки закрыты": "findings",
-  // Предмет этих трёх — сам переход, и у проекта без него ломать нечего:
-  // все три печатают «перехода нет». Прежде их рецепты сами заводили план,
+  // Предмет этих четырёх — сам переход, и у проекта без него ломать нечего:
+  // все четыре печатают «перехода нет». Прежде их рецепты сами заводили план,
   // опираясь на строку `transition: null`, — и у живого проекта сразу после
   // посадки, где план открыт, места не находили. Красную фальсификацию
   // получал каждый живой проект в день посадки: ровно там, где рубеж
@@ -4071,6 +4158,7 @@ const RECIPE_NEEDS = {
   "План перехода не потерялся": "transition",
   "Шаги перехода закрывают измерение": "transition",
   "Напоминание о переходе включено": "transition",
+  "Архитектурный проход перехода запечатан": "transition",
 };
 
 /** Сверки, чей предмет песочница не воспроизводит НИ В ОДНОМ проекте, — с
@@ -6296,7 +6384,7 @@ if (mode === "tested") {
     if (touchedCode.length) {
       // Тот же разбор, что у досье, — `docsFor`: два сканера одного вопроса
       // расходятся, и расходились — голое имя без условия приносило чужие
-      // README, а дверь папки и документ единицы не находил ни один.
+      // README, а дверь папки и документ по её имени не находил ни один.
       const described = [];
       for (const f of touchedCode) {
         const docs = docsFor(f);
@@ -6322,7 +6410,7 @@ if (mode === "tested") {
         if (named.length)
           console.log("    назван в: " + named.slice(0, 8).join(", "));
         if (near.length)
-          console.log("    дверь папки и документ единицы: " + near.join(", "));
+          console.log("    дверь папки и документ по её имени: " + near.join(", "));
       }
       if (described.length)
         console.log(
@@ -6861,30 +6949,26 @@ if (mode === "bar-probe") {
   else if (was.seal !== barSealOf(was.body))
     verdict = "печать не сходится: протокол правлен после неё";
   else {
-    const said = new Map();
-    for (const line of was.body.split(/\r?\n/)) {
-      if (!line.startsWith("| ")) continue;
-      const cells = line
-        .split("|")
-        .slice(1, -1)
-        .map((c) => c.trim());
-      if (cells.length !== 6 || /^-+$/.test(cells[0])) continue;
-      said.set(cells[0], { outcome: cells[2], addr: cells[3], what: cells[4] });
-    }
+    // Разбор протокола общий с режимом. Строк у критерия бывает несколько —
+    // ядро узла и слоя разложено по предметам, — и засчитывается любая.
+    const rows = barRowsOf(was.body).outcomes;
     const planted = culprits.map((f) => path.basename(f));
     const hitsPlanted = (one) =>
-      one !== undefined &&
-      one.outcome === "нашлось" &&
-      planted.some((p) => one.addr.includes(p));
-    const mine = said.get(plant.criterion);
-    if (hitsPlanted(mine)) verdict = "поймано";
-    else if (mine !== undefined && mine.outcome === "нашлось")
-      verdict = "критерий назван, адрес другой: " + mine.addr;
+      one.outcome === "нашлось" && planted.some((p) => one.addr.includes(p));
+    const mine = rows.filter((one) => one.id === plant.criterion);
+    const mineFound = mine.filter((one) => one.outcome === "нашлось");
+    if (mine.some(hitsPlanted)) verdict = "поймано";
+    else if (mineFound.length > 0)
+      verdict =
+        "критерий назван, адрес другой: " +
+        mineFound.map((one) => one.addr).join(", ");
     else {
-      const byOther = [...said.entries()].filter(([, one]) => hitsPlanted(one));
+      const byOther = [
+        ...new Set(rows.filter(hitsPlanted).map((one) => one.id)),
+      ];
       verdict =
         byOther.length > 0
-          ? "названо другим критерием: " + byOther.map(([k]) => k).join(", ")
+          ? "названо другим критерием: " + byOther.join(", ")
           : "мимо";
     }
   }
@@ -7222,8 +7306,9 @@ const WRITER_KINDS = [
   },
 ];
 
-/** Внутренность чужой единицы: файл в папке другого компонента, не её вход.
- * Единица — папка под объявленным слоем компонентов (`componentsAt`): её
+/** Внутренность чужой единицы переноса: файл в папке другого компонента, не
+ * её вход. Единица переноса — папка под объявленным слоем компонентов
+ * (`componentsAt`): её
  * переносят копированием, и берут у неё только вход. */
 const foreignInside = (from, to) => {
   for (const layer of CONFIG.componentsAt ?? ["components"]) {
@@ -7520,7 +7605,7 @@ const instabilityOf = (f) => {
 };
 
 /** Ребро к более неустойчивому: не из бочки — она только отдаёт, — и не
- * внутри одной единицы — там это устройство единицы, а не слоя. */
+ * внутри одной единицы переноса — там это её устройство, а не слоя. */
 const unstableEdge = (f, d) =>
   !isBarrel(f) &&
   !isTest(d) &&
@@ -7556,11 +7641,19 @@ const listCell = (names, room = 8) =>
  * Строка — `{ level, sort, where, what, delta, mark, release }`; номер ставится
  * в конце, по порядку уровней. `delta` — сдвиг против последнего коммита на
  * задаче изменения: `новое`, `снято` либо оба. `mark` — пометка строки:
- * записано ли в базе, против правила ли ребро, мимо ли входа. Связь двух
- * узлов модели между собой строки не даёт: обе стороны уже в модели. */
-const barModelOf = (focus, { kind, subject }) => {
+ * записано ли в базе, против правила ли ребро, мимо ли входа, есть ли в
+ * поверхности лишнее. Связь двух узлов модели между собой строки не даёт:
+ * обе стороны уже в модели.
+ *
+ * `only` сужает модель до видов строк, о которых спросят; `lead` — строки,
+ * которые ставятся первыми. Нужны протоколам перехода: они спрашивают одно
+ * ядро одного уровня, и остальные виды там — чтение, о котором не спросит
+ * ни один их критерий. */
+const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
   const out = [];
-  const add = (sort, where, what, mark = "", delta = "", release = "") =>
+  const want = (sort) => only === null || only.has(sort);
+  const add = (sort, where, what, mark = "", delta = "", release = "") => {
+    if (!want(sort)) return;
     out.push({
       level: MODEL_LEVEL[sort],
       sort,
@@ -7570,8 +7663,13 @@ const barModelOf = (focus, { kind, subject }) => {
       mark,
       release,
     });
+  };
+  for (const one of lead) add(one.sort, one.where, one.what);
   const inFocus = new Set(focus);
   const change = kind === "на изменение";
+  // Переход читает весь код разом: ребро на ребро давало бы сотни строк про
+  // узел, которым пользуются все, и сводится в одну строку на файл.
+  const transition = kind === "на переход";
   const inSubject = new Set(subject);
   const graphAt = path.join(BASE, CONFIG.domTables?.file ?? "03-graph.md");
   const graphText = existsSync(graphAt) ? readFileSync(graphAt, "utf8") : "";
@@ -7615,14 +7713,16 @@ const barModelOf = (focus, { kind, subject }) => {
     const text = readFileSync(f, "utf8");
 
     // --- узел ------------------------------------------------------------
-    const said = mapResponsibilityOf(f);
-    add(
-      "ответственность",
-      where,
-      said === null ? "в карте не описан" : said.slice(0, 140),
-      said === null ? "нет" : "да",
-    );
-    {
+    if (want("ответственность")) {
+      const said = mapResponsibilityOf(f);
+      add(
+        "ответственность",
+        where,
+        said === null ? "в карте не описан" : said.slice(0, 140),
+        said === null ? "нет" : "да",
+      );
+    }
+    if (want("поверхность")) {
       const now = [...(exportsOf.get(f) ?? new Set())].sort();
       const h = headCode(f);
       const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h);
@@ -7636,31 +7736,57 @@ const barModelOf = (focus, { kind, subject }) => {
       if (removed.length) parts.push("сняты: " + listCell(removed));
       if (unused.length) parts.push("снаружи не берут: " + listCell(unused));
       if (byTests.length) parts.push("берут только тесты: " + listCell(byTests));
+      // Имя, которого снаружи не берёт никто, — вопрос к поверхности: либо
+      // она объявлена такой, либо имя лишнее. Пометкой, а не одними словами:
+      // по ней критерий о поверхности спрашивает основание.
       add(
         "поверхность",
         where,
         parts.join("; "),
-        "",
+        unused.length ? "лишнее" : "",
         [added.length ? "новое" : "", removed.length ? "снято" : ""]
           .filter(Boolean)
           .join(", "),
       );
     }
     const { uses } = usesWithVia(f);
-    for (const [d, via] of uses) {
-      if (inFocus.has(d)) continue;
-      add(
-        "зависит",
-        where,
-        rel(d) + (via.size ? " через " + [...via].map(rel).join(", ") : ""),
-        "",
-        fresh.has(d) || [...via].some((v) => fresh.has(v)) ? "новое" : "",
-      );
+    if (want("зависит")) {
+      const away = [...uses].filter(([d]) => !inFocus.has(d));
+      if (transition) {
+        if (away.length)
+          add(
+            "зависит",
+            where,
+            barQuoted(String(away.length)) +
+              ": " +
+              listCell(away.map(([d]) => rel(d))),
+          );
+      } else
+        for (const [d, via] of away)
+          add(
+            "зависит",
+            where,
+            rel(d) + (via.size ? " через " + [...via].map(rel).join(", ") : ""),
+            "",
+            fresh.has(d) || [...via].some((v) => fresh.has(v)) ? "новое" : "",
+          );
     }
-    for (const u of dependentsOf(f))
-      if (!inFocus.has(u) && !isTest(u)) add("пользуется", where, rel(u));
+    if (want("пользуется")) {
+      const users = [...dependentsOf(f)].filter(
+        (u) => !inFocus.has(u) && !isTest(u),
+      );
+      if (transition) {
+        if (users.length)
+          add(
+            "пользуется",
+            where,
+            barQuoted(String(users.length)) + ": " + listCell(users.map(rel)),
+          );
+      } else for (const u of users) add("пользуется", where, rel(u));
+    }
     const lines = text.split(LF);
     const owesState = owedFor(f).some((one) => one.subject === "state");
+    if (want("состояние") || want("ресурс"))
     lines.forEach((line, i) => {
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
       if (BRIEF_SUBJECTS.state.test(line))
@@ -7690,13 +7816,16 @@ const barModelOf = (focus, { kind, subject }) => {
 
     // --- слой ------------------------------------------------------------
     const layer = layerOf(f);
-    add("слой", where, layer + " · единица " + unitOf(f));
-    for (const t of importsOf.get(f) ?? []) {
+    // Протокол перехода — об ОДНОЙ единице переноса либо одном слое: строка
+    // «слой» на каждый его файл повторяла бы одно и то же.
+    if (!transition)
+      add("слой", where, layer + " · единица переноса " + unitOf(f));
+    for (const t of want("граница") ? (importsOf.get(f) ?? []) : []) {
       if (isTest(t) || !foreignInside(f, t)) continue;
       add(
         "граница",
         where,
-        rel(t) + " — мимо входа единицы " + unitOf(t),
+        rel(t) + " — мимо входа единицы переноса " + unitOf(t),
         "мимо входа",
         fresh.has(t) ? "новое" : "",
       );
@@ -7732,7 +7861,7 @@ const barModelOf = (focus, { kind, subject }) => {
         "новое",
       );
     }
-    const cycle = cycleThrough(f);
+    const cycle = want("цикл") ? cycleThrough(f) : null;
     if (cycle !== null) {
       const key = [...new Set(cycle)].sort().join("|");
       if (!seenCycles.has(key)) {
@@ -7746,7 +7875,7 @@ const barModelOf = (focus, { kind, subject }) => {
         );
       }
     }
-    for (const [d, via] of uses) {
+    for (const [d, via] of want("устойчивость") ? uses : []) {
       if (inFocus.has(d) || !unstableEdge(f, d)) continue;
       add(
         "устойчивость",
@@ -7765,7 +7894,7 @@ const barModelOf = (focus, { kind, subject }) => {
     }
 
     // --- приложение ------------------------------------------------------
-    for (const r of records) {
+    for (const r of want("источник") || want("писатель") ? records : []) {
       if (seenRecords.has(r.line) || !namesFileIn(r.line, f)) continue;
       seenRecords.add(r.line);
       add(
@@ -7790,7 +7919,7 @@ const barModelOf = (focus, { kind, subject }) => {
           "да",
         );
     }
-    for (const [key, byFile] of writers) {
+    for (const [key, byFile] of want("писатель") ? writers : []) {
       if (!byFile.has(f) || byFile.size < 2 || seenKeys.has(key)) continue;
       seenKeys.add(key);
       const at = byFile.get(f);
@@ -7804,7 +7933,7 @@ const barModelOf = (focus, { kind, subject }) => {
         isNewLine(lines[at - 1] ?? "") ? "новое" : "",
       );
     }
-    for (const [names, who] of sharedNamesOf(f)) {
+    for (const [names, who] of want("связь") ? sharedNamesOf(f) : []) {
       const recorded = names.some((n) => {
         if (graphText.includes("`" + n + "`")) return true;
         const def = codeLiteralOf(n);
@@ -7812,7 +7941,7 @@ const barModelOf = (focus, { kind, subject }) => {
       });
       add("связь", where, names.join(", ") + " — " + who, recorded ? "да" : "нет");
     }
-    const outward = publicNamesOf(f);
+    const outward = want("наружу") ? publicNamesOf(f) : { names: [], via: [] };
     if (outward.names.length) {
       const h = headCode(f);
       const before = h === undefined || h === null ? null : surfaceOfText(h);
@@ -7830,8 +7959,9 @@ const barModelOf = (focus, { kind, subject }) => {
     }
   }
 
-  // Размах — один на предмет: сколько узлов, единиц и слоёв тронуто. Мера
-  // критерия о цене изменения: правка, задевшая полдерева, говорит о раскладке.
+  // Размах — один на предмет: сколько узлов, единиц переноса и слоёв тронуто.
+  // Мера критерия о цене изменения: правка, задевшая полдерева, говорит о
+  // раскладке.
   {
     const own = subject.filter((f) => !isTest(f));
     if (own.length > 0) {
@@ -7839,10 +7969,10 @@ const barModelOf = (focus, { kind, subject }) => {
       const layers = [...new Set(own.map(layerOf))].sort();
       add(
         "размах",
-        change ? "правка" : "область",
+        change ? "правка" : transition ? "проект" : "область",
         "файлов " +
           barQuoted(String(own.length)) +
-          "; единиц " +
+          "; единиц переноса " +
           barQuoted(String(units.length)) +
           ": " +
           listCell(units, 6) +
@@ -7880,6 +8010,1018 @@ const barModelCode = (model) =>
         m.delta,
     )
     .join(";");
+
+/** Движок протокола свода — общий для задачи изменения, задачи чтения и
+ * перехода.
+ *
+ * Род задаёт предмет, набор критериев и законные судьбы; скелет, разбор и
+ * сверка формы — одни. Переход своего механизма не заводит: его протокол —
+ * тот же свод, чей предмет — единица переноса, слой либо приложение, а
+ * набор — ядро этого уровня. Второй механизм разошёлся бы с первым при
+ * первой же правке формы, и разошёлся бы молча: переход делают редко. */
+const BAR_HEAD = "| критерий | предмет | о чём | исход | адрес | что | судьба |";
+const BAR_BASE_HEAD = "| файл | база | документация | чем это объяснено |";
+const BAR_MODEL_HEAD = "| модель | вид | где | что | сдвиг | пометка | снятие |";
+const BAR_LEVEL_HEAD = "| уровень | предмет | что на уровне | держится | опора |";
+// Открытая находка — та, что не починена: предложена, отложена, задана
+// вопросом, записана долгом перехода.
+const BAR_OPEN = new Set(["предложено", "отложено", "вопрос", "долг"]);
+const barLevelTitle = (level) => level.charAt(0).toUpperCase() + level.slice(1);
+const barSubjectText = (s) => (s === "" ? BAR_NO_SUBJECT : barQuoted(s));
+const barWho = (id, subject) =>
+  id + (subject === "" ? "" : " для " + barQuoted(subject));
+/** Ключ строки модели без номера и без снятия: по нему прежний протокол
+ * узнаёт свою строку в новом, когда номера сдвинулись. */
+const barModelKey = (m) => [m.sort, m.where, m.what].join("|");
+const barByRel = (x, y) => (rel(x) < rel(y) ? -1 : 1);
+
+/** Предметы уровней: единицы переноса и слои, которых касается работа.
+ * Тесты и объявления типов предметом не бывают: узлом продукта они не
+ * являются. */
+const barSubjectsOf = (list) => {
+  const own = list.filter((f) => !isTest(f) && !f.endsWith(".d.ts"));
+  const units = [...new Set(own.map(unitOf))].sort();
+  const all = (u, test) => own.filter((f) => unitOf(f) === u).every(test);
+  return {
+    узел: units,
+    слой: [...new Set(own.map(layerOf))].sort(),
+    // Единица из одних бочек ничего не делает сама, единица из одних листов
+    // стилей не несёт кода: из ядра узла предмет у первой есть только у
+    // вопроса о поверхности, у второй — о владении стилями. Остальные
+    // вопросы там пусты по построению, и строка на каждый была бы набивкой.
+    only: new Map(
+      units.flatMap((u) =>
+        all(u, isBarrel)
+          ? [[u, "B7"]]
+          : all(u, (f) => isStylePath(f))
+            ? [[u, "O1"]]
+            : [],
+      ),
+    ),
+  };
+};
+
+/** Строки исходов, которых ждёт протокол: критерий на каждый предмет своего
+ * уровня, если его раскладывают, иначе одна. */
+const barExpectedOf = (criteria, subjects) =>
+  criteria.flatMap((c) => {
+    const split = barSplitOf(c.id + "|" + c.level);
+    const list = split === "" ? [] : (subjects[split] ?? []);
+    if (list.length === 0) return [{ c, subject: "" }];
+    return list
+      .filter((s) => {
+        const only = split === "узел" ? subjects.only?.get(s) : undefined;
+        return only === undefined || only === c.id;
+      })
+      .map((subject) => ({ c, subject }));
+  });
+
+/** Где лежит строка модели: единица переноса и слой её файла. Строка итога
+ * слоя называет сам слой. */
+let BAR_BY_REL = null;
+const barAbsOf = (where) => {
+  if (BAR_BY_REL === null)
+    BAR_BY_REL = new Map([...files, ...styleFiles].map((f) => [rel(f), f]));
+  return BAR_BY_REL.get(where.replace(/:[0-9]+$/, "")) ?? null;
+};
+const barPlaceOf = (where) => {
+  const f = barAbsOf(where);
+  return f === null
+    ? { unit: null, layer: where }
+    : { unit: unitOf(f), layer: layerOf(f) };
+};
+/** Модель под строку: факты её предмета. «Чисто» про одну единицу переноса
+ * обязано стоять на строке о ней, а не о соседке по правке. */
+const barModelFor = (rows, level, subject) =>
+  subject === "" || level === "приложение"
+    ? rows
+    : rows.filter((r) => {
+        const p = barPlaceOf(r.where);
+        return level === "узел" ? p.unit === subject : p.layer === subject;
+      });
+
+/** Что ЕСТЬ в предмете. Признаки узкие и замеряются текстом: по ним
+ * инструмент сам проставляет «нет предмета» там, где критерий предмета не
+ * касается, — и только там, где это выводится, а не судится.
+ *
+ * Разбор, какой критерий каким признаком закрывается, живёт в словаре
+ * области: здесь только замер. Второй разбор здесь разошёлся бы с первым при
+ * первой же правке набора критериев. */
+const barFlagsOf = (list, manifestTouched) => {
+  const code = list.filter((f) => !isStylePath(f));
+  const styles = list.filter((f) => isStylePath(f));
+  const tests = new Set();
+  for (const f of list) for (const t of testReach().get(f) ?? []) tests.add(t);
+  for (const f of list) if (isTest(f)) tests.add(f);
+  const text = code
+    .map((f) => (existsSync(f) ? codeOf(readFileSync(f, "utf8")) : ""))
+    .join(LF);
+  const has = (re) => re.test(text);
+  return Object.entries({
+    code: code.length > 0,
+    // Вид задаётся и прямо в разметке — строкой классов утилит или
+    // встроенным стилем. Такой вид — тоже предмет раздела стилей, хотя листа
+    // в правке нет; ссылка на класс модуля (`styles.x`) предметом не
+    // считается: её вид лежит в листе.
+    style:
+      styles.length > 0 ||
+      has(
+        /className=\s*["'`]|className=\{\s*(cn|clsx|classnames|twMerge)\(|\bstyle=\{\{/,
+      ),
+    test: tests.size > 0,
+    time: has(
+      /useEffect|useLayoutEffect|setTimeout|setInterval|requestAnimationFrame|addEventListener|new [A-Za-z]*Observer|\.subscribe\(/,
+    ),
+    async: has(/\basync\b|\bawait\b|Promise|\.then\(|AbortController/),
+    list: has(/\.map\(|\.flatMap\(/),
+    manifest: manifestTouched,
+    forks: (CONFIG.forks ?? []).length > 0,
+  })
+    .map(([k, v]) => k + "=" + (v ? "1" : "0"))
+    .join(",");
+};
+
+/** Скелет протокола. Исходы, снятия, итог и база переносятся из `carried`:
+ * правка предмета гасит печать, но не работу. */
+const barSkeletonOf = ({
+  kind,
+  marks,
+  model,
+  expected,
+  levelSubjects,
+  carried,
+  withBase,
+  noneOf,
+}) => {
+  const said0 = carried?.said ?? new Map();
+  const release0 = carried?.releases ?? new Map();
+  const base0 = carried?.baseRows ?? new Map();
+  const level0 = carried?.levelRows ?? new Map();
+  const modelRow = (m) =>
+    "| " +
+    m.id +
+    " | " +
+    m.sort +
+    " | " +
+    barQuoted(m.where) +
+    " | " +
+    m.what.split("|").join("\\|") +
+    " | " +
+    m.delta +
+    " | " +
+    m.mark +
+    " | " +
+    (release0.get(barModelKey(m)) ?? m.release) +
+    " |";
+  // Лозунгу исход проставлен заранее: ставить его нечем, и пустая клетка
+  // тут означала бы работу, которой не существует. Беспредметное на ЭТОМ
+  // предмете — тоже: причина при нём замеренная, и переписать её руками
+  // никто не мешает.
+  const outcomeRow = ({ c, subject }) => {
+    const none = c.slogan ? "" : noneOf(c, subject);
+    // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
+    // замеренная беспредметность берутся заново, остальное — прежнее.
+    const was = said0.get(barKey(c.id, subject));
+    const keep = !c.slogan && none === "" && was !== undefined;
+    const outcome = c.slogan
+      ? "лозунг"
+      : none !== ""
+        ? "нет предмета"
+        : keep
+          ? was.outcome
+          : "";
+    return (
+      "| " +
+      c.id +
+      " | " +
+      barSubjectText(subject) +
+      " | " +
+      // Строка архитектурного ядра помечена в самом протоколе: клетка
+      // основания у неё обязательна, и без пометки она выглядела бы лишней
+      // ровно там, где нужнее всего.
+      (barCoreCriterion(c.id) ? "**ядро.** " : "") +
+      c.title +
+      " | " +
+      outcome +
+      " | " +
+      (keep ? was.addr : "") +
+      " | " +
+      (keep ? was.what : none) +
+      " | " +
+      (keep ? was.fate : "") +
+      " |"
+    );
+  };
+  const table = (list) => [
+    BAR_HEAD,
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...list.map(outcomeRow),
+    "",
+  ];
+  // Предмет — своя таблица: строки одной единицы переноса отвечают подряд,
+  // и ответ про одну не сливается с ответом про соседку.
+  const outcomesOf = (level) => {
+    const mine = expected.filter((e) => e.c.level === level);
+    if (mine.length === 0) return [];
+    const bySubject = new Map();
+    for (const e of mine) {
+      if (!bySubject.has(e.subject)) bySubject.set(e.subject, []);
+      bySubject.get(e.subject).push(e);
+    }
+    const head = ["### " + barLevelTitle(level), ""];
+    const keys = [...bySubject.keys()];
+    if (keys.length === 1 && keys[0] === "") return [...head, ...table(mine)];
+    const out = [...head];
+    for (const s of keys.filter((k) => k !== "").sort())
+      out.push("#### " + barQuoted(s), "", ...table(bySubject.get(s)));
+    if (bySubject.has(""))
+      out.push("#### вся работа", "", ...table(bySubject.get("")));
+    return out;
+  };
+  const transition = kind === "на переход";
+  const rows = [
+    transition
+      ? "# Свод по планке — протокол перехода"
+      : "# Свод по планке — протокол текущей работы",
+    "",
+    "Скелет печатает режим " +
+      barQuoted("bar") +
+      ", исход ставит сессия, печать ставит режим.",
+    "Шапку руками не правят: она описывает предмет, на котором свод сделан,",
+    "и правка предмета гасит печать целиком. Правка самого протокола после",
+    "печати гасит её тоже: печать — отпечаток всего, что ниже.",
+    "",
+    "## Предмет",
+    "",
+    "- род: " + barQuoted(kind),
+    BAR_NOSEAL,
+    "",
+    "| файл | отпечаток |",
+    "| --- | --- |",
+    ...marks.map(
+      (m) => "| " + barQuoted(m.file) + " | " + barQuoted(m.mark) + " |",
+    ),
+    "",
+    "## Модель предмета",
+    "",
+    "Строки собрал инструмент из кода и базы, по уровням. Узел: что он",
+    "делает по карте, его поверхность, зависимости, потребители, состояние,",
+    "ресурсы. Слой: слой и единица переноса, рёбра против правила и новые",
+    "рёбра между слоями, взятое мимо входа единицы переноса, циклы,",
+    "устойчивость. Приложение: источники из записи о состоянии, второй",
+    ...(transition
+      ? [
+          "писатель, связи через имя, выход наружу, размах. Сдвига у перехода",
+          "нет: он читает то, что есть, а не то, что изменилось.",
+        ]
+      : [
+          "писатель, связи через имя, выход наружу, размах. Графа «сдвиг» — что",
+          "работа изменила против последнего коммита; каждый сдвиг получает ответ",
+          "в итоге уровня, в основании либо в находке.",
+        ]),
+    "",
+    "Собранное не правят — оно пересобирается; недостающее дописывают строкой",
+    "со своим номером. Снятие ресурса ставит сессия: " +
+      barQuoted("строка N") +
+      ", " +
+      barQuoted("нет") +
+      " либо",
+    barQuoted("не нужно: причина") +
+      ". Вердикт ядра «чисто» называет строку модели СВОЕГО уровня и",
+    "своего предмета.",
+    "",
+    ...BAR_SUMMED.flatMap((level) => {
+      const mine = model.filter((m) => m.level === level);
+      return mine.length === 0
+        ? []
+        : [
+            "### " + barLevelTitle(level),
+            "",
+            BAR_MODEL_HEAD,
+            "| --- | --- | --- | --- | --- | --- | --- |",
+            ...mine.map(modelRow),
+            "",
+          ];
+    }),
+    "## Исходы",
+    "",
+    "Исход: " +
+      barQuoted("чисто") +
+      " — нарушения нет; " +
+      barQuoted("нет предмета") +
+      " — с причиной",
+    "в колонке «что»; " +
+      barQuoted("нашлось") +
+      " — с адресом «путь:строка», словами и судьбой.",
+    ...(transition
+      ? [
+          "Судьба: " +
+            barQuoted("долг") +
+            " — файл перехода называет файл находки: переход код",
+          "не трогает, и находка ложится пунктом долга с планом; " +
+            barQuoted("вопрос"),
+          "— развилка разработчика, и список вопросов называет файл находки.",
+        ]
+      : [
+          "Судьба: " +
+            barQuoted("починено") +
+            " — адрес обязан быть в правленом; " +
+            barQuoted("предложено"),
+          "— только на задаче чтения; " +
+            barQuoted("отложено") +
+            " — после ответа разработчика, и список",
+          "отложенного называет файл находки; " +
+            barQuoted("вопрос") +
+            " — развилка разработчика, и список",
+          "вопросов называет файл находки.",
+        ]),
+    "",
+    ...(transition
+      ? [
+          "Здесь — ядро одного уровня об ОДНОМ предмете: находка называет файл",
+          "этого предмета. Прочие критерии спросит свод на правке, когда код",
+          "тронут.",
+        ]
+      : [
+          "Критерии разложены по уровню, на котором их судят. Ядро уровня узла",
+          "спрашивают по каждой единице переноса предмета, ядро уровня слоя — по",
+          "каждому слою: у строки графа «предмет», и находка в ней называет файл",
+          "этого предмета. Остальное — одной строкой на работу.",
+        ]),
+    "",
+    ...LEVEL_ORDER.flatMap(outcomesOf),
+    "## Итог по уровням",
+    "",
+    "Строка на предмет уровня: что работа изменила на нём (на задаче чтения",
+    "и на переходе — как он устроен), держится ли он — " +
+      barQuoted("да") +
+      " либо " +
+      barQuoted("нет") +
+      ",",
+    "— и на каких строках модели это стоит. Открытая находка предмета",
+    "означает «не держится», и наоборот. Правка, безупречная в каждой строке,",
+    "ломает именно здесь.",
+    "",
+    BAR_LEVEL_HEAD,
+    "| --- | --- | --- | --- | --- |",
+    ...BAR_SUMMED.flatMap((level) =>
+      (levelSubjects[level] ?? []).map(
+        (s) =>
+          "| " +
+          level +
+          " | " +
+          barSubjectText(s) +
+          " | " +
+          (level0.get(barKey(level, s)) ?? ["", "", ""]).join(" | ") +
+          " |",
+      ),
+    ),
+    "",
+    ...(withBase
+      ? [
+          "## База и документация",
+          "",
+          "Ответ на каждый файл предмета ПОРОЗНЬ: правлена ли запись базы",
+          "о нём, правлен ли документ. Один ответ на оба вопроса сливает их,",
+          "а слитый ответ всегда положителен.",
+          "",
+          "Исход: " +
+            barQuoted("правлено") +
+            " — с адресом правленого; " +
+            barQuoted("не требуется") +
+            " — с причиной.",
+          "",
+          BAR_BASE_HEAD,
+          "| --- | --- | --- | --- |",
+          ...marks.map(
+            (m) =>
+              "| " +
+              barQuoted(m.file) +
+              " | " +
+              (base0.get(m.file) ?? ["", "", ""]).join(" | ") +
+              " |",
+          ),
+          "",
+        ]
+      : []),
+  ];
+  return rows.join(LF);
+};
+
+/** Перенос исходов из прежнего протокола в новый скелет.
+ *
+ * Прежняя форма протокола и смена предмета единственной строки переносятся
+ * тоже: критерий, у которого и была, и осталась одна строка, переносит её
+ * исход; итог — так же, по уровню. Иначе протокол, начатый до раскладки ядра
+ * по предметам, терял бы всю сделанную работу разом. */
+const barCarryOf = (parsed, expected, levelSubjects) => {
+  const said = new Map();
+  const byId = new Map();
+  for (const o of parsed.outcomes) {
+    said.set(barKey(o.id, o.subject), o);
+    byId.set(o.id, [...(byId.get(o.id) ?? []), o]);
+  }
+  for (const { c, subject } of expected) {
+    const k = barKey(c.id, subject);
+    if (said.has(k)) continue;
+    const now = expected.filter((e) => e.c.id === c.id).length;
+    const before = byId.get(c.id) ?? [];
+    if (now === 1 && before.length === 1) said.set(k, before[0]);
+  }
+  const levelRows = new Map(
+    parsed.levels.map((l) => [barKey(l.level, l.subject), l.cells]),
+  );
+  for (const level of BAR_SUMMED) {
+    const now = levelSubjects[level] ?? [];
+    const before = parsed.levels.filter((l) => l.level === level);
+    if (
+      now.length === 1 &&
+      before.length === 1 &&
+      !levelRows.has(barKey(level, now[0]))
+    )
+      levelRows.set(barKey(level, now[0]), before[0].cells);
+  }
+  return {
+    said,
+    releases: new Map(parsed.model.map((r) => [barModelKey(r), r.release])),
+    baseRows: parsed.base,
+    levelRows,
+  };
+};
+
+/** Сверка формы протокола: дыры словами. Исход в каждой ожидаемой строке,
+ * адрес находки на диске и в своём предмете, судьба с записью там, куда она
+ * ведёт, согласие с моделью предмета строки, итог по каждому предмету,
+ * ответ на каждый сдвиг, база и документация. */
+const barHolesOf = ({
+  kind,
+  parsed,
+  expected,
+  levelSubjects,
+  repoRoot,
+  changedNow,
+  withBase,
+  marks,
+}) => {
+  const holes = [];
+  const said = new Map();
+  const twice = [];
+  for (const one of parsed.outcomes) {
+    const key = barKey(one.id, one.subject);
+    if (said.has(key)) twice.push(barWho(one.id, one.subject));
+    said.set(key, one);
+  }
+  const wanted = new Set(expected.map((e) => barKey(e.c.id, e.subject)));
+  const extra = [...said.values()]
+    .filter((one) => !wanted.has(barKey(one.id, one.subject)))
+    .map((one) => barWho(one.id, one.subject));
+  // Адрес находки принимается в обеих ходовых формах: от корня репозитория
+  // (так печатают git, редактор и отчёт) и от корня исходников (так печатает
+  // база). Отказ по одной из них звучал бы как «файла нет» про существующий
+  // файл — тот самый класс, что уже записан у разбора путей-аргументов.
+  const spotFile = (p) => {
+    for (const one of [path.join(repoRoot, p), path.join(ROOT, p)]) {
+      const abs = norm(one);
+      if (existsSync(abs)) return abs;
+    }
+    return null;
+  };
+  const spotOf = (addr) => /^`?(.+?):([0-9]+)`?$/.exec(addr);
+  const formsOf = (spot, abs) => [
+    spot[1],
+    norm(path.relative(repoRoot, abs)),
+    norm(path.relative(ROOT, abs)),
+  ];
+  // Запись, куда ведёт судьба: список вопросов, отложенное, долг перехода.
+  const namedIn = (field, what, spot, abs) => {
+    const file = field === "transition" ? CONFIG.transition?.file : CONFIG[field];
+    const at = file == null ? null : path.join(BASE, file);
+    const text = at !== null && existsSync(at) ? readFileSync(at, "utf8") : null;
+    if (text !== null && formsOf(spot, abs).some((f) => text.includes(f)))
+      return "";
+    return text === null
+      ? what + " нет (поле `" + field + "`)"
+      : what + " " + barQuoted(file) + " не называет " + barQuoted(spot[1]);
+  };
+  for (const { c, subject } of expected) {
+    const who = barWho(c.id, subject);
+    const one = said.get(barKey(c.id, subject)) ?? {
+      outcome: "",
+      addr: "",
+      what: "",
+      fate: "",
+    };
+    // Чистая часть разбора живёт в словаре области: закрытые словари,
+    // законность судьбы при роде задачи, вид адреса.
+    const fault = barRowFault(
+      [kind, one.outcome, one.addr, one.what, one.fate, c.id].join("|"),
+    );
+    if (fault !== "") {
+      // Неверное значение называется тут же: сообщение, после которого надо
+      // идти искать строку глазами, перестают читать.
+      const shown = {
+        "исход не из словаря": one.outcome,
+        "судьба не из словаря": one.fate,
+        "адрес не вида путь:строка": one.addr,
+      }[fault];
+      holes.push(
+        who + ": " + fault + (shown === undefined ? "" : ": «" + shown + "»"),
+      );
+      continue;
+    }
+    if (one.outcome !== "нашлось") continue;
+    const spot = spotOf(one.addr);
+    if (spot === null) continue;
+    const abs = spotFile(spot[1]);
+    if (abs === null) {
+      holes.push(who + ": файла " + barQuoted(spot[1]) + " нет");
+      continue;
+    }
+    const lines = readFileSync(abs, "utf8").split(/\r?\n/).length;
+    if (Number(spot[2]) < 1 || Number(spot[2]) > lines)
+      holes.push(
+        who +
+          ": строки " +
+          spot[2] +
+          " в " +
+          barQuoted(spot[1]) +
+          " нет, всего " +
+          lines,
+      );
+    // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
+    // одну единицу переноса закрывал бы вопрос о другой.
+    if (subject !== "") {
+      const inside =
+        c.level === "узел"
+          ? unitOf(abs) === subject
+          : c.level === "слой"
+            ? layerOf(abs) === subject
+            : true;
+      if (!inside)
+        holes.push(
+          who + ": находка называет " + barQuoted(spot[1]) + " — вне этого предмета",
+        );
+    }
+    if (one.fate === "починено" && !changedNow.has(abs))
+      holes.push(
+        who +
+          ": «починено», а " +
+          barQuoted(spot[1]) +
+          " в правленом не числится",
+      );
+    // «Вопрос» — развилка разработчика: список вопросов называет файл
+    // находки, иначе вопрос живёт только в протоколе и исчезнет с ним.
+    // «Отложено» — после ответа разработчика, и запись уходит в отложенное:
+    // прежде судьба принималась голой, и отложенная находка исчезала со
+    // следующим проходом. «Долг» — находка перехода: план называет её файл.
+    for (const [fate, field, what] of [
+      ["вопрос", "questions", "список вопросов"],
+      ["отложено", "todo", "отложенное"],
+      ["долг", "transition", "файл перехода"],
+    ]) {
+      if (one.fate !== fate) continue;
+      const loose = namedIn(field, what, spot, abs);
+      if (loose !== "") holes.push(who + ": «" + fate + "», а " + loose);
+    }
+  }
+  // Модель предмета: снятие у каждого ресурса названо, и вердикты с моделью
+  // согласны. Правила — в словаре области (`barModelFault`): они про виды
+  // строк, общие любому коду, и гоняются его самопроверкой.
+  const RELEASE = /^(нет|строка [0-9]+|есть: строка [0-9]+|не нужно: .+)$/;
+  for (const r of parsed.model) {
+    if (r.sort !== "ресурс") continue;
+    if (r.release === "")
+      holes.push(r.id + ": снятие ресурса не названо (" + r.where + ")");
+    else if (!RELEASE.test(r.release))
+      holes.push(r.id + ": снятие не из словаря: «" + r.release + "»");
+  }
+  // Клетка словаря несёт черту только экранированной; в строку для словаря
+  // она идёт косой, иначе строка распалась бы не по своим графам.
+  const flat = (x) => (x ?? "").split("\\|").join("/");
+  for (const { c, subject } of expected) {
+    const one = said.get(barKey(c.id, subject));
+    if (one === undefined) continue;
+    const code = barModelCode(barModelFor(parsed.model, c.level, subject));
+    const fault = barModelFault(
+      [c.id, one.outcome, flat(one.what), kind, code, c.level, one.fate].join(
+        "|",
+      ),
+    );
+    if (fault !== "") holes.push(barWho(c.id, subject) + ": " + fault);
+  }
+  // Итог по уровням: строка на предмет уровня, согласная с моделью и с
+  // исходами. Открытая находка предмета — по её адресу.
+  const levelMap = new Map(
+    parsed.levels.map((l) => [barKey(l.level, l.subject), l.cells]),
+  );
+  const openOf = (level, s) =>
+    expected.filter(({ c, subject }) => {
+      if (c.level !== level) return false;
+      const one = said.get(barKey(c.id, subject));
+      if (
+        one === undefined ||
+        one.outcome !== "нашлось" ||
+        !BAR_OPEN.has(one.fate)
+      )
+        return false;
+      if (s === "") return true;
+      const spot = spotOf(one.addr);
+      const abs = spot === null ? null : spotFile(spot[1]);
+      if (abs === null) return subject === s;
+      return level === "узел" ? unitOf(abs) === s : layerOf(abs) === s;
+    }).length;
+  for (const level of BAR_SUMMED)
+    for (const s of levelSubjects[level] ?? []) {
+      const row = levelMap.get(barKey(level, s)) ?? ["", "", ""];
+      const fault = barLevelFault(
+        [
+          level,
+          flat(row[0]),
+          flat(row[1]),
+          flat(row[2]),
+          barModelCode(barModelFor(parsed.model, level, s)),
+          openOf(level, s),
+        ].join("|"),
+      );
+      if (fault !== "")
+        holes.push(
+          "итог, " + level + (s === "" ? "" : " " + barQuoted(s)) + ": " + fault,
+        );
+    }
+  // Каждый сдвиг модели получил ответ: в итоге уровня, в основании
+  // критерия либо в находке. Сдвиг, о котором промолчали, — ровно та
+  // поломка, которой строки правки не показывают.
+  const answered = [
+    ...[...levelMap.values()].flat(),
+    ...[...said.values()].flatMap((one) => [one.addr, one.what]),
+  ]
+    .map(flat)
+    .join(" ");
+  const loose = barDeltaFault(barModelCode(parsed.model) + "|" + answered);
+  if (loose !== "") holes.push(loose);
+
+  // Вторая таблица: база и документация, по файлу предмета и порознь.
+  //
+  // Прежде это был вопрос прозой в другом режиме, и ответ на него держался
+  // памятью. Замерено на приложении с нуля: карта заполнена, реестр тестов
+  // заполнен — у обоих есть сверка, — а запись о состоянии, назначение и
+  // витрина остались от посадки. База заполняется по форме своего ловца.
+  if (withBase) {
+    // Файл, которого карта не называет своей записью, базу не освобождает:
+    // «не требуется» у него неверно без суждения — прочитанное в области
+    // обязано лечь в базу, иначе следующий заход читает его заново. Имя
+    // сличается хвостом: снисходительно, ложного отказа это не даёт.
+    const mapAt = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
+    const mapLines =
+      mapAt !== null && existsSync(mapAt)
+        ? readFileSync(mapAt, "utf8").split(/\r?\n/)
+        : [];
+    const owned = mapLines
+      .filter((l) => l.startsWith("#"))
+      .concat(mapLines.filter((l) => l.startsWith("|")).map(firstCellOf));
+    const unmapped = (file) => {
+      const tail = file.slice(file.lastIndexOf("/") + 1);
+      return !owned.some((cell) => cell.includes(tail));
+    };
+    for (const { file } of marks) {
+      const c = parsed.base.get(file);
+      if (c === undefined) {
+        holes.push("база: строки про " + barQuoted(file) + " нет");
+        continue;
+      }
+      for (const [i, what] of [
+        [0, "база"],
+        [1, "документация"],
+      ]) {
+        const one = c[i];
+        if (one === "") {
+          holes.push(file + ", " + what + ": исход не поставлен");
+          continue;
+        }
+        if (!["правлено", "не требуется"].includes(one)) {
+          holes.push(
+            file + ", " + what + ": исход не из словаря: " + barQuoted(one),
+          );
+          continue;
+        }
+        if (i === 0 && one === "не требуется" && unmapped(file))
+          holes.push(
+            file +
+              ", база: " +
+              barQuoted("не требуется") +
+              " у файла без своей записи в карте — прочитанное ложится в базу",
+          );
+        if (c[2] === "")
+          holes.push(
+            file +
+              ", " +
+              what +
+              ": " +
+              one +
+              (one === "правлено" ? " без адреса" : " без причины"),
+          );
+      }
+    }
+  }
+  return { holes, twice, extra, said, levelMap };
+};
+
+/** Протокол по месту: пересобрать, сверить, запечатать.
+ *
+ * Возвращает, что случилось: `напечатан` (предмет или модель изменились —
+ * скелет пересобран, исходы перенесены), `запечатан`, `дыры`, `правлен` —
+ * печать стоит и с телом не сходится. Печатает тот, кто зовёт: у задачи
+ * изменения и у перехода разный вывод. */
+const barProcess = ({
+  at,
+  kind,
+  marks,
+  model,
+  expected,
+  levelSubjects,
+  withBase,
+  noneOf,
+  repoRoot,
+  changedNow,
+}) => {
+  const was = barHeader(at);
+  const parsedWas = was === null ? null : barRowsOf(was.body);
+  // Собранные инструментом строки модели совпадают с тем, что он соберёт
+  // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
+  const sameModel = (rows) =>
+    model.every((m, k) => {
+      const r = rows[k];
+      return (
+        r !== undefined &&
+        r.id === m.id &&
+        r.sort === m.sort &&
+        r.where === m.where &&
+        r.what === m.what &&
+        r.delta === m.delta &&
+        r.mark === m.mark
+      );
+    });
+  // Набор строк — ровно ожидаемый: недостающая строка и лишняя одинаково
+  // означают, что скелет печатался под другой набор — политика сменилась,
+  // единица переноса стала бочкой, — и протокол пересобирается с переносом.
+  const sameRows =
+    parsedWas !== null &&
+    (() => {
+      const want = new Set(expected.map((e) => barKey(e.c.id, e.subject)));
+      const have = new Set(
+        parsedWas.outcomes.map((o) => barKey(o.id, o.subject)),
+      );
+      return want.size === have.size && [...want].every((k) => have.has(k));
+    })();
+  const sameSubject =
+    was !== null &&
+    was.kind === kind &&
+    barSameMarks(was.marks, marks) &&
+    sameModel(parsedWas.model) &&
+    sameRows;
+  if (!sameSubject) {
+    // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
+    // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
+    // форматтера по новому тесту стирал сто восемьдесят исходов разом —
+    // замерено на стенде. Сбрасывается только «чисто» ядра, когда правлен
+    // код: вердикт о форме целого стоит на том коде, которого больше нет.
+    // Род задачи сменился — переносить нечего: законные судьбы другие.
+    const carry =
+      was !== null && was.kind === kind
+        ? barCarryOf(parsedWas, expected, levelSubjects)
+        : null;
+    const edited = [];
+    if (was !== null) {
+      const before = new Map(was.marks.map((m) => [m.file, m.mark]));
+      for (const m of marks)
+        if (before.get(m.file) !== m.mark) edited.push(m.file);
+    }
+    let reset = 0;
+    if (carry !== null && edited.length > 0) {
+      for (const [k, one] of carry.said)
+        if (
+          one.outcome === "чисто" &&
+          barCoreCriterion(k.slice(0, k.indexOf("|")))
+        ) {
+          carry.said.delete(k);
+          reset += 1;
+        }
+      // Итог по уровням — тоже вердикт о форме целого: стоит он на коде,
+      // которого больше нет, и пишется заново.
+      carry.levelRows = new Map();
+    }
+    const lost =
+      was === null || carry !== null
+        ? 0
+        : parsedWas.outcomes.filter((one) => one.outcome !== "").length;
+    mkdirSync(path.dirname(at), { recursive: true });
+    writeFileSync(
+      at,
+      barSkeletonOf({
+        kind,
+        marks,
+        model,
+        expected,
+        levelSubjects,
+        carried: carry,
+        withBase,
+        noneOf,
+      }),
+    );
+    return {
+      state: "напечатан",
+      carried:
+        carry === null
+          ? 0
+          : [...carry.said.values()].filter((one) => one.outcome !== "")
+              .length,
+      reset,
+      edited,
+      levelReset: carry !== null && edited.length > 0,
+      lost,
+    };
+  }
+  const body = was.body;
+  const { holes, twice, extra, said, levelMap } = barHolesOf({
+    kind,
+    parsed: parsedWas,
+    expected,
+    levelSubjects,
+    repoRoot,
+    changedNow,
+    withBase,
+    marks,
+  });
+  const found = expected
+    .map(({ c, subject }) => ({
+      who: barWho(c.id, subject),
+      one: said.get(barKey(c.id, subject)),
+    }))
+    .filter(({ one }) => one !== undefined && one.outcome === "нашлось");
+  const levels = BAR_SUMMED.flatMap((level) =>
+    (levelSubjects[level] ?? []).map(
+      (s) =>
+        level +
+        (s === "" ? "" : " " + barQuoted(s)) +
+        " — " +
+        ((levelMap.get(barKey(level, s)) ?? ["", ""])[1] === "да"
+          ? "держится"
+          : "не держится"),
+    ),
+  );
+  if (holes.length || twice.length || extra.length)
+    return {
+      state: "дыры",
+      holes,
+      twice,
+      extra,
+      blank: expected.filter(
+        ({ c, subject }) =>
+          (said.get(barKey(c.id, subject))?.outcome ?? "") === "",
+      ).length,
+    };
+  const seal = barSealOf(body);
+  // Печать уже стоит и сходится с телом — протокол закрыт на этом виде
+  // предмета, и повторный зов об этом и говорит. Прежде он отвечал «правлен
+  // после печати» про нетронутый протокол.
+  if (was.seal !== null && was.seal !== "нет") {
+    if (was.seal === seal)
+      return { state: "запечатан", seal, found, levels, already: true };
+    // Печать пишется ЗАМЕНОЙ строки «печать: нет». Если печать стоит и не
+    // сходится, протокол правлен после неё: правка после печати её гасит,
+    // и перепечатывать значило бы разрешить править исходы под уже
+    // закрытым сводом.
+    return { state: "правлен" };
+  }
+  writeFileSync(at, body.split(BAR_NOSEAL).join("- печать: " + barQuoted(seal)));
+  return { state: "запечатан", seal, found, levels, already: false };
+};
+
+/** Папка протоколов перехода — рядом с файлом перехода, по его имени. Её
+ * снимают вместе с ним: протоколы нужны, пока переход идёт. */
+const barTransitionDir = () => {
+  const file = CONFIG.transition?.file;
+  if (file == null) return null;
+  return path.join(BASE, path.dirname(file), path.basename(file, ".md") + "-bar");
+};
+
+/** Предметы перехода: каждая единица переноса, каждый слой и приложение — по
+ * всему коду и стилям проекта, кроме тестов, объявлений типов и семян
+ * обвязки, лежащих нетронутыми: это работа обвязки, а не проекта. */
+const barTransitionSubjects = () => {
+  const dir = barTransitionDir();
+  if (dir === null) return [];
+  const repoRoot = path.join(BASE, "..");
+  const seeds = seedOfPath();
+  const own = [...files, ...styleFiles]
+    .filter(
+      (f) =>
+        !isTest(f) &&
+        !f.endsWith(".d.ts") &&
+        !untouchedSeed(f, repoRoot, seeds),
+    )
+    .sort(barByRel);
+  const group = (keyOf) => {
+    const out = new Map();
+    for (const f of own) {
+      const k = keyOf(f);
+      if (!out.has(k)) out.set(k, []);
+      out.get(k).push(f);
+    }
+    return [...out].sort(([a], [b]) => (a < b ? -1 : 1));
+  };
+  const slug = (x) => x.split("/").join("--").replace(/\s+/g, "_");
+  return [
+    ...group(unitOf).map(([key, list]) => ({
+      level: "узел",
+      key,
+      files: list,
+      at: path.join(dir, "node--" + slug(key) + ".md"),
+    })),
+    ...group(layerOf).map(([key, list]) => ({
+      level: "слой",
+      key,
+      files: list,
+      at: path.join(dir, "layer--" + slug(key) + ".md"),
+    })),
+    ...(own.length
+      ? [{ level: "приложение", key: "", files: own, at: path.join(dir, "app.md") }]
+      : []),
+  ];
+};
+
+/** Виды строк модели, о которых спросит ядро уровня. Остальное в протоколе
+ * перехода — чтение, о котором не спросит ни один его критерий.
+ *
+ * Приложению нужно и состояние: источник истины один ли и не хранится ли
+ * производное — вопрос о ВСЁМ состоянии проекта разом, а раздвоение видно
+ * только в перечне, где обе копии стоят рядом. */
+const BAR_TRANSITION_SORTS = {
+  узел: new Set([
+    "ответственность",
+    "поверхность",
+    "зависит",
+    "пользуется",
+    "состояние",
+    "граница",
+  ]),
+  слой: new Set(["слой", "граница", "направление", "цикл", "устойчивость"]),
+  приложение: new Set([
+    "источник",
+    "писатель",
+    "связь",
+    "наружу",
+    "размах",
+    "состояние",
+  ]),
+};
+
+/** Протокол перехода для одного предмета: модель, ожидаемые строки, итог. */
+const barTransitionPlan = (s, live) => {
+  const criteria = live.all.filter(
+    (c) => c.level === s.level && barCoreCriterion(c.id),
+  );
+  const expected = barExpectedOf(
+    criteria,
+    s.level === "узел"
+      ? barSubjectsOf(s.files)
+      : s.level === "слой"
+        ? { слой: [s.key] }
+        : {},
+  );
+  const lead =
+    s.level === "слой"
+      ? [
+          {
+            sort: "слой",
+            where: s.key,
+            what:
+              "файлов " +
+              barQuoted(String(s.files.length)) +
+              "; единиц переноса " +
+              barQuoted(String(new Set(s.files.map(unitOf)).size)) +
+              ": " +
+              listCell([...new Set(s.files.map(unitOf))].sort(), 6),
+          },
+        ]
+      : [];
+  const model = barModelOf(s.files, {
+    kind: "на переход",
+    subject: s.files,
+    only: BAR_TRANSITION_SORTS[s.level],
+    lead,
+  });
+  const flags = barFlagsOf(s.files, false);
+  return {
+    kind: "на переход",
+    marks: barMarks(s.files),
+    model,
+    expected,
+    levelSubjects: { [s.level]: [s.key] },
+    withBase: false,
+    noneOf: (c) => barNoSubject(c.id + "|" + flags),
+  };
+};
 
 if (mode === "bar") {
   {
@@ -7923,11 +9065,120 @@ if (mode === "bar") {
     console.log("  (узел), (слой) или (приложение).");
     process.exit(1);
   }
+  const repoRoot = path.join(BASE, "..");
+
+  // Переход — тот же свод, чей предмет весь код: протокол ядра на каждую
+  // единицу переноса, каждый слой и приложение. Один вызов пересобирает
+  // изменившееся, сверяет заполненное и запечатывает готовое; код ноль —
+  // когда запечатано всё и на нынешнем коде.
+  if (process.argv.includes("--transition")) {
+    const dir = barTransitionDir();
+    const planAt =
+      dir === null ? null : path.join(BASE, CONFIG.transition.file);
+    if (dir === null || !existsSync(planAt)) {
+      console.log("=== Свод перехода: перехода нет ===");
+      console.log(
+        "  Поле `transition` пусто либо файла перехода нет: протоколы прохода",
+      );
+      console.log(
+        "  нужны только живому проекту, пока идёт переход. Свод текущей работы —",
+      );
+      console.log("  `graph.mjs bar` без флага.");
+      process.exit(1);
+    }
+    const subjects = barTransitionSubjects();
+    mkdirSync(dir, { recursive: true });
+    // Протокол о предмете, которого больше нет, описывает ничто: снимается
+    // тем же вызовом и называется.
+    const wantAt = new Set(subjects.map((s) => norm(s.at)));
+    const orphans = readdirSync(dir).filter(
+      (n) => n.endsWith(".md") && !wantAt.has(norm(path.join(dir, n))),
+    );
+    for (const n of orphans) rmSync(path.join(dir, n));
+    const tally = { напечатан: [], запечатан: [], дыры: [], правлен: [] };
+    let rows = 0;
+    for (const s of subjects) {
+      const plan = barTransitionPlan(s, live);
+      rows += plan.expected.length;
+      const r = barProcess({
+        at: s.at,
+        ...plan,
+        repoRoot,
+        changedNow: new Set(),
+      });
+      tally[r.state].push({ s, r });
+    }
+    console.log("=== Свод перехода ===");
+    console.log("  " + rel0(dir));
+    console.log(
+      "  предметов: " +
+        subjects.length +
+        " (единиц переноса " +
+        subjects.filter((s) => s.level === "узел").length +
+        ", слоёв " +
+        subjects.filter((s) => s.level === "слой").length +
+        ", приложение " +
+        subjects.filter((s) => s.level === "приложение").length +
+        "), строк исходов: " +
+        rows,
+    );
+    console.log(
+      "  запечатано: " +
+        tally.запечатан.length +
+        ", с дырами: " +
+        tally.дыры.length +
+        " (строк без исхода: " +
+        tally.дыры.reduce((n, { r }) => n + r.blank, 0) +
+        "), пересобрано: " +
+        tally.напечатан.length +
+        ", правлено после печати: " +
+        tally.правлен.length,
+    );
+    if (orphans.length)
+      console.log("  снято протоколов о предметах, которых нет: " + orphans.join(", "));
+    for (const { s, r } of tally.напечатан.slice(0, 20))
+      console.log(
+        "  пересобран: " +
+          rel0(s.at) +
+          (r.reset > 0 ? " — «чисто» ядра сброшено: " + r.reset : ""),
+      );
+    for (const { s, r } of tally.дыры.slice(0, 20))
+      console.log(
+        "  дыр " +
+          (r.holes.length + r.twice.length + r.extra.length) +
+          ": " +
+          rel0(s.at) +
+          " — " +
+          [...r.holes, ...r.twice, ...r.extra].slice(0, 2).join("; "),
+      );
+    for (const { s } of tally.правлен)
+      console.log(
+        "  правлен после печати: " +
+          rel0(s.at) +
+          " — снести и позвать режим заново",
+      );
+    for (const { s, r } of tally.запечатан.filter(({ r }) => !r.already))
+      console.log(
+        "  печать поставлена: " + rel0(s.at) + " — " + r.seal +
+          (r.found.length ? ", находок " + r.found.length : ""),
+      );
+    console.log("");
+    console.log(
+      "  По КАЖДОМУ протоколу — исход в каждой строке, читая политику, а не",
+    );
+    console.log(
+      "  название; находка — судьбой «долг», и файл перехода называет её файл;",
+    );
+    console.log(
+      "  затем итог предмета. Печать говорит: ответ дан; о верности ответа —",
+    );
+    console.log("  ничего.");
+    process.exit(tally.запечатан.length === subjects.length ? 0 : 1);
+  }
 
   // Предмет свода считает ИНСТРУМЕНТ, а не сессия: предмет, выбираемый тем,
   // кого проверяют, сужается до удобного незаметно для всех.
   const arg = argPath(process.argv[3]);
-  const repoRoot = path.join(BASE, "..");
   let kind;
   let subject;
   // Узлы, чья модель собирается: на задаче чтения — сам адрес, а не его
@@ -7936,35 +9187,45 @@ if (mode === "bar") {
   let focus = null;
   let manifestTouched = false;
   if (arg) {
-    const hits = [...files, ...styleFiles]
+    const pool = [...files, ...styleFiles];
+    // Адрес-папка — вся папка: разбор компонента спрашивает о компоненте, а
+    // не о первом попавшемся его файле.
+    const folder = arg.replace(/\/+$/, "");
+    const under = pool
+      .filter((f) => rel(f).startsWith(folder + "/") && !isTest(f))
+      .sort(barByRel);
+    const hits = pool
       .filter((f) => rel(f).includes(arg))
       .sort((x, y) => Number(isTest(x)) - Number(isTest(y)));
-    if (hits.length === 0) {
+    if (under.length === 0 && hits.length === 0) {
       console.log(outOfScope(arg));
       process.exit(1);
     }
-    const target = hits[0];
-    focus = [target];
+    focus = under.length > 0 ? under : [hits[0]];
+    kind = "на чтение";
     // Область чтения — та же, что очерчивает досье: сам узел, то, что он
     // берёт, то, что берёт его, и листы стилей, которых граф не видит.
-    const near = isStylePath(rel(target))
-      ? { own: [], viaUsers: [] }
-      : stylesNear(target);
-    kind = "на чтение";
     // Соседи — по ИМЕНАМ, сквозь бочки, как у досье: по строке импорта в
     // предмет попадал публичный вход, пустой по смыслу, а настоящие
     // партнёры узла оставались снаружи.
     subject = [
       ...new Set(
-        [
-          target,
-          ...usesWithVia(target).uses.keys(),
-          ...dependentsOf(target),
-          ...near.own,
-          ...near.viaUsers,
-        ].map(norm),
+        focus
+          .flatMap((target) => {
+            const near = isStylePath(rel(target))
+              ? { own: [], viaUsers: [] }
+              : stylesNear(target);
+            return [
+              target,
+              ...usesWithVia(target).uses.keys(),
+              ...dependentsOf(target),
+              ...near.own,
+              ...near.viaUsers,
+            ];
+          })
+          .map(norm),
       ),
-    ].sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+    ].sort(barByRel);
   } else {
     subject = await barChangedSubject(repoRoot);
     if (subject === null) {
@@ -8002,400 +9263,83 @@ if (mode === "bar") {
     process.exit(0);
   }
 
-  // Что ЕСТЬ в предмете этой правки. Признаки узкие и замеряются текстом:
-  // по ним инструмент сам проставляет «нет предмета» там, где критерий эту
-  // правку не касается, — и только там, где это выводится, а не судится.
-  //
-  // Разбор, какой критерий каким признаком закрывается, живёт в словаре
-  // области: здесь только замер. Второй разбор здесь разошёлся бы с первым
-  // при первой же правке набора критериев.
-  const subjectFlags = (() => {
-    const code = subject.filter((f) => !isStylePath(f));
-    const styles = subject.filter((f) => isStylePath(f));
-    const tests = new Set();
-    for (const f of subject)
-      for (const t of testReach().get(f) ?? []) tests.add(t);
-    for (const f of subject) if (isTest(f)) tests.add(f);
-    const text = code
-      .map((f) => (existsSync(f) ? codeOf(readFileSync(f, "utf8")) : ""))
-      .join(NEWLINE);
-    const has = (re) => re.test(text);
-    return {
-      code: code.length > 0,
-      // Вид задаётся и прямо в разметке — строкой классов утилит или
-      // встроенным стилем. Такой вид — тоже предмет раздела стилей, хотя листа
-      // в правке нет; ссылка на класс модуля (`styles.x`) предметом не считается:
-      // её вид лежит в листе.
-      style:
-        styles.length > 0 ||
-        has(
-          /className=\s*["'`]|className=\{\s*(cn|clsx|classnames|twMerge)\(|\bstyle=\{\{/,
-        ),
-      test: tests.size > 0,
-      time: has(
-        /useEffect|useLayoutEffect|setTimeout|setInterval|requestAnimationFrame|addEventListener|new [A-Za-z]*Observer|\.subscribe\(/,
-      ),
-      async: has(/\basync\b|\bawait\b|Promise|\.then\(|AbortController/),
-      list: has(/\.map\(|\.flatMap\(/),
-      manifest: manifestTouched,
-      forks: (CONFIG.forks ?? []).length > 0,
-    };
-  })();
-  const subjectRow = Object.entries(subjectFlags)
-    .map(([k, v]) => k + "=" + (v ? "1" : "0"))
-    .join(",");
   const marks = barMarks(subject);
   const model = barModelOf(focus ?? subject, { kind, subject });
-  const HEAD = "| критерий | о чём | исход | адрес | что | судьба |";
-  const BASE_HEAD = "| файл | база | документация | чем это объяснено |";
-  const MODEL_HEAD = "| модель | вид | где | что | сдвиг | пометка | снятие |";
-  const LEVEL_HEAD = "| уровень | что на уровне | держится | опора |";
-  // Уровни с итогом. Единице итога нет: её нарушения видны в строках, и
-  // отвечают на них критерии.
-  const SUMMED = ["узел", "слой", "приложение"];
-  const title = (level) => level.charAt(0).toUpperCase() + level.slice(1);
-  // Ключ строки модели без номера и без снятия: по нему прежний протокол
-  // узнаёт свою строку в новом, когда номера сдвинулись.
-  const modelKey = (m) => [m.sort, m.where, m.what].join("|");
-  const skeleton = (carried) => {
-    const said0 = carried?.said ?? new Map();
-    const release0 = carried?.releases ?? new Map();
-    const base0 = carried?.baseRows ?? new Map();
-    const level0 = carried?.levelRows ?? new Map();
-    const modelRow = (m) =>
-      "| " +
-      m.id +
-      " | " +
-      m.sort +
-      " | " +
-      barQuoted(m.where) +
-      " | " +
-      m.what.split("|").join("\\|") +
-      " | " +
-      m.delta +
-      " | " +
-      m.mark +
-      " | " +
-      (release0.get(modelKey(m)) ?? m.release) +
-      " |";
-    // Лозунгу исход проставлен заранее: ставить его нечем, и пустая клетка
-    // тут означала бы работу, которой не существует. Беспредметное на ЭТОЙ
-    // правке — тоже: причина при нём замеренная, и переписать её руками
-    // никто не мешает.
-    const outcomeRow = (c) => {
-      const none = c.slogan ? "" : barNoSubject(c.id + "|" + subjectRow);
-      // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
-      // замеренная беспредметность берутся заново, остальное — прежнее.
-      const was = said0.get(c.id);
-      const keep = !c.slogan && none === "" && was !== undefined;
-      const outcome = c.slogan
-        ? "лозунг"
-        : none !== ""
-          ? "нет предмета"
-          : keep
-            ? was.outcome
-            : "";
-      return (
-        "| " +
-        c.id +
-        " | " +
-        // Строка архитектурного ядра помечена в самом протоколе: клетка
-        // основания у неё обязательна, и без пометки она выглядела бы
-        // лишней ровно там, где нужнее всего.
-        (barCoreCriterion(c.id) ? "**ядро.** " : "") +
-        c.title +
-        " | " +
-        outcome +
-        " | " +
-        (keep ? was.addr : "") +
-        " | " +
-        (keep ? was.what : none) +
-        " | " +
-        (keep ? was.fate : "") +
-        " |"
-      );
-    };
-    const rows = [
-      "# Свод по планке — протокол текущей работы",
-      "",
-      "Скелет печатает режим " +
-        barQuoted("bar") +
-        ", исход ставит сессия, печать ставит режим.",
-      "Шапку руками не правят: она описывает предмет, на котором свод сделан,",
-      "и правка предмета гасит печать целиком. Правка самого протокола после",
-      "печати гасит её тоже: печать — отпечаток всего, что ниже.",
-      "",
-      "## Предмет",
-      "",
-      "- род: " + barQuoted(kind),
-      BAR_NOSEAL,
-      "",
-      "| файл | отпечаток |",
-      "| --- | --- |",
-      ...marks.map(
-        (m) => "| " + barQuoted(m.file) + " | " + barQuoted(m.mark) + " |",
-      ),
-      "",
-      "## Модель предмета",
-      "",
-      "Строки собрал инструмент из кода и базы, по уровням. Узел: что он",
-      "делает по карте, его поверхность, зависимости, потребители, состояние,",
-      "ресурсы. Слой: слой и единица, рёбра против правила и новые рёбра между",
-      "слоями, взятое мимо входа единицы, циклы, устойчивость. Приложение:",
-      "источники из записи о состоянии, второй писатель, связи через имя,",
-      "выход наружу, размах. Графа «сдвиг» — что работа изменила против",
-      "последнего коммита; каждый сдвиг получает ответ в итоге уровня, в",
-      "основании либо в находке.",
-      "",
-      "Собранное не правят — оно пересобирается; недостающее дописывают строкой",
-      "со своим номером. Снятие ресурса ставит сессия: " +
-        barQuoted("строка N") +
-        ", " +
-        barQuoted("нет") +
-        " либо",
-      barQuoted("не нужно: причина") +
-        ". Вердикт ядра «чисто» называет строку модели СВОЕГО уровня.",
-      "",
-      ...SUMMED.flatMap((level) => {
-        const mine = model.filter((m) => m.level === level);
-        return mine.length === 0
-          ? []
-          : [
-              "### " + title(level),
-              "",
-              MODEL_HEAD,
-              "| --- | --- | --- | --- | --- | --- | --- |",
-              ...mine.map(modelRow),
-              "",
-            ];
-      }),
-      "## Исходы",
-      "",
-      "Исход: " +
-        barQuoted("чисто") +
-        " — нарушения нет; " +
-        barQuoted("нет предмета") +
-        " — с причиной",
-      "в колонке «что»; " +
-        barQuoted("нашлось") +
-        " — с адресом «путь:строка», словами и судьбой.",
-      "Судьба: " +
-        barQuoted("починено") +
-        " — адрес обязан быть в правленом; " +
-        barQuoted("предложено"),
-      "— только на задаче чтения; " +
-        barQuoted("отложено") +
-        " — после ответа разработчика, и список",
-      "отложенного называет файл находки; " +
-        barQuoted("вопрос") +
-        " — развилка разработчика, и список",
-      "вопросов называет файл находки. Критерии разложены по уровню, на",
-      "котором их судят.",
-      "",
-      ...LEVEL_ORDER.flatMap((level) => {
-        const mine = live.all.filter((c) => c.level === level);
-        return mine.length === 0
-          ? []
-          : [
-              "### " + title(level),
-              "",
-              HEAD,
-              "| --- | --- | --- | --- | --- | --- |",
-              ...mine.map(outcomeRow),
-              "",
-            ];
-      }),
-      "## Итог по уровням",
-      "",
-      "Строка на уровень: что работа изменила на нём (на задаче чтения — как",
-      "он устроен), держится ли он — " +
-        barQuoted("да") +
-        " либо " +
-        barQuoted("нет") +
-        ", — и на каких строках",
-      "модели это стоит. Открытая находка уровня означает «не держится», и",
-      "наоборот. Правка, безупречная в каждой строке, ломает именно здесь.",
-      "",
-      LEVEL_HEAD,
-      "| --- | --- | --- | --- |",
-      ...SUMMED.map(
-        (level) =>
-          "| " +
-          level +
-          " | " +
-          (level0.get(level) ?? ["", "", ""]).join(" | ") +
-          " |",
-      ),
-      "",
-      "## База и документация",
-      "",
-      "Ответ на каждый файл предмета ПОРОЗНЬ: правлена ли запись базы",
-      "о нём, правлен ли документ. Один ответ на оба вопроса сливает их,",
-      "а слитый ответ всегда положителен.",
-      "",
-      "Исход: " +
-        barQuoted("правлено") +
-        " — с адресом правленого; " +
-        barQuoted("не требуется") +
-        " — с причиной.",
-      "",
-      BASE_HEAD,
-      "| --- | --- | --- | --- |",
-      ...marks.map(
-        (m) =>
-          "| " +
-          barQuoted(m.file) +
-          " | " +
-          (base0.get(m.file) ?? ["", "", ""]).join(" | ") +
-          " |",
-      ),
-      "",
-    ];
-    writeFileSync(at, rows.join(NEWLINE));
+  // Предметы уровней: ядро узла спрашивают по каждой тронутой единице
+  // переноса, ядро слоя — по каждому слою. Одна строка на правку двух узлов
+  // закрывала вопрос одного ответом о другом.
+  const subjects = barSubjectsOf(focus ?? subject);
+  const expected = barExpectedOf(live.all, subjects);
+  const levelSubjects = {
+    узел: subjects.узел.length ? subjects.узел : [""],
+    слой: subjects.слой.length ? subjects.слой : [""],
+    приложение: [""],
   };
-
-  const was = barHeader(at);
-  // Разбор протокола — один на перенос исходов и на сверку формы.
-  const barParse = (body) => {
-    const said = new Map();
-    const twice = [];
-    const rows = [];
-    const baseRows = new Map();
-    const levelRows = new Map();
-    const unTick = (x) => x.split(BAR_TICK).join("");
-    for (const line of body.split(/\r?\n/)) {
-      if (!line.startsWith("| ")) continue;
-      if (
-        line === HEAD ||
-        line === MODEL_HEAD ||
-        line === BASE_HEAD ||
-        line === LEVEL_HEAD
-      )
-        continue;
-      const cells = line
-        .split(/(?<!\\)\|/)
-        .slice(1, -1)
-        .map((c) => c.trim());
-      if (cells.length === 7 && /^П[0-9]+$/.test(cells[0])) {
-        const [id, sort, where, what, delta, mark, release] = cells;
-        rows.push({
-          id,
-          sort,
-          where: unTick(where),
-          what: what.split("\\|").join("|"),
-          delta,
-          mark,
-          release,
-        });
-        continue;
-      }
-      // Строка модели прежней формы исходом не считается: иначе её номер
-      // читался бы критерием, которого в политике нет.
-      if (cells.length === 6 && /^П[0-9]+$/.test(cells[0])) continue;
-      if (cells.length === 6 && !/^-+$/.test(cells[0])) {
-        const [id, , outcome, addr, what, fate] = cells;
-        if (said.has(id)) twice.push(id);
-        said.set(id, { outcome, addr, what, fate });
-        continue;
-      }
-      if (cells.length === 4 && SUMMED.includes(cells[0])) {
-        levelRows.set(cells[0], cells.slice(1));
-        continue;
-      }
-      if (cells.length === 4 && cells[0].startsWith(BAR_TICK))
-        baseRows.set(unTick(cells[0]), cells.slice(1));
-    }
-    return { said, twice, rows, baseRows, levelRows };
-  };
-  // Собранные инструментом строки модели совпадают с тем, что он соберёт
-  // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
-  const sameModel = (rows) =>
-    model.every((m, k) => {
-      const r = rows[k];
-      return (
-        r !== undefined &&
-        r.id === m.id &&
-        r.sort === m.sort &&
-        r.where === m.where &&
-        r.what === m.what &&
-        r.delta === m.delta &&
-        r.mark === m.mark
+  // Признаки беспредметности — по предмету строки: лист стилей одной
+  // единицы переноса не делает предметом стилей соседнюю.
+  const flagsAll = barFlagsOf(subject, manifestTouched);
+  const flagsBy = new Map();
+  const noneOf = (c, s) => {
+    const split = barSplitOf(c.id + "|" + c.level);
+    if (s === "" || split === "") return barNoSubject(c.id + "|" + flagsAll);
+    const k = split + "|" + s;
+    if (!flagsBy.has(k))
+      flagsBy.set(
+        k,
+        barFlagsOf(
+          subject.filter(
+            (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
+          ),
+          manifestTouched,
+        ),
       );
-    });
-  const parsedWas = was === null ? null : barParse(was.body);
-  const sameMarks =
-    was !== null && was.kind === kind && barSameMarks(was.marks, marks);
-  const sameSubject = sameMarks && sameModel(parsedWas.rows);
+    return barNoSubject(c.id + "|" + flagsBy.get(k));
+  };
+  const changedNow = new Set(
+    kind === "на изменение"
+      ? subject
+      : ((await barChangedSubject(repoRoot)) ?? []),
+  );
+  const r = barProcess({
+    at,
+    kind,
+    marks,
+    model,
+    expected,
+    levelSubjects,
+    withBase: true,
+    noneOf,
+    repoRoot,
+    changedNow,
+  });
 
-  if (!sameSubject) {
-    // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
-    // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
-    // форматтера по новому тесту стирал сто восемьдесят исходов разом —
-    // замерено на стенде. Сбрасывается только «чисто» ядра, когда правлен
-    // код: вердикт о форме целого стоит на том коде, которого больше нет.
-    // Род задачи сменился — переносить нечего: законные судьбы другие.
-    const carry =
-      was !== null && was.kind === kind
-        ? {
-            said: new Map(parsedWas.said),
-            releases: new Map(
-              parsedWas.rows.map((r) => [
-                [r.sort, r.where, r.what].join("|"),
-                r.release,
-              ]),
-            ),
-            baseRows: parsedWas.baseRows,
-            levelRows: parsedWas.levelRows,
-          }
-        : null;
-    const edited = [];
-    if (was !== null) {
-      const before = new Map(was.marks.map((m) => [m.file, m.mark]));
-      for (const m of marks) if (before.get(m.file) !== m.mark) edited.push(m.file);
-    }
-    let reset = 0;
-    if (carry !== null && edited.length > 0) {
-      for (const [id, one] of carry.said)
-        if (one.outcome === "чисто" && barCoreCriterion(id)) {
-          carry.said.delete(id);
-          reset += 1;
-        }
-      // Итог по уровням — тоже вердикт о форме целого: стоит он на коде,
-      // которого больше нет, и пишется заново.
-      carry.levelRows = new Map();
-    }
-    const lost =
-      was === null || carry !== null
-        ? 0
-        : [...parsedWas.said.values()].filter((one) => one.outcome !== "")
-            .length;
-    skeleton(carry);
+  if (r.state === "напечатан") {
     console.log("=== Свод по планке: протокол напечатан ===");
-    if (carry !== null && carry.said.size > 0)
+    if (r.carried > 0)
       console.log(
         "  исходы перенесены: " +
-          [...carry.said.values()].filter((one) => one.outcome !== "").length +
+          r.carried +
           ", печать снята — предмет или модель изменились",
       );
-    if (reset > 0)
+    if (r.reset > 0)
       console.log(
         "  «чисто» ядра сброшено: " +
-          reset +
+          r.reset +
           " — правлен код: " +
-          edited.join(", "),
+          r.edited.join(", "),
       );
-    if (carry !== null && edited.length > 0)
+    if (r.levelReset)
       console.log("  итог по уровням сброшен: он о коде, которого больше нет");
-    if (edited.length > 0 && carry !== null)
+    if (r.levelReset)
       console.log(
         "  Пересмотреть строки по правленым файлам до печати: перенесённый",
       );
-    if (edited.length > 0 && carry !== null)
+    if (r.levelReset)
       console.log("  исход описывает прежний вид кода, пока его не подтвердили.");
-    if (lost > 0)
+    if (r.lost > 0)
       console.log(
         "  ПРЕЖНИЕ ИСХОДЫ ОТБРОШЕНЫ: их было " +
-          lost +
+          r.lost +
           ". Род задачи не тот, на котором они ставились",
       );
     console.log("  " + rel0(at));
@@ -8406,285 +9350,29 @@ if (mode === "bar") {
         marks.length +
         ", критериев: " +
         live.all.length +
+        ", строк исходов: " +
+        expected.length +
         ", строк модели: " +
         model.length,
+    );
+    console.log(
+      "  единиц переноса: " +
+        (subjects.узел.length ? subjects.узел.join(", ") : "—") +
+        "; слоёв: " +
+        (subjects.слой.length ? subjects.слой.join(", ") : "—"),
     );
     console.log("");
     console.log("  По КАЖДОМУ критерию поставить исход, читая политику, а не");
     console.log("  название в строке: название — указатель, а не критерий.");
-    console.log("  Затем итог по уровням — узел, слой, приложение: что работа");
-    console.log("  на них изменила и держатся ли они; каждый сдвиг модели назван.");
+    console.log(
+      "  Ядро узла — по каждой единице переноса, ядро слоя — по каждому слою.",
+    );
+    console.log("  Затем итог по уровням — по каждому предмету: что работа");
+    console.log("  на нём изменила и держится ли он; каждый сдвиг модели назван.");
     console.log(
       "  Затем позвать режим снова — он сверит форму и поставит печать.",
     );
     process.exit(1);
-  }
-
-  const body = was.body;
-  const { said, twice, rows: modelRows } = parsedWas;
-
-  // Адрес находки принимается в обеих ходовых формах: от корня репозитория
-  // (так печатают git, редактор и отчёт) и от корня исходников (так печатает
-  // база). Отказ по одной из них звучал бы как «файла нет» про существующий
-  // файл — тот самый класс, что уже записан у разбора путей-аргументов.
-  const spotFile = (p) => {
-    for (const one of [path.join(repoRoot, p), path.join(ROOT, p)]) {
-      const abs = norm(one);
-      if (existsSync(abs)) return abs;
-    }
-    return null;
-  };
-
-  const holes = [];
-  const changedNow = new Set(
-    kind === "на изменение"
-      ? subject
-      : ((await barChangedSubject(repoRoot)) ?? []),
-  );
-  for (const c of live.all) {
-    const one = said.get(c.id) ?? { outcome: "", addr: "", what: "", fate: "" };
-    // Чистая часть разбора живёт в словаре области: закрытые словари,
-    // законность судьбы при роде задачи, вид адреса. Второй её разбор здесь
-    // разошёлся бы с первым при первой же правке словаря исходов.
-    const fault = barRowFault(
-      [kind, one.outcome, one.addr, one.what, one.fate, c.id].join("|"),
-    );
-    if (fault !== "") {
-      // Неверное значение называется тут же: сообщение, после которого надо
-      // идти искать строку глазами, перестают читать.
-      const shown = {
-        "исход не из словаря": one.outcome,
-        "судьба не из словаря": one.fate,
-        "адрес не вида путь:строка": one.addr,
-      }[fault];
-      holes.push(
-        c.id + ": " + fault + (shown === undefined ? "" : ": «" + shown + "»"),
-      );
-      continue;
-    }
-    if (one.outcome !== "нашлось") continue;
-    const spot = new RegExp(
-      "^" + BAR_TICK + "?(.+?):([0-9]+)" + BAR_TICK + "?$",
-    ).exec(one.addr);
-    if (spot === null) continue;
-    const abs = spotFile(spot[1]);
-    if (abs === null) {
-      holes.push(c.id + ": файла " + barQuoted(spot[1]) + " нет");
-      continue;
-    }
-    const lines = readFileSync(abs, "utf8").split(/\r?\n/).length;
-    if (Number(spot[2]) < 1 || Number(spot[2]) > lines)
-      holes.push(
-        c.id +
-          ": строки " +
-          spot[2] +
-          " в " +
-          barQuoted(spot[1]) +
-          " нет, всего " +
-          lines,
-      );
-    if (one.fate === "починено" && !changedNow.has(abs))
-      holes.push(
-        c.id +
-          ": «починено», а " +
-          barQuoted(spot[1]) +
-          " в правленом не числится",
-      );
-    // «Отложено» — после ответа разработчика, и запись уходит в отложенное.
-    //
-    // Прежде судьба принималась голой: слово «отложено» закрывало строку, а
-    // куда отложено, не спрашивал никто. Протокол перезаписывается следующим
-    // проходом, и отложенная находка исчезала так же, как предложенная до
-    // своей сверки. Замерено на стенде: сессия отложила шесть находок без
-    // ответа разработчика, назвав вместо записи номер строки реестра.
-    //
-    // Спрашивается самое слабое, что проверяемо: список отложенного называет
-    // файл находки в одной из ходовых форм пути.
-    // «Вопрос» — развилка разработчика: список вопросов называет файл
-    // находки, иначе вопрос живёт только в протоколе и исчезнет с ним.
-    if (one.fate === "вопрос") {
-      const askAt =
-        CONFIG.questions == null ? null : path.join(BASE, CONFIG.questions);
-      const asked =
-        askAt !== null && existsSync(askAt) ? readFileSync(askAt, "utf8") : null;
-      const forms = [
-        spot[1],
-        norm(path.relative(repoRoot, abs)),
-        norm(path.relative(ROOT, abs)),
-      ];
-      if (asked === null || !forms.some((f) => asked.includes(f)))
-        holes.push(
-          c.id +
-            ": «вопрос», а " +
-            (asked === null
-              ? "списка вопросов нет (поле `questions`)"
-              : "список вопросов " +
-                barQuoted(CONFIG.questions) +
-                " не называет " +
-                barQuoted(spot[1])),
-        );
-    }
-    if (one.fate === "отложено") {
-      const todoAt = CONFIG.todo == null ? null : path.join(BASE, CONFIG.todo);
-      const todo =
-        todoAt !== null && existsSync(todoAt)
-          ? readFileSync(todoAt, "utf8")
-          : null;
-      const forms = [
-        spot[1],
-        norm(path.relative(repoRoot, abs)),
-        norm(path.relative(ROOT, abs)),
-      ];
-      if (todo === null || !forms.some((f) => todo.includes(f)))
-        holes.push(
-          c.id +
-            ": «отложено», а " +
-            (todo === null
-              ? "списка отложенного нет (поле `todo`)"
-              : "отложенное " +
-                barQuoted(CONFIG.todo) +
-                " не называет " +
-                barQuoted(spot[1])),
-        );
-    }
-  }
-  // Модель предмета: снятие у каждого ресурса названо, и вердикты с моделью
-  // согласны. Правила — в словаре области (`barModelFault`): они про виды
-  // строк, общие любому коду, и гоняются его самопроверкой.
-  {
-    const RELEASE = /^(нет|строка [0-9]+|есть: строка [0-9]+|не нужно: .+)$/;
-    for (const r of modelRows) {
-      if (r.sort !== "ресурс") continue;
-      if (r.release === "")
-        holes.push(r.id + ": снятие ресурса не названо (" + r.where + ")");
-      else if (!RELEASE.test(r.release))
-        holes.push(r.id + ": снятие не из словаря: «" + r.release + "»");
-    }
-    const code = barModelCode(modelRows);
-    // Клетка словаря несёт черту только экранированной; в строку для словаря
-    // она идёт косой, иначе строка распалась бы не по своим графам.
-    const flat = (x) => (x ?? "").split("\\|").join("/");
-    for (const c of live.all) {
-      const one = said.get(c.id);
-      if (one === undefined) continue;
-      const fault = barModelFault(
-        [c.id, one.outcome, flat(one.what), kind, code, c.level, one.fate].join(
-          "|",
-        ),
-      );
-      if (fault !== "") holes.push(c.id + ": " + fault);
-    }
-    // Итог по уровням: строка на уровень, согласная с моделью и с исходами.
-    // Открытая находка — та, что не починена: предложена, отложена, задана
-    // вопросом.
-    const OPEN = new Set(["предложено", "отложено", "вопрос"]);
-    for (const level of SUMMED) {
-      const row = parsedWas.levelRows.get(level) ?? ["", "", ""];
-      const open = live.all.filter((c) => {
-        const one = said.get(c.id);
-        return (
-          c.level === level &&
-          one !== undefined &&
-          one.outcome === "нашлось" &&
-          OPEN.has(one.fate)
-        );
-      }).length;
-      const fault = barLevelFault(
-        [level, flat(row[0]), flat(row[1]), flat(row[2]), code, open].join("|"),
-      );
-      if (fault !== "") holes.push("итог, " + level + ": " + fault);
-    }
-    // Каждый сдвиг модели получил ответ: в итоге уровня, в основании
-    // критерия либо в находке. Сдвиг, о котором промолчали, — ровно та
-    // поломка, которой строки правки не показывают.
-    const answered = [
-      ...[...parsedWas.levelRows.values()].flat(),
-      ...[...said.values()].flatMap((one) => [one.addr, one.what]),
-    ]
-      .map(flat)
-      .join(" ");
-    const loose = barDeltaFault(code + "|" + answered);
-    if (loose !== "") holes.push(loose);
-  }
-  const extra = [...said.keys()].filter(
-    (id) => !live.all.some((c) => c.id === id),
-  );
-
-  // Вторая таблица: база и документация, по файлу предмета и порознь.
-  //
-  // Прежде это был вопрос прозой в другом режиме, и ответ на него держался
-  // памятью. Замерено на приложении с нуля: карта заполнена, реестр тестов
-  // заполнен — у обоих есть сверка, — а запись о состоянии, назначение и
-  // витрина остались от посадки. База заполняется по форме своего ловца.
-  {
-    const want = new Set(marks.map((m) => m.file));
-    // Файл, которого карта не называет своей записью, базу не освобождает:
-    // «не требуется» у него неверно без суждения — прочитанное в области
-    // обязано лечь в базу, иначе следующий заход читает его заново. Имя
-    // сличается хвостом: снисходительно, ложного отказа это не даёт.
-    const mapAt = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
-    const mapLines =
-      mapAt !== null && existsSync(mapAt)
-        ? readFileSync(mapAt, "utf8").split(/\r?\n/)
-        : [];
-    const owned = mapLines
-      .filter((l) => l.startsWith("#"))
-      .concat(mapLines.filter((l) => l.startsWith("|")).map(firstCellOf));
-    const unmapped = (file) => {
-      const tail = file.slice(file.lastIndexOf("/") + 1);
-      return !owned.some((cell) => cell.includes(tail));
-    };
-    const rows = new Map();
-    for (const line of body.split(/\r?\n/)) {
-      if (!line.startsWith("| ")) continue;
-      const c = line
-        .split("|")
-        .slice(1, -1)
-        .map((x) => x.trim());
-      if (c.length !== 4) continue;
-      const file = c[0].replace(new RegExp(BAR_TICK, "g"), "");
-      if (!want.has(file)) continue;
-      rows.set(file, c);
-    }
-    for (const file of want) {
-      const c = rows.get(file);
-      if (c === undefined) {
-        holes.push("база: строки про " + barQuoted(file) + " нет");
-        continue;
-      }
-      for (const [i, what] of [
-        [1, "база"],
-        [2, "документация"],
-      ]) {
-        const one = c[i];
-        if (one === "") {
-          holes.push(file + ", " + what + ": исход не поставлен");
-          continue;
-        }
-        if (!["правлено", "не требуется"].includes(one)) {
-          holes.push(
-            file + ", " + what + ": исход не из словаря: " + barQuoted(one),
-          );
-          continue;
-        }
-        if (i === 1 && one === "не требуется" && unmapped(file))
-          holes.push(
-            file +
-              ", база: " +
-              barQuoted("не требуется") +
-              " у файла без своей записи в карте — прочитанное ложится в базу",
-          );
-        if (c[3] === "")
-          holes.push(
-            file +
-              ", " +
-              what +
-              ": " +
-              one +
-              (one === "правлено" ? " без адреса" : " без причины"),
-          );
-      }
-    }
   }
 
   console.log("=== Свод по планке ===");
@@ -8694,84 +9382,50 @@ if (mode === "bar") {
       kind +
       ", критериев: " +
       live.all.length +
+      ", строк исходов: " +
+      expected.length +
       ", файлов: " +
       marks.length,
   );
-  if (twice.length)
-    console.log("  критерий назван дважды: " + twice.join(", "));
-  if (extra.length)
-    console.log("  критерий, которого в политике нет: " + extra.join(", "));
-  if (holes.length === 0 && twice.length === 0 && extra.length === 0) {
-    const found = live.all.filter(
-      (c) => (said.get(c.id) ?? {}).outcome === "нашлось",
-    );
-    const seal = barSealOf(body);
-    // Печать пишется ЗАМЕНОЙ строки «печать: нет». Если печать уже стоит,
-    // заменять нечего: файл остаётся как был, а режим рапортовал об успехе и
-    // называл отпечаток, которого в протоколе нет. Замерено на правке
-    // запечатанного протокола — сверка базы тут же доложила «печать не
-    // сходится», и понять, откуда это, было неоткуда.
-    //
-    // Отказ, а не перепечать: доктрина протокола говорит прямо — правка после
-    // печати её гасит, потому что печать есть отпечаток всего, что ниже.
-    // Перепечатывать значило бы разрешить править исходы под уже закрытым
-    // сводом.
-    if (!body.includes(BAR_NOSEAL)) {
-      console.log(
-        "  ПЕЧАТЬ НЕ ПОСТАВЛЕНА: протокол уже закрыт и правлен после этого." +
-          NEWLINE +
-          "  Правка после печати её гасит. Свод делают заново: снести протокол" +
-          NEWLINE +
-          "  и позвать режим ещё раз.",
-      );
-      process.exit(1);
-    }
-    writeFileSync(
-      at,
-      body.split(BAR_NOSEAL).join("- печать: " + barQuoted(seal)),
-    );
-    console.log("  печать поставлена: " + seal);
+  if (r.state === "правлен") {
     console.log(
-      "  уровни: " +
-        SUMMED.map(
-          (level) =>
-            level +
-            " — " +
-            ((parsedWas.levelRows.get(level) ?? ["", ""])[1] === "да"
-              ? "держится"
-              : "не держится"),
-        ).join("; "),
+      "  ПЕЧАТЬ НЕ ПОСТАВЛЕНА: протокол уже закрыт и правлен после этого." +
+        NEWLINE +
+        "  Правка после печати её гасит. Свод делают заново: снести протокол" +
+        NEWLINE +
+        "  и позвать режим ещё раз.",
     );
-    console.log("  находок: " + found.length);
-    for (const c of found) {
-      const one = said.get(c.id);
-      console.log(
-        "    " +
-          c.id +
-          " " +
-          one.addr +
-          " — " +
-          one.what +
-          " (" +
-          one.fate +
-          ")",
-      );
-    }
-    console.log("");
-    console.log(
-      "  Печать говорит: по каждому критерию дан ответ, и дан на этом",
-    );
-    console.log("  виде предмета. О ВЕРНОСТИ ответа она не говорит ничего —");
-    console.log(
-      "  признаки планки прогоном не ловятся, и это не изображается.",
-    );
-    process.exit(0);
+    process.exit(1);
   }
-  console.log("  дыр: " + holes.length);
-  for (const h of holes) console.log("    " + h);
+  if (r.state === "дыры") {
+    if (r.twice.length)
+      console.log("  строка названа дважды: " + r.twice.join(", "));
+    if (r.extra.length)
+      console.log(
+        "  строка, которой в этом своде нет: " + r.extra.join(", "),
+      );
+    console.log("  дыр: " + r.holes.length);
+    for (const h of r.holes) console.log("    " + h);
+    console.log("");
+    console.log("  Печать не поставлена. Свод с дырами — не свод.");
+    process.exit(1);
+  }
+  console.log(
+    (r.already ? "  печать уже стоит: " : "  печать поставлена: ") + r.seal,
+  );
+  console.log("  уровни: " + r.levels.join("; "));
+  console.log("  находок: " + r.found.length);
+  for (const { who, one } of r.found)
+    console.log(
+      "    " + who + " " + one.addr + " — " + one.what + " (" + one.fate + ")",
+    );
   console.log("");
-  console.log("  Печать не поставлена. Свод с дырами — не свод.");
-  process.exit(1);
+  console.log("  Печать говорит: по каждому критерию дан ответ, и дан на этом");
+  console.log("  виде предмета. О ВЕРНОСТИ ответа она не говорит ничего —");
+  console.log(
+    "  признаки планки прогоном не ловятся, и это не изображается.",
+  );
+  process.exit(0);
 }
 
 // Факты по уровням — без протокола.
@@ -8783,8 +9437,8 @@ if (mode === "bar") {
 // поверх того, что уже в нём лежит.
 //
 // Без пути: архитектурные факты всего проекта, которые машина видит сама, —
-// ребро против правила направления, цикл, внутренность чужой единицы мимо
-// входа, второй писатель хранилища. Каждый обязан быть назван по адресу
+// ребро против правила направления, цикл, внутренность чужой единицы
+// переноса мимо входа, второй писатель хранилища. Каждый обязан быть назван по адресу
 // долгом перехода, решением либо строкой реестра находок: переход читает
 // весь код один раз, и найденное им по архитектуре не должно пропасть.
 // Неназванный факт — ненулевой код. Устойчивость печатается к сведению: это
@@ -8864,7 +9518,8 @@ if (mode === "levels") {
         facts.push({
           kind: "граница",
           where: [f],
-          text: rel(f) + " → " + rel(t) + " — мимо входа единицы " + unitOf(t),
+          text:
+            rel(f) + " → " + rel(t) + " — мимо входа единицы переноса " + unitOf(t),
         });
   for (const [key, byFile] of storeWriters())
     if (byFile.size > 1)
@@ -9203,10 +9858,10 @@ if (mode === "brief") {
         for (const [n, i, line] of docs.exact.slice(0, 20))
           console.log(`  ${n}:${i}  ${line.trim().slice(0, 110)}`);
         if (!docs.exact.length) console.log("  нет");
-        console.log("--- документация: дверь папки и документ единицы ---");
+        console.log("--- документация: дверь папки и документ по её имени ---");
         if (docs.door !== null) console.log("  дверь папки: " + rel(docs.door));
         for (const d of docs.unitDocs)
-          console.log("  документ по имени единицы: " + rel(d));
+          console.log("  документ по имени папки: " + rel(d));
         for (const [n, i, line] of docs.loose.slice(0, 10))
           console.log(`  по имени (проверить, тот ли): ${n}:${i}  ${line.trim().slice(0, 90)}`);
         if (docs.door === null && !docs.unitDocs.length && !docs.loose.length)
@@ -9835,7 +10490,7 @@ if (mode === "verify") {
             ? locate(named[0].split(String.fromCharCode(96)).join(""), prefix)
             : null;
         // Заголовок, называющий один файл, — его собственная запись: форма
-        // «единица — файл, заголовок — путь».
+        // «единица записи — файл, заголовок — путь».
         if (name === MAP && current !== null) mapMentions.add(current);
       }
 
@@ -10585,7 +11240,7 @@ if (mode === "verify") {
         // сослаться на решение: «почему так» там и объясняют. Без них решение,
         // названное только в правилах, читалось как никем не адресованное, и
         // предлагалось снести живую запись. Найдено посадкой в проект со
-        // вложенными правилами единицы.
+        // вложенными правилами единицы переноса.
         const rulesFiles = (CONFIG.rulesManifest?.rules ?? [])
           .map((one) => norm(path.join(BASE, one)))
           .filter((one) => existsSync(one));
@@ -11432,6 +12087,11 @@ if (mode === "verify") {
       CONFIG.barProtocol == null
         ? null
         : norm(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
+    // Протоколы перехода — та же форма режима, что и протокол текущей работы.
+    const barDir =
+      barTransitionDir() === null
+        ? null
+        : norm(path.relative(REPO, barTransitionDir())) + "/";
     if (diff !== null) {
       let file = "";
       for (const line of diff.split(NEWLINE)) {
@@ -11440,6 +12100,7 @@ if (mode === "verify") {
           continue;
         }
         if (file === barFile) continue;
+        if (barDir !== null && file.startsWith(barDir)) continue;
         if (!line.startsWith("+") || line.startsWith("+++")) continue;
         const body = line.slice(1);
         NEW_ANCHOR.lastIndex = 0;
@@ -13785,7 +14446,7 @@ if (mode === "verify") {
     const decided =
       (existsSync(decidedAt) ? readFileSync(decidedAt, "utf8") : "") +
       debtPlanText();
-    // Единица — ПАПКА компонента: в ней и он сам, и его тип, и его лист.
+    // Считается ПАПКА компонента: в ней и он сам, и его тип, и его лист.
     // Пофайловый разбор называл файл типов — адрес, по которому чинить
     // нечего, потому что лист импортирует не тип, а компонент рядом.
     const byDir = new Map();
@@ -16547,40 +17208,42 @@ if (mode === "verify") {
       else if (live !== null && !live.blind) {
         // Счёт — дешёвая вторая опора к печати: полноту сверяет режим при
         // печати, но протокол, собранный мимо режима, печать бы унаследовал
-        // вместе с недостающими строками.
-        const answered = was.body
-          .split(/\r?\n/)
-          .filter((l) => l.startsWith("| "))
-          .map((l) =>
-            l
-              .split("|")
-              .slice(1, -1)
-              .map((c) => c.trim()),
-          )
-          // Исход сверяется со СЛОВАРЁМ, а не с непустотой. Шапка таблицы
-          // несёт в той же клетке слово «исход» и считалась ответом: счёт
-          // выходил на единицу больше живого набора всегда, и вторая опора к
-          // печати говорила о дыре там, где дыры не было.
-          // «Лозунг» стоит здесь наравне с исходами: он проставлен скелетом
-          // и означает, что исхода у пункта быть не может. Не считать его
-          // ответом значило бы требовать к печати ровно тех оценок, которые
-          // политика объявила невыводимыми.
-          .filter(
-            (c) =>
-              c.length === 6 &&
-              ["чисто", "нет предмета", "нашлось", "лозунг"].includes(c[2]),
-          ).length;
-        if (answered !== live.all.length)
+        // вместе с недостающими строками. Ждут строку на критерий и предмет:
+        // ядро узла — по каждой тронутой единице переноса, ядро слоя — по
+        // каждому слою. Разбор протокола общий с режимом.
+        //
+        // Исход сверяется со СЛОВАРЁМ, а не с непустотой. «Лозунг» стоит
+        // здесь наравне с исходами: он проставлен скелетом и означает, что
+        // исхода у пункта быть не может.
+        const answered = new Set(
+          barRowsOf(was.body)
+            .outcomes.filter((o) =>
+              ["чисто", "нет предмета", "нашлось", "лозунг"].includes(o.outcome),
+            )
+            .map((o) => barKey(o.id, o.subject)),
+        );
+        const expected = barExpectedOf(live.all, barSubjectsOf(subject));
+        const missing = expected.filter(
+          (e) => !answered.has(barKey(e.c.id, e.subject)),
+        );
+        if (missing.length)
           barGaps.push(
-            "исходов в протоколе " +
-              answered +
-              ", живых критериев " +
-              live.all.length,
+            "исхода нет у строк: " +
+              missing.length +
+              " из " +
+              expected.length +
+              " — " +
+              missing
+                .slice(0, 5)
+                .map((e) => barWho(e.c.id, e.subject))
+                .join(", "),
           );
         else
           barSaid =
             "свод закрыт печатью: критериев " +
             live.all.length +
+            ", строк исходов " +
+            expected.length +
             ", файлов " +
             marks.length;
       } else barSaid = "свод закрыт печатью, живой набор критериев не прочитан";
@@ -16608,20 +17271,20 @@ if (mode === "verify") {
     const at =
       CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
     if (at !== null && existsSync(at)) {
-      for (const line of readFileSync(at, "utf8").split(NEWLINE)) {
-        const cell = line.split("|").map((c) => c.trim());
-        if (cell.length < 7) continue;
-        if (cell[3] !== "нашлось" || cell[6] !== "предложено") continue;
+      // Разбор протокола общий с режимом: свой, делящий строку по любой
+      // черте, сбивался на экранированной черте внутри клетки.
+      for (const one of barRowsOf(readFileSync(at, "utf8")).outcomes) {
+        if (one.outcome !== "нашлось" || one.fate !== "предложено") continue;
         barProposed += 1;
         // Строка реестра отвечает за находку, только если называет и
         // критерий, и её файл. Прежде хватало критерия: одна открытая строка
         // «E1» закрывала любую будущую находку E1 в любом файле — замерено на
         // стенде, где строка об одном узле гасила находку о другом.
-        const file = cell[4].split(BAR_TICK).join("").replace(/:[0-9]+$/, "");
+        const file = one.addr.split(BAR_TICK).join("").replace(/:[0-9]+$/, "");
         const tail = file.slice(file.lastIndexOf("/") + 1);
         const named = openFindingRows().some(
           (row) =>
-            row.includes("«" + cell[1] + "»") &&
+            row.includes("«" + one.id + "»") &&
             (row.includes(file) ||
               (row.includes(tail) &&
                 [...files, ...styleFiles].filter((f) => f.endsWith("/" + tail))
@@ -16629,9 +17292,9 @@ if (mode === "verify") {
         );
         if (!named)
           barLoose.push(
-            cell[1] +
+            one.id +
               " — предложено сводом и не названо открытой строкой реестра с его файлом: адрес " +
-              cell[4],
+              one.addr,
           );
       }
     }
@@ -16643,6 +17306,90 @@ if (mode === "verify") {
   console.log("  без строки реестра: " + barLoose.length);
   for (const one of barLoose)
     console.log("    " + one + ". Завести строку открытой");
+  // Архитектурный проход перехода запечатан.
+  //
+  // Переход читает весь код один раз, и суждения по архитектуре — узел с
+  // двумя ответственностями, раздвоенный источник, лишняя поверхность —
+  // держались тем, что сессия спросит о каждой единице переноса. Пропуск не
+  // был виден никак: долг выглядел полным, переход закрывался зелёным.
+  //
+  // Проход идёт протоколами свода — ядро на каждую единицу переноса, слой и
+  // приложение, `graph.mjs bar --transition`. Пока шаг знания открыт, сверка
+  // печатает ход: незакрытый переход — работа, а не поломка. Шаг закрыт —
+  // каждый протокол обязан быть запечатан; протоколов нет — шаг закрыли, не
+  // пройдя. На нынешнем коде закрытый протокол не спрашивается: после шага
+  // код держит свод на каждой правке, а долг помнит найденное. Переход
+  // закрыт — папке протоколов лежать незачем.
+  const archGaps = [];
+  let archLooked = 0;
+  let archSaid = null;
+  {
+    const dir = barTransitionDir();
+    const planAt =
+      CONFIG.transition?.file == null
+        ? null
+        : path.join(BASE, CONFIG.transition.file);
+    const planLives = planAt !== null && existsSync(planAt);
+    const protocols =
+      dir !== null && existsSync(dir)
+        ? readdirSync(dir)
+            .filter((n) => n.endsWith(".md"))
+            .map((n) => path.join(dir, n))
+        : [];
+    archLooked = protocols.length;
+    const sealedOf = (p) => {
+      const h = barHeader(p);
+      if (h.kind !== "на переход") return "род не «на переход»";
+      if (h.seal === null || h.seal === "нет") return "не запечатан";
+      if (h.seal !== barSealOf(h.body))
+        return "печать не сходится: правлен после неё";
+      return "";
+    };
+    if (!planLives) {
+      if (protocols.length)
+        archGaps.push(
+          "перехода нет, а протоколы его прохода лежат: " +
+            rel0(dir) +
+            " — снять папку вместе с закрытым переходом",
+        );
+      else archSaid = "перехода нет — протоколов прохода не нужно";
+    } else {
+      const stepOpen = (transitionOpen() ?? []).some((s) =>
+        /bar\s+--transition/.test(s.line),
+      );
+      if (stepOpen) {
+        const subjects = barTransitionSubjects();
+        const fresh = subjects.filter((s) => {
+          if (!existsSync(s.at) || sealedOf(s.at) !== "") return false;
+          return barSameMarks(barHeader(s.at).marks, barMarks(s.files));
+        }).length;
+        archSaid =
+          "шаг открыт: запечатано на нынешнем коде " +
+          fresh +
+          " из " +
+          subjects.length +
+          " предметов";
+      } else if (protocols.length === 0)
+        archGaps.push(
+          "шаг «архитектурный проход» закрыт, а протоколов нет: вернуть шаг в таблицу знания и пройти `graph.mjs bar --transition`",
+        );
+      else {
+        for (const p of protocols) {
+          const why = sealedOf(p);
+          if (why !== "") archGaps.push(rel0(p) + " — " + why);
+        }
+        if (!archGaps.length)
+          archSaid =
+            "шаг закрыт: протоколов " + protocols.length + ", все запечатаны";
+      }
+    }
+  }
+  checkHead("Архитектурный проход перехода запечатан", {
+    n: archLooked,
+    unit: "протоколов перехода",
+  });
+  if (archSaid !== null) console.log("  " + archSaid);
+  for (const one of archGaps) console.log("    " + one);
   // Коммит с кодом накрыт запечатанным сводом — ревизия по ИСТОРИИ.
   //
   // Соседняя сверка спрашивает свод с правленого, то есть с рабочего дерева.

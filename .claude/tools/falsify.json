@@ -1059,6 +1059,12 @@
       ]
     },
     {
+      "section": "Архитектурный проход перехода запечатан",
+      "file": ".context/15-transition.md",
+      "find": "`graph.mjs levels` и `graph.mjs bar --transition`",
+      "replace": "`graph.mjs levels`"
+    },
+    {
       "section": "Ворота перед коммитом установлены",
       "edits": [
         {
