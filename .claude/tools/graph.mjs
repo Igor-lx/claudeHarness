@@ -30,6 +30,7 @@ import {
   barSplitOf,
   barOwedOf,
   BAR_OWED,
+  BAR_HELD,
   BAR_FACT_CRITERIA,
   MODEL_LEVEL,
   LEVEL_ORDER,
@@ -2750,6 +2751,7 @@ const CODE_NAME = /"([A-Za-z][\w-]*)"|'([A-Za-z][\w-]*)'|\.([A-Za-z][\w-]*)\b/g;
 const ownExportsOf = new Map(); // файл -> имена, объявленные в нём самом
 const reexportsOf = new Map(); // файл -> { named: имя наружу -> [{target, name}], stars: [target] }
 const namedImportsOf = new Map(); // файл -> [{ target, names: [имя там] | "*" | null }]
+const bindingsOf = new Map(); // файл -> [{ target, there: имя там | "*", here: имя здесь }]
 
 const readNames = (f, src) => {
   const own = new Set();
@@ -2759,6 +2761,7 @@ const readNames = (f, src) => {
   // Привязки, пришедшие импортом: `export default X` и `export { X }` без
   // `from` отдают наружу чужое имя, и идти за ним надо туда, откуда оно взято.
   const bound = new Map();
+  const local = [];
   const addNamed = (outName, target, name) => {
     if (!named.has(outName)) named.set(outName, []);
     named.get(outName).push({ target, name });
@@ -2798,10 +2801,15 @@ const readNames = (f, src) => {
     }
     if (clause.includes("*")) {
       imports.push({ target, names: "*" });
+      const ns = /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause);
+      if (ns !== null) local.push({ target, there: "*", here: ns[1] });
       continue;
     }
     const pairs = clauseNames(clause);
-    for (const [there, here] of pairs) bound.set(here, { target, name: there });
+    for (const [there, here] of pairs) {
+      bound.set(here, { target, name: there });
+      local.push({ target, there, here });
+    }
     imports.push({ target, names: pairs.map(([there]) => there) });
   }
   for (const m of src.matchAll(/(?:^|\n)\s*import\s*["']([^"']+)["']/g)) {
@@ -2830,6 +2838,7 @@ const readNames = (f, src) => {
   ownExportsOf.set(f, own);
   reexportsOf.set(f, { named, stars });
   namedImportsOf.set(f, imports);
+  bindingsOf.set(f, local);
 };
 
 for (const f of files) {
@@ -7378,6 +7387,10 @@ const foreignInside = (from, to) => {
     if (rel(from).startsWith(unit)) return false;
     const entry = /^index\.[cm]?[jt]sx?$/;
     if (entry.test(m[2])) return false;
+    // Типы в корне узла — его публичный контракт (`code.md`, раздел «Внутри
+    // папки узла — тоже раскладка, и она такая же жёсткая»): пропы и карту
+    // классов для перекраски берут оттуда законно.
+    if (/^types\.(?:d\.)?[cm]?tsx?$/.test(m[2])) return false;
     const nodeFile =
       !m[2].includes("/") &&
       m[2].replace(/\.[^.]+$/, "").toLowerCase() === m[1].toLowerCase();
@@ -7391,6 +7404,28 @@ const foreignInside = (from, to) => {
   }
   return false;
 };
+
+/** Есть ли у единицы переноса вход: бочка либо файл узла, названный как
+ * папка. Внутренность единицы без входа берут потому, что взять её иначе
+ * нечем: это вопрос к раскладке единицы, а не обход её входа. */
+const unitHasEntry = (t) => {
+  const unit = unitOf(t) + "/";
+  const name = unit.split("/").slice(-2, -1)[0].toLowerCase();
+  return files.some((f) => {
+    const r = rel(f);
+    if (!r.startsWith(unit)) return false;
+    const tail = r.slice(unit.length);
+    return (
+      /^index\.[cm]?[jt]sx?$/.test(tail) ||
+      (!tail.includes("/") && tail.replace(/\.[^.]+$/, "").toLowerCase() === name)
+    );
+  });
+};
+/** Факт о внутренности чужой единицы словами: обход входа либо вход, которого нет. */
+const insideText = (t) =>
+  unitHasEntry(t)
+    ? "мимо входа единицы переноса " + unitOf(t)
+    : "внутренность единицы переноса " + unitOf(t) + ", у которой входа нет";
 
 /** Слой файла: самый узкий слой таблиц слоёв, под которым он лежит; таблиц
  * нет или файл вне их — первая папка от корня исходников. */
@@ -7496,7 +7531,9 @@ const heldBy = (ends, names = []) =>
 /** Известный дефект: факт держит пункт долга перехода либо открытая строка
  * реестра находок, а решение — нет. Решение пометку снимает: разработчик
  * сказал «не сейчас» либо «оставляем», и «чисто» с опорой на него законно.
- * Возвращает слово пометки из `BAR_OWED` либо `null`. */
+ * Возвращает слово пометки из `BAR_OWED`, `BAR_HELD` либо `null`: факт,
+ * названный решением, помечается тоже — свод принимает «чисто» с опорой на
+ * него и у фактов, которые иначе режут сами. */
 const owedBy = (ends, names = []) => {
   const all = (text) =>
     ends.every((f) => namesFileIn(text, f)) &&
@@ -7504,7 +7541,7 @@ const owedBy = (ends, names = []) => {
   const at = (one) => (one == null ? null : rel0(path.join(BASE, one)));
   const decisions = at(CONFIG.decisions);
   if (heldRecords().some(([file, text]) => file === decisions && all(text)))
-    return null;
+    return BAR_HELD;
   const plan = at(CONFIG.transition?.file);
   if (heldRecords().some(([file, text]) => file === plan && all(text)))
     return BAR_OWED[0];
@@ -7565,20 +7602,21 @@ const levelFacts = () => {
           kind: "граница",
           where: [f, t],
           names: [],
-          text:
-            rel(f) + " → " + rel(t) + " — мимо входа единицы переноса " + unitOf(t),
+          text: rel(f) + " → " + rel(t) + " — " + insideText(t),
         });
-  for (const [key, byFile] of storeWriters())
-    if (byFile.size > 1)
+  for (const [key, entry] of storeWrites()) {
+    const where = writerFactOf(entry);
+    if (where !== null)
       facts.push({
         kind: "писатель",
-        where: [...byFile.keys()],
+        where,
         names: [],
-        text: key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
+        text: writerText(key, entry),
       });
+  }
   for (const r of stateRecords()) {
-    const writing = filesNamedIn(r.writers);
-    if (writing.length > 1)
+    const writing = decidingOf(filesNamedIn(r.writers));
+    if (unitsAmong(writing) > 1)
       facts.push({
         kind: "писатель",
         where: writing,
@@ -7692,44 +7730,202 @@ const stateRecords = () => {
   return STATE_ROWS;
 };
 
-/** Писатели внешних хранилищ по ключу: ключ → файл → строка записи. */
-let STORE_WRITERS = null;
-const storeWriters = () => {
-  if (STORE_WRITERS !== null) return STORE_WRITERS;
-  STORE_WRITERS = new Map();
+/** Объявление верхнего уровня: пометка экспорта и имя. Пропускает `default`
+ * и `async`: `export default async function saveAll` — объявление `saveAll`. */
+const TOP_DECL =
+  /^(export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|enum)\s+([A-Za-z_$][\w$]*)/;
+/** Куски верхнего уровня: от строки, начатой с первой колонки, до следующей
+ * такой. Закрывающая скобка с первой колонки кусок не начинает — она его
+ * кончает. Имя есть у объявления; у импорта, выражения и переотдачи — нет. */
+const topSegmentsOf = (lines) => {
+  const out = [];
+  lines.forEach((line, i) => {
+    if (!/^[^\s})\]/*]/.test(line)) return;
+    if (out.length) out[out.length - 1].to = i;
+    const m = TOP_DECL.exec(line);
+    out.push({
+      name: m === null ? null : m[2],
+      exported: m !== null && m[1] !== undefined,
+      bare: /^(?:import|export\s*[{*])/.test(line),
+      from: i,
+      to: lines.length,
+    });
+  });
+  return out;
+};
+/** Имя функции-канала: обычное имя, не хук и не компонент. Хук и компонент
+ * держат своё и решают сами; канал только передаёт чужое решение. */
+const channelName = (n) => /^[a-z_$][\w$]*$/.test(n) && !/^use[A-Z0-9]/.test(n);
+
+/** Запись во внешние хранилища по ключу: где она СТОИТ и кто её РЕШАЕТ.
+ *
+ * Решает тот, кто зовёт, а не строка с `setItem`. Модуль, отдающий функцию
+ * записи (`saveCount(value)`), не решает ничего: решает вызывающий — по
+ * цепочке таких функций до первого решающего: компонента, хука, кода, который
+ * никто не зовёт. Прежде писателем считался только файл с прямой записью, и
+ * три компонента, писавшие один ключ через функции модуля хранилища,
+ * выглядели одним писателем. Замерено кривой кнопкой на мини-стенде: вторая
+ * копия счётчика писала тот же ключ, и свод её не видел.
+ *
+ * Ключ, пришедший доводом, так не разворачивается: обобщённое
+ * `save(key, value)` сделало бы решающими одного ключа всех, кто пишет хоть
+ * что-нибудь. */
+let STORE_WRITES = null;
+const storeWrites = () => {
+  if (STORE_WRITES !== null) return STORE_WRITES;
+  STORE_WRITES = new Map();
   // Ключ — строкой, как его увидит хранилище: литерал как есть, имя —
   // значением своей константы, в том же файле либо экспортом соседа. Иначе
   // один ключ, названный в одном узле строкой, а в другом константой,
   // выглядел бы двумя разными ключами, и второй писатель прятался бы.
   const keyOf = (raw, text) => {
     const t = raw.trim();
-    const lit = /^["'`]([^"'`]+)["'`]$/.exec(t);
-    if (lit !== null) return lit[1];
-    if (!/^[A-Za-z_$][\w$]*$/.test(t)) return t;
+    const lit = /^["'`]([^"'`$]+)["'`]$/.exec(t);
+    if (lit !== null) return { key: lit[1], fixed: true };
+    if (!/^[A-Za-z_$][\w$]*$/.test(t)) return { key: t, fixed: false };
     const here = new RegExp(
       "\\b(?:const|let|var)\\s+" +
         t +
         "\\s*(?::[^=]+)?=\\s*[\"'`]([^\"'`]+)[\"'`]",
     ).exec(text);
-    return here !== null ? here[1] : (codeLiteralOf(t) ?? t);
+    if (here !== null) return { key: here[1], fixed: true };
+    const there = codeLiteralOf(t);
+    return there !== null ? { key: there, fixed: true } : { key: t, fixed: false };
+  };
+  const cache = new Map();
+  const shapeOf = (f) => {
+    if (!cache.has(f)) {
+      const lines = codeOf(readFileSync(f, "utf8")).split(LF);
+      cache.set(f, { lines, segs: topSegmentsOf(lines) });
+    }
+    return cache.get(f);
+  };
+  const word = (n) =>
+    "(?<![\\w$.])" + n.replace(/[$]/g, "\\$") + "(?![\\w$])";
+  // Объявления файла, которые тянут запись: кусок, где она стоит, и всё,
+  // что его зовёт внутри того же файла.
+  const closureOf = ({ lines, segs }, s) => {
+    const names = new Set([s.name]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const e of segs) {
+        if (e.name === null || names.has(e.name)) continue;
+        const body = lines.slice(e.from, e.to).join("\n");
+        if ([...names].some((n) => new RegExp(word(n)).test(body))) {
+          names.add(e.name);
+          grew = true;
+        }
+      }
+    }
+    return segs.filter((e) => e.name !== null && names.has(e.name));
+  };
+  // Обращения других файлов к экспорту: строка, где имя названо вне
+  // импорта, — вызов либо передача как обработчика.
+  const usesOf = (f, name) => {
+    const out = [];
+    for (const u of files) {
+      if (u === f || isTest(u)) continue;
+      for (const b of bindingsOf.get(u) ?? []) {
+        const re =
+          b.there === "*"
+            ? definerOf(b.target, name) === f
+              ? new RegExp(
+                  word(b.here) +
+                    "\\s*\\.\\s*" +
+                    name.replace(/[$]/g, "\\$") +
+                    "(?![\\w$])",
+                )
+              : null
+            : b.there === name && definerOf(b.target, b.there) === f
+              ? new RegExp(word(b.here))
+              : null;
+        if (re === null) continue;
+        const { lines, segs } = shapeOf(u);
+        lines.forEach((line, k) => {
+          if (/^\s*(\/\/|\*)/.test(line) || !re.test(line)) return;
+          const at = segs.find((e) => e.from <= k && k < e.to);
+          if (at === undefined || !at.bare) out.push({ file: u, at: k });
+        });
+      }
+    }
+    return out;
+  };
+  // Кто решает запись в строке `at` файла `f`: сам файл либо, если запись
+  // стоит в экспортированном канале, те, кто канал зовёт. Канал, которого
+  // не зовёт никто, решает сам: код записи есть, и чей он — видно по файлу.
+  const decidersAt = (f, at, seen) => {
+    const out = new Map();
+    const shape = shapeOf(f);
+    const s = shape.segs.find((e) => e.from <= at && at < e.to);
+    if (s === undefined || s.name === null) return out.set(f, at + 1);
+    const exported = closureOf(shape, s).filter((e) => e.exported);
+    if (exported.length === 0 || exported.some((e) => !channelName(e.name)))
+      out.set(f, at + 1);
+    for (const e of exported) {
+      if (!channelName(e.name) || seen.has(f + "\u0000" + e.name)) continue;
+      seen.add(f + "\u0000" + e.name);
+      const uses = usesOf(f, e.name);
+      if (uses.length === 0 && !out.has(f)) out.set(f, at + 1);
+      for (const use of uses)
+        for (const [g, line] of decidersAt(use.file, use.at, seen))
+          if (!out.has(g)) out.set(g, line);
+    }
+    return out;
   };
   for (const f of files) {
     if (isTest(f)) continue;
-    const text = codeOf(readFileSync(f, "utf8"));
-    text
-      .split(LF)
-      .forEach((line, i) => {
-        if (/^\s*(\/\/|\*)/.test(line)) return;
-        for (const kind of WRITER_KINDS)
-          for (const m of line.matchAll(kind.take)) {
-            const key = kind.kind + " «" + keyOf(m[1], text) + "»";
-            if (!STORE_WRITERS.has(key)) STORE_WRITERS.set(key, new Map());
-            if (!STORE_WRITERS.get(key).has(f))
-              STORE_WRITERS.get(key).set(f, i + 1);
-          }
-      });
+    const { lines } = shapeOf(f);
+    const text = lines.join(LF);
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line)) return;
+      for (const kind of WRITER_KINDS)
+        for (const m of line.matchAll(kind.take)) {
+          const { key: bare, fixed } = keyOf(m[1], text);
+          const key = kind.kind + " «" + bare + "»";
+          if (!STORE_WRITES.has(key))
+            STORE_WRITES.set(key, {
+              sites: new Map(),
+              deciders: new Map(),
+              channels: new Set(),
+            });
+          const entry = STORE_WRITES.get(key);
+          if (!entry.sites.has(f)) entry.sites.set(f, i + 1);
+          const who = fixed ? decidersAt(f, i, new Set()) : new Map([[f, i + 1]]);
+          if (!who.has(f)) entry.channels.add(f);
+          for (const [g, at] of who)
+            if (!entry.deciders.has(g)) entry.deciders.set(g, at);
+        }
+    });
   }
-  return STORE_WRITERS;
+  return STORE_WRITES;
+};
+/** Второй писатель ключа: запись СТОИТ в двух единицах переноса — ключ
+ * пишут напрямую из двух мест, и канал, если он есть, обойдён, — либо её
+ * РЕШАЮТ две: канал один, а зовут его двое. Возвращает все файлы факта либо
+ * `null`. */
+const writerFactOf = (entry) =>
+  unitsAmong([...entry.sites.keys()]) < 2 &&
+  unitsAmong([...entry.deciders.keys()]) < 2
+    ? null
+    : [...new Set([...entry.sites.keys(), ...entry.deciders.keys()])];
+/** Факт о писателях ключа словами: где запись стоит и кто её решает. */
+const writerText = (key, entry) =>
+  key +
+  ": запись стоит в " +
+  [...entry.sites.keys()].map(rel).sort().join(", ") +
+  "; решают " +
+  [...entry.deciders.keys()].map(rel).sort().join(", ");
+/** Сколько единиц переноса среди файлов: второй писатель — вторая ЕДИНИЦА.
+ * Два файла одной папки компонента — один владелец: папку переносят целиком. */
+const unitsAmong = (list) => new Set(list.map(unitOf)).size;
+/** Решающие среди файлов, названных писателями: канал писателем не считается.
+ * Запись о состоянии называет и модуль хранилища, и тех, кто его зовёт, —
+ * второй писатель там только среди зовущих. */
+const decidingOf = (list) => {
+  const channel = new Set(
+    [...storeWrites().values()].flatMap((entry) => [...entry.channels]),
+  );
+  return list.filter((f) => !channel.has(f));
 };
 
 /** Имена файла, которые берут другие: по именам, сквозь бочки, и отдельно —
@@ -7913,7 +8109,7 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
     return h === null ? new Set() : importTargetsOfText(x, h);
   };
   const faults = directionFaults().edges;
-  const writers = storeWriters();
+  const writes = storeWrites();
   const records = stateRecords();
   const seenCycles = new Set();
   const seenRecords = new Set();
@@ -8040,8 +8236,8 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
       add(
         "граница",
         where,
-        rel(t) + " — мимо входа единицы переноса " + unitOf(t),
-        owedMark("мимо входа", [f, t]),
+        rel(t) + " — " + insideText(t),
+        owedMark(unitHasEntry(t) ? "мимо входа" : "входа нет", [f, t]),
         fresh.has(t) ? "новое" : "",
       );
     }
@@ -8129,8 +8325,8 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
           (r.readers || "—"),
         "да",
       );
-      const writing = filesNamedIn(r.writers);
-      if (writing.length > 1)
+      const writing = decidingOf(filesNamedIn(r.writers));
+      if (unitsAmong(writing) > 1)
         add(
           "писатель",
           where,
@@ -8138,23 +8334,32 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
           owedMark("да", writing),
         );
     }
-    for (const [key, byFile] of want("писатель") ? writers : []) {
-      if (!byFile.has(f) || byFile.size < 2 || seenKeys.has(key)) continue;
+    for (const [key, entry] of want("писатель") ? writes : []) {
+      const all = writerFactOf(entry);
+      if (all === null || !all.includes(f) || seenKeys.has(key)) continue;
       seenKeys.add(key);
-      const at = byFile.get(f);
+      const at = entry.deciders.get(f) ?? entry.sites.get(f);
+      // Сдвиг — когда правка завела запись либо решающего: в любом правленом
+      // файле факта, не только в первом, который до ключа дошёл.
+      const made = [...entry.sites, ...entry.deciders].some(([g, line]) => {
+        if (!inFocus.has(g)) return false;
+        const was = headLines(g);
+        const now = readFileSync(g, "utf8").split(LF)[line - 1] ?? "";
+        return was !== null && !was.has(now.trim());
+      });
       add(
         "писатель",
         where + ":" + at,
-        key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
+        writerText(key, entry),
         owedMark(
           records.some((r) =>
             r.line.includes(key.slice(key.indexOf("«") + 1, -1)),
           )
             ? "да"
             : "нет",
-          [...byFile.keys()],
+          all,
         ),
-        isNewLine(lines[at - 1] ?? "") ? "новое" : "",
+        made ? "новое" : "",
       );
     }
     for (const [names, who] of want("связь") ? sharedNamesOf(f) : []) {
