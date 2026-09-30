@@ -2551,6 +2551,104 @@ describe("находки мини-стенда: факты, долг, отлож
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  it("пункт долга, задетый правкой, чинится: ни «чисто», ни «отложено», пункт правится; чтение без второй записи", () => {
+    const box = seatEmpty("ministend-dolg-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=m", "-c", "user.email=m@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = toolAt(box);
+      layered(box);
+      // Цикл: компонент зовёт общий модуль, а тот берёт у компонента шаг.
+      write(
+        box,
+        "src/components/zzA/zzA.tsx",
+        'import { zzs } from "../../shared/zzs/zzs";\n\nexport const ZZ_STEP = 1;\n\nexport function ZzA() {\n  return <b>{ZZ_STEP + zzs()}</b>;\n}\n',
+      );
+      withTransitionDebt(box, [
+        "| 1 | Цикл и ребро против слоёв: `src/shared/zzs/zzs.ts` и `src/components/zzA/zzA.tsx` | `1` | «Правила направления» | развести | `1` импорт |",
+        "| 2 | Экспорт без потребителя в `src/components/zzA/zzA.tsx` — H4 «Мёртвого кода нет» | `1` | `graph.mjs bar --transition` | снять | `1` имя |",
+      ]);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "seat");
+      const proto = path.join(box, ".context", "bar-protocol.md");
+      const holes = () => tool("bar").out;
+
+      // Правка задела файл цикла: модель помечает цикл известным дефектом.
+      edit(box, "src/components/zzA/zzA.tsx", "<b>", "<i>");
+      edit(box, "src/components/zzA/zzA.tsx", "</b>", "</i>");
+      tool("bar");
+      expect(fs.readFileSync(proto, "utf8")).toMatch(/\| цикл \|[^\n]*\| долг перехода \|/);
+      // «Чисто» при нём ложно: пункт долга называет и цикл, и H4 в файле правки.
+      fillBar(proto, { release: "нет" });
+      let said = holes();
+      expect(said).toMatch(/A9-бис[^\n]*чисто, а П\d+ — известный дефект \(долг перехода\): правка его задела/);
+      expect(said).toMatch(/H4[^\n]*«нет предмета», а пункт 2 долга перехода называет H4 в `components\/zzA\/zzA\.tsx`/);
+      // «Отложено» заводит вторую запись — не принимается ни у факта, ни у пункта.
+      fillBar(proto, {
+        release: "нет",
+        pick: {
+          "A9-бис": "нашлось | `src/components/zzA/zzA.tsx:1` | цикл | отложено",
+          H4: "нашлось | `src/components/zzA/zzA.tsx:3` | мёртвое имя | отложено",
+        },
+      });
+      said = holes();
+      expect(said).toMatch(/A9-бис[^\n]*отложено, а П\d+ — известный дефект \(долг перехода\)/);
+      expect(said).toMatch(/H4[^\n]*«отложено», а находка — пункт 2 долга перехода/);
+      // «Починено» при неправленом пункте — неправда; правленый пункт — законно.
+      fillBar(proto, {
+        release: "нет",
+        pick: { H4: "нашлось | `src/components/zzA/zzA.tsx:3` | мёртвое имя | починено" },
+      });
+      expect(holes()).toMatch(/H4[^\n]*«починено», а пункт 2 долга перехода не правлен/);
+      edit(box, ".context/15-transition.md", "| `1` | `graph.mjs bar --transition` | снять | `1` имя |", "| `0` | `graph.mjs bar --transition` | снять | `1` имя |");
+      expect(holes()).not.toMatch(/пункт 2 долга перехода не правлен/);
+
+      // Чтение: предложенное держит сам пункт долга — второй записи не нужно.
+      git("checkout", "-q", "--", ".");
+      fs.rmSync(proto, { force: true });
+      tool("bar", "src/components/zzA");
+      fillBar(proto, {
+        release: "нет",
+        pick: {
+          "A9-бис": "нашлось | `src/components/zzA/zzA.tsx:1` | цикл | предложено",
+          H4: "нашлось | `src/components/zzA/zzA.tsx:3` | мёртвое имя | предложено",
+          "H6-тер": "нашлось | `src/components/zzA/zzA.tsx:5` | сокращение | предложено",
+        },
+      });
+      const loose = verifyIn(box).get("Предложенное сводом названо находкой") ?? [];
+      expect(loose).toHaveLength(1);
+      expect(loose[0]).toMatch(/^H6-тер/);
+
+      // Правила направления нет — факт остаётся циклом, и пункт, назвавший
+      // его файлы, держит его: сверка не падает на факте без имён пакетов.
+      edit(box, ".context/00-map.md", "| `shared` | `app`, `components` |  |", "| `shared` | `app` |  |");
+      const whole = tool("verify").out;
+      expect(whole).toContain("=== Шаги перехода закрывают измерение ===");
+      expect(whole).not.toContain("пункт долга 1 держит факт");
+      edit(box, ".context/00-map.md", "| `shared` | `app` |  |", "| `shared` | `app`, `components` |  |");
+
+      // Цикл и ребро починены — пункт, державший их, закрыт и не удалён.
+      fs.rmSync(proto, { force: true });
+      write(box, "src/shared/zzs/zzs.ts", "export const zzs = (): number => 1;\n");
+      const steps = () => verifyIn(box).get("Шаги перехода закрывают измерение") ?? [];
+      expect(steps().some((one) => one.includes("пункт долга 1 держит факт, которого в коде нет"))).toBe(true);
+      edit(
+        box,
+        ".context/15-transition.md",
+        "| 1 | Цикл и ребро против слоёв: `src/shared/zzs/zzs.ts` и `src/components/zzA/zzA.tsx` | `1` | «Правила направления» | развести | `1` импорт |\n",
+        "",
+      );
+      expect(steps().some((one) => one.includes("пункт долга 1"))).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 describe("тесты обвязки — своей командой, вне прогона проекта", () => {

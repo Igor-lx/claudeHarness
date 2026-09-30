@@ -28,6 +28,9 @@ import {
   barLevelFault,
   barDeltaFault,
   barSplitOf,
+  barOwedOf,
+  BAR_OWED,
+  BAR_FACT_CRITERIA,
   MODEL_LEVEL,
   LEVEL_ORDER,
   codeOf,
@@ -186,6 +189,7 @@ const transitionDebt = () => {
       holds,
       plan: planText,
       price,
+      line: lines[i],
       count: n === null ? null : Number(n[1]),
       names: [...(what + " " + holds).matchAll(/«([^»]+)»/g)].map((m) => m[1]),
     });
@@ -7489,7 +7493,101 @@ const heldBy = (ends, names = []) =>
       ends.every((f) => namesFileIn(text, f)) &&
       names.every((n) => quotedIn(text).includes(n)),
   )?.[0] ?? null;
+/** Известный дефект: факт держит пункт долга перехода либо открытая строка
+ * реестра находок, а решение — нет. Решение пометку снимает: разработчик
+ * сказал «не сейчас» либо «оставляем», и «чисто» с опорой на него законно.
+ * Возвращает слово пометки из `BAR_OWED` либо `null`. */
+const owedBy = (ends, names = []) => {
+  const all = (text) =>
+    ends.every((f) => namesFileIn(text, f)) &&
+    names.every((n) => quotedIn(text).includes(n));
+  const at = (one) => (one == null ? null : rel0(path.join(BASE, one)));
+  const decisions = at(CONFIG.decisions);
+  if (heldRecords().some(([file, text]) => file === decisions && all(text)))
+    return null;
+  const plan = at(CONFIG.transition?.file);
+  if (heldRecords().some(([file, text]) => file === plan && all(text)))
+    return BAR_OWED[0];
+  return openFindingRows().some(all) ? BAR_OWED[1] : null;
+};
+/** Запись называет критерий планки обозначением-словом: «H4» либо
+ * `H4 «Заголовок»`. Слово целиком: A5 не называет A5-бис. */
+const namesCriterion = (text, id) =>
+  new RegExp(
+    "(^|[^\\p{L}\\p{N}-])" +
+      id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      "(?![\\p{L}\\p{N}-])",
+    "u",
+  ).test(text);
 
+/** Архитектурные факты всего проекта: ребро против правила направления,
+ * цикл, внутренность чужой единицы переноса мимо входа, второй писатель.
+ * Один список на режим `levels` и на сверку пунктов долга, которые их
+ * держат: два списка разошлись бы при первом новом виде факта. Форма одна у
+ * всех видов — `where`, `names`, `text`: сверка пунктов долга падала на
+ * цикле, у которого имён не было. */
+const levelFacts = () => {
+  const own = files.filter((f) => !isTest(f));
+  const facts = [];
+  for (const e of directionFaults().edges)
+    facts.push({
+      kind: "направление",
+      where: e.to === null ? [e.from] : [e.from, e.to],
+      // Ребро к пакету, а не к файлу: второй конец — имя пакета в кавычках.
+      names: e.to === null ? [e.banned] : [],
+      text:
+        (e.to === null ? rel(e.from) + " → " + e.banned : e.text) +
+        ": слою " +
+        e.rule.layer +
+        " запрещено " +
+        e.banned,
+    });
+  {
+    const seen = new Set();
+    for (const f of own) {
+      const c = cycleThrough(f);
+      if (c === null) continue;
+      const key = [...new Set(c)].sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      facts.push({
+        kind: "цикл",
+        where: c.slice(0, -1),
+        names: [],
+        text: c.map(rel).join(" → "),
+      });
+    }
+  }
+  for (const f of own)
+    for (const t of importsOf.get(f) ?? [])
+      if (!isTest(t) && foreignInside(f, t))
+        facts.push({
+          kind: "граница",
+          where: [f, t],
+          names: [],
+          text:
+            rel(f) + " → " + rel(t) + " — мимо входа единицы переноса " + unitOf(t),
+        });
+  for (const [key, byFile] of storeWriters())
+    if (byFile.size > 1)
+      facts.push({
+        kind: "писатель",
+        where: [...byFile.keys()],
+        names: [],
+        text: key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
+      });
+  for (const r of stateRecords()) {
+    const writing = filesNamedIn(r.writers);
+    if (writing.length > 1)
+      facts.push({
+        kind: "писатель",
+        where: writing,
+        names: [],
+        text: "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
+      });
+  }
+  return facts;
+};
 /** Что узел делает — словами карты: графа ответственности у строки, где он
  * назван первой графой, либо первая строка под заголовком, называющим его.
  * Не описан — `null`. */
@@ -7779,6 +7877,14 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
   // Переход читает весь код разом: ребро на ребро давало бы сотни строк про
   // узел, которым пользуются все, и сводится в одну строку на файл.
   const transition = kind === "на переход";
+  // Факт, который держит пункт долга или открытая строка реестра, —
+  // известный дефект; пометка называет его, и свод спрашивает его с
+  // критерия факта. Переход этот долг сам и пишет — ему пометка ни к чему.
+  const owedMark = (mark, ends, names = []) => {
+    const owed = transition ? null : owedBy(ends, names);
+    if (owed === null) return mark;
+    return mark === "" ? owed : mark + " · " + owed;
+  };
   const inSubject = new Set(subject);
   const graphAt = path.join(BASE, CONFIG.domTables?.file ?? "03-graph.md");
   const graphText = existsSync(graphAt) ? readFileSync(graphAt, "utf8") : "";
@@ -7935,7 +8041,7 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
         "граница",
         where,
         rel(t) + " — мимо входа единицы переноса " + unitOf(t),
-        "мимо входа",
+        owedMark("мимо входа", [f, t]),
         fresh.has(t) ? "новое" : "",
       );
     }
@@ -7951,7 +8057,11 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
           e.rule.layer +
           " запрещено " +
           e.banned,
-        "против правила",
+        owedMark(
+          "против правила",
+          e.to === null ? [e.from] : [e.from, e.to],
+          e.to === null ? [e.banned] : [],
+        ),
         e.to !== null && fresh.has(e.to) ? "новое" : "",
       );
     }
@@ -7979,7 +8089,7 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
           "цикл",
           where,
           cycle.map(rel).join(" → "),
-          "",
+          owedMark("", cycle.slice(0, -1)),
           change && cycleThrough(f, headEdges) === null ? "новое" : "",
         );
       }
@@ -8025,7 +8135,7 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
           "писатель",
           where,
           "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
-          "да",
+          owedMark("да", writing),
         );
     }
     for (const [key, byFile] of want("писатель") ? writers : []) {
@@ -8036,9 +8146,14 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
         "писатель",
         where + ":" + at,
         key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
-        records.some((r) => r.line.includes(key.slice(key.indexOf("«") + 1, -1)))
-          ? "да"
-          : "нет",
+        owedMark(
+          records.some((r) =>
+            r.line.includes(key.slice(key.indexOf("«") + 1, -1)),
+          )
+            ? "да"
+            : "нет",
+          [...byFile.keys()],
+        ),
         isNewLine(lines[at - 1] ?? "") ? "новое" : "",
       );
     }
@@ -8443,7 +8558,10 @@ const barSkeletonOf = ({
           "отложенного называет файл находки; " +
             barQuoted("вопрос") +
             " — развилка разработчика, и список",
-          "вопросов называет файл находки.",
+          "вопросов называет файл находки. Находка, которую уже держит пункт",
+          "долга перехода, на правке чинится, и пункт правится той же правкой: " +
+            barQuoted("чисто"),
+          "и " + barQuoted("отложено") + " при ней не принимаются.",
         ]),
     "",
     ...(transition
@@ -8572,6 +8690,7 @@ const barHolesOf = ({
   changedNow,
   withBase,
   marks,
+  subjectAbs = [],
 }) => {
   const holes = [];
   const said = new Map();
@@ -8602,6 +8721,37 @@ const barHolesOf = ({
     norm(path.relative(repoRoot, abs)),
     norm(path.relative(ROOT, abs)),
   ];
+  // Пункт долга перехода, называющий критерий и файл предмета, — известная
+  // находка. Работа с диффом кода, задевшая файл, чинит её тем же заходом и
+  // правит пункт той же правкой; задача чтения её называет. Вторая запись —
+  // в отложенном — расходится с первой. Правлен ли пункт, видно по HEAD.
+  const planAt =
+    CONFIG.transition?.file == null
+      ? null
+      : path.join(BASE, CONFIG.transition.file);
+  const headPlan = new Set(
+    (kind === "на изменение" && planAt !== null
+      ? (headTextOf(planAt) ?? "")
+      : ""
+    ).split(/\r?\n/),
+  );
+  const insideOf = (c, s, abs) =>
+    s === "" ||
+    (c.level === "узел"
+      ? unitOf(abs) === s
+      : c.level === "слой"
+        ? layerOf(abs) === s
+        : true);
+  const debtNaming = (c, s) =>
+    kind === "на переход"
+      ? []
+      : transitionDebt().flatMap((row) =>
+          namesCriterion(row.line, c.id)
+            ? subjectAbs
+                .filter((f) => insideOf(c, s, f) && namesFileIn(row.line, f))
+                .map((file) => ({ row, file }))
+            : [],
+        );
   // Запись, куда ведёт судьба: список вопросов, отложенное, долг перехода.
   const namedIn = (field, what, spot, abs) => {
     const file = field === "transition" ? CONFIG.transition?.file : CONFIG[field];
@@ -8639,6 +8789,25 @@ const barHolesOf = ({
       );
       continue;
     }
+    const known = debtNaming(c, subject);
+    if (
+      known.length > 0 &&
+      (one.outcome === "чисто" || one.outcome === "нет предмета")
+    )
+      holes.push(
+        who +
+          ": «" +
+          one.outcome +
+          "», а пункт " +
+          known[0].row.no +
+          " долга перехода называет " +
+          c.id +
+          " в " +
+          barQuoted(rel(known[0].file)) +
+          (kind === "на изменение"
+            ? ": правка задела его место — это находка, чинится тем же заходом, пункт правится той же правкой; дефекта уже нет — пункт закрыт и удаляется"
+            : ": это находка — называется и предлагается"),
+      );
     if (one.outcome !== "нашлось") continue;
     const spot = spotOf(one.addr);
     if (spot === null) continue;
@@ -8646,6 +8815,23 @@ const barHolesOf = ({
     if (abs === null) {
       holes.push(who + ": файла " + barQuoted(spot[1]) + " нет");
       continue;
+    }
+    const mine = known.find(({ file }) => file === abs);
+    if (mine !== undefined && kind === "на изменение") {
+      if (one.fate === "отложено")
+        holes.push(
+          who +
+            ": «отложено», а находка — пункт " +
+            mine.row.no +
+            " долга перехода: работа с диффом кода чинит её тем же заходом, развилка — «вопрос»",
+        );
+      if (one.fate === "починено" && headPlan.has(mine.row.line))
+        holes.push(
+          who +
+            ": «починено», а пункт " +
+            mine.row.no +
+            " долга перехода не правлен: пункт правится той же правкой — число меньше либо строка удалена",
+        );
     }
     const lines = readFileSync(abs, "utf8").split(/\r?\n/).length;
     if (Number(spot[2]) < 1 || Number(spot[2]) > lines)
@@ -8853,6 +9039,7 @@ const barProcess = ({
   noneOf,
   repoRoot,
   changedNow,
+  subjectAbs = [],
 }) => {
   const was = barHeader(at);
   const parsedWas = was === null ? null : barRowsOf(was.body);
@@ -8979,6 +9166,7 @@ const barProcess = ({
     changedNow,
     withBase,
     marks,
+    subjectAbs,
   });
   const found = expected
     .map(({ c, subject }) => ({
@@ -9439,6 +9627,7 @@ if (mode === "bar") {
     noneOf,
     repoRoot,
     changedNow,
+    subjectAbs: subject,
   });
 
   if (r.state === "напечатан") {
@@ -9617,56 +9806,7 @@ if (mode === "levels") {
   }
   const own = files.filter((f) => !isTest(f));
   sayLooked("файлов кода", own.length);
-  const facts = [];
-  for (const e of directionFaults().edges)
-    facts.push({
-      kind: "направление",
-      where: e.to === null ? [e.from] : [e.from, e.to],
-      // Ребро к пакету, а не к файлу: второй конец — имя пакета в кавычках.
-      names: e.to === null ? [e.banned] : [],
-      text:
-        (e.to === null ? rel(e.from) + " → " + e.banned : e.text) +
-        ": слою " +
-        e.rule.layer +
-        " запрещено " +
-        e.banned,
-    });
-  {
-    const seen = new Set();
-    for (const f of own) {
-      const c = cycleThrough(f);
-      if (c === null) continue;
-      const key = [...new Set(c)].sort().join("|");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      facts.push({ kind: "цикл", where: c.slice(0, -1), text: c.map(rel).join(" → ") });
-    }
-  }
-  for (const f of own)
-    for (const t of importsOf.get(f) ?? [])
-      if (!isTest(t) && foreignInside(f, t))
-        facts.push({
-          kind: "граница",
-          where: [f, t],
-          text:
-            rel(f) + " → " + rel(t) + " — мимо входа единицы переноса " + unitOf(t),
-        });
-  for (const [key, byFile] of storeWriters())
-    if (byFile.size > 1)
-      facts.push({
-        kind: "писатель",
-        where: [...byFile.keys()],
-        text: key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
-      });
-  for (const r of stateRecords()) {
-    const writing = filesNamedIn(r.writers);
-    if (writing.length > 1)
-      facts.push({
-        kind: "писатель",
-        where: writing,
-        text: "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
-      });
-  }
+  const facts = levelFacts();
   // Где факт назван: долг перехода, реестр решений, реестр находок — одной
   // записью, называющей ВСЕ его файлы (`heldBy`).
   const namedBy = (fact) => heldBy(fact.where, fact.names);
@@ -17486,7 +17626,8 @@ if (mode === "verify") {
     if (at !== null && existsSync(at)) {
       // Разбор протокола общий с режимом: свой, делящий строку по любой
       // черте, сбивался на экранированной черте внутри клетки.
-      for (const one of barRowsOf(readFileSync(at, "utf8")).outcomes) {
+      const proto = barRowsOf(readFileSync(at, "utf8"));
+      for (const one of proto.outcomes) {
         if (one.outcome !== "нашлось" || one.fate !== "предложено") continue;
         barProposed += 1;
         // Строка реестра отвечает за находку, только если называет и
@@ -17495,14 +17636,26 @@ if (mode === "verify") {
         // стенде, где строка об одном узле гасила находку о другом.
         const file = one.addr.split(BAR_TICK).join("").replace(/:[0-9]+$/, "");
         const tail = file.slice(file.lastIndexOf("/") + 1);
-        const named = openFindingRows().some(
-          (row) =>
-            row.includes("«" + one.id + "»") &&
-            (row.includes(file) ||
-              (row.includes(tail) &&
-                [...files, ...styleFiles].filter((f) => f.endsWith("/" + tail))
-                  .length === 1)),
-        );
+        // Критерий назван словом — «H4» реестра либо `H4 «Заголовок»` пункта
+        // долга: пункт долга и есть запись о находке, вторая ей не нужна.
+        // Известный дефект, записанный фактом, модель протокола называет
+        // пометкой сама — его держит пункт, называющий файлы факта.
+        const named =
+          openFindingRows().some(
+            (row) =>
+              namesCriterion(row, one.id) &&
+              (row.includes(file) ||
+                (row.includes(tail) &&
+                  [...files, ...styleFiles].filter((f) =>
+                    f.endsWith("/" + tail),
+                  ).length === 1)),
+          ) ||
+          proto.model.some(
+            (m) =>
+              barOwedOf(m.mark) !== "" &&
+              (BAR_FACT_CRITERIA[m.sort] ?? []).includes(one.id) &&
+              (m.where + " " + m.what).includes(tail),
+          );
         if (!named)
           barLoose.push(
             one.id +
@@ -20711,6 +20864,30 @@ if (mode === "verify") {
                 " не называет, что его держит: «" +
                 row.holds +
                 "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
+            );
+        }
+        // Пункт, чей держатель — сверка направления или режим фактов, держит
+        // ФАКТ: ребро, цикл, внутренность мимо входа, второго писателя. Факта
+        // в коде нет — пункт закрыт и не удалён: работа его починила, а
+        // запись осталась описывать то, чего нет. Замерено на мини-стенде:
+        // цикл, задетый рефактором, чинится правкой, и пункт обязан уйти ею же.
+        const live = levelFacts();
+        for (const row of transitionDebt()) {
+          const byFacts =
+            [...row.holds.matchAll(/«([^»]+)»/g)].some(
+              (m) => m[1] === "Правила направления",
+            ) || /`[^`]*\blevels\b[^`]*`/.test(row.holds);
+          if (!byFacts) continue;
+          const holdsLive = live.some(
+            (fact) =>
+              fact.where.every((f) => namesFileIn(row.line, f)) &&
+              fact.names.every((n) => quotedIn(row.line).includes(n)),
+          );
+          if (!holdsLive)
+            stepsAdrift.push(
+              "пункт долга " +
+                row.no +
+                " держит факт, которого в коде нет: пункт закрыт — удалить его той же правкой, что починила",
             );
         }
       }
