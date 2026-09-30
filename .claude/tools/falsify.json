@@ -315,22 +315,6 @@
       "replace": "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n| 9999 | проба | проба |  | «нечем» | закрыта |"
     },
     {
-      "section": "Объявленный долг назван планом перехода",
-      "edits": [
-        {
-          "file": ".context/graph.config.mjs",
-          "find": "    constants: null,",
-          "replace": "    constants: 1,"
-        },
-        {
-          "create": {
-            "path": ".context/15-transition.md",
-            "text": "# План перехода\n\n| № | Шаг | Объём | Чем проверяется |\n| --- | --- | --- | --- |"
-          }
-        }
-      ]
-    },
-    {
       "section": "Шаги перехода закрывают измерение",
       "file": ".context/15-transition.md",
       "find": "| --- | --- | --- | --- |",
@@ -1062,7 +1046,20 @@
       "section": "Архитектурный проход перехода запечатан",
       "file": ".context/15-transition.md",
       "find": "`graph.mjs levels` и `graph.mjs bar --transition`",
-      "replace": "`graph.mjs levels`"
+      "replace": "`graph.mjs levels`",
+      "whenStepOpen": "bar\\s+--transition"
+    },
+    {
+      "section": "Архитектурный проход перехода запечатан",
+      "whenStepClosed": "bar\\s+--transition",
+      "edits": [
+        {
+          "create": {
+            "path": ".context/15-transition-bar/проба.md",
+            "text": "# Свод по планке — протокол перехода\n\n- род: `на переход`\n- печать: `нет`\n"
+          }
+        }
+      ]
     },
     {
       "section": "Ворота перед коммитом установлены",
@@ -1224,8 +1221,13 @@
     {
       "section": "Настройка проекта знает все поля семени",
       "file": ".context/graph.config.mjs",
-      "find": "    tongue: null,",
+      "find": "  isolationHeading: null,",
       "replace": ""
+    },
+    {
+      "section": "Объявленный долг назван планом перехода",
+      "file": ".context/graph.config.mjs",
+      "append": "CONFIG.debt.constants = 1;"
     },
     {
       "section": "Поле семени настройки объяснено",
@@ -1245,12 +1247,6 @@
         "path": "CLAUDE.md",
         "text": "# Проба\n\nПравила заполнены.\n\n<!-- ЗАПОЛНИТЬ -->\nОтвечать по слотам.\n<!-- /ЗАПОЛНИТЬ -->"
       }
-    },
-    {
-      "section": "Объявленный долг назван планом перехода",
-      "file": ".context/graph.config.mjs",
-      "find": "    tongue: null,",
-      "replace": "    tongue: 3,"
     }
   ]
 }

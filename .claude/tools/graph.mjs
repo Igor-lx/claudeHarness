@@ -132,8 +132,6 @@ const namedFindings = () => {
   }
   return out;
 };
-/** Находок этой сверки, не покрытых ни пунктом долга, ни открытой строкой. */
-const overOpen = (name, n) => Math.max(0, n - (openFindings().get(name) ?? 0));
 /** Тексты ОТКРЫТЫХ строк реестра: что найдено и чем держится. Нужны там,
  * где строку узнают не по одному имени, а по имени и адресу вместе. */
 const openFindingRows = () => {
@@ -1390,6 +1388,10 @@ const barHeaderOf = (body) => {
     "^- печать: " + BAR_TICK + "(.+)" + BAR_TICK + "$",
     "m",
   ).exec(body);
+  const modelRows = new RegExp(
+    "^- строк модели от инструмента: " + BAR_TICK + "([0-9]+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
   const rowOf = new RegExp(
     "^\\| " +
       BAR_TICK +
@@ -1410,6 +1412,7 @@ const barHeaderOf = (body) => {
     body,
     kind: kind === null ? null : kind[1],
     seal: seal === null ? null : seal[1],
+    modelRows: modelRows === null ? null : Number(modelRows[1]),
     marks: [...body.matchAll(rowOf)].map((h) => ({ file: h[1], mark: h[2] })),
   };
 };
@@ -4236,12 +4239,21 @@ if (mode === "falsify") {
   // было некуда — файл обвязки общий, и правка его расходилась с раздачей.
   // Замерено переходом библиотеки: шаг «перенацелить рецепты» не имел места.
   const projectRecipesAt = path.join(BASE, "falsify.json");
-  const projectRecipes = existsSync(projectRecipesAt)
-    ? (readJson(projectRecipesAt, {}).recipes ?? []).map((r) => ({
-        ...r,
-        project: true,
-      }))
-    : [];
+  const projectJson = existsSync(projectRecipesAt)
+    ? readJson(projectRecipesAt, {})
+    : null;
+  // Файл есть, а списка `recipes` в нём нет — рецептов проекта ноль, и прежде
+  // это было молча: перенацеленные рецепты не исполнялись, а прогон печатал
+  // их сверки «под свой проект». Замерено переходом стенда: рецепты легли
+  // голым списком.
+  const projectUnread =
+    projectJson !== null && !Array.isArray(projectJson?.recipes);
+  const projectRecipes = (projectUnread ? [] : (projectJson?.recipes ?? [])).map(
+    (r) => ({
+      ...r,
+      project: true,
+    }),
+  );
   recipes.push(...projectRecipes);
   const retargeted = new Set(projectRecipes.map((r) => r.section));
   sayLooked("рецептов опровержения", recipes.length);
@@ -4604,7 +4616,20 @@ if (mode === "falsify") {
     // раннером либо на обычном JavaScript их не несёт, и рецепт там
     // печатался «устаревшим» — прогон краснел на законном устройстве.
     // Замерено фальсификацией стендов на jest и на JavaScript.
+    // `whenStepOpen` и `whenStepClosed` — состояние шага знания, чья строка
+    // подходит под образец: у сверки прохода перехода предмет разный, пока
+    // шаг открыт и когда он закрыт, и одним рецептом его не сломать. Прежде
+    // рецепт был один, под открытый шаг, и закрытый переход — обычное его
+    // окончание — печатал «рецепт устарел». Замерено переходом стенда.
+    const stepIdle = (r) => {
+      const pattern = r.whenStepOpen ?? r.whenStepClosed;
+      if (pattern === undefined) return false;
+      const steps = transitionOpen();
+      const open = (steps ?? []).some((one) => new RegExp(pattern).test(one.line));
+      return r.whenStepOpen !== undefined ? !open : steps === null || open;
+    };
     const idleByDesign = (r) => {
+      if (stepIdle(r)) return true;
       if (r.whenNull !== undefined && CONFIG[r.whenNull] != null) return true;
       if (r.whenScript !== undefined && scriptsNow()[r.whenScript] == null)
         return true;
@@ -4865,7 +4890,16 @@ if (mode === "falsify") {
       );
   }
 
-  if (silent.length || astray.length || broken.length) process.exitCode = 1;
+  if (projectUnread) {
+    console.log("");
+    console.log(
+      "  РЕЦЕПТЫ ПРОЕКТА НЕ ПРОЧИТАНЫ: " +
+        rel0(projectRecipesAt) +
+        " — нужен объект со списком `recipes`, той же формы, что у обвязки",
+    );
+  }
+  if (silent.length || astray.length || broken.length || projectUnread)
+    process.exitCode = 1;
   process.exit(process.exitCode ?? 0);
 }
 // --- handoff: собрать обвязку для передачи -----------------------------------
@@ -6434,7 +6468,13 @@ if (mode === "tested") {
       return hits.length === 1 ? hits[0] : null;
     };
     const atRisk = [];
-    for (const name of readdirSync(BASE).filter((n) => n.endsWith(".md"))) {
+    // Протокол свода пишет инструмент, и после печати его не правят: якорь
+    // в нём — строка модели на этот вид кода, а не запись, которой
+    // дописывают цитату. Прежде он стоял в этом списке с советом «допиши»,
+    // и совет гасил печать. Замерено рефактором на стенде.
+    for (const name of readdirSync(BASE).filter(
+      (n) => n.endsWith(".md") && n !== CONFIG.barProtocol,
+    )) {
       let current = null;
       for (const line of readFileSync(path.join(BASE, name), "utf8").split(
         NEWLINE,
@@ -7309,14 +7349,27 @@ const WRITER_KINDS = [
 /** Внутренность чужой единицы переноса: файл в папке другого компонента, не
  * её вход. Единица переноса — папка под объявленным слоем компонентов
  * (`componentsAt`): её
- * переносят копированием, и берут у неё только вход. */
+ * переносят копированием, и берут у неё только вход. Вход — бочка; у папки
+ * без бочки — файл узла, названный как папка: раскладка умолчания бочки не
+ * требует, и импорт самого компонента иначе читался бы обходом входа. */
 const foreignInside = (from, to) => {
   for (const layer of CONFIG.componentsAt ?? ["components"]) {
     const m = new RegExp("^" + layer + "/([^/]+)/(.+)$").exec(rel(to));
     if (m === null) continue;
     const unit = layer + "/" + m[1] + "/";
     if (rel(from).startsWith(unit)) return false;
-    return !/^index\.[cm]?[jt]sx?$/.test(m[2]);
+    const entry = /^index\.[cm]?[jt]sx?$/;
+    if (entry.test(m[2])) return false;
+    const nodeFile =
+      !m[2].includes("/") &&
+      m[2].replace(/\.[^.]+$/, "").toLowerCase() === m[1].toLowerCase();
+    return !(
+      nodeFile &&
+      !files.some((f) => {
+        const r = rel(f);
+        return r.startsWith(unit) && entry.test(r.slice(unit.length));
+      })
+    );
   }
   return false;
 };
@@ -7380,6 +7433,48 @@ const namesFileIn = (text, f) => {
 /** Файлы кода, названные текстом путём. */
 const filesNamedIn = (text) =>
   files.filter((f) => !isTest(f) && namesFileIn(text, f));
+
+/** Чем держится архитектурный факт: запись долга перехода, реестра решений
+ * либо реестра находок, назвавшая путём ВСЕ файлы факта. Запись — строка
+ * таблицы либо абзац. Прежде хватало любого упоминания любого файла факта
+ * где угодно в этих файлах, и ребро против направления слоёв держалось
+ * пунктом долга про находку линтера в одном из его концов — замерено
+ * переходом стенда: четыре факта из пяти числились названными, не будучи
+ * названы ни одной записью. */
+let HELD_RECORDS = null;
+const heldRecords = () => {
+  if (HELD_RECORDS !== null) return HELD_RECORDS;
+  HELD_RECORDS = [];
+  for (const one of [
+    CONFIG.transition?.file,
+    CONFIG.decisions,
+    CONFIG.findings?.file,
+  ]) {
+    if (one == null) continue;
+    const at = path.join(BASE, one);
+    if (!existsSync(at)) continue;
+    let para = [];
+    const flush = () => {
+      if (para.length) HELD_RECORDS.push([rel0(at), para.join("\n")]);
+      para = [];
+    };
+    for (const line of readFileSync(at, "utf8").split(/\r?\n/)) {
+      if (line.startsWith("|")) {
+        flush();
+        HELD_RECORDS.push([rel0(at), line]);
+      } else if (line.trim() === "") flush();
+      else para.push(line);
+    }
+    flush();
+  }
+  return HELD_RECORDS;
+};
+const heldBy = (ends, names = []) =>
+  heldRecords().find(
+    ([, text]) =>
+      ends.every((f) => namesFileIn(text, f)) &&
+      names.every((n) => quotedIn(text).includes(n)),
+  )?.[0] ?? null;
 
 /** Что узел делает — словами карты: графа ответственности у строки, где он
  * назван первой графой, либо первая строка под заголовком, называющим его.
@@ -8254,6 +8349,7 @@ const barSkeletonOf = ({
     "## Предмет",
     "",
     "- род: " + barQuoted(kind),
+    "- строк модели от инструмента: " + barQuoted(String(model.length)),
     BAR_NOSEAL,
     "",
     "| файл | отпечаток |",
@@ -8748,7 +8844,15 @@ const barProcess = ({
   const parsedWas = was === null ? null : barRowsOf(was.body);
   // Собранные инструментом строки модели совпадают с тем, что он соберёт
   // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
+  // Сравнение в обе стороны: строки, дописанные сессией, идут после
+  // собранных, и отличить их от строки, которую инструмент больше не
+  // собирает, можно только по числу собранных в шапке. Прежде сравнивался
+  // префикс, и строка, ушедшая из конца модели, оставалась в протоколе
+  // вместе с дырой по ней — замерено переходом стенда: граница, которой уже
+  // не было, требовала ответа. Протокол без этого числа пересобирается один
+  // раз, с переносом исходов.
   const sameModel = (rows) =>
+    was?.modelRows === model.length &&
     model.every((m, k) => {
       const r = rows[k];
       return (
@@ -8786,8 +8890,18 @@ const barProcess = ({
     // замерено на стенде. Сбрасывается только «чисто» ядра, когда правлен
     // код: вердикт о форме целого стоит на том коде, которого больше нет.
     // Род задачи сменился — переносить нечего: законные судьбы другие.
+    // Протокол правки, лежащий ровно таким, каким ушёл в последний коммит,
+    // — свод ПРОШЛОЙ работы: переносить его исходы в новую значило бы
+    // печатать ответы о коде, которого новая правка не касалась. Замерено
+    // на стенде: новая кнопка получила сто тридцать семь исходов от
+    // рефактора счётчика. Переход переносит всегда: его протоколы живут
+    // через коммиты, пока он идёт.
+    const previousWork =
+      was !== null &&
+      kind === "на изменение" &&
+      headTextOf(at) === was.body;
     const carry =
-      was !== null && was.kind === kind
+      was !== null && was.kind === kind && !previousWork
         ? barCarryOf(parsedWas, expected, levelSubjects)
         : null;
     const edited = [];
@@ -9493,7 +9607,9 @@ if (mode === "levels") {
   for (const e of directionFaults().edges)
     facts.push({
       kind: "направление",
-      where: [e.from],
+      where: e.to === null ? [e.from] : [e.from, e.to],
+      // Ребро к пакету, а не к файлу: второй конец — имя пакета в кавычках.
+      names: e.to === null ? [e.banned] : [],
       text:
         (e.to === null ? rel(e.from) + " → " + e.banned : e.text) +
         ": слою " +
@@ -9517,7 +9633,7 @@ if (mode === "levels") {
       if (!isTest(t) && foreignInside(f, t))
         facts.push({
           kind: "граница",
-          where: [f],
+          where: [f, t],
           text:
             rel(f) + " → " + rel(t) + " — мимо входа единицы переноса " + unitOf(t),
         });
@@ -9537,21 +9653,9 @@ if (mode === "levels") {
         text: "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
       });
   }
-  // Где факт назван: долг перехода, реестр решений, реестр находок. Назван —
-  // значит ЛЮБОЙ его файл назван там путём: факт о цикле или о двух
-  // писателях принадлежит всем своим файлам сразу.
-  const texts = [
-    CONFIG.transition?.file,
-    CONFIG.decisions,
-    CONFIG.findings?.file,
-  ]
-    .filter((one) => one != null)
-    .map((one) => path.join(BASE, one))
-    .filter((at) => existsSync(at))
-    .map((at) => [rel0(at), readFileSync(at, "utf8")]);
-  const namedBy = (fact) =>
-    texts.find(([, text]) => fact.where.some((f) => namesFileIn(text, f)))?.[0] ??
-    null;
+  // Где факт назван: долг перехода, реестр решений, реестр находок — одной
+  // записью, называющей ВСЕ его файлы (`heldBy`).
+  const namedBy = (fact) => heldBy(fact.where, fact.names);
   let loose = 0;
   console.log("=== Архитектурные факты проекта ===");
   if (facts.length === 0) console.log("  фактов нет");
@@ -9595,8 +9699,9 @@ if (mode === "levels") {
       "  Каждый факт называют по адресу: пунктом долга перехода с планом,",
     );
     console.log(
-      "  решением в реестре решений либо строкой реестра находок.",
+      "  решением в реестре решений либо строкой реестра находок — одной",
     );
+    console.log("  записью, называющей путём все его файлы.");
     process.exit(1);
   }
   process.exit(0);
@@ -10872,7 +10977,17 @@ if (mode === "verify") {
   // разрешает, читается как объявленная дыра, которой давно нет, и прикрывает
   // собой ту, что появится завтра.
   const { edges: directionEdges, allowUsed } = directionFaults();
-  const broken7 = directionEdges.map((e) => e.text);
+  // Ребро, пришедшее с кодом до посадки, держит запись, назвавшая оба его
+  // конца: пункт долга перехода либо решение. Без этого живой проект с
+  // нарушенным направлением держал прогон красным навсегда, а свод это
+  // запрещает сам; замерено переходом стенда — пункт долга ребро называл,
+  // а сверка его не читала. Новое ребро такой записи не имеет и краснеет.
+  const edgeHeldBy = (e) =>
+    e.to === null ? heldBy([e.from], [e.banned]) : heldBy([e.from, e.to]);
+  const heldEdges = directionEdges.filter((e) => edgeHeldBy(e) !== null);
+  const broken7 = directionEdges
+    .filter((e) => !heldEdges.includes(e))
+    .map((e) => e.text);
   const deadRuleAllowances = [];
   for (const rule of rules)
     for (const q of rule.allowed)
@@ -10904,6 +11019,13 @@ if (mode === "verify") {
     unit: "правил направления",
   });
   console.log(`  нарушено: ${broken7.length}`);
+  if (heldEdges.length)
+    console.log(
+      "  держится записью долга или решения: " +
+        heldEdges
+          .map((e) => e.text + " (" + edgeHeldBy(e) + ")")
+          .join("; "),
+    );
   // Находка печатается строкой С ОТСТУПОМ — той же формой, какой её печатают все
   // сверки. Приписанная к строке счёта, она не делала секцию красной ни для
   // глаза, ни для режима фальсификации: числа оставались нулями. Поймано
@@ -12030,11 +12152,20 @@ if (mode === "verify") {
             if (!selfRef && !NAMES.test(line)) return;
             REF.lastIndex = 0;
             let m;
-            while ((m = REF.exec(line)) !== null)
+            while ((m = REF.exec(line)) !== null) {
+              // «пункт 10 долга перехода» — номер ЧУЖОГО перечня, и внутри
+              // отложенного он пишется естественно: отложенное ссылается на
+              // долг, который откладывает. Прежде такой номер читался своим
+              // пунктом, и запись отложенного краснела на законной ссылке —
+              // замерено рефактором на стенде.
+              const after = line.slice(m.index + m[0].length);
+              if (/^\s+(?:долга|реестра|плана|списка)(?![а-яё])/i.test(after))
+                continue;
               if (!numbers.has(m[1]))
                 danglingTodo.push(
                   name + ":" + (i + 1) + " — пункта " + m[1] + " там нет",
                 );
+            }
           });
       }
     }
@@ -12973,6 +13104,33 @@ if (mode === "verify") {
     if (existsSync(at) && readdirSync(at).length)
       disarmed.push("скиллы уже есть, а CONFIG.skills пуст");
   }
+  // Ревизия сводов по истории вооружается основанием, и прежде его не ставил
+  // никто: посадка давала команду ворот, а поле оставалось пустым, и второй
+  // слой — «Коммит с кодом накрыт сводом» — молчал в каждом посаженном
+  // проекте, говоря «история не сверяется». Замерено посадкой в мини-стенд.
+  // Предмет — ворота стоят и история есть: тогда основание объявить можно.
+  if (CONFIG.barSince == null && CONFIG.barProtocol != null) {
+    disarmedLooked += 1;
+    const git = (args) => {
+      try {
+        return execFileSync("git", args, {
+          cwd: REPO_AT,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch {
+        return null;
+      }
+    };
+    const hooks = git(["config", "core.hooksPath"]);
+    const head = git(["rev-parse", "--verify", "-q", "HEAD"]);
+    if (hooks && head)
+      disarmed.push(
+        "ворота стоят (`core.hooksPath` = " +
+          hooks +
+          "), история есть, а CONFIG.barSince пуст — ревизия сводов по истории выключена: объявить основанием последний коммит до установки ворот",
+      );
+  }
   // Два поля, добавленных вместе со своими сверками. Без этих двух строк они
   // ведут себя по-разному, и хуже то, которое молчит: незаявленная копия
   // доктрины краснеет сама, на первом же адресе внутри неё, а незаявленный
@@ -13858,8 +14016,17 @@ if (mode === "verify") {
         if (body.includes("run check") || calls.length > 0) continue;
         // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
         // посадки не входит: она ставит инструмент, а не чинит код. Пункт
-        // долга перехода снимает красное и оставляет находку на виду.
-        if (overOpen("Конвейер зовёт проверки", 1) === 0) continue;
+        // долга перехода снимает красное и оставляет находку на виду — пункт,
+        // назвавший ЭТОТ файл. Прежде пункт держал сверку по имени, и один
+        // пункт про одно описание держал любое число новых: замерено
+        // фальсификацией на стенде — посаженное второе описание без проверок
+        // прошло зелёным.
+        if (
+          openFindingRows().some(
+            (row) => row.includes("«Конвейер зовёт проверки»") && row.includes(one),
+          )
+        )
+          continue;
         ciMute.push(
           one +
             " — описание сборки на сервере не зовёт ни связку проверок, ни одно звено цепочки: ворота стоят и не проверяют ничего. Записать пунктом долга перехода либо позвать цепочку",
@@ -16863,6 +17030,16 @@ if (mode === "verify") {
   );
   for (const s of strayTests) console.log("    " + rel(s));
   for (const s of reasonlessTests) console.log("    " + s);
+  // Как держат тест, пришедший с кодом до посадки, сверка говорит сама:
+  // одного пункта долга перехода тут мало, нужен и адрес в поле. Прежде это
+  // знала только настройка, и переход стенда записал пункт, а сверка
+  // осталась красной, не объяснив почему.
+  if (strayTests.length)
+    console.log(
+      "  перенести в `tests/` своего слоя; тест, пришедший до посадки, держат" +
+        " адресом в поле `testsOutside` вместе с пунктом долга перехода либо" +
+        " решением, называющим его",
+    );
 
   checkHead("Объявленный состав папок и радиусы", {
     n: dirs + radii,

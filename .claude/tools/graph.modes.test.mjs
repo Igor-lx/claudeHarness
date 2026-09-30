@@ -1743,16 +1743,30 @@ describe("факты по уровням без протокола", () => {
       const all = tool("levels");
       expect(all.code).toBe(1);
       expect(all.out).toMatch(/цикл: [^\n]*— НЕ НАЗВАН/);
-      // Назван строкой реестра находок — факт принят, код ноль.
+      // Запись, назвавшая один файл цикла, факта не называет: прежде её
+      // хватало, и строка про что угодно в одном из концов держала цикл.
       const regAt = path.join(box, ".context", "16-findings.md");
+      const head =
+        "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n";
+      const reg0 = fs.readFileSync(regAt, "utf8");
       fs.writeFileSync(
         regAt,
-        fs
-          .readFileSync(regAt, "utf8")
-          .replace(
-            "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n",
-            "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n| 1 | цикл `src/app/zzA.ts` | проба | — | нечем | открыта |\n",
-          ),
+        reg0.replace(
+          head,
+          head + "| 1 | линт в `src/app/zzA.ts` | проба | — | нечем | открыта |\n",
+        ),
+      );
+      const half = tool("levels");
+      expect(half.out).toMatch(/цикл: [^\n]*— НЕ НАЗВАН/);
+      expect(half.code).toBe(1);
+      // Названы оба файла одной строкой — факт принят, код ноль.
+      fs.writeFileSync(
+        regAt,
+        reg0.replace(
+          head,
+          head +
+            "| 1 | цикл `src/app/zzA.ts` и `src/app/zzB.ts` | проба | — | нечем | открыта |\n",
+        ),
       );
       const named = tool("levels");
       expect(named.out).toMatch(/цикл: [^\n]*— назван: /);
@@ -2328,4 +2342,213 @@ describe("номер записи в заголовке не счёт", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+});
+
+/**
+ * Находки прогона обвязки на мини-стенде: посадка, переход и две работы
+ * по слову пользователя. Каждая — поломка, которую прежде не ловило ничто,
+ * а ловил человек, проходивший процесс руками.
+ */
+describe("находки мини-стенда: факты, долг, отложенное, перенос", () => {
+  const toolAt = (box) => (...args) => {
+    try {
+      return {
+        code: 0,
+        out: execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      };
+    } catch (e) {
+      return { code: e.status, out: String(e.stdout ?? "") };
+    }
+  };
+  const write = (box, rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+    fs.writeFileSync(path.join(box, rel), text);
+  };
+  const edit = (box, rel, from, to) => {
+    const at = path.join(box, rel);
+    const had = fs.readFileSync(at, "utf8");
+    expect(had).toContain(from);
+    fs.writeFileSync(at, had.replace(from, to));
+  };
+  // Общий слой берёт компонент, корень композиции — файл узла без бочки.
+  const layered = (box) => {
+    write(
+      box,
+      "src/components/zzA/zzA.tsx",
+      "export const ZZ_STEP = 1;\n\nexport function ZzA() {\n  return <b>{ZZ_STEP}</b>;\n}\n",
+    );
+    write(
+      box,
+      "src/shared/zzs/zzs.ts",
+      'import { ZZ_STEP } from "../../components/zzA/zzA";\n\nexport const zzs = (): number => ZZ_STEP;\n',
+    );
+    write(
+      box,
+      "src/app/zzApp.tsx",
+      'import { ZzA } from "../components/zzA/zzA";\n\nexport const ZzApp = () => <ZzA />;\n',
+    );
+    edit(
+      box,
+      ".context/00-map.md",
+      "| `shared` | `app` |  |",
+      "| `shared` | `app`, `components` |  |",
+    );
+  };
+
+  it("вход узла без бочки — файл узла; ребро держит запись, назвавшая оба конца", () => {
+    const box = seatEmpty("ministend-");
+    try {
+      layered(box);
+      const tool = toolAt(box);
+      // Файл узла, названный как папка, при отсутствии бочки — вход.
+      expect(tool("levels").out).not.toMatch(/граница: app\/zzApp\.tsx/);
+      write(box, "src/components/zzA/index.ts", 'export { ZzA } from "./zzA";\n');
+      expect(tool("levels").out).toMatch(/граница: app\/zzApp\.tsx → components\/zzA\/zzA\.tsx/);
+      fs.rmSync(path.join(box, "src/components/zzA/index.ts"));
+      // Ребро против правила красно, пока его не назовёт запись с ОБОИМИ концами.
+      expect(verifyIn(box).get("Правила направления")).toEqual([
+        "shared/zzs/zzs.ts → components/zzA/zzA.tsx",
+      ]);
+      withTransitionDebt(box, [
+        "| 1 | Линт в `src/shared/zzs/zzs.ts` | `1` | «lint» | снять | `1` место |",
+      ]);
+      expect(verifyIn(box).get("Правила направления")).toEqual([
+        "shared/zzs/zzs.ts → components/zzA/zzA.tsx",
+      ]);
+      expect(tool("levels").out).toMatch(/направление: [^\n]*— НЕ НАЗВАН/);
+      withTransitionDebt(box, [
+        "| 2 | Ребро `src/shared/zzs/zzs.ts` → `src/components/zzA/zzA.tsx` | `1` | «Правила направления» | шаг — параметром | `1` импорт |",
+      ]);
+      expect(verifyIn(box).get("Правила направления")).toBeUndefined();
+      expect(tool("levels").out).toMatch(/направление: [^\n]*— назван: 15-transition\.md/);
+      // Ребро к запрещённому ПАКЕТУ: второй конец — имя пакета, и запись
+      // без него ребра не держит.
+      edit(
+        box,
+        ".context/00-map.md",
+        "| `shared` | `app`, `components` |  |",
+        "| `shared` | `app`, `components`, `react` |  |",
+      );
+      write(box, "src/shared/zzs/zzr.ts", 'import { useId } from "react";\n\nexport const zzr = useId;\n');
+      withTransitionDebt(box, [
+        "| 3 | Линт в `src/shared/zzs/zzr.ts` | `1` | «lint» | снять | `1` место |",
+      ]);
+      expect(tool("levels").out).toMatch(/направление: shared\/zzs\/zzr\.ts → react[^\n]*— НЕ НАЗВАН/);
+      expect(verifyIn(box).get("Правила направления")).toEqual(["shared/zzs/zzr.ts → react"]);
+      withTransitionDebt(box, [
+        "| 4 | Общий слой зовёт `react`: `src/shared/zzs/zzr.ts` | `1` | «Правила направления» | убрать | `1` импорт |",
+      ]);
+      expect(tool("levels").out).toMatch(/направление: shared\/zzs\/zzr\.ts → react[^\n]*— назван/);
+      expect(verifyIn(box).get("Правила направления")).toBeUndefined();
+      // Новое ребро такой записи не имеет и краснеет.
+      write(
+        box,
+        "src/shared/zzs/zzt.ts",
+        'import { ZzA } from "../../components/zzA/zzA";\n\nexport const zzt = ZzA;\n',
+      );
+      expect(verifyIn(box).get("Правила направления")).toEqual([
+        "shared/zzs/zzt.ts → components/zzA/zzA.tsx",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("пункт про одно описание конвейера другого не держит; номер чужого перечня в отложенном законен", () => {
+    const box = seatEmpty("ministend-ci-");
+    try {
+      const flow = (name) =>
+        write(
+          box,
+          ".github/workflows/" + name,
+          "name: b\non: [push]\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm ci\n      - run: npm run build\n",
+        );
+      flow("a.yml");
+      expect(verifyIn(box).get("Конвейер зовёт проверки")?.length).toBe(1);
+      withTransitionDebt(box, [
+        "| 1 | Конвейер не зовёт проверок | `1` | «Конвейер зовёт проверки» | `.github/workflows/a.yml` — звать `npm run check` | `1` файл |",
+      ]);
+      expect(verifyIn(box).get("Конвейер зовёт проверки")).toBeUndefined();
+      flow("b.yml");
+      const red = verifyIn(box).get("Конвейер зовёт проверки") ?? [];
+      expect(red).toHaveLength(1);
+      expect(red[0]).toMatch(/^\.github\/workflows\/b\.yml/);
+      // Отложенное ссылается на пункт долга перехода — это не его пункт.
+      edit(
+        box,
+        ".context/02-todo.md",
+        "Отложенного нет: проект только что посажен, и согласовывать было нечего.",
+        "## 1. Проба\n\nГде: `src/app/App.tsx`. Почему отложено: это пункт 10 долга перехода. Чем закроется: пункт 7.",
+      );
+      expect(verifyIn(box).get("Отложенное без закрытых пунктов")).toEqual([
+        expect.stringMatching(/^02-todo\.md:\d+ — пункта 7 там нет$/),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("протокол прошлой работы в новую не переносится; ушедшая строка модели пересобирает протокол", () => {
+    const box = seatEmpty("ministend-perenos-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=m", "-c", "user.email=m@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = toolAt(box);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "seat");
+      // Ворота стоят, история есть — основание ревизии обязано быть объявлено.
+      execFileSync("git", ["config", "core.hooksPath", ".claude/hooks/git"], { cwd: box });
+      const disarmedOf = () => verifyIn(box).get("Сверки, выключенные при живом предмете") ?? [];
+      expect(disarmedOf()).toEqual(
+        expect.arrayContaining([expect.stringMatching(/CONFIG\.barSince пуст/)]),
+      );
+      edit(box, ".context/graph.config.mjs", "  barSince: null,", '  barSince: "' + git("rev-parse", "HEAD").trim() + '",');
+      expect(disarmedOf().some((one) => one.includes("barSince"))).toBe(false);
+      // Состояние даёт модели строку с якорем на строку файла — ту, что
+      // досье правки прежде советовало дописать цитатой.
+      write(
+        box,
+        "src/components/zzP/zzP.tsx",
+        'import { useState } from "react";\n\nexport function ZzP() {\n  const [on, setOn] = useState(false);\n  return <i onClick={() => setOn(!on)}>p</i>;\n}\n',
+      );
+      const proto = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      expect(fs.readFileSync(proto, "utf8")).toMatch(/^- строк модели от инструмента: `\d+`$/m);
+      fillBar(proto, { release: "нет" });
+      expect(tool("bar").out).toContain("печать поставлена");
+      // Якоря протокола правят не руками: досье правки их не называет.
+      expect(fs.readFileSync(proto, "utf8")).toMatch(/`components\/zzP\/zzP\.tsx:4`/);
+      expect(tool("tested").out).not.toMatch(/bar-protocol\.md: `/);
+      git("add", "-A");
+      git("commit", "-qm", "p");
+      write(box, "src/components/zzQ/zzQ.tsx", "export function ZzQ() {\n  return <i>q</i>;\n}\n");
+      const next = tool("bar").out;
+      expect(next).toContain("протокол напечатан");
+      expect(next).not.toContain("исходы перенесены");
+      // Переход: строка «граница» ушла из конца модели узла — протокол пересобран.
+      layered(box);
+      write(box, "src/components/zzA/index.ts", 'export { ZzA } from "./zzA";\n');
+      withTransitionDebt(box, []);
+      tool("bar", "--transition");
+      const appProto = path.join(box, ".context", "15-transition-bar", "node--app--zzApp.tsx.md");
+      expect(fs.readFileSync(appProto, "utf8")).toMatch(/\| граница \|/);
+      fillBar(appProto, { release: "нет" });
+      tool("bar", "--transition");
+      fs.rmSync(path.join(box, "src/components/zzA/index.ts"));
+      const again = tool("bar", "--transition").out;
+      expect(again).toContain("пересобран: 15-transition-bar/node--app--zzApp.tsx.md");
+      expect(fs.readFileSync(appProto, "utf8")).not.toMatch(/\| граница \|/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });

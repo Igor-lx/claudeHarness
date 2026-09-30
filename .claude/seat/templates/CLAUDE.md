@@ -114,6 +114,7 @@
 | Линт | `npm run lint` |
 | Формат | `npm run format:check` |
 | Покрытие (по требованию) | `npm run test:coverage` |
+| Мутационный прогон по новым и изменённым файлам, после `--` ключ `--mutate` и файлы | `npm run mutate` |
 | Всё разом | `npm run check` |
 | Правка против её тестов, базы и доков | `node .claude/tools/graph.mjs tested` |
 | Долг мутационного прогона по правке | `node .claude/tools/graph.mjs mutated` |
