@@ -25,6 +25,10 @@ import {
   barNoSubject,
   barCoreCriterion,
   barModelFault,
+  barLevelFault,
+  barDeltaFault,
+  MODEL_LEVEL,
+  LEVEL_ORDER,
   codeOf,
   inComment,
   isCodePath,
@@ -1190,13 +1194,19 @@ const barCriteria = (file) => {
       title += " " + rows[j];
     }
     const end = title.indexOf("**");
-    // Пометка стоит ПОСЛЕ закрытия жирного, то есть в хвосте, который
-    // название уже не включает. Оттуда её и берут.
-    const slogan = (end < 0 ? "" : title.slice(end)).includes("(лозунг)");
+    // Пометки стоят ПОСЛЕ закрытия жирного, то есть в хвосте, который
+    // название уже не включает. Оттуда их и берут: лозунг и уровень, на
+    // котором критерий судят. Уровня нет — `null`, и свод такую политику
+    // не принимает.
+    const tail = end < 0 ? "" : title.slice(end);
+    const slogan = tail.includes("(лозунг)");
+    const level =
+      /\((единица|узел|слой|приложение)\)/.exec(tail)?.[1] ?? null;
     out.push({
       section,
       id: one[1],
       slogan,
+      level,
       title: (end < 0 ? title : title.slice(0, end))
         .split(/\s+/)
         .join(" ")
@@ -1239,7 +1249,14 @@ const liveBarCriteria = () => {
   const blind = scope.state !== "прочитано";
   const live = new Set(blind ? [] : scope.live);
   const scoped = barCriteria(policy).filter((c) => live.has(c.section));
-  return { core, scoped, all: [...core, ...scoped], blind };
+  const all = [...core, ...scoped];
+  return {
+    core,
+    scoped,
+    all,
+    blind,
+    levelless: all.filter((c) => c.level === null).map((c) => c.id),
+  };
 };
 
 /** Формат протокола свода по планке — в одном месте.
@@ -2542,6 +2559,51 @@ const NAME_RE = /^[A-Za-z_$][\w$]*$/;
 const OWN_EXPORT =
   /export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|abstract\s+class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
 
+/** Строка импорта и переотдачи: `import … from "x"`, `export … from "x"`.
+ * Клаузе запрещено содержать кавычку и точку с запятой: с `[\s\S]*?` разбор
+ * перешагивал через импорт-побочный-эффект и склеивал его со следующей
+ * строкой. Один образец на граф и на прежний вид файла, по которому модель
+ * свода считает сдвиг: два образца разошлись бы, и сдвиг назывался бы там,
+ * где его нет. */
+const IMPORT_FROM =
+  /(?:^|\n)\s*(?:import|export)\s+([^;"']*?)\s*from\s*["']([^"']+)["']/g;
+/** Импорт-побочный-эффект: ребро графа без имён. */
+const IMPORT_BARE = /(?:^|\n)\s*import\s*["']([^"']+)["']/g;
+
+/** Имена, которые текст модуля отдаёт наружу: объявленные и переотданные.
+ * `export type { … }` — тоже экспорт: разбор, требовавший скобку сразу за
+ * словом `export`, такого типа не видел вовсе. Найдено пробой. */
+const surfaceOfText = (src) => {
+  const ex = new Set();
+  for (const mm of src.matchAll(OWN_EXPORT)) ex.add(mm[1]);
+  if (/export\s+default\s/.test(src)) ex.add("default");
+  for (const mm of src.matchAll(/export\s*(?:type\s*)?\{([^}]*)\}/g)) {
+    for (let part of mm[1].split(",")) {
+      part = part.trim().replace(/^type\s+/, "");
+      if (!part) continue;
+      const name = (
+        part.split(/\s+as\s+/)[1] ?? part.split(/\s+as\s+/)[0]
+      ).trim();
+      if (NAME_RE.test(name)) ex.add(name);
+    }
+  }
+  return ex;
+};
+
+/** Файлы, которые текст модуля называет в строках импорта. */
+const importTargetsOfText = (f, src) => {
+  const out = new Set();
+  for (const m of src.matchAll(IMPORT_FROM)) {
+    const target = resolve(f, m[2]);
+    if (target) out.add(target);
+  }
+  for (const m of src.matchAll(IMPORT_BARE)) {
+    const target = resolve(f, m[1]);
+    if (target) out.add(target);
+  }
+  return out;
+};
+
 /** Переменная листа стилей: объявление и чтение. Связь через них не видна
  * графу импортов — её пишет один файл, а читает другой. */
 const CSS_VAR_DECL = /(--[A-Za-z][\w-]*)\s*:/g;
@@ -2683,15 +2745,10 @@ for (const f of files) {
   importsOf.set(f, new Set());
 
   // разбираемые формы: import { a, b as c } from "x" | import x from "y" | export {...} from "z"
-  // Клаузе запрещено содержать кавычку и точку с запятой. Это не косметика:
-  // с `[\s\S]*?` разбор перешагивал через импорт-побочный-эффект и склеивал
-  // его со СЛЕДУЮЩЕЙ строкой — имя оттуда терялось, и `dead` показывал живой
-  // экспорт мёртвым. Ограничение было записано в базе как свойство инструмента;
-  // на деле оно чинится сужением класса, потому что настоящая клауза
-  // (`x`, `* as ns`, `{ a as b }`, `type { T }`) ни кавычек, ни точек с запятой
-  // не содержит никогда.
-  const re =
-    /(?:^|\n)\s*(?:import|export)\s+([^;"']*?)\s*from\s*["']([^"']+)["']/g;
+  // Ограничение было записано в базе как свойство инструмента; на деле оно
+  // чинится сужением класса, потому что настоящая клауза (`x`, `* as ns`,
+  // `{ a as b }`, `type { T }`) ни кавычек, ни точек с запятой не содержит.
+  const re = new RegExp(IMPORT_FROM.source, "g");
   let m;
   while ((m = re.exec(src))) {
     const clause = m[1];
@@ -2737,32 +2794,14 @@ for (const f of files) {
   // было вовсе, поэтому правила направления и изоляции на нём проходили
   // зелёными, а `blast` недосчитывал импортёров. Найдено пробой: импорт такой
   // формы из изолированного слоя в запрещённый прогон не уронил.
-  for (const mm of src.matchAll(/(?:^|\n)\s*import\s*["']([^"']+)["']/g)) {
+  for (const mm of src.matchAll(IMPORT_BARE)) {
     if (!specsOf.has(f)) specsOf.set(f, new Set());
     specsOf.get(f).add(mm[1]);
     const target = resolve(f, mm[1]);
     if (target) importsOf.get(f).add(target);
   }
 
-  // экспорты, объявленные в самом файле
-  const ex = new Set();
-  for (const mm of src.matchAll(OWN_EXPORT)) ex.add(mm[1]);
-  if (/export\s+default\s/.test(src)) ex.add("default");
-  // `export type { … }` — тоже экспорт, и раньше он не считался вовсе: разбор
-  // требовал скобку сразу за словом `export`. Тип, ушедший наружу только так,
-  // был для инструмента невидим — то есть `dead` его не показывал даже без
-  // потребителей, а запись базы о нём нечем было проверить. Найдено пробой.
-  for (const mm of src.matchAll(/export\s*(?:type\s*)?\{([^}]*)\}/g)) {
-    for (let part of mm[1].split(",")) {
-      part = part.trim().replace(/^type\s+/, "");
-      if (!part) continue;
-      const name = (
-        part.split(/\s+as\s+/)[1] ?? part.split(/\s+as\s+/)[0]
-      ).trim();
-      if (NAME_RE.test(name)) ex.add(name);
-    }
-  }
-  exportsOf.set(f, ex);
+  exportsOf.set(f, surfaceOfText(src));
   readNames(f, src);
 }
 
@@ -6740,17 +6779,33 @@ if (mode === "bar-probe") {
     }
     // Адрес посадки считается от корня ИСХОДНИКОВ: у чужого проекта он зовётся
     // не `src`, и адрес, записанный от корня репозитория, лёг бы мимо.
-    const where = path.join(
-      box,
-      path.relative(path.join(BASE, ".."), ROOT),
-      plant.create.path,
+    //
+    // Нарушение формы целого одним файлом не посадить: второй писатель,
+    // цикл, общий слой, берущий из приложения, — это связь двух узлов, и в
+    // каждом из них по отдельности строки безупречны. Поэтому посадка бывает
+    // из нескольких файлов, и виновники названы: адрес находки обязан назвать
+    // хотя бы одного.
+    const at = (p) =>
+      path.join(box, path.relative(path.join(BASE, ".."), ROOT), p);
+    const creates = Array.isArray(plant.create) ? plant.create : [plant.create];
+    for (const one of creates) {
+      const where = at(one.path);
+      mkdirSync(path.dirname(where), { recursive: true });
+      writeFileSync(where, one.text.split("\n").join(NEWLINE));
+    }
+    const culprits = (plant.culprits ?? [creates[0].path]).map((p) =>
+      norm(at(p)),
     );
-    mkdirSync(path.dirname(where), { recursive: true });
-    writeFileSync(where, plant.create.text.split("\n").join(NEWLINE));
     writeFileSync(
       mark,
       JSON.stringify(
-        { criterion: plant.criterion, why: plant.why, file: norm(where), box },
+        {
+          criterion: plant.criterion,
+          why: plant.why,
+          file: culprits[0],
+          files: culprits,
+          box,
+        },
         null,
         2,
       ) + NEWLINE,
@@ -6795,7 +6850,11 @@ if (mode === "bar-probe") {
   const was = barHeader(protocolAt);
   console.log("=== Суд по пробе планки ===");
   console.log("  посажено: " + plant.criterion + " — " + plant.why);
-  console.log("  где: " + norm(path.relative(plant.box, plant.file)));
+  const culprits = plant.files ?? [plant.file];
+  console.log(
+    "  где: " +
+      culprits.map((f) => norm(path.relative(plant.box, f))).join(", "),
+  );
   let verdict;
   if (was === null) verdict = "свода нет";
   else if (was.seal === null || was.seal === "нет") verdict = "свод без печати";
@@ -6812,11 +6871,11 @@ if (mode === "bar-probe") {
       if (cells.length !== 6 || /^-+$/.test(cells[0])) continue;
       said.set(cells[0], { outcome: cells[2], addr: cells[3], what: cells[4] });
     }
-    const planted = path.basename(plant.file);
+    const planted = culprits.map((f) => path.basename(f));
     const hitsPlanted = (one) =>
       one !== undefined &&
       one.outcome === "нашлось" &&
-      one.addr.includes(planted);
+      planted.some((p) => one.addr.includes(p));
     const mine = said.get(plant.criterion);
     if (hitsPlanted(mine)) verdict = "поймано";
     else if (mine !== undefined && mine.outcome === "нашлось")
@@ -6851,6 +6910,260 @@ if (mode === "bar-probe") {
   process.exit(verdict === "поймано" ? 0 : 1);
 }
 
+// Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу
+// раздела, затем по однозначному суффиксу.
+// Сокращения объявлены НАСТРОЙКОЙ, а не зашиты сюда. Прежде здесь стояла
+// раскладка одного конкретного проекта: префиксы его папок разрешались в его
+// же адреса. В любом другом проекте те же префиксы указывали в несуществующие
+// места — и делали это молча, потому что неразрешённый адрес просто уходил
+// дальше по цепочке разрешения. Найдено поиском следов проекта в обвязке.
+const expand = (q) => {
+  if (q.startsWith("src/")) return path.join(REPO_AT, q);
+  for (const [prefix, base] of CONFIG.pathShortcuts ?? [])
+    if (q.startsWith(prefix)) return path.join(REPO_AT, base, q);
+  // Адрес ОТ КОРНЯ ИСХОДНИКОВ — та форма, в которой инструмент сам их и
+  // печатает: `components/CheckboxPanel/domain/selection.ts`. Ветка выше
+  // знает один литерал `src/`, и проект, зовущий корень иначе, не разрешал
+  // ни одного адреса с косой чертой — а признака у этого не было: сверка
+  // слоёв краснела строкой «слоя нет на диске» про папку, которая есть.
+  // Слой без косой черты при этом проходил зелёным по другой ветке, и
+  // расхождение выглядело случайным. Найдено посадкой в проект со слоями.
+  const atRoot = path.join(ROOT, q);
+  if (existsSync(atRoot)) return atRoot;
+  return null;
+};
+
+// Два списка, и смешивать их нельзя: размеры папок считаются по коду
+// (`everyFile`), а якоря указывают ещё и на доки (`everyPath`).
+const everyFile = [];
+const everyPath = [];
+const walkAll = (dir) => {
+  if (!walkable(dir)) return;
+  for (const e of readdirSync(dir)) {
+    const full = path.join(dir, e);
+    if (outOfTree(e, full)) continue;
+    if (statSync(full).isDirectory()) walkAll(full);
+    else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
+      everyPath.push(full.split(path.sep).join("/"));
+      if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
+    }
+  }
+  // Корень исходников берётся ИЗ НАСТРОЙКИ, а не зашит именем `src`.
+  //
+  // Поле настройки существует именно затем, что корень бывает другой:
+  // библиотеки зовут его `lib`, каркасы — `app`. Пока имя стояло здесь
+  // строкой, у такого проекта этот обход возвращал ПУСТО, и всё, что на нём
+  // стоит, молчало — в первую очередь покрытие карты по файлам стилей.
+  // Заметить это было нечем: соседний список собирается другим обходом, тоже
+  // молча, и сверка печатала правдоподобное число. Найдено сверкой двух
+  // замеров одного и того же проекта, разошедшихся на единицу. Деревьев
+  // бывает несколько, и обход зовётся по каждому.
+};
+for (const one of SRC_ROOTS) walkAll(one);
+
+// Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
+// хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
+//
+// Префикс раздела пробуется ПЕРВЫМ. Голое имя разрешается ещё и от корня
+// исходников, и в обратном порядке `index.ts` под заголовком папки плагина
+// засчитывался корневому `index.ts`: строки карты стояли, а тридцать файлов
+// числились неописанными, корневые же — описанными чужими строками. Замерено
+// переходом библиотеки, где у каждой папки свои `index.ts` и `props.ts`.
+const locate = (q, prefix) => {
+  for (const candidate of prefix === null ? [q] : [prefix + q, q]) {
+    const expanded = expand(candidate);
+    if (expanded !== null && existsSync(expanded)) return norm(expanded);
+    const atRepo = path.join(REPO_AT, candidate);
+    if (existsSync(atRepo) && statSync(atRepo).isFile()) return norm(atRepo);
+  }
+  const hits = everyPath.filter((f) => f.endsWith("/" + q));
+  return hits.length === 1 ? hits[0] : null;
+};
+
+// База пишет группы вида `{a,b}/tests`: раскрываем их в отдельные пути.
+const variants = (q) => {
+  const group = /\{([^}]*)\}/.exec(q);
+  if (group === null) return [q];
+  const head = q.slice(0, group.index);
+  const tail = q.slice(group.index + group[0].length);
+  return group[1]
+    .split(",")
+    .flatMap((one) => variants(head + one.trim() + tail));
+};
+
+// Звёздочки — «сколько угодно сегментов, в том числе ноль»; путь без них
+// означает «всё, что лежит под ним».
+const GLOB_BACKSLASH = String.fromCharCode(92);
+const GLOB_MID = String.fromCharCode(1);
+const GLOB_TAIL = String.fromCharCode(2);
+const globEsc = (s) =>
+  [...s].map((c) => (/[\w-]/.test(c) ? c : GLOB_BACKSLASH + c)).join("");
+const asRegExp = (full) => {
+  const marked = (full.includes("*") ? full : full + "**")
+    .split("/**/")
+    .join(GLOB_MID)
+    .split("**")
+    .join(GLOB_TAIL);
+  const body = globEsc(marked)
+    .split(globEsc(GLOB_MID))
+    .join("/(?:[^]*/)?")
+    .split(globEsc(GLOB_TAIL))
+    .join("(?:[^]*)?");
+  return new RegExp("^" + body + "$");
+};
+
+// Всё, что лежит под путём, тесты включительно.
+const inside = (q, prefix) => {
+  for (const raw of prefix === null ? [q] : [prefix + q, q]) {
+    const shapes = [];
+    for (const pattern of variants(raw)) {
+      const head = pattern.split("*")[0];
+      // Сокращённые адреса разрешает `expand` по объявленным сокращениям.
+      // Прежде здесь и в `locate` был зашит `src/shared` одного проекта: в
+      // любом другом он указывал в пустоту либо в чужую папку.
+      const root = expand(head);
+      if (root === null) continue;
+      const slash = head.endsWith("/") ? "/" : "";
+      shapes.push(asRegExp(norm(root) + slash + pattern.slice(head.length)));
+    }
+    if (!shapes.length) continue;
+    const hits = everyFile.filter((f) => shapes.some((rx) => rx.test(f)));
+    if (hits.length) return { hits, wantTests: raw.includes("tests") };
+  }
+  return null;
+};
+
+// Таблицы слоёв: «Правила направления» — слой, запреты, разрешённые
+// исключения — и «Изоляция» — слой и то, что ему можно. Разбор один на
+// сверку базы и на модель свода: разойдясь, они судили бы одно ребро по-разному.
+//
+// Заголовок из настройки — ТЕКСТ, а не образец, и подставляется он
+// экранированным. Настройка называет шапку таблицы дословно, а шапка
+// markdown-таблицы состоит из вертикальных черт — в регулярном выражении это
+// «или». Подставленная как есть, она превращала образец в «любой заголовок ИЛИ
+// вот это», и разбор вставал на ПЕРВОМ же заголовке файла и не сбрасывался.
+// Дальше правилом направления читалась каждая трёхколоночная строка базы.
+// Замерено на посадке в проект со слоями: двенадцать правил вместо трёх, и
+// ячейки чужих строк объявлены мёртвыми разрешениями.
+//
+// Поле не объявлено — таблицы нет, и разбор не запускается ВОВСЕ: образец из
+// пустого текста совпал бы с любым заголовком. Огороженный блок — пример, а не
+// правило: пример в семени карты давал два лишних слоя, и правила для
+// несуществующих слоёв проверялись на настоящем коде.
+//
+// Нашёлся ли РАЗДЕЛ — отдельно от того, разобрались ли в нём строки: заголовок
+// назван неверно и таблица под ним другой формы — разные поломки.
+let LAYER_TABLES = null;
+const layerTables = () => {
+  if (LAYER_TABLES !== null) return LAYER_TABLES;
+  const headRe = (text) =>
+    text == null
+      ? { test: () => false }
+      : new RegExp("^#+.*" + text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const RULES_HEAD = headRe(CONFIG.rulesHeading);
+  const ISOLATION_HEAD = headRe(CONFIG.isolationHeading);
+  const ROW_RE = /^\|(.+)\|(.+)\|(.*)\|\s*$/;
+  const ISO_ROW_RE = /^\|([^|]+)\|([^|]+)\|\s*$/;
+  const cellPaths = (cell) => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  const out = {
+    rules: [],
+    isolation: [],
+    rulesHeadSeen: false,
+    isolationHeadSeen: false,
+  };
+  for (const name of existsSync(BASE) ? readdirSync(BASE) : []) {
+    if (!name.endsWith(".md") || name === "README.md") continue;
+    let inRules = false;
+    let inIsolation = false;
+    let fenced = false;
+    for (const line of readFileSync(path.join(BASE, name), "utf8").split(LF)) {
+      if (/^\s*(```|~~~)/.test(line)) {
+        fenced = !fenced;
+        continue;
+      }
+      if (fenced) continue;
+      if (line.startsWith("#")) {
+        inRules = RULES_HEAD.test(line);
+        if (inRules) out.rulesHeadSeen = true;
+        inIsolation = ISOLATION_HEAD.test(line);
+        if (inIsolation) out.isolationHeadSeen = true;
+      }
+      const row = inRules ? ROW_RE.exec(line) : null;
+      if (row !== null) {
+        const layer = cellPaths(row[1]);
+        if (layer.length === 1)
+          out.rules.push({
+            layer: layer[0],
+            banned: cellPaths(row[2]),
+            allowed: cellPaths(row[3]),
+          });
+      }
+      // Изоляция — правило наоборот: не список запретов, а список
+      // разрешённого. Запрет перечислением отстаёт от появления соседней
+      // папки, и отстаёт молча. Найдено пробой.
+      const iso = inIsolation ? ISO_ROW_RE.exec(line) : null;
+      if (iso !== null) {
+        const layer = cellPaths(iso[1]);
+        if (layer.length === 1)
+          out.isolation.push({ layer: layer[0], only: cellPaths(iso[2]) });
+      }
+    }
+  }
+  LAYER_TABLES = out;
+  return out;
+};
+
+/** Файлы под адресом слоя — с памятью: модель свода спрашивает один слой на
+ * каждое ребро. */
+const INSIDE_CACHE = new Map();
+const insideOnce = (q) => {
+  if (!INSIDE_CACHE.has(q)) INSIDE_CACHE.set(q, inside(q, null)?.hits ?? []);
+  return INSIDE_CACHE.get(q);
+};
+
+/** Рёбра против правил направления и исключения, которые что-то разрешили.
+ *
+ * Ребро — то, что файл НАПИСАЛ в строке импорта: правила направления судят
+ * написанное, и судят верно. Запрет на имя пакета спрашивается по
+ * спецификатору как написан. Одно вычисление на сверку и на модель свода. */
+let DIRECTION_CACHE = null;
+const directionFaults = () => {
+  if (DIRECTION_CACHE !== null) return DIRECTION_CACHE;
+  const edges = [];
+  const allowUsed = new Set();
+  for (const rule of layerTables().rules) {
+    const layer = insideOnce(rule.layer).filter((f) => !isTest(f));
+    const allowedBy = new Map();
+    for (const q of rule.allowed)
+      for (const hit of insideOnce(q)) allowedBy.set(hit, q);
+    for (const banned of rule.banned) {
+      // Папка это или имя пакета — ЗАМЕР, а не догадка по косой черте:
+      // слой, лежащий одной папкой в корне исходников, под «без косой —
+      // пакет» уходил из-под сверки целиком. Спрашиваются обе стороны сразу.
+      const target = new Set(insideOnce(banned));
+      for (const f of layer) {
+        if (specsOf.get(f)?.has(banned))
+          edges.push({ from: f, to: null, rule, banned, text: `${rel(f)} → ${banned}` });
+        for (const dep of importsOf.get(f) ?? []) {
+          if (!target.has(dep)) continue;
+          const by = allowedBy.get(dep);
+          if (by === undefined)
+            edges.push({
+              from: f,
+              to: dep,
+              rule,
+              banned,
+              text: `${rel(f)} → ${rel(dep)}`,
+            });
+          else allowUsed.add(`${rule.layer}|${by}`);
+        }
+      }
+    }
+  }
+  DIRECTION_CACHE = { edges, allowUsed };
+  return DIRECTION_CACHE;
+};
+
 // Свод по планке — покритериальный протокол.
 //
 // Шаг, у которого машинного крючка не было вовсе. Режим «правка против её
@@ -6864,18 +7177,22 @@ if (mode === "bar-probe") {
 // закрыт; у находки есть адрес, существующий на диске, слова и судьба; судьба
 // согласна роду задачи; протокол сделан на ТОМ ЖЕ виде предмета, что лежит
 // сейчас. Верность самого исхода машине недоступна и здесь не изображается.
-// --- модель предмета свода --------------------------------------------------
-// Свод по планке опирается на модель того, что в предмете ЕСТЬ: зависимости,
-// потребители, выход наружу, состояние, ресурсы, связи мимо импорта. Модель
-// собирает инструмент из кода и базы, сессия дописывает недостающее и ставит
-// снятие ресурсов, а архитектурные вердикты называют строку модели, на
-// которой стоят. Без модели вердикт «чисто» по форме целого писался не глядя
-// в код, и отличить его от проверенного было нечем: замерено разбором узла,
-// где у каждого из этих видов была находка, закрытая словом «чисто».
+// --- модель предмета свода: по уровням -------------------------------------
+// Свод по планке опирается на модель того, что в предмете ЕСТЬ, и модель
+// разложена по уровням: узел, слой, приложение. Правка бывает безупречна в
+// каждой своей строке и при этом ломает целое — второй источник истины, узел
+// со второй ответственностью, внутренность наружу, ребро против слоёв. В
+// строках этого не видно, на уровне видно; поэтому модель называет факты
+// каждого уровня, а на задаче изменения — и СДВИГ: что правка изменила на
+// уровне против последнего коммита. Требование разработчика: правка,
+// технически безупречная, не должна молча ломать слой и приложение. Прежняя
+// модель знала один узел — его зависимости и ресурсы — и выше не видела.
 //
-// Виды строк общие для любого кода и не знают ни фреймворка, ни проекта.
-// Распознаватели ниже — данные, а не логика: у другого окружения другие
-// вызовы, и дописывают их сюда, а не ветку в разбор.
+// Модель собирает инструмент из кода и базы, сессия дописывает недостающее и
+// ставит снятие ресурсов, а архитектурные вердикты называют строку модели
+// СВОЕГО уровня. Виды строк общие для любого кода и не знают ни фреймворка,
+// ни проекта. Распознаватели ниже — данные, а не логика: у другого окружения
+// другие вызовы, и дописывают их сюда, а не ветку в разбор.
 
 /** Захват ресурса и его снятие: пара образцов на род. */
 const RESOURCE_KINDS = [
@@ -6895,6 +7212,16 @@ const RESOURCE_KINDS = [
   { take: /\buse(?:Layout|Insertion)?Effect\s*\(/, give: null },
 ];
 
+/** Запись во внешнее хранилище: ключ — первый довод вызова. Второй файл,
+ * пишущий тот же ключ, — второй писатель одного источника истины, и в
+ * строках каждого из двух файлов этого не видно. */
+const WRITER_KINDS = [
+  {
+    kind: "хранилище",
+    take: /\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|removeItem)\s*\(\s*([^,)]+)/g,
+  },
+];
+
 /** Внутренность чужой единицы: файл в папке другого компонента, не её вход.
  * Единица — папка под объявленным слоем компонентов (`componentsAt`): её
  * переносят копированием, и берут у неё только вход. */
@@ -6909,91 +7236,299 @@ const foreignInside = (from, to) => {
   return false;
 };
 
-/** Модель предмета: строки `{ sort, where, what, base, release }` по узлам
- * `focus`. Связь двух узлов модели между собой строки не даёт: обе стороны
- * уже в модели. */
-const barModelOf = (focus) => {
-  const out = [];
-  const inFocus = new Set(focus);
-  const graphAt = path.join(
-    BASE,
-    CONFIG.domTables?.file ?? "03-graph.md",
+/** Слой файла: самый узкий слой таблиц слоёв, под которым он лежит; таблиц
+ * нет или файл вне их — первая папка от корня исходников. */
+const layerOf = (f) => {
+  const { rules, isolation } = layerTables();
+  let best = null;
+  for (const q of [...rules, ...isolation].map((r) => r.layer))
+    if (insideOnce(q).includes(f) && (best === null || q.length > best.length))
+      best = q;
+  if (best !== null) return best;
+  const r = rel(f);
+  return r.includes("/") ? r.slice(0, r.indexOf("/")) : "корень исходников";
+};
+
+/** Единица переноса: папка компонента под слоем компонентов, папка области
+ * под прочими слоями, иначе сам файл. */
+const unitOf = (f) => {
+  const r = rel(f);
+  for (const layer of CONFIG.componentsAt ?? ["components"]) {
+    const m = new RegExp(
+      "^" + layer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/([^/]+)/",
+    ).exec(r);
+    if (m !== null) return layer + "/" + m[1];
+  }
+  const parts = r.split("/");
+  return parts.length >= 3 ? parts.slice(0, 2).join("/") : r;
+};
+
+/** Прежний вид файла — из последнего коммита; нет его там — `null`. */
+const HEAD_TEXT = new Map();
+const headTextOf = (abs) => {
+  if (HEAD_TEXT.has(abs)) return HEAD_TEXT.get(abs);
+  let text = null;
+  try {
+    text = execFileSync(
+      "git",
+      ["show", "HEAD:" + norm(path.relative(REPO_AT, abs))],
+      { cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+  } catch {
+    text = null;
+  }
+  HEAD_TEXT.set(abs, text);
+  return text;
+};
+
+/** Называет ли текст файл путём: целиком, от корня исходников либо от корня
+ * репозитория. Голое имя не засчитывается: одноимённых файлов бывает много. */
+const namesFileIn = (text, f) => {
+  const r = rel(f);
+  return quotedIn(text).some(
+    (t) =>
+      t === r ||
+      (t.includes("/") && (r.endsWith("/" + t) || t.endsWith("/" + r))),
   );
-  const graphText = existsSync(graphAt) ? readFileSync(graphAt, "utf8") : "";
-  for (const f of focus) {
-    if (!files.includes(f) || isTest(f)) continue;
-    const where = rel(f);
-    const { uses } = usesWithVia(f);
-    const written = importsOf.get(f) ?? new Set();
-    for (const [d, via] of uses) {
-      if (inFocus.has(d)) continue;
-      const foreign = [...written].some(
-        (t) => (t === d || via.has(t)) && foreignInside(f, t),
-      );
-      out.push({
-        sort: "зависит",
-        where,
-        what: rel(d) + (via.size ? " через " + [...via].map(rel).join(", ") : ""),
-        base: foreign ? "чужое" : "",
-        release: "",
-      });
-    }
-    for (const u of dependentsOf(f))
-      if (!inFocus.has(u) && !isTest(u))
-        out.push({ sort: "пользуется", where, what: rel(u), base: "", release: "" });
-    const outward = publicNamesOf(f);
-    if (outward.names.length)
-      out.push({
-        sort: "наружу",
-        where,
-        what: outward.names.join(", ") + " через " + outward.via.join(", "),
-        base: "",
-        release: "",
-      });
-    const lines = readFileSync(f, "utf8").split(LF);
-    const owesState = owedFor(f).some((one) => one.subject === "state");
-    lines.forEach((line, i) => {
-      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
-      if (BRIEF_SUBJECTS.state.test(line))
-        out.push({
-          sort: "состояние",
-          where: where + ":" + (i + 1),
-          what: line.trim().slice(0, 70),
-          base: owesState ? "нет" : "да",
-          release: "",
-        });
-      for (const kind of RESOURCE_KINDS) {
-        if (!kind.take.test(line)) continue;
-        const given =
-          kind.give === null
-            ? -1
-            : lines.findIndex((l, k) => k !== i && kind.give.test(l));
-        out.push({
-          sort: "ресурс",
-          where: where + ":" + (i + 1),
-          what: line.trim().slice(0, 70),
-          base: "",
-          release: given >= 0 ? "есть: строка " + (given + 1) : "",
-        });
+};
+
+/** Файлы кода, названные текстом путём. */
+const filesNamedIn = (text) =>
+  files.filter((f) => !isTest(f) && namesFileIn(text, f));
+
+/** Что узел делает — словами карты: графа ответственности у строки, где он
+ * назван первой графой, либо первая строка под заголовком, называющим его.
+ * Не описан — `null`. */
+const mapResponsibilityOf = (f) => {
+  const at = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
+  if (at === null || !existsSync(at)) return null;
+  const lines = readFileSync(at, "utf8").split(LF);
+  let head = null;
+  // Заголовок раздела с папкой задаёт префикс: карта пишет `Controller.tsx`
+  // под разделом `src/modules/Controller`, и голое имя разрешается от него.
+  let prefix = null;
+  const cellNames = (cell) =>
+    namesFileIn(cell, f) ||
+    (prefix !== null &&
+      quotedIn(cell).some((t) =>
+        namesFileIn(BACKTICK + prefix + "/" + t + BACKTICK, f),
+      ));
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.startsWith("|")) {
+      if (/^[-:\s|]+$/.test(line)) continue;
+      const cells = line
+        .split(/(?<!\\)\|/)
+        .slice(1, -1)
+        .map((c) => c.trim());
+      if (head === null) {
+        head = cells;
+        continue;
       }
+      if (!cellNames(cells[0] ?? "")) continue;
+      const k = head.findIndex((h) =>
+        /отвеча|ответствен|назначен|responsib|purpose/i.test(h),
+      );
+      const said = (cells[k >= 1 ? k : 1] ?? "").trim();
+      return said === "" ? null : said;
+    }
+    head = null;
+    if (/^#{2,4}\s/.test(line)) {
+      const token = /`([^`]+)`/.exec(line)?.[1] ?? null;
+      prefix =
+        token !== null && token.includes("/") && !CODE_OR_STYLE.test(token)
+          ? token.replace(/\/+$/, "")
+          : null;
+    }
+    if (
+      /^#{2,4}\s/.test(line) &&
+      (line.match(/`[^`]+`/g) ?? []).length === 1 &&
+      namesFileIn(line, f)
+    )
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const t = lines[j].trim();
+        if (t.startsWith("#")) break;
+        if (t !== "") return t;
+      }
+  }
+  return null;
+};
+
+/** Записи о состоянии: строки таблицы файла базы, чей предмет — состояние.
+ * Графы берутся по шапке — «Что», «Владелец», «Кто пишет», «Кто читает» —
+ * тем же объявлением карты посадки, по которому сверка требует запись. */
+let STATE_ROWS = null;
+const stateRecords = () => {
+  if (STATE_ROWS !== null) return STATE_ROWS;
+  STATE_ROWS = [];
+  const mapAt = shelfAt("seat/map.json");
+  const entry =
+    mapAt === null || !existsSync(mapAt)
+      ? undefined
+      : (readJson(mapAt, {}).onSubject ?? []).find(
+          (e) => e.subject === "state",
+        );
+  const at = entry === undefined ? null : path.join(REPO_AT, entry.to);
+  if (at === null || !existsSync(at)) return STATE_ROWS;
+  let head = null;
+  for (const line of readFileSync(at, "utf8").split(LF)) {
+    if (!line.startsWith("|")) {
+      head = null;
+      continue;
+    }
+    if (/^[-:\s|]+$/.test(line)) continue;
+    const cells = line
+      .split(/(?<!\\)\|/)
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (head === null) {
+      if (cells.includes(entry.column ?? "Владелец")) head = cells;
+      continue;
+    }
+    const cell = (start) => {
+      const i = head.findIndex((h) => h.toLowerCase().startsWith(start));
+      return i < 0 ? "" : (cells[i] ?? "");
+    };
+    STATE_ROWS.push({
+      what: cell("что"),
+      owner: cell("владел"),
+      writers: cell("кто пиш"),
+      readers: cell("кто чит"),
+      line,
     });
-    for (const [names, who] of sharedNamesOf(f)) {
-      const recorded = names.some((n) => {
-        if (graphText.includes("`" + n + "`")) return true;
-        const def = codeLiteralOf(n);
-        return def !== null && graphText.includes("`" + def + "`");
+  }
+  return STATE_ROWS;
+};
+
+/** Писатели внешних хранилищ по ключу: ключ → файл → строка записи. */
+let STORE_WRITERS = null;
+const storeWriters = () => {
+  if (STORE_WRITERS !== null) return STORE_WRITERS;
+  STORE_WRITERS = new Map();
+  // Ключ — строкой, как его увидит хранилище: литерал как есть, имя —
+  // значением своей константы, в том же файле либо экспортом соседа. Иначе
+  // один ключ, названный в одном узле строкой, а в другом константой,
+  // выглядел бы двумя разными ключами, и второй писатель прятался бы.
+  const keyOf = (raw, text) => {
+    const t = raw.trim();
+    const lit = /^["'`]([^"'`]+)["'`]$/.exec(t);
+    if (lit !== null) return lit[1];
+    if (!/^[A-Za-z_$][\w$]*$/.test(t)) return t;
+    const here = new RegExp(
+      "\\b(?:const|let|var)\\s+" +
+        t +
+        "\\s*(?::[^=]+)?=\\s*[\"'`]([^\"'`]+)[\"'`]",
+    ).exec(text);
+    return here !== null ? here[1] : (codeLiteralOf(t) ?? t);
+  };
+  for (const f of files) {
+    if (isTest(f)) continue;
+    const text = codeOf(readFileSync(f, "utf8"));
+    text
+      .split(LF)
+      .forEach((line, i) => {
+        if (/^\s*(\/\/|\*)/.test(line)) return;
+        for (const kind of WRITER_KINDS)
+          for (const m of line.matchAll(kind.take)) {
+            const key = kind.kind + " «" + keyOf(m[1], text) + "»";
+            if (!STORE_WRITERS.has(key)) STORE_WRITERS.set(key, new Map());
+            if (!STORE_WRITERS.get(key).has(f))
+              STORE_WRITERS.get(key).set(f, i + 1);
+          }
       });
-      out.push({
-        sort: "связь",
-        where,
-        what: names.join(", ") + " — " + who,
-        base: recorded ? "да" : "нет",
-        release: "",
-      });
+  }
+  return STORE_WRITERS;
+};
+
+/** Имена файла, которые берут другие: по именам, сквозь бочки, и отдельно —
+ * те, что берут только тесты. Переотдача бочкой — тоже взятие: имя уходит
+ * дальше. */
+const takenNamesOf = (f) => {
+  const outside = new Set();
+  const byTests = new Set();
+  for (const u of files) {
+    if (u === f) continue;
+    for (const one of namedImportsOf.get(u) ?? []) {
+      if (one.names === null) continue;
+      if (one.names === "*") {
+        if (one.target === f)
+          for (const n of exportsOf.get(f) ?? [])
+            (isTest(u) ? byTests : outside).add(n);
+        continue;
+      }
+      for (const n of one.names)
+        if (definerOf(one.target, n) === f)
+          (isTest(u) ? byTests : outside).add(n);
+    }
+    for (const out of reexportsOf.get(u)?.named.keys() ?? [])
+      if (definerOf(u, out) === f) outside.add(out);
+    // Звёздная переотдача имён не называет: имя взято, если бочка отдаёт
+    // его из этого файла.
+    if ((reexportsOf.get(u)?.stars.length ?? 0) > 0)
+      for (const n of exportsOf.get(f) ?? [])
+        if (n !== "default" && definerOf(u, n) === f) outside.add(n);
+  }
+  // Имя, уходящее из пакета, берёт потребитель пакета.
+  for (const n of publicNamesOf(f).names) outside.add(n);
+  return { outside, byTests: [...byTests].filter((n) => !outside.has(n)) };
+};
+
+/** Цикл импортов через файл: кратчайший путь от файла обратно к нему либо
+ * `null`. Рёбра — то, что файлы написали в строке импорта; `edgesOf`
+ * подменяет их у правленых файлов прежними, чтобы спросить тот же цикл у
+ * последнего коммита. */
+const cycleThrough = (f, edgesOf = (x) => importsOf.get(x) ?? new Set()) => {
+  const prev = new Map();
+  const queue = [];
+  for (const d of edgesOf(f)) {
+    if (d === f || isTest(d) || prev.has(d)) continue;
+    prev.set(d, f);
+    queue.push(d);
+  }
+  while (queue.length > 0) {
+    const x = queue.shift();
+    for (const d of edgesOf(x)) {
+      if (isTest(d)) continue;
+      if (d === f) {
+        const back = [];
+        for (let y = x; y !== f; y = prev.get(y)) back.push(y);
+        return [f, ...back.reverse(), f];
+      }
+      if (prev.has(d)) continue;
+      prev.set(d, x);
+      queue.push(d);
     }
   }
-  return out.map((row, k) => ({ id: "П" + (k + 1), ...row }));
+  return null;
 };
+
+/** Сколько не-тестовых файлов пользуется файлом. */
+const usersCount = (f) =>
+  [...dependentsOf(f)].filter((u) => !isTest(u)).length;
+
+/** Неустойчивость узла: доля исходящих связей среди всех его связей, от нуля
+ * — от него только зависят — до единицы — он только зависит. Ребро к более
+ * неустойчивому нарушает принцип устойчивых зависимостей: правка изменчивого
+ * тянет правку того, от кого зависят многие. Прежде мерой был голый счёт
+ * потребителей, и на библиотеке он называл рёбрами «к менее устойчивому»
+ * общие типы, зовущие общие константы, — у обоих десятки потребителей, и
+ * нарушения там нет. */
+const instabilityOf = (f) => {
+  const out = [...(usesOf.get(f) ?? new Set())].filter((d) => !isTest(d)).length;
+  const into = usersCount(f);
+  return out + into === 0 ? 0 : out / (out + into);
+};
+
+/** Ребро к более неустойчивому: не из бочки — она только отдаёт, — и не
+ * внутри одной единицы — там это устройство единицы, а не слоя. */
+const unstableEdge = (f, d) =>
+  !isBarrel(f) &&
+  !isTest(d) &&
+  unitOf(d) !== unitOf(f) &&
+  instabilityOf(d) > instabilityOf(f);
+
+/** Неустойчивость для клетки: два знака, в обратных кавычках — это замер. */
+const instabilityCell = (f) => barQuoted(instabilityOf(f).toFixed(2));
 
 /** Значение строковой константы по её имени — там, где оно объявлено. */
 const codeLiteralOf = (name) => {
@@ -7007,8 +7542,327 @@ const codeLiteralOf = (name) => {
   return null;
 };
 
-/** Модель одной строкой для словаря: `П1:вид:пометка;…`. Пометка ресурса —
- * `нет`, когда снятия нет, иначе `есть`. */
+/** Перечень в клетку модели: первые имена и счёт остального. Клетка —
+ * указатель, а не опись: опись длиннее строки перестают читать. */
+const listCell = (names, room = 8) =>
+  names.length <= room
+    ? names.join(", ")
+    : names.slice(0, room).join(", ") +
+      " и ещё " +
+      barQuoted(String(names.length - room));
+
+/** Модель предмета по уровням.
+ *
+ * Строка — `{ level, sort, where, what, delta, mark, release }`; номер ставится
+ * в конце, по порядку уровней. `delta` — сдвиг против последнего коммита на
+ * задаче изменения: `новое`, `снято` либо оба. `mark` — пометка строки:
+ * записано ли в базе, против правила ли ребро, мимо ли входа. Связь двух
+ * узлов модели между собой строки не даёт: обе стороны уже в модели. */
+const barModelOf = (focus, { kind, subject }) => {
+  const out = [];
+  const add = (sort, where, what, mark = "", delta = "", release = "") =>
+    out.push({
+      level: MODEL_LEVEL[sort],
+      sort,
+      where,
+      what: what.split(LF).join(" "),
+      delta,
+      mark,
+      release,
+    });
+  const inFocus = new Set(focus);
+  const change = kind === "на изменение";
+  const inSubject = new Set(subject);
+  const graphAt = path.join(BASE, CONFIG.domTables?.file ?? "03-graph.md");
+  const graphText = existsSync(graphAt) ? readFileSync(graphAt, "utf8") : "";
+  // Прежний вид — только на задаче изменения: на задаче чтения сдвига нет.
+  const headCode = (f) => {
+    if (!change) return undefined;
+    const h = headTextOf(f);
+    return h === null ? null : codeOf(h);
+  };
+  const newTargets = (f) => {
+    const h = headCode(f);
+    const now = importsOf.get(f) ?? new Set();
+    if (h === undefined) return new Set();
+    if (h === null) return new Set(now);
+    const was = importTargetsOfText(f, h);
+    return new Set([...now].filter((t) => !was.has(t)));
+  };
+  const headLines = (f) => {
+    const h = headCode(f);
+    if (h === undefined) return null;
+    return new Set((h ?? "").split(/\r?\n/).map((l) => l.trim()));
+  };
+  const headEdges = (x) => {
+    if (!change || !inSubject.has(x)) return importsOf.get(x) ?? new Set();
+    const h = headCode(x);
+    return h === null ? new Set() : importTargetsOfText(x, h);
+  };
+  const faults = directionFaults().edges;
+  const writers = storeWriters();
+  const records = stateRecords();
+  const seenCycles = new Set();
+  const seenRecords = new Set();
+  const seenKeys = new Set();
+
+  for (const f of focus) {
+    if (!files.includes(f) || isTest(f)) continue;
+    const where = rel(f);
+    const fresh = newTargets(f);
+    const was = headLines(f);
+    const isNewLine = (line) => was !== null && !was.has(line.trim());
+    const text = readFileSync(f, "utf8");
+
+    // --- узел ------------------------------------------------------------
+    const said = mapResponsibilityOf(f);
+    add(
+      "ответственность",
+      where,
+      said === null ? "в карте не описан" : said.slice(0, 140),
+      said === null ? "нет" : "да",
+    );
+    {
+      const now = [...(exportsOf.get(f) ?? new Set())].sort();
+      const h = headCode(f);
+      const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h);
+      const added = before === null ? [] : now.filter((n) => !before.has(n));
+      const removed =
+        before === null ? [] : [...before].filter((n) => !now.includes(n)).sort();
+      const { outside, byTests } = takenNamesOf(f);
+      const unused = now.filter((n) => !outside.has(n) && !byTests.includes(n));
+      const parts = [now.length ? "имена: " + listCell(now) : "экспортов нет"];
+      if (added.length) parts.push("новые: " + listCell(added));
+      if (removed.length) parts.push("сняты: " + listCell(removed));
+      if (unused.length) parts.push("снаружи не берут: " + listCell(unused));
+      if (byTests.length) parts.push("берут только тесты: " + listCell(byTests));
+      add(
+        "поверхность",
+        where,
+        parts.join("; "),
+        "",
+        [added.length ? "новое" : "", removed.length ? "снято" : ""]
+          .filter(Boolean)
+          .join(", "),
+      );
+    }
+    const { uses } = usesWithVia(f);
+    for (const [d, via] of uses) {
+      if (inFocus.has(d)) continue;
+      add(
+        "зависит",
+        where,
+        rel(d) + (via.size ? " через " + [...via].map(rel).join(", ") : ""),
+        "",
+        fresh.has(d) || [...via].some((v) => fresh.has(v)) ? "новое" : "",
+      );
+    }
+    for (const u of dependentsOf(f))
+      if (!inFocus.has(u) && !isTest(u)) add("пользуется", where, rel(u));
+    const lines = text.split(LF);
+    const owesState = owedFor(f).some((one) => one.subject === "state");
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      if (BRIEF_SUBJECTS.state.test(line))
+        add(
+          "состояние",
+          where + ":" + (i + 1),
+          line.trim().slice(0, 70),
+          owesState ? "нет" : "да",
+          isNewLine(line) ? "новое" : "",
+        );
+      for (const res of RESOURCE_KINDS) {
+        if (!res.take.test(line)) continue;
+        const given =
+          res.give === null
+            ? -1
+            : lines.findIndex((l, k) => k !== i && res.give.test(l));
+        add(
+          "ресурс",
+          where + ":" + (i + 1),
+          line.trim().slice(0, 70),
+          "",
+          isNewLine(line) ? "новое" : "",
+          given >= 0 ? "есть: строка " + (given + 1) : "",
+        );
+      }
+    });
+
+    // --- слой ------------------------------------------------------------
+    const layer = layerOf(f);
+    add("слой", where, layer + " · единица " + unitOf(f));
+    for (const t of importsOf.get(f) ?? []) {
+      if (isTest(t) || !foreignInside(f, t)) continue;
+      add(
+        "граница",
+        where,
+        rel(t) + " — мимо входа единицы " + unitOf(t),
+        "мимо входа",
+        fresh.has(t) ? "новое" : "",
+      );
+    }
+    const against = new Set();
+    for (const e of faults) {
+      if (e.from !== f) continue;
+      if (e.to !== null) against.add(e.to);
+      add(
+        "направление",
+        where,
+        (e.to === null ? e.banned : rel(e.to)) +
+          ": слою " +
+          e.rule.layer +
+          " запрещено " +
+          e.banned,
+        "против правила",
+        e.to !== null && fresh.has(e.to) ? "новое" : "",
+      );
+    }
+    // Новое ребро между слоями называется и тогда, когда оба конца в
+    // предмете: правка, связавшая два слоя, — сдвиг слоя, даже если оба
+    // файла тронуты ею же.
+    for (const t of fresh) {
+      if (isTest(t) || against.has(t)) continue;
+      const other = layerOf(t);
+      if (other === layer) continue;
+      add(
+        "направление",
+        where,
+        layer + " → " + other + ": " + rel(t),
+        "по правилу",
+        "новое",
+      );
+    }
+    const cycle = cycleThrough(f);
+    if (cycle !== null) {
+      const key = [...new Set(cycle)].sort().join("|");
+      if (!seenCycles.has(key)) {
+        seenCycles.add(key);
+        add(
+          "цикл",
+          where,
+          cycle.map(rel).join(" → "),
+          "",
+          change && cycleThrough(f, headEdges) === null ? "новое" : "",
+        );
+      }
+    }
+    for (const [d, via] of uses) {
+      if (inFocus.has(d) || !unstableEdge(f, d)) continue;
+      add(
+        "устойчивость",
+        where,
+        where +
+          " (неустойчивость " +
+          instabilityCell(f) +
+          ") → " +
+          rel(d) +
+          " (" +
+          instabilityCell(d) +
+          ")",
+        "",
+        fresh.has(d) || [...via].some((v) => fresh.has(v)) ? "новое" : "",
+      );
+    }
+
+    // --- приложение ------------------------------------------------------
+    for (const r of records) {
+      if (seenRecords.has(r.line) || !namesFileIn(r.line, f)) continue;
+      seenRecords.add(r.line);
+      add(
+        "источник",
+        where,
+        "«" +
+          r.what +
+          "» — владелец " +
+          r.owner +
+          "; пишут " +
+          (r.writers || "—") +
+          "; читают " +
+          (r.readers || "—"),
+        "да",
+      );
+      const writing = filesNamedIn(r.writers);
+      if (writing.length > 1)
+        add(
+          "писатель",
+          where,
+          "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
+          "да",
+        );
+    }
+    for (const [key, byFile] of writers) {
+      if (!byFile.has(f) || byFile.size < 2 || seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      const at = byFile.get(f);
+      add(
+        "писатель",
+        where + ":" + at,
+        key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
+        records.some((r) => r.line.includes(key.slice(key.indexOf("«") + 1, -1)))
+          ? "да"
+          : "нет",
+        isNewLine(lines[at - 1] ?? "") ? "новое" : "",
+      );
+    }
+    for (const [names, who] of sharedNamesOf(f)) {
+      const recorded = names.some((n) => {
+        if (graphText.includes("`" + n + "`")) return true;
+        const def = codeLiteralOf(n);
+        return def !== null && graphText.includes("`" + def + "`");
+      });
+      add("связь", where, names.join(", ") + " — " + who, recorded ? "да" : "нет");
+    }
+    const outward = publicNamesOf(f);
+    if (outward.names.length) {
+      const h = headCode(f);
+      const before = h === undefined || h === null ? null : surfaceOfText(h);
+      const added =
+        h === undefined
+          ? []
+          : outward.names.filter((n) => before === null || !before.has(n));
+      add(
+        "наружу",
+        where,
+        outward.names.join(", ") + " через " + outward.via.join(", "),
+        "",
+        added.length ? "новое" : "",
+      );
+    }
+  }
+
+  // Размах — один на предмет: сколько узлов, единиц и слоёв тронуто. Мера
+  // критерия о цене изменения: правка, задевшая полдерева, говорит о раскладке.
+  {
+    const own = subject.filter((f) => !isTest(f));
+    if (own.length > 0) {
+      const units = [...new Set(own.map(unitOf))].sort();
+      const layers = [...new Set(own.map(layerOf))].sort();
+      add(
+        "размах",
+        change ? "правка" : "область",
+        "файлов " +
+          barQuoted(String(own.length)) +
+          "; единиц " +
+          barQuoted(String(units.length)) +
+          ": " +
+          listCell(units, 6) +
+          "; слоёв " +
+          barQuoted(String(layers.length)) +
+          ": " +
+          layers.join(", "),
+      );
+    }
+  }
+
+  const order = (m) => LEVEL_ORDER.indexOf(m.level);
+  return out
+    .map((row, k) => ({ row, k }))
+    .sort((a, b) => order(a.row) - order(b.row) || a.k - b.k)
+    .map(({ row }, k) => ({ id: "П" + (k + 1), ...row }));
+};
+
+/** Модель одной строкой для словаря: `П1:вид:пометка:сдвиг;…`. Пометка
+ * ресурса — `нет`, когда снятия нет, иначе `есть`. */
 const barModelCode = (model) =>
   model
     .map(
@@ -7021,7 +7875,9 @@ const barModelCode = (model) =>
           ? m.release.trim() === "нет"
             ? "нет"
             : "есть"
-          : m.base),
+          : m.mark) +
+        ":" +
+        m.delta,
     )
     .join(";");
 
@@ -7052,6 +7908,19 @@ if (mode === "bar") {
       "  сейчас неизвестно. Свод по одному ядру выглядел бы полным проходом,",
     );
     console.log("  не будучи им. Чинится до свода, а не после.");
+    process.exit(1);
+  }
+  // Критерий без уровня протокол разложить не может, а «чисто» ядра не на
+  // что опереть: уровень задаёт, строка какого уровня модели годится в
+  // основание. Отказ, а не молчаливое умолчание: критерий, отнесённый к
+  // единице по недосмотру, закрывался бы без вопроса о целом.
+  if (live.levelless.length > 0) {
+    console.log("=== Свод по планке невозможен ===");
+    console.log("  у критерия не назван уровень: " + live.levelless.join(", "));
+    console.log(
+      "  Уровень пишут в скобках сразу после заголовка критерия: (единица),",
+    );
+    console.log("  (узел), (слой) или (приложение).");
     process.exit(1);
   }
 
@@ -7176,10 +8045,15 @@ if (mode === "bar") {
     .map(([k, v]) => k + "=" + (v ? "1" : "0"))
     .join(",");
   const marks = barMarks(subject);
-  const model = barModelOf(focus ?? subject);
+  const model = barModelOf(focus ?? subject, { kind, subject });
   const HEAD = "| критерий | о чём | исход | адрес | что | судьба |";
   const BASE_HEAD = "| файл | база | документация | чем это объяснено |";
-  const MODEL_HEAD = "| модель | вид | где | что | в базе | снятие |";
+  const MODEL_HEAD = "| модель | вид | где | что | сдвиг | пометка | снятие |";
+  const LEVEL_HEAD = "| уровень | что на уровне | держится | опора |";
+  // Уровни с итогом. Единице итога нет: её нарушения видны в строках, и
+  // отвечают на них критерии.
+  const SUMMED = ["узел", "слой", "приложение"];
+  const title = (level) => level.charAt(0).toUpperCase() + level.slice(1);
   // Ключ строки модели без номера и без снятия: по нему прежний протокол
   // узнаёт свою строку в новом, когда номера сдвинулись.
   const modelKey = (m) => [m.sort, m.where, m.what].join("|");
@@ -7187,6 +8061,60 @@ if (mode === "bar") {
     const said0 = carried?.said ?? new Map();
     const release0 = carried?.releases ?? new Map();
     const base0 = carried?.baseRows ?? new Map();
+    const level0 = carried?.levelRows ?? new Map();
+    const modelRow = (m) =>
+      "| " +
+      m.id +
+      " | " +
+      m.sort +
+      " | " +
+      barQuoted(m.where) +
+      " | " +
+      m.what.split("|").join("\\|") +
+      " | " +
+      m.delta +
+      " | " +
+      m.mark +
+      " | " +
+      (release0.get(modelKey(m)) ?? m.release) +
+      " |";
+    // Лозунгу исход проставлен заранее: ставить его нечем, и пустая клетка
+    // тут означала бы работу, которой не существует. Беспредметное на ЭТОЙ
+    // правке — тоже: причина при нём замеренная, и переписать её руками
+    // никто не мешает.
+    const outcomeRow = (c) => {
+      const none = c.slogan ? "" : barNoSubject(c.id + "|" + subjectRow);
+      // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
+      // замеренная беспредметность берутся заново, остальное — прежнее.
+      const was = said0.get(c.id);
+      const keep = !c.slogan && none === "" && was !== undefined;
+      const outcome = c.slogan
+        ? "лозунг"
+        : none !== ""
+          ? "нет предмета"
+          : keep
+            ? was.outcome
+            : "";
+      return (
+        "| " +
+        c.id +
+        " | " +
+        // Строка архитектурного ядра помечена в самом протоколе: клетка
+        // основания у неё обязательна, и без пометки она выглядела бы
+        // лишней ровно там, где нужнее всего.
+        (barCoreCriterion(c.id) ? "**ядро.** " : "") +
+        c.title +
+        " | " +
+        outcome +
+        " | " +
+        (keep ? was.addr : "") +
+        " | " +
+        (keep ? was.what : none) +
+        " | " +
+        (keep ? was.fate : "") +
+        " |"
+      );
+    };
     const rows = [
       "# Свод по планке — протокол текущей работы",
       "",
@@ -7210,8 +8138,15 @@ if (mode === "bar") {
       "",
       "## Модель предмета",
       "",
-      "Строки собрал инструмент из кода и базы: зависимости по взятым именам,",
-      "потребители, выход наружу, состояние, ресурсы, связи мимо импорта.",
+      "Строки собрал инструмент из кода и базы, по уровням. Узел: что он",
+      "делает по карте, его поверхность, зависимости, потребители, состояние,",
+      "ресурсы. Слой: слой и единица, рёбра против правила и новые рёбра между",
+      "слоями, взятое мимо входа единицы, циклы, устойчивость. Приложение:",
+      "источники из записи о состоянии, второй писатель, связи через имя,",
+      "выход наружу, размах. Графа «сдвиг» — что работа изменила против",
+      "последнего коммита; каждый сдвиг получает ответ в итоге уровня, в",
+      "основании либо в находке.",
+      "",
       "Собранное не правят — оно пересобирается; недостающее дописывают строкой",
       "со своим номером. Снятие ресурса ставит сессия: " +
         barQuoted("строка N") +
@@ -7219,27 +8154,21 @@ if (mode === "bar") {
         barQuoted("нет") +
         " либо",
       barQuoted("не нужно: причина") +
-        ". Вердикт ядра «чисто» называет номер строки модели, на которой стоит.",
+        ". Вердикт ядра «чисто» называет строку модели СВОЕГО уровня.",
       "",
-      MODEL_HEAD,
-      "| --- | --- | --- | --- | --- | --- |",
-      ...model.map(
-        (m) =>
-          "| " +
-          m.id +
-          " | " +
-          m.sort +
-          " | " +
-          barQuoted(m.where) +
-          " | " +
-          m.what.split("|").join("\\|") +
-          " | " +
-          m.base +
-          " | " +
-          (release0.get(modelKey(m)) ?? m.release) +
-          " |",
-      ),
-      "",
+      ...SUMMED.flatMap((level) => {
+        const mine = model.filter((m) => m.level === level);
+        return mine.length === 0
+          ? []
+          : [
+              "### " + title(level),
+              "",
+              MODEL_HEAD,
+              "| --- | --- | --- | --- | --- | --- | --- |",
+              ...mine.map(modelRow),
+              "",
+            ];
+      }),
       "## Исходы",
       "",
       "Исход: " +
@@ -7260,47 +8189,43 @@ if (mode === "bar") {
       "отложенного называет файл находки; " +
         barQuoted("вопрос") +
         " — развилка разработчика, и список",
-      "вопросов называет файл находки.",
+      "вопросов называет файл находки. Критерии разложены по уровню, на",
+      "котором их судят.",
       "",
-      HEAD,
-      "| --- | --- | --- | --- | --- | --- |",
-      // Лозунгу исход проставлен заранее: ставить его нечем, и пустая
-      // клетка тут означала бы работу, которой не существует. Беспредметное
-      // на ЭТОЙ правке — тоже: причина при нём замеренная, и переписать её
-      // руками никто не мешает.
-      ...live.all.map((c) => {
-        const none = c.slogan ? "" : barNoSubject(c.id + "|" + subjectRow);
-        // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
-        // замеренная беспредметность берутся заново, остальное — прежнее.
-        const was = said0.get(c.id);
-        const keep = !c.slogan && none === "" && was !== undefined;
-        const outcome = c.slogan
-          ? "лозунг"
-          : none !== ""
-            ? "нет предмета"
-            : keep
-              ? was.outcome
-              : "";
-        return (
-          "| " +
-          c.id +
-          " | " +
-          // Строка архитектурного ядра помечена в самом протоколе: клетка
-          // основания у неё обязательна, и без пометки она выглядела бы
-          // лишней ровно там, где нужнее всего.
-          (barCoreCriterion(c.id) ? "**ядро.** " : "") +
-          c.title +
-          " | " +
-          outcome +
-          " | " +
-          (keep ? was.addr : "") +
-          " | " +
-          (keep ? was.what : none) +
-          " | " +
-          (keep ? was.fate : "") +
-          " |"
-        );
+      ...LEVEL_ORDER.flatMap((level) => {
+        const mine = live.all.filter((c) => c.level === level);
+        return mine.length === 0
+          ? []
+          : [
+              "### " + title(level),
+              "",
+              HEAD,
+              "| --- | --- | --- | --- | --- | --- |",
+              ...mine.map(outcomeRow),
+              "",
+            ];
       }),
+      "## Итог по уровням",
+      "",
+      "Строка на уровень: что работа изменила на нём (на задаче чтения — как",
+      "он устроен), держится ли он — " +
+        barQuoted("да") +
+        " либо " +
+        barQuoted("нет") +
+        ", — и на каких строках",
+      "модели это стоит. Открытая находка уровня означает «не держится», и",
+      "наоборот. Правка, безупречная в каждой строке, ломает именно здесь.",
+      "",
+      LEVEL_HEAD,
+      "| --- | --- | --- | --- |",
+      ...SUMMED.map(
+        (level) =>
+          "| " +
+          level +
+          " | " +
+          (level0.get(level) ?? ["", "", ""]).join(" | ") +
+          " |",
+      ),
       "",
       "## База и документация",
       "",
@@ -7336,39 +8261,54 @@ if (mode === "bar") {
     const twice = [];
     const rows = [];
     const baseRows = new Map();
+    const levelRows = new Map();
     const unTick = (x) => x.split(BAR_TICK).join("");
     for (const line of body.split(/\r?\n/)) {
       if (!line.startsWith("| ")) continue;
-      if (line === HEAD || line === MODEL_HEAD || line === BASE_HEAD) continue;
+      if (
+        line === HEAD ||
+        line === MODEL_HEAD ||
+        line === BASE_HEAD ||
+        line === LEVEL_HEAD
+      )
+        continue;
       const cells = line
         .split(/(?<!\\)\|/)
         .slice(1, -1)
         .map((c) => c.trim());
-      if (cells.length === 6 && /^П[0-9]+$/.test(cells[0])) {
-        const [id, sort, where, what, base, release] = cells;
+      if (cells.length === 7 && /^П[0-9]+$/.test(cells[0])) {
+        const [id, sort, where, what, delta, mark, release] = cells;
         rows.push({
           id,
           sort,
           where: unTick(where),
           what: what.split("\\|").join("|"),
-          base,
+          delta,
+          mark,
           release,
         });
         continue;
       }
+      // Строка модели прежней формы исходом не считается: иначе её номер
+      // читался бы критерием, которого в политике нет.
+      if (cells.length === 6 && /^П[0-9]+$/.test(cells[0])) continue;
       if (cells.length === 6 && !/^-+$/.test(cells[0])) {
         const [id, , outcome, addr, what, fate] = cells;
         if (said.has(id)) twice.push(id);
         said.set(id, { outcome, addr, what, fate });
         continue;
       }
+      if (cells.length === 4 && SUMMED.includes(cells[0])) {
+        levelRows.set(cells[0], cells.slice(1));
+        continue;
+      }
       if (cells.length === 4 && cells[0].startsWith(BAR_TICK))
         baseRows.set(unTick(cells[0]), cells.slice(1));
     }
-    return { said, twice, rows, baseRows };
+    return { said, twice, rows, baseRows, levelRows };
   };
   // Собранные инструментом строки модели совпадают с тем, что он соберёт
-  // сейчас: номер, вид, место, суть, пометка базы. Снятие — клетка сессии.
+  // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
   const sameModel = (rows) =>
     model.every((m, k) => {
       const r = rows[k];
@@ -7378,7 +8318,8 @@ if (mode === "bar") {
         r.sort === m.sort &&
         r.where === m.where &&
         r.what === m.what &&
-        r.base === m.base
+        r.delta === m.delta &&
+        r.mark === m.mark
       );
     });
   const parsedWas = was === null ? null : barParse(was.body);
@@ -7404,6 +8345,7 @@ if (mode === "bar") {
               ]),
             ),
             baseRows: parsedWas.baseRows,
+            levelRows: parsedWas.levelRows,
           }
         : null;
     const edited = [];
@@ -7412,12 +8354,16 @@ if (mode === "bar") {
       for (const m of marks) if (before.get(m.file) !== m.mark) edited.push(m.file);
     }
     let reset = 0;
-    if (carry !== null && edited.length > 0)
+    if (carry !== null && edited.length > 0) {
       for (const [id, one] of carry.said)
         if (one.outcome === "чисто" && barCoreCriterion(id)) {
           carry.said.delete(id);
           reset += 1;
         }
+      // Итог по уровням — тоже вердикт о форме целого: стоит он на коде,
+      // которого больше нет, и пишется заново.
+      carry.levelRows = new Map();
+    }
     const lost =
       was === null || carry !== null
         ? 0
@@ -7438,6 +8384,8 @@ if (mode === "bar") {
           " — правлен код: " +
           edited.join(", "),
       );
+    if (carry !== null && edited.length > 0)
+      console.log("  итог по уровням сброшен: он о коде, которого больше нет");
     if (edited.length > 0 && carry !== null)
       console.log(
         "  Пересмотреть строки по правленым файлам до печати: перенесённый",
@@ -7464,6 +8412,8 @@ if (mode === "bar") {
     console.log("");
     console.log("  По КАЖДОМУ критерию поставить исход, читая политику, а не");
     console.log("  название в строке: название — указатель, а не критерий.");
+    console.log("  Затем итог по уровням — узел, слой, приложение: что работа");
+    console.log("  на них изменила и держатся ли они; каждый сдвиг модели назван.");
     console.log(
       "  Затем позвать режим снова — он сверит форму и поставит печать.",
     );
@@ -7611,14 +8561,50 @@ if (mode === "bar") {
         holes.push(r.id + ": снятие не из словаря: «" + r.release + "»");
     }
     const code = barModelCode(modelRows);
+    // Клетка словаря несёт черту только экранированной; в строку для словаря
+    // она идёт косой, иначе строка распалась бы не по своим графам.
+    const flat = (x) => (x ?? "").split("\\|").join("/");
     for (const c of live.all) {
       const one = said.get(c.id);
       if (one === undefined) continue;
       const fault = barModelFault(
-        [c.id, one.outcome, one.what, kind, code].join("|"),
+        [c.id, one.outcome, flat(one.what), kind, code, c.level, one.fate].join(
+          "|",
+        ),
       );
       if (fault !== "") holes.push(c.id + ": " + fault);
     }
+    // Итог по уровням: строка на уровень, согласная с моделью и с исходами.
+    // Открытая находка — та, что не починена: предложена, отложена, задана
+    // вопросом.
+    const OPEN = new Set(["предложено", "отложено", "вопрос"]);
+    for (const level of SUMMED) {
+      const row = parsedWas.levelRows.get(level) ?? ["", "", ""];
+      const open = live.all.filter((c) => {
+        const one = said.get(c.id);
+        return (
+          c.level === level &&
+          one !== undefined &&
+          one.outcome === "нашлось" &&
+          OPEN.has(one.fate)
+        );
+      }).length;
+      const fault = barLevelFault(
+        [level, flat(row[0]), flat(row[1]), flat(row[2]), code, open].join("|"),
+      );
+      if (fault !== "") holes.push("итог, " + level + ": " + fault);
+    }
+    // Каждый сдвиг модели получил ответ: в итоге уровня, в основании
+    // критерия либо в находке. Сдвиг, о котором промолчали, — ровно та
+    // поломка, которой строки правки не показывают.
+    const answered = [
+      ...[...parsedWas.levelRows.values()].flat(),
+      ...[...said.values()].flatMap((one) => [one.addr, one.what]),
+    ]
+      .map(flat)
+      .join(" ");
+    const loose = barDeltaFault(code + "|" + answered);
+    if (loose !== "") holes.push(loose);
   }
   const extra = [...said.keys()].filter(
     (id) => !live.all.some((c) => c.id === id),
@@ -7745,6 +8731,17 @@ if (mode === "bar") {
       body.split(BAR_NOSEAL).join("- печать: " + barQuoted(seal)),
     );
     console.log("  печать поставлена: " + seal);
+    console.log(
+      "  уровни: " +
+        SUMMED.map(
+          (level) =>
+            level +
+            " — " +
+            ((parsedWas.levelRows.get(level) ?? ["", ""])[1] === "да"
+              ? "держится"
+              : "не держится"),
+        ).join("; "),
+    );
     console.log("  находок: " + found.length);
     for (const c of found) {
       const one = said.get(c.id);
@@ -7775,6 +8772,179 @@ if (mode === "bar") {
   console.log("");
   console.log("  Печать не поставлена. Свод с дырами — не свод.");
   process.exit(1);
+}
+
+// Факты по уровням — без протокола.
+//
+// С путём: модель свода для одного адреса — узел, слой, приложение, — та же,
+// что `bar` кладёт в протокол задачи чтения. Нужна ДО письма: новый узел
+// проектируют против фактов точки встраивания, и замысел правится дешевле
+// написанного. Свод для этого не годится — он пишет протокол текущей работы
+// поверх того, что уже в нём лежит.
+//
+// Без пути: архитектурные факты всего проекта, которые машина видит сама, —
+// ребро против правила направления, цикл, внутренность чужой единицы мимо
+// входа, второй писатель хранилища. Каждый обязан быть назван по адресу
+// долгом перехода, решением либо строкой реестра находок: переход читает
+// весь код один раз, и найденное им по архитектуре не должно пропасть.
+// Неназванный факт — ненулевой код. Устойчивость печатается к сведению: это
+// вопрос к чтению, а не нарушение.
+if (mode === "levels") {
+  const arg = argPath(process.argv[3]);
+  if (arg) {
+    sayLooked("файлов кода и стилей в графе", files.length + styleFiles.length);
+    const hits = [...files, ...styleFiles]
+      .filter((f) => rel(f).includes(arg))
+      .sort((x, y) => Number(isTest(x)) - Number(isTest(y)));
+    if (hits.length === 0) {
+      console.log(outOfScope(arg));
+      process.exit(1);
+    }
+    const target = hits[0];
+    const area = [
+      ...new Set(
+        [target, ...usesWithVia(target).uses.keys(), ...dependentsOf(target)].map(
+          norm,
+        ),
+      ),
+    ];
+    const model = barModelOf([target], { kind: "на чтение", subject: area });
+    console.log("=== Уровни: " + rel(target) + " ===");
+    for (const level of ["узел", "слой", "приложение"]) {
+      const mine = model.filter((m) => m.level === level);
+      console.log("--- " + level + " ---");
+      if (mine.length === 0) console.log("  фактов нет");
+      for (const m of mine)
+        console.log(
+          "  " +
+            m.sort +
+            ": " +
+            m.what.split(BAR_TICK).join("") +
+            (m.mark === "" ? "" : " [" + m.mark + "]") +
+            (m.where === rel(target) ? "" : " — " + m.where),
+        );
+    }
+    console.log("");
+    console.log(
+      "Новый узел читают против этих фактов ДО письма: куда он ляжет, чей",
+    );
+    console.log(
+      "источник истины тронет, не свяжет ли слои против правила и не замкнёт ли цикл.",
+    );
+    process.exit(0);
+  }
+  const own = files.filter((f) => !isTest(f));
+  sayLooked("файлов кода", own.length);
+  const facts = [];
+  for (const e of directionFaults().edges)
+    facts.push({
+      kind: "направление",
+      where: [e.from],
+      text:
+        (e.to === null ? rel(e.from) + " → " + e.banned : e.text) +
+        ": слою " +
+        e.rule.layer +
+        " запрещено " +
+        e.banned,
+    });
+  {
+    const seen = new Set();
+    for (const f of own) {
+      const c = cycleThrough(f);
+      if (c === null) continue;
+      const key = [...new Set(c)].sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      facts.push({ kind: "цикл", where: c.slice(0, -1), text: c.map(rel).join(" → ") });
+    }
+  }
+  for (const f of own)
+    for (const t of importsOf.get(f) ?? [])
+      if (!isTest(t) && foreignInside(f, t))
+        facts.push({
+          kind: "граница",
+          where: [f],
+          text: rel(f) + " → " + rel(t) + " — мимо входа единицы " + unitOf(t),
+        });
+  for (const [key, byFile] of storeWriters())
+    if (byFile.size > 1)
+      facts.push({
+        kind: "писатель",
+        where: [...byFile.keys()],
+        text: key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
+      });
+  for (const r of stateRecords()) {
+    const writing = filesNamedIn(r.writers);
+    if (writing.length > 1)
+      facts.push({
+        kind: "писатель",
+        where: writing,
+        text: "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
+      });
+  }
+  // Где факт назван: долг перехода, реестр решений, реестр находок. Назван —
+  // значит ЛЮБОЙ его файл назван там путём: факт о цикле или о двух
+  // писателях принадлежит всем своим файлам сразу.
+  const texts = [
+    CONFIG.transition?.file,
+    CONFIG.decisions,
+    CONFIG.findings?.file,
+  ]
+    .filter((one) => one != null)
+    .map((one) => path.join(BASE, one))
+    .filter((at) => existsSync(at))
+    .map((at) => [rel0(at), readFileSync(at, "utf8")]);
+  const namedBy = (fact) =>
+    texts.find(([, text]) => fact.where.some((f) => namesFileIn(text, f)))?.[0] ??
+    null;
+  let loose = 0;
+  console.log("=== Архитектурные факты проекта ===");
+  if (facts.length === 0) console.log("  фактов нет");
+  for (const fact of facts) {
+    const by = namedBy(fact);
+    if (by === null) loose += 1;
+    console.log(
+      "  " +
+        fact.kind +
+        ": " +
+        fact.text +
+        (by === null ? " — НЕ НАЗВАН" : " — назван: " + by),
+    );
+  }
+  console.log("");
+  console.log("=== Зависимость к менее устойчивому — к сведению ===");
+  let weak = 0;
+  for (const f of own)
+    for (const d of usesOf.get(f) ?? []) {
+      if (!unstableEdge(f, d)) continue;
+      weak += 1;
+      if (weak <= 15)
+        console.log(
+          "  " +
+            rel(f) +
+            " (неустойчивость " +
+            instabilityOf(f).toFixed(2) +
+            ") → " +
+            rel(d) +
+            " (" +
+            instabilityOf(d).toFixed(2) +
+            ")",
+        );
+    }
+  if (weak > 15) console.log("  …и ещё " + (weak - 15));
+  if (weak === 0) console.log("  таких рёбер нет");
+  console.log("");
+  console.log("  фактов: " + facts.length + ", не названо: " + loose);
+  if (loose > 0) {
+    console.log(
+      "  Каждый факт называют по адресу: пунктом долга перехода с планом,",
+    );
+    console.log(
+      "  решением в реестре решений либо строкой реестра находок.",
+    );
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 if (mode === "brief") {
@@ -8252,87 +9422,6 @@ if (mode === "tiers") {
 // режиму оставалось завести свою копию, а копия расходится первой.
 const bare = (q) => q.replace(/[*]+$/, "").replace(/[/]+$/, "");
 
-// Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу
-// раздела, затем по однозначному суффиксу.
-// Сокращения объявлены НАСТРОЙКОЙ, а не зашиты сюда. Прежде здесь стояла
-// раскладка одного конкретного проекта: префиксы его папок разрешались в его
-// же адреса. В любом другом проекте те же префиксы указывали в несуществующие
-// места — и делали это молча, потому что неразрешённый адрес просто уходил
-// дальше по цепочке разрешения. Найдено поиском следов проекта в обвязке.
-const expand = (q) => {
-  if (q.startsWith("src/")) return path.join(REPO_AT, q);
-  for (const [prefix, base] of CONFIG.pathShortcuts ?? [])
-    if (q.startsWith(prefix)) return path.join(REPO_AT, base, q);
-  // Адрес ОТ КОРНЯ ИСХОДНИКОВ — та форма, в которой инструмент сам их и
-  // печатает: `components/CheckboxPanel/domain/selection.ts`. Ветка выше
-  // знает один литерал `src/`, и проект, зовущий корень иначе, не разрешал
-  // ни одного адреса с косой чертой — а признака у этого не было: сверка
-  // слоёв краснела строкой «слоя нет на диске» про папку, которая есть.
-  // Слой без косой черты при этом проходил зелёным по другой ветке, и
-  // расхождение выглядело случайным. Найдено посадкой в проект со слоями.
-  const atRoot = path.join(ROOT, q);
-  if (existsSync(atRoot)) return atRoot;
-  return null;
-};
-
-// Два списка, и смешивать их нельзя: размеры папок считаются по коду
-// (`everyFile`), а якоря указывают ещё и на доки (`everyPath`).
-const everyFile = [];
-const everyPath = [];
-const walkAll = (dir) => {
-  if (!walkable(dir)) return;
-  for (const e of readdirSync(dir)) {
-    const full = path.join(dir, e);
-    if (outOfTree(e, full)) continue;
-    if (statSync(full).isDirectory()) walkAll(full);
-    else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
-      everyPath.push(full.split(path.sep).join("/"));
-      if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
-    }
-  }
-  // Корень исходников берётся ИЗ НАСТРОЙКИ, а не зашит именем `src`.
-  //
-  // Поле настройки существует именно затем, что корень бывает другой:
-  // библиотеки зовут его `lib`, каркасы — `app`. Пока имя стояло здесь
-  // строкой, у такого проекта этот обход возвращал ПУСТО, и всё, что на нём
-  // стоит, молчало — в первую очередь покрытие карты по файлам стилей.
-  // Заметить это было нечем: соседний список собирается другим обходом, тоже
-  // молча, и сверка печатала правдоподобное число. Найдено сверкой двух
-  // замеров одного и того же проекта, разошедшихся на единицу. Деревьев
-  // бывает несколько, и обход зовётся по каждому.
-};
-for (const one of SRC_ROOTS) walkAll(one);
-
-// Файл ищется по сокращению, по префиксу раздела и, последним, по уникальному
-// хвосту пути: база пишет и `client/domain/track.ts`, и просто `track.ts`.
-//
-// Префикс раздела пробуется ПЕРВЫМ. Голое имя разрешается ещё и от корня
-// исходников, и в обратном порядке `index.ts` под заголовком папки плагина
-// засчитывался корневому `index.ts`: строки карты стояли, а тридцать файлов
-// числились неописанными, корневые же — описанными чужими строками. Замерено
-// переходом библиотеки, где у каждой папки свои `index.ts` и `props.ts`.
-const locate = (q, prefix) => {
-  for (const candidate of prefix === null ? [q] : [prefix + q, q]) {
-    const expanded = expand(candidate);
-    if (expanded !== null && existsSync(expanded)) return norm(expanded);
-    const atRepo = path.join(REPO_AT, candidate);
-    if (existsSync(atRepo) && statSync(atRepo).isFile()) return norm(atRepo);
-  }
-  const hits = everyPath.filter((f) => f.endsWith("/" + q));
-  return hits.length === 1 ? hits[0] : null;
-};
-
-// База пишет группы вида `{a,b}/tests`: раскрываем их в отдельные пути.
-const variants = (q) => {
-  const group = /\{([^}]*)\}/.exec(q);
-  if (group === null) return [q];
-  const head = q.slice(0, group.index);
-  const tail = q.slice(group.index + group[0].length);
-  return group[1]
-    .split(",")
-    .flatMap((one) => variants(head + one.trim() + tail));
-};
-
 const HEAD_RE = /^#{2,4}[^`]*`([^`]+)`/;
 const HEAD_FILES_RE = new RegExp(
   "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
@@ -8585,48 +9674,6 @@ if (mode === "verify") {
     return subjectCode.some((f) => ext.has(f.slice(f.lastIndexOf("."))));
   };
 
-  // Звёздочки — «сколько угодно сегментов, в том числе ноль»; путь без них
-  // означает «всё, что лежит под ним».
-  const BACKSLASH = String.fromCharCode(92);
-  const MID = String.fromCharCode(1);
-  const TAIL = String.fromCharCode(2);
-  const esc = (s) =>
-    [...s].map((c) => (/[\w-]/.test(c) ? c : BACKSLASH + c)).join("");
-  const asRegExp = (full) => {
-    const marked = (full.includes("*") ? full : full + "**")
-      .split("/**/")
-      .join(MID)
-      .split("**")
-      .join(TAIL);
-    const body = esc(marked)
-      .split(esc(MID))
-      .join("/(?:[^]*/)?")
-      .split(esc(TAIL))
-      .join("(?:[^]*)?");
-    return new RegExp("^" + body + "$");
-  };
-
-  // Всё, что лежит под путём, тесты включительно.
-  const inside = (q, prefix) => {
-    for (const raw of prefix === null ? [q] : [prefix + q, q]) {
-      const shapes = [];
-      for (const pattern of variants(raw)) {
-        const head = pattern.split("*")[0];
-        // Сокращённые адреса разрешает `expand` по объявленным сокращениям.
-        // Прежде здесь и в `locate` был зашит `src/shared` одного проекта: в
-        // любом другом он указывал в пустоту либо в чужую папку.
-        const root = expand(head);
-        if (root === null) continue;
-        const slash = head.endsWith("/") ? "/" : "";
-        shapes.push(asRegExp(norm(root) + slash + pattern.slice(head.length)));
-      }
-      if (!shapes.length) continue;
-      const hits = everyFile.filter((f) => shapes.some((rx) => rx.test(f)));
-      if (hits.length) return { hits, wantTests: raw.includes("tests") };
-    }
-    return null;
-  };
-
   // Размер папки считается по коду, а пути со словом `tests` — по тестам.
   const under = (q, prefix) => {
     const found = inside(q, prefix);
@@ -8726,43 +9773,9 @@ if (mode === "verify") {
   const DENIAL = /^(?:нет|—|-|no|none)$/i;
   const mapClaimSeen = new Set();
 
-  // Строки таблицы «Правила направления»: слой, запреты, разрешённые исключения.
-  // Заголовок из настройки — ТЕКСТ, а не образец, и подставляется он
-  // экранированным.
-  //
-  // Настройка называет шапку таблицы дословно, а шапка markdown-таблицы состоит
-  // из вертикальных черт — в регулярном выражении это «или». Подставленная как
-  // есть, она превращала образец в «любой заголовок ИЛИ вот это», и `inRules`
-  // вставал на ПЕРВОМ же заголовке файла и не сбрасывался. Дальше правилом
-  // направления читалась каждая трёхколоночная строка базы: строки таблиц
-  // файлов в карте, строки базовой линии в фактах. Замерено на посадке в проект
-  // со слоями: двенадцать правил вместо трёх, и ячейки чужих строк объявлены
-  // мёртвыми разрешениями.
-  //
-  // Не находило это ничто: во всех предыдущих проектах поле стояло `null`, и
-  // сверка молчала за отсутствием предмета. Первый же проект, объявивший слои,
-  // получил её сломанной.
-  // Поле не объявлено — таблицы нет, и разбор не запускается ВОВСЕ. Образец из
-  // пустого текста совпал бы с любым заголовком, то есть ровно с тем, что эта
-  // правка и чинит: пустая подстановка опаснее неверной, потому что выглядит
-  // безобидно. Поймано тем же прогоном сразу после первой редакции.
-  const headRe = (text) =>
-    text == null
-      ? { test: () => false }
-      : new RegExp("^#+.*" + text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const RULES_HEAD = headRe(CONFIG.rulesHeading);
-  const ISOLATION_HEAD = headRe(CONFIG.isolationHeading);
-  const ROW_RE = /^\|(.+)\|(.+)\|(.*)\|\s*$/;
-  const ISO_ROW_RE = /^\|([^|]+)\|([^|]+)\|\s*$/;
-  const cellPaths = (cell) => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-  const rules = [];
-  // Нашёлся ли РАЗДЕЛ с объявленным заголовком — отдельно от того, разобрались
-  // ли в нём строки. Это разные поломки: заголовок назван неверно, либо таблица
-  // под ним другой формы. Одно сообщение на оба случая отправляло бы искать не
-  // там — поймано собственной правкой на живом проекте.
-  let rulesHeadSeen = false;
-  let isolationHeadSeen = false;
-  const isolation = [];
+  // Таблицы слоёв разбирает общий помощник: их читает и модель свода, и два
+  // разбора одной таблицы разошлись бы первой же правкой формы.
+  const { rules, isolation, rulesHeadSeen, isolationHeadSeen } = layerTables();
 
   for (const name of readdirSync(BASE)) {
     // README базы описывает ФОРМЫ записи и приводит примеры: якорь с номером,
@@ -8774,8 +9787,6 @@ if (mode === "verify") {
     // адресата относительных якорей.
     let prefix = null;
     let current = null;
-    let inRules = false;
-    let inIsolation = false;
     let mapCols = null;
     // Огороженный блок — ПРИМЕР, а не заявление о проекте.
     //
@@ -8826,34 +9837,6 @@ if (mode === "verify") {
         // Заголовок, называющий один файл, — его собственная запись: форма
         // «единица — файл, заголовок — путь».
         if (name === MAP && current !== null) mapMentions.add(current);
-      }
-      if (line.startsWith("#")) {
-        inRules = RULES_HEAD.test(line);
-        if (inRules) rulesHeadSeen = true;
-        inIsolation = ISOLATION_HEAD.test(line);
-        if (inIsolation) isolationHeadSeen = true;
-      }
-
-      const row = inRules ? ROW_RE.exec(line) : null;
-      if (row !== null) {
-        const layer = cellPaths(row[1]);
-        if (layer.length === 1)
-          rules.push({
-            layer: layer[0],
-            banned: cellPaths(row[2]),
-            allowed: cellPaths(row[3]),
-          });
-      }
-
-      // Изоляция — правило наоборот: не список запретов, а список разрешённого.
-      // Запрет перечислением отстаёт от появления соседней папки, и отстаёт
-      // молча: у `domain` в запретах стояло восемь папок из двадцати, и импорт
-      // в любую из прочих проходил зелёным. Найдено пробой.
-      const iso = inIsolation ? ISO_ROW_RE.exec(line) : null;
-      if (iso !== null) {
-        const layer = cellPaths(iso[1]);
-        if (layer.length === 1)
-          isolation.push({ layer: layer[0], only: cellPaths(iso[2]) });
       }
 
       for (const span of line
@@ -9228,44 +10211,14 @@ if (mode === "verify") {
   // Слой описан путём, запрет — либо путём (сверяется по графу), либо именем
   // пакета (сверяется по спецификатору как написан). Исключения перечислены
   // рядом с правилом: дыра, о которой известно, — это не то же, что дыра.
-  const broken7 = [];
-  // Графа «исключение» — третий список того же рода, что исключения адресов и
-  // ссылок: запись, которая ничего не разрешает, читается как объявленная дыра,
-  // которой давно нет, и прикрывает собой ту, что появится завтра.
-  const allowUsed = new Set();
+  // Рёбра против правил считает общий помощник — тот же, из которого модель
+  // свода берёт уровень слоя. Графа «исключение» — третий список того же
+  // рода, что исключения адресов и ссылок: запись, которая ничего не
+  // разрешает, читается как объявленная дыра, которой давно нет, и прикрывает
+  // собой ту, что появится завтра.
+  const { edges: directionEdges, allowUsed } = directionFaults();
+  const broken7 = directionEdges.map((e) => e.text);
   const deadRuleAllowances = [];
-  for (const rule of rules) {
-    const layer = (inside(rule.layer, null)?.hits ?? []).filter(
-      (f) => !isTest(f),
-    );
-    const allowedBy = new Map();
-    for (const q of rule.allowed)
-      for (const hit of inside(q, null)?.hits ?? []) allowedBy.set(hit, q);
-    for (const banned of rule.banned) {
-      // Папка это или имя пакета — ЗАМЕР, а не догадка по косой черте.
-      //
-      // Прежде запрет без косой черты считался именем пакета и сверялся с
-      // написанным спецификатором. Слой, лежащий одной папкой в корне
-      // исходников, — `app`, `ui`, `domain` — под это правило попадал целиком:
-      // запрет на него не проверялся НИ РАЗУ, и таблица направления молчала
-      // при живом нарушении. Замерено на проекте, где фиче запрещён импорт из
-      // слоя приложения: импорт был, запрет был, нарушений — ноль.
-      //
-      // Спрашиваются теперь обе стороны сразу: область на диске и имя пакета
-      // как написано. Совпасть может и то, и другое — пакет, названный как
-      // папка, законен, и молчать о нём было бы тем же дефектом.
-      const target = new Set(inside(banned, null)?.hits ?? []);
-      for (const f of layer) {
-        if (specsOf.get(f)?.has(banned)) broken7.push(`${rel(f)} → ${banned}`);
-        for (const dep of importsOf.get(f) ?? []) {
-          if (!target.has(dep)) continue;
-          const by = allowedBy.get(dep);
-          if (by === undefined) broken7.push(`${rel(f)} → ${rel(dep)}`);
-          else allowUsed.add(`${rule.layer}|${by}`);
-        }
-      }
-    }
-  }
   for (const rule of rules)
     for (const q of rule.allowed)
       if (!allowUsed.has(`${rule.layer}|${q}`))

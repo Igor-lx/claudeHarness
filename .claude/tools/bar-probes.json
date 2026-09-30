@@ -1,5 +1,5 @@
 {
-  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с этим адресом. Вердикт машинный целиком. Чего замер НЕ доказывает: нарушение посажено в файле, заведённом ради пробы, и оттого заметнее настоящего — доля выходит оптимистичной, и читать её надо как верхнюю границу, а не как ловчесть на живом коде. Критерии-суждения — честно ли назван узел, та ли здесь граница — не сажаются вовсе и в долю не входят.",
+  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с адресом виновника. Вердикт машинный целиком. Посадка бывает из нескольких файлов: нарушение формы целого — второй писатель, цикл, общий слой, берущий из приложения, внутренность, отданная наружу, — это связь узлов, и каждый из них по отдельности безупречен в строках. Такие посадки проверяют уровневый проход, а не построчный; виновники названы полем `culprits`, и находка обязана назвать хотя бы одного. Чего замер НЕ доказывает: нарушение посажено в файлах, заведённых ради пробы, и оттого заметнее настоящего — доля выходит оптимистичной, и читать её надо как верхнюю границу, а не как ловчесть на живом коде. Критерии-суждения — честно ли назван узел, та ли здесь граница — не сажаются вовсе и в долю не входят.",
   "plants": [
     {
       "criterion": "B1",
@@ -79,6 +79,92 @@
       "create": {
         "path": "zzPlantVisible.ts",
         "text": "export const visible = (items: string[]): boolean =>\n  items.length >= 0 && items.length > 0;\n"
+      }
+    },
+    {
+      "criterion": "A5",
+      "why": "общий слой берёт имя из слоя приложения: направление перевёрнуто",
+      "culprits": [
+        "shared/zzPlantLabel/zzPlantLabel.ts"
+      ],
+      "create": [
+        {
+          "path": "app/zzPlantBrand.ts",
+          "text": "export const BRAND_NAME = \"zz\";\n"
+        },
+        {
+          "path": "shared/zzPlantLabel/zzPlantLabel.ts",
+          "text": "import { BRAND_NAME } from \"../../app/zzPlantBrand\";\n\nexport const labelOf = (item: string): string => BRAND_NAME + \": \" + item;\n"
+        }
+      ]
+    },
+    {
+      "criterion": "A9-бис",
+      "why": "два узла берут друг у друга: порядок инициализации стал значим",
+      "culprits": [
+        "shared/zzPlantUnits/zzPlantUnits.ts",
+        "shared/zzPlantFormat/zzPlantFormat.ts"
+      ],
+      "create": [
+        {
+          "path": "shared/zzPlantUnits/zzPlantUnits.ts",
+          "text": "import { formatAmount } from \"../zzPlantFormat/zzPlantFormat\";\n\nexport const UNIT = \"kg\";\n\nexport const withUnit = (n: number): string => formatAmount(n) + \" \" + UNIT;\n"
+        },
+        {
+          "path": "shared/zzPlantFormat/zzPlantFormat.ts",
+          "text": "import { UNIT } from \"../zzPlantUnits/zzPlantUnits\";\n\nexport const formatAmount = (n: number): string => n.toFixed(1);\n\nexport const unitLabel = (): string => \"(\" + UNIT + \")\";\n"
+        }
+      ]
+    },
+    {
+      "criterion": "C6-бис",
+      "why": "ключ хранилища пишут двое: узел-владелец и тот, кто обошёл его",
+      "culprits": [
+        "app/zzPlantReset.ts"
+      ],
+      "create": [
+        {
+          "path": "shared/zzPlantPrefs/zzPlantPrefs.ts",
+          "text": "const PREFS_KEY = \"zz.plant.prefs\";\n\nexport const savePrefs = (value: string): void => {\n  window.localStorage.setItem(PREFS_KEY, value);\n};\n\nexport const readPrefs = (): string =>\n  window.localStorage.getItem(PREFS_KEY) ?? \"\";\n"
+        },
+        {
+          "path": "app/zzPlantReset.ts",
+          "text": "import { readPrefs } from \"../shared/zzPlantPrefs/zzPlantPrefs\";\n\nexport const resetPrefs = (): string => {\n  const before = readPrefs();\n  window.localStorage.setItem(\"zz.plant.prefs\", \"\");\n  return before;\n};\n"
+        }
+      ]
+    },
+    {
+      "criterion": "C7",
+      "why": "длина списка хранится состоянием и догоняется эффектом",
+      "create": {
+        "path": "app/zzPlantCount.tsx",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport function ZzPlantCount({ items }: { items: string[] }) {\n  const [count, setCount] = useState(0);\n  useEffect(() => {\n    setCount(items.length);\n  }, [items]);\n  return <span>{count}</span>;\n}\n"
+      }
+    },
+    {
+      "criterion": "C4",
+      "why": "изменяемое хранилище узла отдано наружу, и чужой узел пишет в него сам",
+      "culprits": [
+        "shared/zzPlantCache/zzPlantCache.ts",
+        "app/zzPlantWarm.ts"
+      ],
+      "create": [
+        {
+          "path": "shared/zzPlantCache/zzPlantCache.ts",
+          "text": "export const cacheStore = new Map<string, number>();\n\nexport const cachedValue = (key: string): number | undefined =>\n  cacheStore.get(key);\n"
+        },
+        {
+          "path": "app/zzPlantWarm.ts",
+          "text": "import { cacheStore } from \"../shared/zzPlantCache/zzPlantCache\";\n\nexport const warmCache = (at: number): void => {\n  cacheStore.set(\"start\", at);\n};\n"
+        }
+      ]
+    },
+    {
+      "criterion": "A1",
+      "why": "узел форматирования цены ещё и копит просмотры в хранилище",
+      "create": {
+        "path": "shared/zzPlantPrice/zzPlantPrice.ts",
+        "text": "const CENTS_IN_UNIT = 100;\n\nexport const formatPrice = (cents: number): string =>\n  (cents / CENTS_IN_UNIT).toFixed(2);\n\nexport const countPriceView = (): number => {\n  const seen = Number(window.localStorage.getItem(\"zz.views\") ?? \"0\") + 1;\n  window.localStorage.setItem(\"zz.views\", String(seen));\n  return seen;\n};\n"
       }
     }
   ]

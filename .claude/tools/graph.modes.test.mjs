@@ -399,6 +399,10 @@ describe("ревизия сводов по истории", () => {
               c[1].trim().replace(/`/g, "") +
               "` | правлено | не требуется | `.context/00-map.md` — проба ревизии |"
             );
+          // Итог по уровням: строка на уровень, диапазоном называет все
+          // строки модели — и сдвиги в их числе.
+          if (c.length === 6 && ["узел", "слой", "приложение"].includes(c[1].trim()))
+            return "| " + c[1].trim() + " | П1–П99 проба ревизии | да | П1–П99 |";
           return line;
         })
         .join("\n");
@@ -1169,8 +1173,55 @@ describe("база о своём: документы узла, сторона т
   }, 240000);
 });
 
+/** Заполнить протокол свода, как заполнила бы его сессия: снятие ресурсов,
+ * исходы по умолчанию, база, итог по уровням. `pick` задаёт исход критерия
+ * строкой «исход | адрес | что | судьба»; основание ядра по умолчанию
+ * называет диапазоном все строки модели — и сдвиги в их числе. */
+const fillBar = (protoAt, { release, pick = {}, holds = "да" }) =>
+  fs.writeFileSync(
+    protoAt,
+    fs
+      .readFileSync(protoAt, "utf8")
+      .split("\n")
+      .map((line) => {
+        const c = line.split("|");
+        // строка модели: семь граф
+        if (c.length === 9 && /^ П\d+ $/.test(c[1])) {
+          if (c[2].trim() === "ресурс" && c[7].trim() === "")
+            c[7] = c[4].includes("setInterval") || c[3].includes(":4")
+              ? " строка 6 "
+              : " " + release + " ";
+          return c.join("|");
+        }
+        // итог по уровням; `holds` — одно слово на все уровни либо по уровню
+        if (c.length === 6 && ["узел", "слой", "приложение"].includes(c[1].trim())) {
+          const level = c[1].trim();
+          const said = typeof holds === "string" ? holds : (holds[level] ?? "да");
+          return "| " + level + " | П1–П99 разобраны | " + said + " | П1–П99 |";
+        }
+        // база и документация: строка на файл предмета
+        if (c.length === 6 && /^\s*`[^`]+`\s*$/.test(c[1]))
+          return c[2].trim() !== ""
+            ? line
+            : "| " + c[1].trim() + " | правлено | не требуется | `.context/00-map.md` — проба |";
+        if (c.length !== 8 || /^\s*-+\s*$/.test(c[1])) return line;
+        const id = c[1].trim();
+        if (id === "критерий") return line;
+        if (pick[id] !== undefined) return "| " + id + " | x | " + pick[id] + " |";
+        if (["F1", "F2", "E4", "C12"].includes(id))
+          return "| " + id + " | x | чисто |  | снимается, см. П1–П99 |  |";
+        if (c[3].trim() === "") {
+          const core = c[2].includes("**ядро.**");
+          c[3] = core ? " чисто " : " нет предмета ";
+          c[5] = core ? " П1–П99 проба " : " проба ";
+        }
+        return c.join("|");
+      })
+      .join("\n"),
+  );
+
 describe("свод по планке от модели предмета", () => {
-  it("модель называет ресурсы, вердикты с ней согласны, исходы переносятся, вопрос записан", () => {
+  it("модель по уровням: ресурсы, итог уровня, перенос исходов, вопрос", () => {
     const box = seatEmpty("model-");
     try {
       const tool = (...args) => {
@@ -1208,49 +1259,20 @@ describe("свод по планке от модели предмета", () => 
       tool("bar", "app/zzClock.ts");
       const printed = fs.readFileSync(protoAt, "utf8");
       expect(printed).toContain("## Модель предмета");
+      expect(printed).toContain("### Узел");
+      expect(printed).toContain("## Итог по уровням");
       expect(printed).toMatch(
         /\| П\d+ \| ресурс \| `app\/zzClock\.ts:5` \|[^\n]*\| есть: строка 6 \|/,
       );
       // Пустое снятие ресурса — дыра: без неё вердикт о ресурсах не на чем
-      // проверять.
-      expect(tool("bar", "app/zzClock.ts")).toMatch(
-        /П\d+: снятие ресурса не названо/,
-      );
-      // Заполнить: ресурсы — снятием, критерии — исходом, базу — ответом.
-      const fill = (release, a1, h7) =>
-        fs.writeFileSync(
-          protoAt,
-          fs
-            .readFileSync(protoAt, "utf8")
-            .split("\n")
-            .map((line) => {
-              const c = line.split("|");
-              if (c.length === 8 && /^ П\d+ $/.test(c[1]) && c[2].trim() === "ресурс") {
-                if (c[6].trim() === "")
-                  c[6] = c[3].includes(":4") ? " строка 6 " : " " + release + " ";
-                return c.join("|");
-              }
-              if (c.length !== 8 || /^\s*-+\s*$/.test(c[1])) return line;
-              const id = c[1].trim();
-              if (id === "критерий" || /^П\d+$/.test(id)) return line;
-              if (id === "A1") return "| A1 | x | " + a1 + " |";
-              if (id === "H7") return "| H7 | x | " + h7 + " |";
-              if (["F1", "F2", "E4", "C12"].includes(id))
-                return "| " + id + " | x | чисто |  | снимается, см. П3 |  |";
-              if (c[3].trim() === "") {
-                c[3] = " нет предмета ";
-                c[5] = " проба ";
-              }
-              return c.join("|");
-            })
-            .map((line) =>
-              line === "| `app/zzClock.ts` |  |  |  |"
-                ? "| `app/zzClock.ts` | правлено | не требуется | `.context/00-map.md` — проба |"
-                : line,
-            )
-            .join("\n"),
-        );
-      fill("нет", "чисто |  | П1 — узел отвечает на один вопрос | ", "нет предмета |  | проба | ");
+      // проверять. Пустой итог уровня — тоже.
+      const empty = tool("bar", "app/zzClock.ts");
+      expect(empty).toMatch(/П\d+: снятие ресурса не названо/);
+      expect(empty).toContain("итог, узел: не сказано");
+      fillBar(protoAt, {
+        release: "нет",
+        pick: { H7: "нет предмета |  | проба | " },
+      });
       const refused = tool("bar", "app/zzClock.ts");
       expect(refused).not.toContain("печать поставлена");
       expect(refused).toMatch(/F2: чисто, а снятия нет у ресурса П\d+/);
@@ -1262,22 +1284,24 @@ describe("свод по планке от модели предмета", () => 
           .readFileSync(protoAt, "utf8")
           .replace(/\| нет \|$/gm, "| не нужно: проба |"),
       );
-      expect(tool("bar", "app/zzClock.ts")).toContain("печать поставлена");
+      const sealed = tool("bar", "app/zzClock.ts");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain("уровни: узел — держится; слой — держится; приложение — держится");
 
-      // Правка кода: исходы переносятся, «чисто» ядра сбрасывается.
+      // Правка кода: исходы переносятся, «чисто» ядра и итог уровней
+      // сбрасываются — они о коде, которого больше нет.
       fs.appendFileSync(at, "export const zzTick = 1;\n");
       const moved = tool("bar", "app/zzClock.ts");
       expect(moved).toContain("исходы перенесены");
-      expect(moved).toContain("«чисто» ядра сброшено: 1");
-      expect(fs.readFileSync(protoAt, "utf8")).toContain("| H7 | ");
+      expect(moved).toMatch(/«чисто» ядра сброшено: [1-9]/);
+      expect(moved).toContain("итог по уровням сброшен");
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(/\| H7 \|[^\n]*\| нет предмета \|/);
 
       // Находка-развилка: судьба «вопрос» требует записи в списке вопросов.
-      fill(
-        "не нужно: проба",
-        "чисто |  | П1 — узел отвечает на один вопрос | ",
-        "нашлось | src/app/zzClock.ts:5 | число без имени | вопрос",
-      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { H7: "нашлось | src/app/zzClock.ts:5 | число без имени | вопрос" },
+      });
       expect(tool("bar", "app/zzClock.ts")).toContain(
         "H7: «вопрос», а список вопросов",
       );
@@ -1290,6 +1314,235 @@ describe("свод по планке от модели предмета", () => 
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  it("правка, чистая в строках, не запечатывается, пока целое не отвечено", () => {
+    const box = seatEmpty("urovni-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      // Общий слой берёт из слоя приложения — против правила таблицы слоёв,
+      // — приложение берёт из общего: цикл. Оба пишут один ключ хранилища.
+      fs.mkdirSync(path.join(box, "src", "shared", "zzPrefs"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "shared", "zzPrefs", "zzPrefs.ts"),
+        'import { ZZ_TITLE } from "../../app/zzTitle";\n\nexport const zzSave = (v: string): void => {\n  window.localStorage.setItem("zz.key", ZZ_TITLE + v);\n};\n',
+      );
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzTitle.ts"),
+        'import { zzSave } from "../shared/zzPrefs/zzPrefs";\n\nexport const ZZ_TITLE = "t";\n\nexport const zzReset = (): void => {\n  window.localStorage.setItem("zz.key", "");\n  zzSave("");\n};\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const model = fs.readFileSync(protoAt, "utf8");
+      expect(model).toMatch(/\| П\d+ \| направление \|[^\n]*\| новое \| против правила \|/);
+      expect(model).toMatch(/\| П\d+ \| цикл \|[^\n]*\| новое \|/);
+      expect(model).toMatch(/\| П\d+ \| писатель \|[^\n]*хранилище «zz\.key»/);
+      // Ленивое «чисто» по всем строкам, основания без строк модели: печати
+      // нет, и названо, почему — по уровням, а не списком строк.
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const lazy = fs
+        .readFileSync(protoAt, "utf8")
+        .replace(/П1–П99 проба/g, "проба")
+        .replace(/см\. П1–П99/g, "см. выше")
+        .replace(/П1–П99 разобраны \| да \| П1–П99/g, "разобраны | да | проба");
+      fs.writeFileSync(protoAt, lazy);
+      const refused = tool("bar");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toMatch(/A5: чисто, а ребро идёт против правила направления: П\d+/);
+      expect(refused).toMatch(/A9-бис: чисто, а правка завела цикл: П\d+/);
+      expect(refused).toMatch(/C6-бис: чисто, а у источника больше одного писателя/);
+      expect(refused).toMatch(/чисто без опоры на модель своего уровня: назвать строку уровня «приложение»/);
+      expect(refused).toMatch(/итог, узел: опора не называет ни одной строки модели этого уровня/);
+      expect(refused).toMatch(/сдвиг без ответа: П\d+/);
+      // «Починено», а модель по нынешнему коду показывает то же: не принято.
+      // Протокол начинается заново: ленивые основания иначе переехали бы.
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          A5: "нашлось | src/shared/zzPrefs/zzPrefs.ts:1 | общее берёт из приложения | починено",
+        },
+      });
+      expect(tool("bar")).toMatch(/A5: починено, а ребро против правила в модели осталось/);
+      // Честный ответ: развилки вынесены вопросом, уровни не держатся.
+      fs.rmSync(protoAt);
+      tool("bar");
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\nВопрос о `src/shared/zzPrefs/zzPrefs.ts` и `src/app/zzTitle.ts`.\n",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        holds: "нет",
+        pick: {
+          A5: "нашлось | src/shared/zzPrefs/zzPrefs.ts:1 | общее берёт из приложения | вопрос",
+          "A9-бис": "нашлось | src/app/zzTitle.ts:1 | цикл общего и приложения | вопрос",
+          "C6-бис": "нашлось | src/app/zzTitle.ts:6 | второй писатель ключа | вопрос",
+          A1: "нашлось | src/app/zzTitle.ts:3 | узел и держит заголовок, и пишет хранилище | вопрос",
+        },
+      });
+      const sealed = tool("bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain("уровни: узел — не держится; слой — не держится; приложение — не держится");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+describe("проба планки из нескольких файлов", () => {
+  it("посаженное против направления слоёв свод называет, суд засчитывает", () => {
+    const box = seatEmpty("probaur-");
+    let sandbox = null;
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      const all = JSON.parse(fs.readFileSync(probes, "utf8"));
+      const one = all.plants.find((p) => p.criterion === "A5" && Array.isArray(p.create));
+      expect(one).toBeDefined();
+      fs.writeFileSync(probes, JSON.stringify({ ...all, plants: [one] }));
+      const run = (cwd, ...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const planted = run(box, "bar-probe");
+      sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
+      const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
+      expect(sandbox).not.toBeNull();
+      expect(id).not.toBeNull();
+      // Все файлы посадки лежат в песочнице.
+      for (const c of one.create)
+        expect(fs.existsSync(path.join(sandbox, "src", c.path))).toBe(true);
+      run(sandbox, "bar");
+      const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
+      // Модель показывает ребро против правила — «чисто» по направлению
+      // невозможно без суждения.
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/\| направление \|[^\n]*\| против правила \|/);
+      fs.appendFileSync(
+        path.join(sandbox, ".context", "13-questions.md"),
+        "\nВопрос о `src/shared/zzPlantLabel/zzPlantLabel.ts`.\n",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        holds: { слой: "нет" },
+        pick: {
+          A5: "нашлось | src/shared/zzPlantLabel/zzPlantLabel.ts:1 | общий слой берёт из приложения | вопрос",
+        },
+      });
+      expect(run(sandbox, "bar")).toContain("печать поставлена");
+      expect(run(box, "bar-probe", id)).toContain("исход: поймано");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+describe("факты по уровням без протокола", () => {
+  it("по адресу печатает уровни, по проекту — требует назвать каждый факт", () => {
+    const box = seatEmpty("levels-");
+    try {
+      const tool = (...args) => {
+        try {
+          return {
+            code: 0,
+            out: execFileSync(
+              process.execPath,
+              [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+              { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+            ),
+          };
+        } catch (e) {
+          return { code: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzA.ts"),
+        'import { zzB } from "./zzB";\nexport const zzA = (): number => zzB() + 1;\n',
+      );
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzB.ts"),
+        'import { zzA } from "./zzA";\nexport const zzB = (): number => (zzA.length > 0 ? 1 : 0);\n',
+      );
+      const one = tool("levels", "app/zzA.ts");
+      expect(one.code).toBe(0);
+      expect(one.out).toContain("--- узел ---");
+      expect(one.out).toContain("--- слой ---");
+      expect(one.out).toContain("--- приложение ---");
+      expect(one.out).toMatch(/цикл: app\/zzA\.ts → app\/zzB\.ts → app\/zzA\.ts/);
+      const all = tool("levels");
+      expect(all.code).toBe(1);
+      expect(all.out).toMatch(/цикл: [^\n]*— НЕ НАЗВАН/);
+      // Назван строкой реестра находок — факт принят, код ноль.
+      const regAt = path.join(box, ".context", "16-findings.md");
+      fs.writeFileSync(
+        regAt,
+        fs
+          .readFileSync(regAt, "utf8")
+          .replace(
+            "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n",
+            "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n| 1 | цикл `src/app/zzA.ts` | проба | — | нечем | открыта |\n",
+          ),
+      );
+      const named = tool("levels");
+      expect(named.out).toMatch(/цикл: [^\n]*— назван: /);
+      expect(named.code).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("свод отказывает политике, у критерия которой не назван уровень", () => {
+    const box = seatEmpty("bezurovnya-");
+    try {
+      const policy = path.join(box, ".claude", "rules", "quality.md");
+      fs.writeFileSync(
+        policy,
+        fs
+          .readFileSync(policy, "utf8")
+          .replace("**H7. Магических чисел нет.** (единица)", "**H7. Магических чисел нет.**"),
+      );
+      fs.writeFileSync(path.join(box, "src", "app", "zzN.ts"), "export const zzN = 1;\n");
+      let out = "";
+      try {
+        execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar", "app/zzN.ts"], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (e) {
+        out = String(e.stdout ?? "");
+      }
+      expect(out).toContain("у критерия не назван уровень: H7");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
 });
 
 describe("предложенное сводом держит строка о критерии и файле", () => {
