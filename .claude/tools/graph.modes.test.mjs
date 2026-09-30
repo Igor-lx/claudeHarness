@@ -1507,10 +1507,10 @@ describe("что завела сама правка, режет само", () =>
       git("add", "-A");
       git("commit", "-qm", "своё", "--no-verify");
       // Кривая правка: помощник соседа мимо входа, тот же ключ — вторым
-      // решающим. Типы соседа — его контракт, их взять законно.
+      // писателем. Типы соседа — его контракт, их взять законно.
       put(
         "components/ZzB/ZzB.tsx",
-        'import type { ZzAProps } from "../ZzA/types";\nimport { zzClamp } from "../ZzA/zzClamp";\nimport { zzInner } from "../ZzC/zzInner";\nimport { zzSave } from "../../shared/zzStore/zzStore";\n\nexport function ZzB({ max }: ZzAProps) {\n  return <button onClick={() => zzSave(zzClamp(max + zzInner))}>b</button>;\n}\n',
+        'import type { ZzAProps } from "../ZzA/types";\nimport { zzClamp } from "../ZzA/zzClamp";\nimport { zzInner } from "../ZzC/zzInner";\n\nexport function ZzB({ max }: ZzAProps) {\n  const save = () =>\n    window.localStorage.setItem("zz.count", String(zzClamp(max + zzInner)));\n  return <button onClick={save}>b</button>;\n}\n',
       );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar");
@@ -1518,7 +1518,7 @@ describe("что завела сама правка, режет само", () =>
       expect(proto).toMatch(/\| граница \|[^\n]*ZzA\/zzClamp\.ts[^\n]*\| новое \| мимо входа \|/);
       expect(proto).toMatch(/\| граница \|[^\n]*ZzC\/zzInner\.ts[^\n]*\| новое \| входа нет \|/);
       expect(proto).not.toMatch(/\| граница \|[^\n]*ZzA\/types\.ts/);
-      expect(proto).toMatch(/\| писатель \|[^\n]*решают components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx \| новое \|/);
+      expect(proto).toMatch(/\| писатель \|[^\n]*хранилище «zz\.count»: пишут components\/ZzB\/ZzB\.tsx, shared\/zzStore\/zzStore\.ts \| новое \|/);
       // Прилежное «чисто», каждая строка названа номером: мало.
       fillBar(protoAt, { release: "не нужно: проба" });
       const refused = tool("bar");
@@ -1543,7 +1543,7 @@ describe("что завела сама правка, режет само", () =>
       fillBar(protoAt, {
         release: "не нужно: проба",
         holds: { приложение: "нет" },
-        pick: { "C6-бис": "нашлось | src/components/ZzB/ZzB.tsx:7 | второй решающий ключа | вопрос" },
+        pick: { "C6-бис": "нашлось | src/components/ZzB/ZzB.tsx:7 | второй писатель ключа | вопрос" },
       });
       expect(tool("bar")).toContain("печать поставлена");
     } finally {
@@ -1902,8 +1902,8 @@ describe("факты по уровням без протокола", () => {
     }
   }, 180000);
 
-  it("писатель — тот, кто решает запись: канал хранилища, его вызывающие, хук, ключ доводом", () => {
-    const box = seatEmpty("pisatel-");
+  it("факт без записи роняет сверку базы; папку без входа называют одной записью", () => {
+    const box = seatEmpty("fakt-");
     try {
       const tool = (...args) => {
         try {
@@ -1924,44 +1924,25 @@ describe("факты по уровням без протокола", () => {
         fs.mkdirSync(path.dirname(at), { recursive: true });
         fs.writeFileSync(at, text);
       };
-      // Канал: простая функция записи с ключом-константой и обобщённая —
-      // с ключом доводом. Хук держит своё и решает сам.
-      put(
-        "shared/zzStore/zzStore.ts",
-        'const ZZ_KEY = "zz.count";\n\nexport const zzSave = (value: number): void => {\n  window.localStorage.setItem(ZZ_KEY, String(value));\n};\n\nexport const zzPut = (key: string, value: string): void => {\n  window.localStorage.setItem(key, value);\n};\n',
-      );
-      put(
-        "shared/zzTheme/useZzTheme.ts",
-        'export function useZzTheme() {\n  return (value: string): void => {\n    window.localStorage.setItem("zz.theme", value);\n  };\n}\n',
-      );
-      put(
-        "components/ZzA/ZzA.tsx",
-        'import { useZzTheme } from "../../shared/zzTheme/useZzTheme";\nimport { zzPut, zzSave } from "../../shared/zzStore/zzStore";\n\nexport function ZzA() {\n  const setTheme = useZzTheme();\n  return <button onClick={() => { zzSave(1); zzPut("zz.a", "1"); setTheme("a"); }}>a</button>;\n}\n',
-      );
-      expect(tool("levels").out).not.toMatch(/писатель: /);
-      // Второй компонент зовёт тот же канал: запись стоит в одном месте, а
-      // решают её двое — второй писатель одного ключа.
-      put(
-        "components/ZzB/ZzB.tsx",
-        'import { useZzTheme } from "../../shared/zzTheme/useZzTheme";\nimport * as store from "../../shared/zzStore/zzStore";\n\nexport function ZzB() {\n  const setTheme = useZzTheme();\n  return <button onClick={() => { store.zzSave(2); store.zzPut("zz.b", "2"); setTheme("b"); }}>b</button>;\n}\n',
-      );
-      const two = tool("levels");
-      expect(two.code).toBe(1);
-      expect(two.out).toMatch(
-        /писатель: хранилище «zz\.count»: запись стоит в shared\/zzStore\/zzStore\.ts; решают components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — НЕ НАЗВАН/,
-      );
-      // Перехода нет — факт без записи роняет и прогон сверки базы.
       const loose = () =>
         (verifyIn(box).get("Архитектурный факт назван записью") ?? []).join("\n");
+      // Два компонента пишут один ключ хранилища сами: второй писатель.
+      for (const name of ["ZzA", "ZzB"])
+        put(
+          "components/" + name + "/" + name + ".tsx",
+          "export function " +
+            name +
+            '() {\n  return <button onClick={() => window.localStorage.setItem("zz.count", "1")}>x</button>;\n}\n',
+        );
+      const two = tool("levels");
+      expect(two.code).toBe(1);
+      expect(two.out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — НЕ НАЗВАН/);
+      // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
-      // Ключ доводом у каждого вызова свой, а хук решает сам: писателей
-      // у них по одному, факта нет.
-      expect(two.out).not.toMatch(/«key»[^\n]*решают components/);
-      expect(two.out).not.toMatch(/«zz\.theme»/);
       // Решение, назвавшее все файлы факта, его держит.
       fs.appendFileSync(
         path.join(box, ".context", "09-decisions.md"),
-        "\nПроба: `src/shared/zzStore/zzStore.ts`, `src/components/ZzA/ZzA.tsx` и `src/components/ZzB/ZzB.tsx` пишут один ключ — порядок записи объявлен.\n",
+        "\nПроба: `src/components/ZzA/ZzA.tsx` и `src/components/ZzB/ZzB.tsx` пишут один ключ — порядок записи объявлен.\n",
       );
       expect(tool("levels").out).toMatch(/«zz\.count»[^\n]*— назван: /);
       expect(loose()).not.toMatch(/«zz\.count»/);
