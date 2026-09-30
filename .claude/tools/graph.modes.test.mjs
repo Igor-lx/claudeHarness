@@ -2552,3 +2552,36 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 240000);
 });
+
+describe("тесты обвязки — своей командой, вне прогона проекта", () => {
+  it("правка обвязки печатает в досье правки команду её тестов", () => {
+    const box = seatEmpty("harness-tests-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=m", "-c", "user.email=m@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tested = () =>
+        execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "tested"],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "seat");
+      expect(tested()).not.toContain("=== Тронута обвязка ===");
+      fs.appendFileSync(path.join(box, ".claude", "tools", "graph.md"), "\n");
+      expect(tested()).toMatch(
+        /=== Тронута обвязка ===\n  файлов инструмента в правке: 1\n[^\n]*\n    npx vitest run --config \.claude\/tools\/vitest\.config\.mjs/,
+      );
+      // Семя конфига сборщика в прогон проекта обвязку не зовёт.
+      const seed = fs.readFileSync(path.join(box, "vite.config.ts"), "utf8");
+      expect(seed).toMatch(/include: \["src\/\*\*\/\*\.test\.\{ts,tsx\}"\]/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+});

@@ -363,6 +363,8 @@ try {
 const BARE_EXT = new RegExp("[.](" + CODE_STYLE_ALT + ")$");
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
+/** Команда тестов самой обвязки: справочник называет её так же, дословно. */
+const HARNESS_TESTS = "npx vitest run --config .claude/tools/vitest.config.mjs";
 
 /** Вид полей настройки сверяется ДО работы, и неверный называется строкой.
  *
@@ -5936,6 +5938,18 @@ if (mode === "tested") {
     const touchedStyles = [...touched].filter(
       (f) => styleFiles.includes(f) && existsSync(f),
     );
+
+    // Правка обвязки — не правка кода проекта: её тесты в прогон проекта не
+    // входят, идут своей командой, и напомнить о них больше некому.
+    const toolDir = norm(TOOL_DIR) + "/";
+    const harness = changed.filter((f) => abs(f).startsWith(toolDir));
+    if (harness.length) {
+      console.log("=== Тронута обвязка ===");
+      console.log("  файлов инструмента в правке: " + harness.length);
+      console.log("  её тесты — не в прогоне проекта, а своей командой:");
+      console.log("    " + HARNESS_TESTS);
+      console.log("");
+    }
 
     console.log("=== Код и тесты в одной правке ===");
     console.log(
@@ -13782,6 +13796,7 @@ if (mode === "verify") {
       // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
       const viteDrift = [];
       let viteLooked = 0;
+      const viteSeen = new Set();
       // Спрашивается только там, где есть ЗВЕНО ТИПОВ: ломается от этого
       // именно компилятор. В проекте на обычном JavaScript импорт берут
       // откуда угодно — раннер читает секцию тестов в любом случае, и
@@ -13790,7 +13805,7 @@ if (mode === "verify") {
         for (const name of runnerConfigNames()) {
           const at = path.join(BASE, "..", name);
           if (!existsSync(at)) continue;
-          viteLooked += 1;
+          viteSeen.add(name);
           const body = readFileSync(at, "utf8");
           if (!body.includes("test: {")) continue;
           if (body.includes("vitest/config")) continue;
@@ -13871,8 +13886,29 @@ if (mode === "verify") {
             );
         }
       }
+      // Область сбора не называет папку обвязки: её тесты идут своей
+      // командой, вне прогона проекта. Семя прежде называло её в `include`,
+      // а обновление обвязки настройку проекта не трогает — в посаженных
+      // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
+      // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
+      for (const name of runnerConfigNames()) {
+        const at = path.join(BASE, "..", name);
+        if (!existsSync(at)) continue;
+        viteSeen.add(name);
+        const body = readFileSync(at, "utf8");
+        const from = body.indexOf("test: {");
+        if (from < 0) continue;
+        const lists = [
+          ...body.slice(from).matchAll(/include:\s*\[([^\]]*)\]/g),
+        ].map((m) => m[1]);
+        if (lists.some((l) => l.includes(".claude")))
+          viteDrift.push(
+            name +
+              " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
+          );
+      }
       checkHead("Настройка сборки знает про тесты", {
-        n: viteLooked,
+        n: viteSeen.size + viteLooked,
         unit: "настроек сборки",
       });
       console.log("  расхождений: " + viteDrift.length);
