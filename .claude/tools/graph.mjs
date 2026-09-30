@@ -8263,6 +8263,63 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
     }
   }
 
+  // Соседи предмета по графу — в обе стороны: что он берёт, кто берёт его,
+  // и файлы единиц переноса того, что он берёт. Правку сверяют не саму с
+  // собой, а с тем, что рядом: с чужой ответственностью, которую она может
+  // повторить, и с источниками истины, которые она может раздвоить. Прежде
+  // модель правки знала одно правленое, и кривая кнопка на мини-стенде —
+  // вторая копия счётчика — стояла в модели без счётчика: сверять её было
+  // не с чем. Переход читает весь код и соседей не ищет.
+  if (!transition && (want("сосед") || want("источник"))) {
+    const near = new Map();
+    const note = (n, why) => {
+      if (inFocus.has(n) || isTest(n) || !files.includes(n)) return;
+      if (!near.has(n)) near.set(n, []);
+      if (!near.get(n).includes(why)) near.get(n).push(why);
+    };
+    for (const f of focus) {
+      if (!files.includes(f) || isTest(f)) continue;
+      for (const d of usesWithVia(f).uses.keys()) {
+        note(d, "его берёт " + rel(f));
+        // Взятое мимо входа тянет за собой хозяина: чужую внутренность
+        // сверяют с той единицей, чья она. Взятое через вход — и есть сосед.
+        if (!foreignInside(f, d)) continue;
+        for (const mate of files)
+          if (mate !== d && unitOf(mate) === unitOf(d))
+            note(mate, "в единице " + unitOf(d) + ", из которой берёт " + rel(f));
+      }
+      for (const u of dependentsOf(f)) note(u, "берёт " + rel(f));
+    }
+    for (const [n, why] of [...near].sort((a, b) => barByRel(a[0], b[0]))) {
+      const said = mapResponsibilityOf(n);
+      add(
+        "сосед",
+        rel(n),
+        why.join("; ") +
+          " — " +
+          (said === null ? "в карте не описан" : said.slice(0, 140)),
+        said === null ? "нет" : "да",
+      );
+      for (const r of records) {
+        if (seenRecords.has(r.line) || !namesFileIn(r.line, n)) continue;
+        seenRecords.add(r.line);
+        add(
+          "источник",
+          rel(n),
+          "«" +
+            r.what +
+            "» — владелец " +
+            r.owner +
+            "; пишут " +
+            (r.writers || "—") +
+            "; читают " +
+            (r.readers || "—"),
+          "да",
+        );
+      }
+    }
+  }
+
   // Размах — один на предмет: сколько узлов, единиц переноса и слоёв тронуто.
   // Мера критерия о цене изменения: правка, задевшая полдерева, говорит о
   // раскладке.

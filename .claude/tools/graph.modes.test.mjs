@@ -1419,8 +1419,8 @@ describe("свод по планке от модели предмета", () => 
       expect(refused).not.toContain("печать поставлена");
       expect(refused).toMatch(/A5 для `shared`: чисто, а ребро идёт против правила направления: П\d+/);
       expect(refused).toMatch(/A9-бис для `app`: чисто, а правка завела цикл: П\d+/);
-      // Второй писатель завела сама правка: не вопрос к основанию, а находка.
-      expect(refused).toMatch(/C6-бис: чисто, а П\d+ — это завела сама правка/);
+      // Второй писатель — вопрос к основанию: не названный номером, не отвечен.
+      expect(refused).toMatch(/C6-бис: чисто, а у источника больше одного писателя/);
       expect(refused).toMatch(/чисто без опоры на модель своего уровня: назвать строку уровня «приложение»/);
       expect(refused).toMatch(/итог, узел `[^`]+`: опора не называет ни одной строки модели этого уровня/);
       expect(refused).toMatch(/сдвиг без ответа: П\d+/);
@@ -1518,6 +1518,10 @@ describe("что завела сама правка, режет само", () =>
       expect(proto).toMatch(/\| граница \|[^\n]*ZzA\/zzClamp\.ts[^\n]*\| новое \| мимо входа \|/);
       expect(proto).toMatch(/\| граница \|[^\n]*ZzC\/zzInner\.ts[^\n]*\| новое \| входа нет \|/);
       expect(proto).not.toMatch(/\| граница \|[^\n]*ZzA\/types\.ts/);
+      // Соседи по графу: взятое мимо входа тянет хозяина — узел той папки.
+      expect(proto).toMatch(
+        /\| сосед \| `components\/ZzA\/ZzA\.tsx` \| в единице components\/ZzA, из которой берёт components\/ZzB\/ZzB\.tsx/,
+      );
       expect(proto).toMatch(/\| писатель \|[^\n]*хранилище «zz\.count»: пишут components\/ZzB\/ZzB\.tsx, shared\/zzStore\/zzStore\.ts \| новое \|/);
       // Прилежное «чисто», каждая строка названа номером: мало.
       fillBar(protoAt, { release: "не нужно: проба" });
@@ -1525,10 +1529,21 @@ describe("что завела сама правка, режет само", () =>
       expect(refused).not.toContain("печать поставлена");
       expect(refused).toMatch(/A5 для `components`: чисто, а П\d+ — это завела сама правка/);
       expect(refused).toMatch(/B7 для `components\/ZzB`: чисто, а П\d+ — это завела сама правка/);
-      expect(refused).toMatch(/C6-бис: чисто, а П\d+ — это завела сама правка/);
+      // Второй писатель, названный номером, — отвеченный вопрос, не приговор.
+      expect(refused).not.toMatch(/C6-бис/);
       // Внутренность папки без входа — вопрос к раскладке, а не приговор.
       const inner = /\| (П\d+) \| граница \|[^\n]*ZzC\/zzInner/.exec(proto)[1];
       expect(refused).not.toMatch(new RegExp("чисто, а " + inner + " — это завела"));
+      // «Чисто» о повторённой логике без соседей — не сверено ни с кем.
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { "A6-бис": "чисто |  | узел делает одно | " },
+      });
+      expect(tool("bar")).toMatch(/A6-бис: чисто, а соседи по графу в основании не названы/);
+      fs.rmSync(protoAt);
+      tool("bar");
       // «Оставляем» обход — решение с обоими файлами; писатель — вопрос.
       fs.appendFileSync(
         path.join(box, ".context", "09-decisions.md"),
