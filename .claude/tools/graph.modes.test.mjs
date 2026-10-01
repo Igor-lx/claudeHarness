@@ -1234,6 +1234,17 @@ describe("база о своём: документы узла, сторона т
  * итоги либо ключами `уровень` и `уровень@предмет`. Основание ядра по
  * умолчанию называет КАЖДУЮ строку модели её номером — и сдвиги в их
  * числе: диапазон — опора, а не ответ. */
+/** Критерии вне ядра, о которых спрашивает признак, видимый текстом. */
+const SYMPTOM_ASKED = {
+  H7: ["число"],
+  B1: ["флаг"],
+  A4: ["флаг"],
+  E1: ["перехват"],
+  B4: ["кортеж"],
+  C10: ["модульное"],
+  C8: ["флаги"],
+  B8: ["флаги"],
+};
 const barRowsCited = (text) =>
   [...text.matchAll(/^\| (П\d+) \|/gm)].map((m) => m[1]).join(", ") || "П1";
 const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
@@ -1278,7 +1289,13 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
         if (["F1", "F2", "E4", "C12"].includes(id))
           return "| " + id + " | " + subject + " | x | чисто |  | снимается, см. " + all + " |  |";
         if (c[4].trim() === "") {
-          const core = c[3].includes("**ядро.**");
+          // Признак, видимый текстом, делает предмет у своего критерия: там
+          // «нет предмета» ложно, и проба отвечает «чисто» с номерами строк.
+          const core =
+            c[3].includes("**ядро.**") ||
+            (SYMPTOM_ASKED[id] ?? []).some((sort) =>
+              new RegExp("^\\| П\\d+ \\| " + sort + " \\|", "m").test(before),
+            );
           c[4] = core ? " чисто " : " нет предмета ";
           c[6] = core ? " " + all + " проба " : " проба ";
         }
@@ -2294,6 +2311,188 @@ describe("свод на правке — по той же области, что
       expect(tool("brief", "components/ZzPanel/ZzPanel.module.css")).toMatch(
         /--- связаны записью таблицы связей ---\n {2}components\/ZzShow\/ZzShow\.tsx/,
       );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("признаки, видимые текстом, в модели свода", () => {
+  it("строка на признак, вопрос по номеру, пустой перехват режет сам", () => {
+    const box = seatEmpty("symptom-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = (rel, text) => {
+        const at = path.join(box, ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      put(
+        "src/shared/zzStore/zzStore.ts",
+        "export const zzItems: string[] = [];\nexport const zzConfig = { size: 0 };\nlet zzHits = 0;\nexport const zzBump = () => {\n  zzHits += 1;\n  return zzHits;\n};\n",
+      );
+      put(
+        "src/shared/zzFormat/zzFormat.ts",
+        'export const zzDate = (d: Date) => d.toISOString();\nexport const zzMoney = (n: number) => n.toFixed(2) + " $";\n',
+      );
+      put("src/shared/zzOnly/zzOnly.ts", "export const zzOnly = () => 'one';\n");
+      // Сеттер значения флагом не является: булево там — само значение.
+      put(
+        "src/shared/zzMode/zzMode.ts",
+        "export function setZzMode(on: boolean) {\n  return on;\n}\nexport const zzUse = () => setZzMode(true);\n",
+      );
+      put(
+        "src/components/ZzClock/ZzClock.tsx",
+        [
+          'import { useState } from "react";',
+          'import { zzItems, zzConfig } from "../../shared/zzStore/zzStore";',
+          'import { zzDate } from "../../shared/zzFormat/zzFormat";',
+          'import { zzOnly } from "../../shared/zzOnly/zzOnly";',
+          "",
+          "export function zzRender(fast: boolean, label = false) {",
+          '  return fast ? "f" : label ? "l" : "s";',
+          "}",
+          "",
+          "export function useZzClock() {",
+          "  const [open, setOpen] = useState(false);",
+          "  const [busy, setBusy] = useState(false);",
+          '  zzItems.push("x");',
+          "  zzConfig.size = 5;",
+          "  const delayMs = 300;",
+          "  setTimeout(() => setBusy(!busy), delayMs * 4);",
+          "  try {",
+          "    zzOnly();",
+          "  } catch {",
+          "    // nothing to do",
+          "  }",
+          '  fetch("/x").catch(() => {});',
+          "  zzRender(true);",
+          "  zzDate(new Date(0));",
+          '  const text = "42 items";',
+          "  return [open, busy, setOpen, text];",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      put(
+        "src/components/ZzClock/types.ts",
+        "export type ZzClockProps = {\n  a: boolean;\n  b?: boolean;\n  c: boolean;\n};\n",
+      );
+      put(
+        "src/components/ZzPrice/ZzPrice.tsx",
+        'import { zzMoney } from "../../shared/zzFormat/zzFormat";\nexport const zzPrice = () => zzMoney(3);\nexport const ZzTag = () => <i tabIndex={7} />;\n',
+      );
+
+      // Разбор папки часов: строка на признак, места по номерам строк.
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "components/ZzClock");
+      const read = fs.readFileSync(protoAt, "utf8");
+      const row = (sort, what, mark = "") =>
+        new RegExp(
+          "^\\| П\\d+ \\| " +
+            sort +
+            " \\| `[^`]+` \\| " +
+            what.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+            " \\| [^|]* \\| " +
+            mark +
+            " \\|",
+          "m",
+        );
+      expect(read).toContain("### Единица");
+      // Число под именем, в строке и ноль-единица-двойка вопросом не являются:
+      // из всех чисел файла осталось одно — множитель без имени.
+      expect(read).toMatch(row("число", "числа без имени: строка 16 `4`"));
+      expect(read).toMatch(
+        row("флаг", "булев параметр либо довод: строка 6 `fast`, строка 6 `label`, строка 23 `zzRender(…)`"),
+      );
+      expect(read).toMatch(row("перехват", "пустой перехват: строка 19 `catch`, строка 22 `.catch`", "пустой"));
+      expect(read).toMatch(row("кортеж", "ответ кортежем: строка 26 `4`"));
+      expect(read).toMatch(
+        row("мутация", "меняет взятое импортом: строка 13 `zzItems.push(`, строка 14 `zzConfig.size=`"),
+      );
+      expect(read).toMatch(row("флаги", "булевых полей состояния `2`: строка 11, строка 12", "состояние"));
+      expect(read).toMatch(row("флаги", "булевых полей в типах `3`: строка 2, строка 3, строка 4", "вход"));
+
+      // Признаки места и состояние модуля — у своих адресов.
+      expect(tool("levels", "shared/zzFormat/zzFormat.ts")).toContain(
+        "порознь: потребители берут непересекающиеся части: components/ZzClock — zzDate; components/ZzPrice — zzMoney",
+      );
+      expect(tool("levels", "shared/zzOnly/zzOnly.ts")).toContain(
+        "место: общий узел, а берёт его одна единица переноса: components/ZzClock",
+      );
+      // Атрибут разметки называет число так же, как ключ объекта.
+      expect(tool("levels", "components/ZzPrice/ZzPrice.tsx")).toContain(
+        "число: числа без имени: строка 2 3 — components/ZzPrice/ZzPrice.tsx:2",
+      );
+      const mode = tool("levels", "shared/zzMode/zzMode.ts");
+      expect(mode).toContain("флаг: булев параметр либо довод: строка 1 on");
+      expect(mode).not.toContain("setZzMode(…)");
+      expect(tool("levels", "shared/zzStore/zzStore.ts")).toContain(
+        "модульное: изменяемое на уровне модуля: строка 3 zzHits",
+      );
+
+      // Беспредметность по признаку ложна.
+      const asked = ["H7", "B1", "A4", "E1", "B4", "C8", "B8"];
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: Object.fromEntries(asked.map((id) => [id, "нет предмета |  | проба | "])),
+      });
+      const holes = tool("bar", "components/ZzClock");
+      for (const id of asked)
+        expect(holes).toMatch(new RegExp("^ {4}" + id + ": нет предмета, а в модели он есть: П\\d+", "m"));
+      const ids = (sort) =>
+        [...read.matchAll(new RegExp("^\\| (П\\d+) \\| " + sort + " \\|", "gm"))].map((m) => m[1]);
+      const say = (sort, why) => ids(sort).join(", ") + " — " + why;
+      const pick = {
+        H7: "чисто |  | " + say("число", "множитель задержки, проба") + " | ",
+        B1: "чисто |  | " + say("флаг", "проба") + " | ",
+        A4: "чисто |  | " + say("флаг", "проба") + " | ",
+        E1: "чисто |  | " + say("перехват", "проба") + " | ",
+        B4: "чисто |  | " + say("кортеж", "проба") + " | ",
+        C8: "чисто |  | " + say("флаги", "проба") + " | ",
+        B8: "чисто |  | " + say("флаги", "проба") + " | ",
+      };
+      fs.writeFileSync(
+        protoAt,
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .map((line) => {
+            const c = line.split("|");
+            const id = (c[1] ?? "").trim();
+            return c.length === 9 && pick[id] !== undefined
+              ? "| " + id + " | " + c[2].trim() + " | x | " + pick[id] + " |"
+              : line;
+          })
+          .join("\n"),
+      );
+      // Пустой перехват — приговор: основание его не отменяет.
+      expect(tool("bar", "components/ZzClock")).toMatch(/^ {4}E1: чисто, а перехват пустой: П\d+$/m);
+      const spot = "`src/components/ZzClock/ZzClock.tsx:19`";
+      fs.writeFileSync(
+        protoAt,
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .map((line) =>
+            line.startsWith("| E1 |")
+              ? "| E1 | — | x | нашлось | " + spot + " | ошибка проглочена | предложено |"
+              : line,
+          )
+          .join("\n"),
+      );
+      const sealed = tool("bar", "components/ZzClock");
+      expect(sealed).toContain("печать поставлена");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

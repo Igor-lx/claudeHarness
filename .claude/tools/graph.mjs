@@ -7432,6 +7432,454 @@ const WRITER_KINDS = [
   },
 ];
 
+// --- признаки, видимые текстом --------------------------------------------
+//
+// Строка, где нарушение критерия планки вероятно и видно без суждения: число
+// без имени, булев флаг, перехват ошибки, ответ кортежем, правка взятого
+// импортом, изменяемое на уровне модуля, россыпь булевых полей. Это вопрос, а
+// не приговор: свод спрашивает о каждой такой строке модели свой критерий, и
+// «чисто» по нему называет её номер — сказав, почему нарушения здесь нет.
+// Приговор один — пустой перехват: политика называет его дефектом всегда.
+//
+// Найдено разбором серии проб: посаженное нарушение ловилось чтением, а модель
+// о нём молчала — правки взятого, состояния модуля, пустого перехвата и
+// кортежа она не знала, и «чисто» по этим критериям держалось одним вниманием.
+
+/** Код без комментариев и без содержимого строк: длина и строки прежние, так
+ * что позиции и номера строк те же. Число в строке и слово в комментарии кодом
+ * не являются. Кавычка не переходит через перевод строки: незакрытая — это
+ * апостроф в тексте разметки, и гасить за ней весь файл значило бы ослепнуть. */
+const bareCodeOf = (text) => {
+  const out = text.split("");
+  const blank = (from, to) => {
+    for (let k = from; k < to; k += 1)
+      if (out[k] !== "\n" && out[k] !== "\r") out[k] = " ";
+  };
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const d = text[i + 1];
+    if (c === "/" && (d === "/" || d === "*")) {
+      const end =
+        d === "/" ? text.indexOf("\n", i) : text.indexOf("*/", i + 2);
+      const stop = end < 0 ? text.length : d === "/" ? end : end + 2;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      let k = i + 1;
+      while (k < text.length && text[k] !== c && (c === "`" || text[k] !== "\n"))
+        k += text[k] === "\\" ? 2 : 1;
+      if (k < text.length && text[k] === c) {
+        blank(i + 1, k);
+        i = k + 1;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return out.join("");
+};
+
+/** Закрывающая скобка для открывающей в позиции `at`; несбалансировано — -1. */
+const closeOf = (text, at) => {
+  const pairs = { "(": ")", "[": "]", "{": "}" };
+  const stack = [pairs[text[at]]];
+  for (let k = at + 1; k < text.length; k += 1) {
+    const c = text[k];
+    if (pairs[c] !== undefined) stack.push(pairs[c]);
+    else if (c === ")" || c === "]" || c === "}") {
+      if (stack.pop() !== c) return -1;
+      if (stack.length === 0) return k;
+    }
+  }
+  return -1;
+};
+
+/** Части списка через запятую верхнего уровня, со смещением каждой. */
+const topLevelParts = (inner) => {
+  const parts = [];
+  let depth = 0;
+  let from = 0;
+  for (let k = 0; k <= inner.length; k += 1) {
+    const c = inner[k];
+    if (c === "(" || c === "[" || c === "{") depth += 1;
+    else if (c === ")" || c === "]" || c === "}") depth -= 1;
+    else if ((c === "," && depth === 0) || k === inner.length) {
+      parts.push({ text: inner.slice(from, k), at: from });
+      from = k + 1;
+    }
+  }
+  return parts;
+};
+
+/** Местные имена, которые файл берёт импортом из файлов ПРОЕКТА: имя → файл.
+ * Пакеты не в счёт: их устройство — предмет раздела о зависимостях. Импорт
+ * одних типов — тоже: менять в нём нечего. */
+const importBindingsOf = (f, src) => {
+  const out = new Map();
+  for (const m of src.matchAll(
+    /(?:^|\n)\s*import\s+(?!type\b)([^;"']*?)\s*from\s*["']([^"']+)["']/g,
+  )) {
+    const target = resolve(f, m[2]);
+    if (target === null) continue;
+    const ns = /\*\s+as\s+([\w$]+)/.exec(m[1]);
+    if (ns !== null) out.set(ns[1], target);
+    const braces = /\{([\s\S]*)\}/.exec(m[1]);
+    for (let part of braces === null ? [] : braces[1].split(",")) {
+      part = part.trim();
+      if (part === "" || part.startsWith("type ")) continue;
+      const local = (part.split(/\s+as\s+/)[1] ?? part).trim();
+      if (NAME_RE.test(local)) out.set(local, target);
+    }
+    const def = m[1]
+      .replace(/\{[\s\S]*\}/, "")
+      .replace(/\*\s+as\s+[\w$]+/, "")
+      .split(",")[0]
+      .trim();
+    if (NAME_RE.test(def)) out.set(def, target);
+  }
+  return out;
+};
+
+/** Слова, за которыми скобка открывает не список параметров и не вызов. */
+const NOT_A_CALLEE = new Set(
+  "if for while switch catch with return typeof await new delete void in of do else yield function super import".split(
+    " ",
+  ),
+);
+/** Методы, меняющие то, у чего их зовут. */
+const MUTATORS =
+  "push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|delete|clear";
+/** Числа, которым имя не нужно: ноль, единица и двойка читаются как они
+ * есть — «первый», «пусто», «пополам». */
+const NUMBER_FREE = new Set([0, 1, 2]);
+/** Сколько элементов делают ответ кортежем. Пара — идиома «значение и способ
+ * его изменить»; с третьим это уже набор, из которого потребитель собирает
+ * своё правило. */
+const TUPLE_FROM = 3;
+/** Сколько булевых полей состояния делают вопрос о сочетаниях: два —
+ * наименьшее число, при котором сочетание вообще бывает недопустимым. */
+const STATE_FLAGS_FROM = 2;
+/** Сколько булевых полей в типах делают вопрос о россыпи: третий флаг —
+ * момент, когда из сочетаний валидны единицы, а пишут их по одному. */
+const TYPE_FLAGS_FROM = 3;
+
+/** Признаки, видимые текстом файла: `{ sort, line, sample, mark }`. */
+const SYMPTOMS = new Map();
+const symptomsOf = (f) => {
+  if (SYMPTOMS.has(f)) return SYMPTOMS.get(f);
+  const text = readFileSync(f, "utf8");
+  const bare = bareCodeOf(text);
+  const starts = [0];
+  for (let k = 0; k < bare.length; k += 1)
+    if (bare[k] === "\n") starts.push(k + 1);
+  const lineAt = (at) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= at) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+  const hits = [];
+  const hit = (sort, at, sample, mark = "") =>
+    hits.push({ sort, line: lineAt(at), sample, mark });
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tail = "(?:\\s*\\.\\s*[\\w$]+|\\s*\\[[^\\]\\n]*\\])";
+  const changes = (name) => [
+    new RegExp(
+      "(?<![\\w$.])" +
+        esc(name) +
+        tail +
+        "+\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|\\?\\?|&&|\\|\\|)?=(?![=>])",
+      "g",
+    ),
+    new RegExp(
+      "(?<![\\w$.])" +
+        esc(name) +
+        "(?:\\s*\\.\\s*[\\w$]+)*\\s*\\.\\s*(?:" +
+        MUTATORS +
+        ")\\s*\\(",
+      "g",
+    ),
+    new RegExp("\\bObject\\.assign\\s*\\(\\s*" + esc(name) + "(?![\\w$])", "g"),
+    new RegExp("\\bdelete\\s+" + esc(name) + tail, "g"),
+    new RegExp(
+      "(?:\\+\\+|--)\\s*" +
+        esc(name) +
+        tail +
+        "|(?<![\\w$.])" +
+        esc(name) +
+        tail +
+        "+\\s*(?:\\+\\+|--)",
+      "g",
+    ),
+  ];
+
+  // Число без имени. Именем считается то, чему число присвоено, и ключ, под
+  // которым оно лежит: `const delay = 300`, `{ width: 300 }`, атрибут
+  // разметки `max={10}`. Таблица, названная константой заглавными, — данные
+  // под именем, а не россыпь.
+  const tables = [];
+  for (const m of bare.matchAll(
+    /(?:^|\n)(?:export\s+)?const\s+[A-Z][A-Z0-9_]*\s*(?::[^=\n]+)?=\s*(?:Object\.freeze\s*\(\s*)?([[{(])/g,
+  )) {
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(bare, open);
+    if (close > open) tables.push([open, close]);
+  }
+  for (const m of bare.matchAll(
+    /(?<![\w$.])(?:0[xXbBoO][\da-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?|\.\d+)(?![\w$])/g,
+  )) {
+    if (NUMBER_FREE.has(Number(m[0].replace(/_/g, "")))) continue;
+    if (tables.some(([a, b]) => m.index > a && m.index < b)) continue;
+    const before = bare
+      .slice(Math.max(0, m.index - 80), m.index)
+      .replace(/-\s*$/, "")
+      .trimEnd();
+    if (
+      /[\w$\]]\s*=$/.test(before) ||
+      /[\w$"'\]]\s*:$/.test(before) ||
+      /[\w$-]=\{$/.test(before)
+    )
+      continue;
+    hit("число", m.index, m[0]);
+  }
+
+  // Булев параметр в сигнатуре: список параметров — скобка, за которой идёт
+  // стрелка либо тело функции. Деструктуризация — поля с именами, то есть
+  // ровно та замена, которую политика советует.
+  for (let p = bare.indexOf("("); p >= 0; p = bare.indexOf("(", p + 1)) {
+    const q = closeOf(bare, p);
+    if (q < 0) continue;
+    const after = bare.slice(q + 1, q + 160);
+    const head = bare.slice(Math.max(0, p - 80), p).replace(/<[^<>]*>\s*$/, "");
+    const word = /([\w$]+)\s*$/.exec(head)?.[1] ?? "";
+    const isFunction = /\bfunction\s*\*?\s*[\w$]*\s*$/.test(head);
+    const isArrow = /^\s*(?::\s*[^{;=()]+?)?\s*=>/.test(after);
+    const isBody =
+      /^\s*(?::\s*[^{;=()]+?)?\s*\{/.test(after) &&
+      (isFunction || (word !== "" && !NOT_A_CALLEE.has(word)));
+    if (!isArrow && !isBody) continue;
+    for (const part of topLevelParts(bare.slice(p + 1, q))) {
+      const t = part.text.trim();
+      if (
+        /^(?:\.\.\.)?[\w$]+\s*\??\s*:\s*boolean\b/.test(t) ||
+        /^[\w$]+\s*(?::[^=]*)?=\s*(?:true|false)$/.test(t)
+      )
+        hit("флаг", p + 1 + part.at, t.split(/[?:=]/)[0].trim());
+    }
+  }
+  // Булев довод в вызове своей функции: своя — объявленная в файле либо
+  // взятая из проекта. Сеттер значения (`setOpen(true)`) флагом не является:
+  // булево там — само значение.
+  const bindings = importBindingsOf(f, codeOf(text));
+  const own = new Set(bindings.keys());
+  for (const m of bare.matchAll(/\bfunction\s*\*?\s*([\w$]+)/g)) own.add(m[1]);
+  for (const m of bare.matchAll(
+    /\b(?:const|let|var)\s+([\w$]+)\s*(?::[^=\n]+)?=\s*(?:async\s+)?(?:function\b|\(|[\w$]+\s*=>)/g,
+  ))
+    own.add(m[1]);
+  for (const m of bare.matchAll(/(?<![\w$.])([\w$]+)\s*\(/g)) {
+    const name = m[1];
+    if (!own.has(name) || /^set[A-Z]/.test(name) || NOT_A_CALLEE.has(name))
+      continue;
+    if (/\bfunction\s*\*?\s*$/.test(bare.slice(Math.max(0, m.index - 20), m.index)))
+      continue;
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q < 0) continue;
+    if (/^\s*(?::\s*[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 160)))
+      continue;
+    if (
+      topLevelParts(bare.slice(p + 1, q)).some((a) =>
+        /^(?:true|false)$/.test(a.text.trim()),
+      )
+    )
+      hit("флаг", p, name + "(…)");
+  }
+
+  // Перехват. Пустой — тело без единой строки кода либо обработчик, который
+  // ничего не делает: ошибка проглочена, и политика называет это дефектом
+  // всегда. Прочий — вопрос: чем ошибка обработана либо видна.
+  for (const m of bare.matchAll(/\bcatch\s*(?:\([^()]*\)\s*)?\{/g)) {
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(bare, open);
+    const empty = close > open && bare.slice(open + 1, close).trim() === "";
+    hit("перехват", m.index, "catch", empty ? "пустой" : "");
+  }
+  for (const m of bare.matchAll(/\.catch\s*\(/g)) {
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q < 0) continue;
+    const arg = bare.slice(p + 1, q).trim();
+    const empty =
+      arg === "" ||
+      /^(?:\(\s*[\w$]*\s*(?::[^)]*)?\)|[\w$]+)\s*=>\s*(?:\{\s*\}|null|undefined|void\s+0|false|true)$/.test(
+        arg,
+      );
+    hit("перехват", m.index, ".catch", empty ? "пустой" : "");
+  }
+
+  // Ответ кортежем: литерал массива, который уходит из функции как есть.
+  // Массив, у которого тут же зовут метод, — значение, а не кортеж.
+  for (const m of bare.matchAll(/\breturn\s+\[/g)) {
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(bare, open);
+    if (close < 0 || /^\s*[.[]/.test(bare.slice(close + 1, close + 4))) continue;
+    const parts = topLevelParts(bare.slice(open + 1, close))
+      .map((x) => x.text.trim())
+      .filter((x) => x !== "");
+    if (parts.length >= TUPLE_FROM && !parts.some((x) => x.startsWith("...")))
+      hit("кортеж", m.index, String(parts.length));
+  }
+
+  // Правка взятого импортом: присваивание его полю, метод, меняющий его,
+  // удаление поля. Вызов метода владельца — просьба, а не правка, и ответ на
+  // вопрос об этом даёт сессия.
+  for (const name of bindings.keys())
+    for (const re of changes(name))
+      for (const m of bare.matchAll(re))
+        hit("мутация", m.index, m[0].replace(/\s+/g, "").slice(0, 40));
+
+  // Изменяемое на уровне модуля: `let` и `var` с начала строки и контейнер,
+  // объявленный константой и меняемый в этом же файле. Константа, которую
+  // не меняют, — таблица, а не состояние.
+  bare.split("\n").forEach((line, i) => {
+    const at = starts[i];
+    const m = /^(?:export\s+)?(?:let|var)\s+([\w$]+|[{[])/.exec(line);
+    if (m !== null) {
+      hit("модульное", at, m[1]);
+      return;
+    }
+    const c =
+      /^(?:export\s+)?const\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet|Array)\b|\[|\{)/.exec(
+        line,
+      );
+    if (c !== null && changes(c[1]).some((re) => new RegExp(re.source).test(bare)))
+      hit("модульное", at, c[1]);
+  });
+
+  // Россыпь булевых полей: в состоянии и в типах.
+  const stateFlags = [
+    ...bare.matchAll(
+      /\b(?:useState|useRef|ref|signal|createSignal)\s*(?:<\s*boolean\s*>\s*)?\(\s*(?:true|false)\s*[,)]|\b(?:useState|useRef)\s*<\s*boolean\s*>\s*\(\s*\)/g,
+    ),
+  ];
+  if (stateFlags.length >= STATE_FLAGS_FROM)
+    for (const m of stateFlags) hit("флаги", m.index, "", "состояние");
+  const typeFlags = [
+    ...bare.matchAll(
+      /(?<=^|\n)[ \t]*(?:readonly\s+)?[\w$]+\s*\??\s*:\s*boolean\s*[;,]?[ \t]*(?=\n|$)/g,
+    ),
+  ];
+  if (typeFlags.length >= TYPE_FLAGS_FROM)
+    for (const m of typeFlags) hit("флаги", m.index, "", "вход");
+
+  SYMPTOMS.set(f, hits);
+  return hits;
+};
+
+/** Признаки места: файл общего слоя, который берёт одна единица переноса, и
+ * узел, из которого потребители разных единиц берут непересекающиеся части.
+ * Первое — вопрос к раскладке, второе — к тому, один ли это узел. */
+const placeSymptomsOf = (f) => {
+  const out = [];
+  if (isBarrel(f) || isTest(f)) return out;
+  const users = [...dependentsOf(f)].filter((u) => !isTest(u));
+  const units = [...new Set(users.map(unitOf))].sort();
+  const tree = SRC_ROOTS.find((one) => norm(f).startsWith(norm(one) + "/"));
+  const shared = [
+    rel(f),
+    tree === undefined ? "" : norm(path.relative(tree, f)),
+  ].some((r) => r.startsWith("shared/"));
+  if (shared && units.length === 1 && units[0] !== unitOf(f))
+    out.push({
+      sort: "место",
+      what: "общий узел, а берёт его одна единица переноса: " + units[0],
+    });
+  if (units.length < 2) return out;
+  const byUnit = new Map();
+  for (const u of users) {
+    const took = new Set();
+    for (const one of namedImportsOf.get(u) ?? []) {
+      if (one.names === null || one.names === "*") {
+        if (
+          one.target === f ||
+          [...(exportsOf.get(f) ?? [])].some(
+            (n) => definerOf(one.target, n) === f,
+          )
+        )
+          return out;
+        continue;
+      }
+      for (const n of one.names) if (definerOf(one.target, n) === f) took.add(n);
+    }
+    const k = unitOf(u);
+    if (!byUnit.has(k)) byUnit.set(k, new Set());
+    for (const n of took) byUnit.get(k).add(n);
+  }
+  const sets = [...byUnit.values()];
+  const apart = sets.every((a, i) =>
+    sets.every((b, j) => i === j || [...a].every((n) => !b.has(n))),
+  );
+  if (apart && new Set(sets.flatMap((s) => [...s])).size >= 2)
+    out.push({
+      sort: "порознь",
+      what:
+        "потребители берут непересекающиеся части: " +
+        [...byUnit]
+          .sort(([a], [b]) => (a < b ? -1 : 1))
+          .map(([u, s]) => u + " — " + [...s].sort().join(", "))
+          .join("; "),
+    });
+  return out;
+};
+
+/** Признак строкой модели: что это и где — первые строки по номеру. */
+const SYMPTOM_WORDS = {
+  число: "числа без имени",
+  флаг: "булев параметр либо довод",
+  перехват: "перехват ошибки",
+  кортеж: "ответ кортежем",
+  мутация: "меняет взятое импортом",
+  модульное: "изменяемое на уровне модуля",
+};
+const symptomWhat = (sort, mark, list) => {
+  const title =
+    sort === "перехват" && mark === "пустой"
+      ? "пустой перехват"
+      : sort === "флаги"
+        ? (mark === "состояние"
+            ? "булевых полей состояния "
+            : "булевых полей в типах ") + barQuoted(String(list.length))
+        : SYMPTOM_WORDS[sort];
+  return (
+    title +
+    ": " +
+    listCell(
+      list.map(
+        (h) => "строка " + h.line + (h.sample === "" ? "" : " " + barQuoted(h.sample)),
+      ),
+      6,
+    )
+  );
+};
+/** Виды строк модели, которые дают признаки текста. */
+const SYMPTOM_SORTS = [
+  "число",
+  "флаг",
+  "перехват",
+  "кортеж",
+  "мутация",
+  "модульное",
+  "флаги",
+];
+
 /** Внутренность чужой единицы переноса: файл в папке другого компонента, не
  * её вход. Единица переноса — папка под объявленным слоем компонентов
  * (`componentsAt`): её
@@ -8166,6 +8614,30 @@ const barModelOf = (
         );
       }
     });
+    // Признаки, видимые текстом: строка на вид и пометку, места — по
+    // номерам. Вопрос, а не приговор: отвечает критерий вида.
+    if (SYMPTOM_SORTS.some(want)) {
+      const groups = new Map();
+      for (const h of symptomsOf(f)) {
+        if (!want(h.sort)) continue;
+        const k = h.sort + "|" + h.mark;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(h);
+      }
+      for (const [k, list] of groups) {
+        const [sort, mark] = k.split("|");
+        list.sort((a, b) => a.line - b.line);
+        add(
+          sort,
+          where + ":" + list[0].line,
+          symptomWhat(sort, mark, list),
+          mark,
+          list.some((h) => isNewLine(lines[h.line - 1] ?? "")) ? "новое" : "",
+        );
+      }
+    }
+    for (const one of want("место") || want("порознь") ? placeSymptomsOf(f) : [])
+      add(one.sort, where, one.what);
 
     // --- слой ------------------------------------------------------------
     const layer = layerOf(f);
@@ -8951,11 +9423,17 @@ const barSkeletonOf = ({
     "",
     "## Модель предмета",
     "",
-    "Строки собрал инструмент из кода и базы, по уровням. Узел: что он",
-    "делает по карте, его поверхность, зависимости, потребители, состояние,",
-    "ресурсы. Слой: слой и единица переноса, рёбра против правила и новые",
-    "рёбра между слоями, взятое мимо входа единицы переноса, циклы,",
-    "устойчивость. Приложение: источники из записи о состоянии, второй",
+    "Строки собрал инструмент из кода и базы, по уровням. Единица: признаки,",
+    "видимые текстом, — число без имени, булев параметр либо довод, перехват",
+    "ошибки, ответ кортежем. Узел: что он делает по карте, его поверхность,",
+    "зависимости, потребители, состояние, ресурсы, правка взятого импортом,",
+    "изменяемое на уровне модуля, россыпь булевых полей, потребители,",
+    "берущие порознь. Слой: слой и единица переноса, рёбра против правила и",
+    "новые рёбра между слоями, взятое мимо входа единицы переноса, циклы,",
+    "устойчивость, общий узел одной единицы. Признак — вопрос, а не приговор:",
+    "«чисто» по его критерию называет номер строки и говорит, почему",
+    "нарушения нет; приговор один — пустой перехват. Приложение: источники из",
+    "записи о состоянии, второй",
     ...(transition
       ? [
           "писатель, связи через имя, выход наружу, размах. Сдвига у перехода",
@@ -8984,7 +9462,7 @@ const barSkeletonOf = ({
       ". Вердикт ядра «чисто» называет строку модели СВОЕГО уровня и",
     "своего предмета.",
     "",
-    ...BAR_SUMMED.flatMap((level) => {
+    ...LEVEL_ORDER.flatMap((level) => {
       const mine = model.filter((m) => m.level === level);
       return mine.length === 0
         ? []
@@ -9774,8 +10252,18 @@ const BAR_TRANSITION_SORTS = {
     "пользуется",
     "состояние",
     "граница",
+    "мутация",
+    "флаги",
+    "порознь",
   ]),
-  слой: new Set(["слой", "граница", "направление", "цикл", "устойчивость"]),
+  слой: new Set([
+    "слой",
+    "граница",
+    "направление",
+    "цикл",
+    "устойчивость",
+    "место",
+  ]),
   приложение: new Set([
     "источник",
     "писатель",
@@ -9783,6 +10271,7 @@ const BAR_TRANSITION_SORTS = {
     "наружу",
     "размах",
     "состояние",
+    "модульное",
   ]),
 };
 
@@ -10295,7 +10784,7 @@ if (mode === "levels") {
       area,
     });
     console.log("=== Уровни: " + rel(target) + " ===");
-    for (const level of ["узел", "слой", "приложение"]) {
+    for (const level of LEVEL_ORDER) {
       const mine = model.filter((m) => m.level === level);
       console.log("--- " + level + " ---");
       if (mine.length === 0) console.log("  фактов нет");
@@ -17610,8 +18099,10 @@ if (mode === "verify") {
     // нельзя: правка после печати её гасит, а заново печать ставится только
     // поверх ПУСТОГО скелета — то есть ценой всех ста пятидесяти трёх строк.
     // Замерено на стенде: сверка потребовала объявить счёт формой, протокол
-    // был закрыт, и выхода из этой пары не было ни одного.
-    if (name === "bar-protocol.md") continue;
+    // был закрыт, и выхода из этой пары не было ни одного. Имя — из поля
+    // настройки: проект, назвавший протокол иначе, иначе получал бы ту же
+    // пару без выхода.
+    if (name === CONFIG.barProtocol) continue;
     let inBaseline = false;
     for (const [i, line] of readFileSync(path.join(BASE, name), "utf8")
       .split(NEWLINE)
