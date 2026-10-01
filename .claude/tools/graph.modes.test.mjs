@@ -2162,6 +2162,40 @@ describe("мутационный отчёт без исполненных тес
   }, 180000);
 });
 
+describe("ворота перед коммитом в конвейере", () => {
+  it("свежий клон без `core.hooksPath` красен у разработчика и зелен в конвейере, где коммитов не делают", () => {
+    const box = seatEmpty("konveier-");
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: box, stdio: "ignore" });
+      const gate = (env) => {
+        let out;
+        try {
+          out = execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env },
+          );
+        } catch (e) {
+          out = String(e.stdout ?? "");
+        }
+        return out.split("=== Ворота перед коммитом установлены ===")[1]?.split("===")[0] ?? "";
+      };
+      const { CI: _ci, ...local } = process.env;
+      expect(gate(local)).toContain("`core.hooksPath` не задан");
+      const piped = gate({ ...local, CI: "true" });
+      expect(piped).not.toMatch(/^ {4}\S/m);
+      expect(piped).toContain("конвейер");
+      // Хук, который git пропустит, красен и в конвейере: это содержимое
+      // репозитория, а не настройка машины.
+      const hook = path.join(box, ".claude", "hooks", "git", "pre-commit");
+      fs.chmodSync(hook, 0o644);
+      expect(gate({ ...local, CI: "true" })).toContain("не исполняемый");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("скрипт манифеста назван и командой с доводами", () => {
   it("`npm run имя -- …` называет скрипт; не названный нигде — предупреждение", () => {
     const box = seatEmpty("skripty-");
