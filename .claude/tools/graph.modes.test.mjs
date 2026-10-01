@@ -1762,7 +1762,7 @@ describe("ядро по предметам уровня: правка, чтен�
     }
   }, 240000);
 
-  it("переход: протокол ядра на каждый предмет, находка — долгом, шаг не закрыть без печати", () => {
+  it("переход: ядро на узел и слой, приложение целиком, находка — долгом, шаг не закрыть без печати", () => {
     const box = seatEmpty("perehod-");
     try {
       const tool = toolAt(box);
@@ -1804,6 +1804,17 @@ describe("ядро по предметам уровня: правка, чтен�
       expect(cart).toContain("| A1 | `components/zzCart` |");
       expect(cart).not.toMatch(/^\| H7 \|/m);
       expect(cart).not.toMatch(/^\| A6 \|/m);
+      expect(cart).not.toMatch(/^\| E7 \|/m);
+      // Приложение — целиком, а не ядром: его критерии каждая правка задаёт
+      // о всём проекте, и не заданные здесь они ложились на первую правку.
+      const app = fs.readFileSync(path.join(dir, "app.md"), "utf8");
+      expect(app).toMatch(/^\| A6 \|/m);
+      expect(app).toMatch(/^\| G7 \|/m);
+      expect(app).toMatch(/^\| J2 \|/m);
+      // Предмет перехода — проект вместе с манифестом: о зависимостях
+      // спрашивают, а не закрывают заготовкой правки.
+      expect(app).toMatch(/^\| R1 \|/m);
+      expect(app).not.toContain("манифест этой правкой не тронут");
       // У бочки из ядра узла предмет есть только у вопроса о поверхности.
       const barrel = fs.readFileSync(path.join(dir, "node--components--index.ts.md"), "utf8");
       expect(barrel).toContain("| B7 | `components/index.ts` |");
