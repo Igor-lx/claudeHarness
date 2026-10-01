@@ -2916,6 +2916,103 @@ describe("проба планки из нескольких файлов", () =>
   }, 240000);
 });
 
+describe("проба планки в существующем коде", () => {
+  it("нарушение дописано в живые файлы среди обычной правки, свод его называет, суд засчитывает", () => {
+    const box = seatEmpty("probaex-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      const all = JSON.parse(fs.readFileSync(probes, "utf8"));
+      const one = all.plants.find((p) => p.criterion === "C4" && Array.isArray(p.into));
+      expect(one).toBeDefined();
+      fs.writeFileSync(probes, JSON.stringify({ ...all, plants: [one] }));
+      for (const [rel, text] of [
+        ["src/shared/zzA/zzA.ts", "export const zzA = (n) => n + 1;\n"],
+        ["src/shared/zzB/zzB.ts", "export const zzB = (n) => n - 1;\n"],
+        ["src/components/ZzC/ZzC.tsx", "export function ZzC() {\n  return 'c';\n}\n"],
+      ]) {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      }
+      const run = (cwd, ...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      // Род «новым файлом» флагом отсекается: сажать нечего.
+      expect(run(box, "bar-probe", "--new")).toContain("=== Сажать нечего ===");
+      const planted = run(box, "bar-probe", "--existing");
+      sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
+      const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
+      expect(sandbox).not.toBeNull();
+      markAt = path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
+      const mark = JSON.parse(fs.readFileSync(markAt, "utf8"));
+      expect(mark.kind).toBe("в существующем коде");
+      // Виновник берёт у владельца путём, который посадка вычислила сама, и
+      // ещё один файл получил обычную правку.
+      const culprit = mark.files[0];
+      const text = fs.readFileSync(culprit, "utf8");
+      const spec = /import \{ zzProbeRegistry \} from "([^"]+)";/.exec(text)[1];
+      const owner = ["", ".ts", ".tsx"]
+        .map((ext) => path.resolve(path.dirname(culprit), spec) + ext)
+        .find((f) => fs.existsSync(f));
+      expect(fs.readFileSync(owner, "utf8")).toContain("export const zzProbeRegistry");
+      const changed = execFileSync("git", ["status", "--porcelain"], { cwd: sandbox, encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean);
+      expect(changed.length).toBe(3);
+      run(sandbox, "bar");
+      const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
+      const relCulprit = path.relative(path.join(sandbox, "src"), culprit).split(path.sep).join("/");
+      // Признак, видимый текстом, называет правку взятого импортом.
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        new RegExp("\\| мутация \\| `" + relCulprit.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&") + ":\\d+` \\|"),
+      );
+      const parts = relCulprit.split("/");
+      const unit = parts.length >= 3 ? parts.slice(0, 2).join("/") : relCulprit;
+      const line = text.split("\n").findIndex((l) => l.includes("zzProbeRegistry.names.push")) + 1;
+      fs.appendFileSync(
+        path.join(sandbox, ".context", "13-questions.md"),
+        "\nВопрос о `src/" + relCulprit + "`.\n",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        holds: { ["узел@" + unit]: "нет" },
+        pick: {
+          ["C4@" + unit]: "нашлось | src/" + relCulprit + ":" + line + " | меняет чужой реестр, взятый импортом | вопрос",
+        },
+      });
+      expect(run(sandbox, "bar")).toContain("печать поставлена");
+      // Суд сличает виновника ПУТЁМ: тот же протокол против одноимённого
+      // файла в другой папке — адрес другой, а не «поймано».
+      const twin = sandbox + "-двойник";
+      fs.cpSync(sandbox, twin, { recursive: true });
+      const twinMark = path.join(os.tmpdir(), "bar-probe-" + id + "9.plant.json");
+      const elsewhere = path.join(twin, "src", "zzElsewhere", path.basename(culprit));
+      fs.writeFileSync(
+        twinMark,
+        JSON.stringify({ ...mark, box: twin, file: elsewhere, files: [elsewhere] }),
+      );
+      expect(run(box, "bar-probe", id + "9")).toContain("исход: критерий назван, адрес другой");
+      fs.rmSync(twin, { recursive: true, force: true });
+      const judged = run(box, "bar-probe", id);
+      expect(judged).toContain("исход: поймано");
+      expect(judged).toContain("в существующем коде: проб 2, поймано 1");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
+});
+
 describe("факты по уровням без протокола", () => {
   it("по адресу печатает уровни, по проекту — требует назвать каждый факт", () => {
     const box = seatEmpty("levels-");

@@ -6974,17 +6974,33 @@ if (mode === "bar-probe") {
     console.log("  Ожидался файл: " + norm(at));
     process.exit(1);
   }
-  const plants = JSON.parse(readFileSync(at, "utf8")).plants;
+  // Два рода посадки: новым файлом (`create`) и в существующий код
+  // (`into`). Флаг сужает выбор до одного рода — серия замеров одного рода
+  // иначе зависела бы от того, что выпало.
+  const kindOf = (p) => (p.into !== undefined ? "в существующем коде" : "новым файлом");
+  const only = process.argv.includes("--existing")
+    ? "в существующем коде"
+    : process.argv.includes("--new")
+      ? "новым файлом"
+      : null;
+  const plants = JSON.parse(readFileSync(at, "utf8")).plants.filter(
+    (p) => only === null || kindOf(p) === only,
+  );
   const ledgerAt =
     CONFIG.barProbeLedger == null
       ? null
       : path.join(BASE, CONFIG.barProbeLedger);
-  const judged = process.argv[3];
+  const judged = process.argv.slice(3).find((a) => !a.startsWith("--"));
 
   if (judged === undefined) {
     // Посадка. Песочница живёт ВНЕ репозитория: свод на задаче изменения
     // читает состояние репозитория, и песочница внутри рабочего дерева
     // попадала бы в предмет свода самого проекта.
+    if (plants.length === 0) {
+      console.log("=== Сажать нечего ===");
+      console.log("  Посадок рода «" + only + "» в списке нет.");
+      process.exit(1);
+    }
     const id = String(Date.now()).slice(-8);
     const box = path.join(tmpdir(), "bar-probe-" + id);
     const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
@@ -7043,21 +7059,94 @@ if (mode === "bar-probe") {
     // хотя бы одного.
     const at = (p) =>
       path.join(box, path.relative(path.join(BASE, ".."), ROOT), p);
-    const creates = Array.isArray(plant.create) ? plant.create : [plant.create];
-    for (const one of creates) {
-      const where = at(one.path);
-      mkdirSync(path.dirname(where), { recursive: true });
-      writeFileSync(where, one.text.split("\n").join(NEWLINE));
+    let culprits;
+    if (plant.into !== undefined) {
+      // В существующий код: нарушение дописывается в конец случайных файлов
+      // проекта, а в ещё один ложится обычная правка — нарушение не одно в
+      // правленом и не в файле, заведённом ради пробы. Файлы — разные: роль
+      // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`.
+      const pool = files
+        .filter(
+          (f) =>
+            !isTest(f) &&
+            !f.endsWith(".d.ts") &&
+            !isBarrel(f) &&
+            /\.[cm]?[jt]sx?$/.test(f),
+        )
+        .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+      for (let k = pool.length - 1; k > 0; k -= 1) {
+        const j = Math.floor(Math.random() * (k + 1));
+        [pool[k], pool[j]] = [pool[j], pool[k]];
+      }
+      const need = plant.into.length + 1;
+      if (pool.length < need) {
+        console.log("=== Проба не посажена ===");
+        console.log(
+          "  Посадке в существующий код нужно файлов кода: " +
+            need +
+            ", а в проекте их " +
+            pool.length +
+            ".",
+        );
+        rmSync(box, { recursive: true, force: true });
+        process.exit(1);
+      }
+      const roleFile = new Map(
+        plant.into.map((one, k) => [one.role ?? "виновник", pool[k]]),
+      );
+      const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
+      const specFrom = (from, to) => {
+        let r = norm(path.relative(path.dirname(from), to)).replace(
+          /\.[cm]?[jt]sx?$/,
+          "",
+        );
+        if (!r.startsWith(".")) r = "./" + r;
+        return r;
+      };
+      const append = (f, text) => {
+        const was = readFileSync(inBox(f), "utf8");
+        writeFileSync(
+          inBox(f),
+          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + text + NEWLINE,
+        );
+      };
+      for (const one of plant.into) {
+        const f = roleFile.get(one.role ?? "виновник");
+        append(
+          f,
+          one.text
+            .split("\n")
+            .join(NEWLINE)
+            .replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
+              specFrom(f, roleFile.get(role)),
+            ),
+        );
+      }
+      append(
+        pool[plant.into.length],
+        "export const zzProbeCover = (value) => String(value).trim();",
+      );
+      culprits = (plant.culprits ?? [...roleFile.keys()]).map((role) =>
+        norm(inBox(roleFile.get(role))),
+      );
+    } else {
+      const creates = Array.isArray(plant.create) ? plant.create : [plant.create];
+      for (const one of creates) {
+        const where = at(one.path);
+        mkdirSync(path.dirname(where), { recursive: true });
+        writeFileSync(where, one.text.split("\n").join(NEWLINE));
+      }
+      culprits = (plant.culprits ?? [creates[0].path]).map((p) =>
+        norm(at(p)),
+      );
     }
-    const culprits = (plant.culprits ?? [creates[0].path]).map((p) =>
-      norm(at(p)),
-    );
     writeFileSync(
       mark,
       JSON.stringify(
         {
           criterion: plant.criterion,
           why: plant.why,
+          kind: kindOf(plant),
           file: culprits[0],
           files: culprits,
           box,
@@ -7120,7 +7209,13 @@ if (mode === "bar-probe") {
     // Разбор протокола общий с режимом. Строк у критерия бывает несколько —
     // ядро узла и слоя разложено по предметам, — и засчитывается любая.
     const rows = barRowsOf(was.body).outcomes;
-    const planted = culprits.map((f) => path.basename(f));
+    // Виновник — путём от корня исходников песочницы, а не голым именем: в
+    // существующем коде одноимённых файлов много.
+    const boxRoot = path.join(
+      plant.box,
+      path.relative(path.join(BASE, ".."), ROOT),
+    );
+    const planted = culprits.map((f) => norm(path.relative(boxRoot, f)));
     const hitsPlanted = (one) =>
       one.outcome === "нашлось" && planted.some((p) => one.addr.includes(p));
     const mine = rows.filter((one) => one.id === plant.criterion);
@@ -7147,15 +7242,27 @@ if (mode === "bar-probe") {
     book.runs.push({
       criterion: plant.criterion,
       verdict,
+      kind: plant.kind ?? "новым файлом",
       when: new Date().toISOString().slice(0, 10),
     });
     writeFileSync(ledgerAt, JSON.stringify(book, null, 2) + NEWLINE);
-    const caught = book.runs.filter((r) => r.verdict === "поймано").length;
-    console.log("  всего проб: " + book.runs.length + ", поймано: " + caught);
+    for (const kind of ["новым файлом", "в существующем коде"]) {
+      const mine = book.runs.filter((r) => (r.kind ?? "новым файлом") === kind);
+      console.log(
+        "  " +
+          kind +
+          ": проб " +
+          mine.length +
+          ", поймано " +
+          mine.filter((r) => r.verdict === "поймано").length,
+      );
+    }
     console.log(
-      "  Доля оптимистична: нарушение посажено в файле, заведённом ради пробы,",
+      "  Посаженное новым файлом заметнее настоящего — доля там верхняя граница;",
     );
-    console.log("  и оттого заметнее настоящего. Это верхняя граница.");
+    console.log(
+      "  посаженное в существующий код стоит среди обычной правки и ближе к жизни.",
+    );
   }
   rmSync(plant.box, { recursive: true, force: true });
   rmSync(mark, { force: true });
