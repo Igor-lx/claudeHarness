@@ -2198,6 +2198,106 @@ describe("свод на правке — по той же области, что
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("партнёр по строке таблицы связей — в области, в модели и в досье", () => {
+    const box = seatEmpty("links-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = (rel, text) => {
+        const at = path.join(box, ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      // Атрибут и переменную ставит показ, читает панель — ни импорта, ни
+      // общей константы между ними нет. Адрес строки берётся от корня
+      // репозитория либо от корня исходников — здесь обе формы.
+      put(
+        "src/components/ZzShow/ZzShow.tsx",
+        'export function ZzShow({ n }: { n: number }) {\n  return (\n    <span data-zz-open="1" style={{ "--zz-tone": "red" }}>\n      {n}\n    </span>\n  );\n}\n',
+      );
+      put(
+        "src/components/ZzPanel/ZzPanel.tsx",
+        'export function ZzPanel() {\n  return <div>{document.querySelector("[data-zz-open]") ? "open" : "closed"}</div>;\n}\n',
+      );
+      put("src/components/ZzPanel/ZzPanel.module.css", ".zzPanel {\n  color: var(--zz-tone);\n}\n");
+      const graphAt = path.join(box, ".context", "03-graph.md");
+      fs.writeFileSync(
+        graphAt,
+        fs
+          .readFileSync(graphAt, "utf8")
+          .replace(
+            "| Атрибут | Кто ставит | Кто читает |\n| --- | --- | --- |\n",
+            "| Атрибут | Кто ставит | Кто читает |\n| --- | --- | --- |\n| `data-zz-open` | `src/components/ZzShow/ZzShow.tsx` | `src/components/ZzPanel/ZzPanel.tsx` |\n",
+          )
+          .replace(
+            "| Переменная | Кто ставит | Кто читает |\n| --- | --- | --- |\n",
+            "| Переменная | Кто ставит | Кто читает |\n| --- | --- | --- |\n| `--zz-tone` | `components/ZzShow/ZzShow.tsx` | `components/ZzPanel/ZzPanel.module.css` |\n",
+          ),
+      );
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs
+          .readFileSync(cfgAt, "utf8")
+          .replace(
+            "  domTables: null,",
+            '  domTables: { file: "03-graph.md", headings: ["| Атрибут | Кто ставит | Кто читает |", "| Переменная | Кто ставит | Кто читает |"] },',
+          ),
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+
+      // Разбор показа: партнёры по записанной связи — в области и в модели.
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "components/ZzShow");
+      const read = fs.readFileSync(protoAt, "utf8");
+      const head = read.split("## Модель предмета")[0];
+      expect(head).toContain("| `components/ZzPanel/ZzPanel.tsx` |");
+      expect(head).toContain("| `components/ZzPanel/ZzPanel.module.css` |");
+      expect(read).toMatch(
+        /\| сосед \| `components\/ZzPanel\/ZzPanel\.tsx` \| связан с components\/ZzShow\/ZzShow\.tsx строкой таблицы связей/,
+      );
+      // Правку сверяют по той же области: оба конца — строками таблицы «база
+      // и документация»; шапка предмета на правке — одно правленое.
+      put(
+        "src/components/ZzShow/ZzShow.tsx",
+        'export function ZzShow({ n }: { n: number }) {\n  return (\n    <span data-zz-open="1" style={{ "--zz-tone": "blue" }}>\n      {n}\n    </span>\n  );\n}\n',
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      const change = fs.readFileSync(protoAt, "utf8");
+      for (const f of ["components/ZzPanel/ZzPanel.tsx", "components/ZzPanel/ZzPanel.module.css"])
+        expect(change).toMatch(
+          new RegExp("^\\| `" + f.replace(/[/.]/g, "\\$&") + "` \\|  \\|  \\|  \\|$", "m"),
+        );
+      // Досье называет их с обеих сторон: у кода и у листа стилей.
+      expect(tool("brief", "components/ZzShow/ZzShow.tsx")).toMatch(
+        /--- связаны записью таблицы связей[^\n]*\n {2}components\/ZzPanel\/ZzPanel\.module\.css\n {2}components\/ZzPanel\/ZzPanel\.tsx/,
+      );
+      expect(tool("brief", "components/ZzPanel/ZzPanel.module.css")).toMatch(
+        /--- связаны записью таблицы связей ---\n {2}components\/ZzShow\/ZzShow\.tsx/,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 const readdirOf = (dir) => fs.readdirSync(dir).filter((n) => n.endsWith(".md"));

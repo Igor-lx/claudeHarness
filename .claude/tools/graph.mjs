@@ -3396,6 +3396,50 @@ const sharedNamesOf = (target) => {
   return [...groups].map(([who, names]) => [names.sort(), who]);
 };
 
+/** Концы записанных связей: на строку таблицы связей — файлы, которые она
+ * называет. Атрибут разметки, переменная стилей, тема шины связывают узлы,
+ * которые друг друга не импортируют и общей константы не берут: ни граф
+ * импортов, ни разбор констант их не соединяют, а запись — соединяет.
+ * Адрес берётся от корня репозитория либо от корня исходников. */
+let LINK_ENDS = null;
+const linkEnds = () => {
+  if (LINK_ENDS !== null) return LINK_ENDS;
+  LINK_ENDS = [];
+  if (CONFIG.domTables == null) return LINK_ENDS;
+  const at = path.join(BASE, CONFIG.domTables.file);
+  if (!existsSync(at)) return LINK_ENDS;
+  const lines = readFileSync(at, "utf8").split(LF);
+  const known = new Set([...files, ...styleFiles]);
+  for (const heading of CONFIG.domTables.headings ?? []) {
+    const from = lines.indexOf(heading);
+    if (from < 0) continue;
+    for (const row of tableAfter(lines, from).rows) {
+      const ends = [
+        ...new Set(
+          [...row.matchAll(/`([^`]+)`/g)]
+            .map((hit) => hit[1])
+            .filter((one) => one.includes("/") && CODE_OR_STYLE.test(one))
+            .flatMap((one) => [
+              norm(path.join(REPO_AT, one)),
+              norm(path.join(ROOT, one)),
+            ])
+            .filter((f) => known.has(f)),
+        ),
+      ];
+      if (ends.length > 1) LINK_ENDS.push(ends);
+    }
+  }
+  return LINK_ENDS;
+};
+/** Партнёры по записанной связи: файлы, названные с этим одной строкой. */
+const linkPartnersOf = (target) => [
+  ...new Set(
+    linkEnds()
+      .filter((ends) => ends.includes(norm(target)))
+      .flatMap((ends) => ends.filter((f) => f !== norm(target))),
+  ),
+];
+
 /** Строки о публичной поверхности узла — одни на `brief` и `plan`. */
 const printPublic = (target) => {
   const { names, via } = publicNamesOf(target);
@@ -8322,6 +8366,8 @@ const barModelOf = (
         if (partners.length <= SHARED_NAME_LIMIT)
           for (const p of partners)
             note(p, "делит с " + rel(f) + " имя " + name);
+      for (const p of linkPartnersOf(f))
+        note(p, "связан с " + rel(f) + " строкой таблицы связей");
     }
     for (const [n, why] of [...near].sort((a, b) => barByRel(a[0], b[0]))) {
       const said = mapResponsibilityOf(n);
@@ -8634,6 +8680,7 @@ const barAreaOf = (focus) =>
             ...near.own,
             ...near.viaUsers,
             ...sharedPartnersOf(target),
+            ...linkPartnersOf(target),
           ];
         })
         .map(norm),
@@ -10412,6 +10459,11 @@ if (mode === "brief") {
                     .join(NEWLINE + "  ")
               : "  ВНИМАНИЕ: ни один тест на него не смотрит",
           );
+          const linked = linkPartnersOf(target).map(rel).sort();
+          if (linked.length) {
+            console.log("--- связаны записью таблицы связей ---");
+            console.log("  " + linked.join(NEWLINE + "  "));
+          }
         } else {
           console.log(
             "--- импортирует (что надо понять, чтобы понять его) ---",
@@ -10444,6 +10496,13 @@ if (mode === "brief") {
             console.log(
               "  Кто из них пишет имя, а кто читает, — таблица связей через имя в коде.",
             );
+          }
+          const linked = linkPartnersOf(target).map(rel).sort();
+          if (linked.length) {
+            console.log(
+              "--- связаны записью таблицы связей (мимо импорта и констант) ---",
+            );
+            console.log("  " + linked.join(NEWLINE + "  "));
           }
 
           // Близнец нужен и здесь, и раньше его тут не было: объясняя файл
