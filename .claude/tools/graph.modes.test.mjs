@@ -6,6 +6,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  BAR_CUTS,
+  BAR_PRESENT,
+  BAR_SIGNALS,
+  WITNESS_COLUMNS,
+} from "./graph.predicates.mjs";
 
 /**
  * Дымовой набор на РЕЖИМЫ инструмента.
@@ -379,9 +385,9 @@ describe("ревизия сводов по истории", () => {
       );
       tool("bar");
       const protoAt = path.join(box, ".context", "bar-protocol.md");
-      const all = barRowsCited(fs.readFileSync(protoAt, "utf8"));
-      const filled = fs
-        .readFileSync(protoAt, "utf8")
+      const text = fs.readFileSync(protoAt, "utf8");
+      const all = barRowsCited(text);
+      const filled = text
         .split("\n")
         .map((line) => {
           const c = line.split("|");
@@ -399,7 +405,9 @@ describe("ревизия сводов по истории", () => {
             // предмет есть, и ответ опирается на каталог. О критериях
             // свидетелей предмет есть тоже: ответ опирается на них.
             const versus =
-              c[1].trim() === "A6-бис" || WITNESS_ASKED.includes(c[1].trim());
+              c[1].trim() === "A6-бис" ||
+              WITNESS_ASKED.includes(c[1].trim()) ||
+              askedIn(c[1].trim(), text);
             c[4] = versus ? " чисто " : " нет предмета ";
             c[6] = versus ? " " + all + " сверено с каталогом слоя " : " проба ревизии ";
             return c.join("|");
@@ -1240,15 +1248,27 @@ describe("база о своём: документы узла, сторона т
  * умолчанию называет КАЖДУЮ строку модели её номером — и сдвиги в их
  * числе: диапазон — опора, а не ответ. */
 /** Критерии вне ядра, о которых спрашивает признак, видимый текстом. */
-const SYMPTOM_ASKED = {
-  H7: ["число"],
-  B1: ["флаг"],
-  A4: ["флаг"],
-  E1: ["перехват"],
-  B4: ["кортеж"],
-  C10: ["модульное"],
-  C8: ["флаги"],
-  B8: ["флаги"],
+/** Строки модели протокола: вид, сдвиг, пометка. */
+const modelRowsIn = (text) =>
+  [...text.matchAll(/^\| П\d+ \| ([^|]+) \|[^|\n]*\|[^\n]*?\| ([^|\n]*) \| ([^|\n]*) \| [^|\n]* \|$/gm)].map(
+    (m) => ({ sort: m[1].trim(), delta: m[2].trim(), mark: m[3].trim() }),
+  );
+/** Критерий, о котором модель спрашивает: строка его вида в модели есть, и
+ * «нет предмета» при ней ложно — проба отвечает «чисто» с номерами строк.
+ * Те же данные, по которым спрашивает свод: список рядом разошёлся бы с ними. */
+const askedIn = (id, text) => {
+  const rows = modelRowsIn(text);
+  const hit = (spec) =>
+    rows.some(
+      (r) =>
+        r.sort === spec.sort &&
+        (spec.mark === undefined || [spec.mark].flat().includes(r.mark)) &&
+        (spec.scope !== "fresh" || r.delta !== ""),
+    );
+  return (
+    [...BAR_SIGNALS, ...BAR_CUTS].some((one) => one.ids.includes(id) && hit(one)) ||
+    (BAR_PRESENT[id] ?? []).some(hit)
+  );
 };
 const barRowsCited = (text) =>
   [...text.matchAll(/^\| ((?:П|Св)\d+) \|/gm)].map((m) => m[1]).join(", ") || "П1";
@@ -1268,7 +1288,7 @@ const fillWitness = (c) => {
   return c.join("|");
 };
 /** Критерии, о которых спрашивают свидетели: «нет предмета» при них ложно. */
-const WITNESS_ASKED = ["A1", "A2", "A10", "C1", "B5", "H8"];
+const WITNESS_ASKED = Object.keys(WITNESS_COLUMNS);
 /** Слова страниц чтения: проба снимает их выводом режима — в тесте это
  * проверка механизма, а не чтение. Корень копии — ближайшая папка с обвязкой. */
 const pageWordsOf = (protoAt) => {
@@ -1362,9 +1382,7 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
           // «нет предмета» ложно, и проба отвечает «чисто» с номерами строк.
           const core =
             c[3].includes("**ядро.**") ||
-            (SYMPTOM_ASKED[id] ?? []).some((sort) =>
-              new RegExp("^\\| П\\d+ \\| " + sort + " \\|", "m").test(before),
-            ) ||
+            askedIn(id, before) ||
             // Свидетели объявлений делают предмет у имени и абстракции.
             (["B5", "H8"].includes(id) && /^\| Св\d+ \| `[^`]+:\d+` \|/m.test(before));
           c[4] = core ? " чисто " : " нет предмета ";
