@@ -2101,6 +2101,62 @@ describe("мутационный отчёт без исполненных тес
   }, 180000);
 });
 
+describe("реестр мутаций считает так же, как отчёт, который читает", () => {
+  it("мутант с ошибкой раннера не живой; файл, заказанный прогоном и не давший мутантов, промерен", () => {
+    const box = seatEmpty("mutschet-");
+    try {
+      const app = path.join(box, "src", "app");
+      fs.writeFileSync(
+        path.join(app, "zzMut.ts"),
+        "export const zzMut = (n: number) => n + 1;\n",
+      );
+      fs.writeFileSync(path.join(app, "zzQuiet.ts"), "export const ZZ_QUIET = 1;\n");
+      fs.writeFileSync(path.join(app, "zzOther.ts"), "export const ZZ_OTHER = 2;\n");
+      const cfg = fs.readFileSync(path.join(box, ".context", "graph.config.mjs"), "utf8");
+      fs.writeFileSync(
+        path.join(box, ".context", cfg.match(/mutationConfig: "([^"]+)"/)[1]),
+        JSON.stringify({ mutate: ["src/app/**/*.ts", "!src/**/tests/**"] }),
+      );
+      // Прогон по файлам правки: своя область отчёта уже области конфига.
+      const out = path.join(box, ".context", cfg.match(/mutationReport: "([^"]+)"/)[1]);
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      const mutant = (status) => ({ status, coveredBy: ["t1"], testsCompleted: 1 });
+      fs.writeFileSync(
+        out,
+        "<script>app.report = " +
+          JSON.stringify({
+            config: { mutate: ["src/app/zzMut.ts", "src/app/zzQuiet.ts"] },
+            files: {
+              "src/app/zzMut.ts": {
+                mutants: ["Killed", "Survived", "RuntimeError", "CompileError", "Ignored"].map(mutant),
+              },
+            },
+          }) +
+          ";</script>",
+      );
+      const said = execFileSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "mutated",
+          "src/app/zzMut.ts",
+          "src/app/zzQuiet.ts",
+          "src/app/zzOther.ts",
+        ],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(said).toContain("zzMut.ts — 50.00 %, живых 1");
+      expect(said).toContain("zzQuiet.ts — мутировать нечего");
+      // Не заказанный прогоном файл промеренным не становится.
+      const never = said.split("Под мутациями не были ни разу:")[1] ?? "";
+      expect(never.split("Измерено")[0]).toContain("zzOther.ts");
+      expect(never.split("Измерено")[0]).not.toContain("zzQuiet.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("граф по именам: сквозь бочку до объявления", () => {
   it("радиус, зависимости и тесты считаются по взятым именам, а не по строке импорта", () => {
     const box = seatEmpty("imena-");

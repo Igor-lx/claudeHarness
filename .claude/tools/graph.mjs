@@ -6653,15 +6653,16 @@ if (mode === "mutated") {
         parsed.files = {};
         parsed.config = null;
       }
-      // Отчёт несёт СВОЮ область (`config.mutate`). Совпала с конфигом —
-      // прогон был полным, и тогда файл в области, которого в отчёте нет,
-      // доказанно не дал ни одного мутанта: мутировать в нём нечего. Без этой
-      // сверки такие файлы числились бы долгом вечно — а проверка, которую
-      // нельзя удовлетворить, учит не читать её вывод.
-      const fullScope =
-        mutateGlobs !== null &&
-        JSON.stringify(parsed.config?.mutate ?? null) ===
-          JSON.stringify(mutateGlobs);
+      // Отчёт несёт СВОЮ область (`config.mutate`): что прогону заказали.
+      // Заказанный файл, которого в отчёте нет, доказанно не дал ни одного
+      // мутанта — мутировать в нём нечего. Прежде это засчитывалось только
+      // прогону на всю область конфига, а доктрина велит гонять по файлам
+      // правки: файл из одних констант числился непромеренным навсегда, и
+      // режим раз за разом предлагал прогон, который ничего не меняет.
+      // Замерено на стенде: файл двух числовых шагов.
+      const askedOf = Array.isArray(parsed.config?.mutate)
+        ? globsToTest(parsed.config.mutate)
+        : null;
       for (const [key, d] of Object.entries(parsed.files ?? {})) {
         const file = norm(path.join(repoRoot, key));
         if (!files.includes(file)) continue;
@@ -6672,21 +6673,24 @@ if (mode === "mutated") {
         let killed = 0;
         let alive = 0;
         for (const m of d.mutants ?? []) {
-          // Исключённые мутаторы остаются в отчёте пометкой `Ignored` — они
-          // не убиты и не выжили, в знаменатель счёта не входят.
-          if (m.status === "Ignored") continue;
+          // Счёт тот же, что у самого отчёта: пропущенный мутатор и мутант,
+          // уронивший компилятор или раннер, не убиты и не выжили. Прежде
+          // живым числилось всё, кроме убитых, и упавший раннер отправлял
+          // сессию разбирать выжившего, которого нет. Замерено на стенде.
           if (m.status === "Killed" || m.status === "Timeout") killed += 1;
-          else alive += 1;
+          else if (m.status === "Survived" || m.status === "NoCoverage")
+            alive += 1;
         }
         const row = { killed, alive, hash: stamp(file) };
         if (JSON.stringify(ledger[key]) !== JSON.stringify(row)) merged += 1;
         ledger[key] = row;
       }
-      if (fullScope) {
+      if (askedOf !== null && inScope !== null) {
         for (const file of files) {
           if (isTest(file) || file.endsWith(".d.ts")) continue;
           const k = key(file);
-          if (!inScope(k) || parsed.files[k] !== undefined) continue;
+          if (!inScope(k) || !askedOf(k) || parsed.files[k] !== undefined)
+            continue;
           if (statSync(file).mtimeMs > reportedAt) continue;
           const row = { killed: 0, alive: 0, hash: stamp(file) };
           if (JSON.stringify(ledger[k]) !== JSON.stringify(row)) merged += 1;
