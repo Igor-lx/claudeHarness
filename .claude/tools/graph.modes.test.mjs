@@ -2063,6 +2063,141 @@ describe("свод на правке — по той же области, что
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("потребитель за областью — строкой радиуса и вопросом о совместимости", () => {
+    const box = seatEmpty("radius-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = (rel, text) => {
+        const at = path.join(box, ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      // Цепочка: помощник ← показ ← экран. Тест есть у показа, у экрана нет.
+      put("src/shared/zzFmt/zzFmt.ts", "export const zzFmt = (n: number): string => String(n);\n");
+      put(
+        "src/components/ZzShow/ZzShow.tsx",
+        'import { zzFmt } from "../../shared/zzFmt/zzFmt";\n\nexport function ZzShow({ n }: { n: number }) {\n  return <span>{zzFmt(n)}</span>;\n}\n',
+      );
+      put(
+        "src/components/ZzShow/tests/ZzShow.test.tsx",
+        'import { ZzShow } from "../ZzShow";\n\nexport const zzProbe = ZzShow;\n',
+      );
+      put(
+        "src/app/zzScreen.tsx",
+        'import { ZzShow } from "../components/ZzShow/ZzShow";\n\nexport function ZzScreen() {\n  return <ZzShow n={1} />;\n}\n',
+      );
+      // Второй потребитель за областью — с тестом через него: строка обязана
+      // их различать, а не говорить «теста нет» обо всех.
+      put(
+        "src/app/zzOther.tsx",
+        'import { ZzShow } from "../components/ZzShow/ZzShow";\n\nexport function ZzOther() {\n  return <ZzShow n={2} />;\n}\n',
+      );
+      put(
+        "src/app/tests/zzOther.test.tsx",
+        'import { ZzOther } from "../zzOther";\n\nexport const zzOtherProbe = ZzOther;\n',
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+
+      // Правка глубокого помощника: оба экрана за областью, тест есть через один.
+      // Новый файл, который помощник берёт, своей строки не несёт: каждый его
+      // потребитель — правленый либо новый, и их радиус уже назван.
+      put("src/shared/zzFmt/zzPad.ts", 'export const zzPad = (s: string): string => s.padStart(4, " ");\n');
+      put(
+        "src/shared/zzFmt/zzFmt.ts",
+        'import { zzPad } from "./zzPad";\n\nexport const zzFmt = (n: number): string => zzPad(n.toFixed(1));\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const first = fs.readFileSync(protoAt, "utf8");
+      expect(first).toContain(
+        "| радиус | `shared/zzFmt/zzFmt.ts` | за областью потребителей `2`, без теста через них `1`: app/zzOther.tsx — тест app/tests/zzOther.test.tsx; app/zzScreen.tsx — теста через него нет |  | без теста |",
+      );
+      expect(first.match(/\| радиус \|/g)).toHaveLength(1);
+      // О совместимости молчать нельзя: ни «чисто» мимо радиуса, ни «нет предмета».
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { "J9-тер": "чисто |  | поведение то же | " },
+      });
+      expect(tool("bar")).toMatch(
+        /J9-тер: чисто, а за областью есть потребители правленого узла[^:]*: П\d+/,
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { "J9-тер": "нет предмета |  | тестов не трогали | " },
+      });
+      expect(tool("bar")).toMatch(/J9-тер: нет предмета, а в модели он есть: П\d+/);
+      fs.rmSync(protoAt);
+      tool("bar");
+      const radiusId = /\| (П\d+) \| радиус \|/.exec(fs.readFileSync(protoAt, "utf8"))[1];
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          "J9-тер": "чисто |  | " + radiusId + ": экран показывает ту же строку показа, её держит тест показа | ",
+        },
+      });
+      expect(tool("bar")).toContain("печать поставлена");
+
+      // Тест есть через каждого потребителя за областью — пометки нет.
+      put(
+        "src/app/tests/zzScreen.test.tsx",
+        'import { ZzScreen } from "../zzScreen";\n\nexport const zzScreenProbe = ZzScreen;\n',
+      );
+      git("add", "-A");
+      git("commit", "-qm", "тест экрана", "--no-verify");
+      put(
+        "src/shared/zzFmt/zzFmt.ts",
+        'import { zzPad } from "./zzPad";\n\nexport const zzFmt = (n: number): string => zzPad(n.toFixed(2));\n',
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(
+        "| радиус | `shared/zzFmt/zzFmt.ts` | за областью потребителей `2`, без теста через них `0`: app/zzOther.tsx — тест app/tests/zzOther.test.tsx; app/zzScreen.tsx — тест app/tests/zzScreen.test.tsx |  |  |",
+      );
+
+      // Потребителей больше, чем строка называет поимённо: голова — по имени,
+      // прочие числом.
+      for (let i = 1; i <= 8; i += 1)
+        put(
+          "src/app/zzS" + i + ".tsx",
+          'import { ZzShow } from "../components/ZzShow/ZzShow";\n\nexport function ZzS' + i + "() {\n  return <ZzShow n={" + i + "} />;\n}\n",
+        );
+      git("add", "-A");
+      git("commit", "-qm", "экраны", "--no-verify");
+      put(
+        "src/shared/zzFmt/zzFmt.ts",
+        'import { zzPad } from "./zzPad";\n\nexport const zzFmt = (n: number): string => zzPad(n.toFixed(3));\n',
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      const wide = /\| радиус \| `shared\/zzFmt\/zzFmt\.ts` \| ([^|]*) \|/.exec(fs.readFileSync(protoAt, "utf8"))[1];
+      expect(wide).toMatch(/^за областью потребителей `10`, без теста через них `8`: /);
+      expect(wide.split("; ")).toHaveLength(9);
+      expect(wide).toMatch(/; и ещё `2`$/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 const readdirOf = (dir) => fs.readdirSync(dir).filter((n) => n.endsWith(".md"));
