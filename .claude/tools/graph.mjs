@@ -3344,7 +3344,9 @@ const publicNamesOf = (target) => {
  * Имя, собранное вызовом во время работы, отсюда не видно — для него таблица
  * связей через имя в коде. */
 const SHARED_NAME_LIMIT = 6;
-const sharedNamesOf = (target) => {
+/** Имя-константа → файлы, берущие его у того же объявления. Разбор один на
+ * досье, модель свода и область работы: разойдясь, они очерчивали бы разное. */
+const sharedPartnersByName = (target) => {
   const mine = new Map();
   for (const one of namedImportsOf.get(target) ?? []) {
     if (!Array.isArray(one.names)) continue;
@@ -3354,23 +3356,36 @@ const sharedNamesOf = (target) => {
       if (d !== null) mine.set(n, d);
     }
   }
-  const groups = new Map();
+  const out = [];
   for (const [n, d] of mine) {
-    const partners = files
-      .filter(
-        (f) =>
-          f !== target &&
-          !isTest(f) &&
-          (namedImportsOf.get(f) ?? []).some(
-            (one) =>
-              Array.isArray(one.names) &&
-              one.names.includes(n) &&
-              definerOf(one.target, n) === d,
-          ),
-      )
-      .map(rel)
-      .sort();
-    if (partners.length === 0) continue;
+    const partners = files.filter(
+      (f) =>
+        f !== target &&
+        !isTest(f) &&
+        (namedImportsOf.get(f) ?? []).some(
+          (one) =>
+            Array.isArray(one.names) &&
+            one.names.includes(n) &&
+            definerOf(one.target, n) === d,
+        ),
+    );
+    if (partners.length > 0) out.push([n, partners]);
+  }
+  return out;
+};
+/** Партнёры по имени в области работы — без словарей: константу, которую
+ * берут шире `SHARED_NAME_LIMIT`, связью не считают. */
+const sharedPartnersOf = (target) => [
+  ...new Set(
+    sharedPartnersByName(target)
+      .filter(([, partners]) => partners.length <= SHARED_NAME_LIMIT)
+      .flatMap(([, partners]) => partners),
+  ),
+];
+const sharedNamesOf = (target) => {
+  const groups = new Map();
+  for (const [n, found] of sharedPartnersByName(target)) {
+    const partners = found.map(rel).sort();
     const key =
       partners.length > SHARED_NAME_LIMIT
         ? "широко: " + partners.length + " файлов"
@@ -7754,6 +7769,7 @@ const stateRecords = () => {
       writers: cell("кто пиш"),
       readers: cell("кто чит"),
       line,
+      at: entry.to,
     });
   }
   return STATE_ROWS;
@@ -7927,7 +7943,10 @@ const listCell = (names, room = 8) =>
  * которые ставятся первыми. Нужны протоколам перехода: они спрашивают одно
  * ядро одного уровня, и остальные виды там — чтение, о котором не спросит
  * ни один их критерий. */
-const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
+const barModelOf = (
+  focus,
+  { kind, subject, only = null, lead = [], area = [] },
+) => {
   const out = [];
   const want = (sort) => only === null || only.has(sort);
   const add = (sort, where, what, mark = "", delta = "", release = "") => {
@@ -8293,6 +8312,12 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
             note(mate, "в единице " + unitOf(d) + ", из которой берёт " + rel(f));
       }
       for (const u of dependentsOf(f)) note(u, "берёт " + rel(f));
+      // Партнёр по имени-константе: оба берут её у третьего файла и друг о
+      // друге не знают. Граф импортов их не соединяет, область — соединяет.
+      for (const [name, partners] of sharedPartnersByName(f))
+        if (partners.length <= SHARED_NAME_LIMIT)
+          for (const p of partners)
+            note(p, "делит с " + rel(f) + " имя " + name);
     }
     for (const [n, why] of [...near].sort((a, b) => barByRel(a[0], b[0]))) {
       const said = mapResponsibilityOf(n);
@@ -8321,6 +8346,135 @@ const barModelOf = (focus, { kind, subject, only = null, lead = [] }) => {
           "да",
         );
       }
+    }
+  }
+
+  // Факты соседей, которые машина видит сама: ребро против правила
+  // направления, внутренность чужой единицы, цикл, второй писатель. Область
+  // читают целиком, и известный дефект в ней — находка того же захода: на
+  // правке он чинится, на чтении называется. Прежде модель знала эти факты
+  // только у самого предмета, и ребро против правила у соседа, которого
+  // правка читала, проходило словом «чисто». Сдвига у них нет: соседа правка
+  // не трогала, иначе он был бы предметом.
+  if (!transition)
+    for (const n of area) {
+      if (inFocus.has(n) || isTest(n) || !files.includes(n)) continue;
+      const where = rel(n);
+      for (const e of want("направление") ? faults : []) {
+        if (e.from !== n) continue;
+        add(
+          "направление",
+          where,
+          (e.to === null ? e.banned : rel(e.to)) +
+            ": слою " +
+            e.rule.layer +
+            " запрещено " +
+            e.banned,
+          owedMark(
+            "против правила",
+            e.to === null ? [e.from] : [e.from, e.to],
+            e.to === null ? [e.banned] : [],
+          ),
+        );
+      }
+      for (const t of want("граница") ? (importsOf.get(n) ?? []) : []) {
+        if (isTest(t) || !foreignInside(n, t)) continue;
+        add(
+          "граница",
+          where,
+          rel(t) + " — " + insideText(t),
+          owedMark(unitHasEntry(t) ? "мимо входа" : "входа нет", [n, t]),
+        );
+      }
+      const cycle = want("цикл") ? cycleThrough(n) : null;
+      if (cycle !== null) {
+        const key = [...new Set(cycle)].sort().join("|");
+        if (!seenCycles.has(key)) {
+          seenCycles.add(key);
+          add(
+            "цикл",
+            where,
+            cycle.map(rel).join(" → "),
+            owedMark("", cycle.slice(0, -1)),
+          );
+        }
+      }
+      for (const [key, byFile] of want("писатель") ? writers : []) {
+        if (
+          !byFile.has(n) ||
+          unitsAmong([...byFile.keys()]) < 2 ||
+          seenKeys.has(key)
+        )
+          continue;
+        seenKeys.add(key);
+        add(
+          "писатель",
+          where + ":" + byFile.get(n),
+          key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
+          owedMark(
+            records.some((r) =>
+              r.line.includes(key.slice(key.indexOf("«") + 1, -1)),
+            )
+              ? "да"
+              : "нет",
+            [...byFile.keys()],
+          ),
+        );
+      }
+    }
+
+  // Каталог проекта — когда правка заводит новое. Второй источник истины и
+  // повторённая работа появляются обычно БЕЗ импорта оригинала: новый узел
+  // пишут, не зная о старом, и в области по графу старого нет. Поэтому новое
+  // состояние сверяют со ВСЕМИ источниками истины проекта, новый файл кода —
+  // со всеми единицами его слоя по карте. Сдвига у каталога нет: это опора
+  // сверки, а не вопрос модели, и назвать его можно диапазоном.
+  if (change) {
+    const brought = (sort) =>
+      out.some(
+        (m) => m.sort === sort && m.delta.split(", ").includes("новое"),
+      );
+    // Записи, которые модель уже показала у предмета и соседей, второй раз
+    // не печатаются: каталог — остальные источники проекта.
+    if (want("каталог") && (brought("состояние") || brought("писатель")))
+      for (const r of records.filter((one) => !seenRecords.has(one.line)))
+        add(
+          "каталог",
+          r.at,
+          "«" +
+            r.what +
+            "» — владелец " +
+            r.owner +
+            "; пишут " +
+            (r.writers || "—"),
+          "источники",
+        );
+    const fresh = focus.filter(
+      (f) =>
+        files.includes(f) &&
+        !isTest(f) &&
+        !f.endsWith(".d.ts") &&
+        headCode(f) === null,
+    );
+    for (const layer of want("каталог")
+      ? [...new Set(fresh.map(layerOf))].sort()
+      : []) {
+      const units = new Map();
+      for (const f of files) {
+        if (isTest(f) || f.endsWith(".d.ts") || inFocus.has(f)) continue;
+        if (layerOf(f) !== layer) continue;
+        const u = unitOf(f);
+        if (!units.has(u)) units.set(u, new Set());
+        const said = mapResponsibilityOf(f);
+        if (said !== null) units.get(u).add(said.slice(0, 100));
+      }
+      for (const [u, says] of [...units].sort((a, b) => (a[0] < b[0] ? -1 : 1)))
+        add(
+          "каталог",
+          u,
+          says.size ? [...says].join("; ").slice(0, 200) : "в карте не описан",
+          "слой",
+        );
     }
   }
 
@@ -8401,16 +8555,70 @@ const barWho = (id, subject) =>
 const barModelKey = (m) => [m.sort, m.where, m.what].join("|");
 const barByRel = (x, y) => (rel(x) < rel(y) ? -1 : 1);
 
+/** Область работы — та же, что очерчивает досье: сам предмет, то, что он
+ * берёт, те, кто берёт его, — по именам, сквозь бочки, — листы стилей,
+ * которых граф импортов не видит, и партнёры по имени-константе. Одна на
+ * задачу чтения, задачу изменения и замер уровней: правку проверяют по тому
+ * же объёму, по которому её читают. Прежде у правки предметом было одно
+ * правленое, и область, которую доктрина велит прочитать и сверить тем же
+ * списком, свод не спрашивал вовсе. */
+const barAreaOf = (focus) =>
+  [
+    ...new Set(
+      focus
+        .flatMap((target) => {
+          const near = isStylePath(rel(target))
+            ? { own: [], viaUsers: [] }
+            : stylesNear(target);
+          const uses = [...usesWithVia(target).uses.keys()];
+          // Взятое мимо входа тянет хозяина: чужую внутренность читают
+          // вместе с той единицей, чья она.
+          const owners = uses
+            .filter((d) => foreignInside(target, d))
+            .flatMap((d) =>
+              files.filter((m) => !isTest(m) && unitOf(m) === unitOf(d)),
+            );
+          return [
+            target,
+            ...uses,
+            ...owners,
+            ...dependentsOf(target),
+            ...near.own,
+            ...near.viaUsers,
+            ...sharedPartnersOf(target),
+          ];
+        })
+        .map(norm),
+    ),
+  ].sort(barByRel);
+
+/** Предмет строки ядра о соседях: файлы области вне единиц переноса (для
+ * ядра узла) либо вне слоёв (для ядра слоя) самого предмета. Ядро о них
+ * спрашивают одной строкой на критерий: строка на каждого соседа давала бы
+ * сотни строк у правки общего помощника. */
+const BAR_AREA = "соседи";
+const barNeighboursOf = (focus, area) => {
+  const own = (list) => list.filter((f) => !isTest(f) && !f.endsWith(".d.ts"));
+  const units = new Set(own(focus).map(unitOf));
+  const layers = new Set(own(focus).map(layerOf));
+  const rest = own(area).filter((f) => !focus.includes(f));
+  return {
+    узел: new Set(rest.filter((f) => !units.has(unitOf(f)))),
+    слой: new Set(rest.filter((f) => !layers.has(layerOf(f)))),
+  };
+};
+
 /** Предметы уровней: единицы переноса и слои, которых касается работа.
  * Тесты и объявления типов предметом не бывают: узлом продукта они не
- * являются. */
-const barSubjectsOf = (list) => {
+ * являются. Соседи области — свой предмет, одной строкой. */
+const barSubjectsOf = (list, neighbours = null) => {
   const own = list.filter((f) => !isTest(f) && !f.endsWith(".d.ts"));
   const units = [...new Set(own.map(unitOf))].sort();
   const all = (u, test) => own.filter((f) => unitOf(f) === u).every(test);
+  const near = (level) => ((neighbours?.[level]?.size ?? 0) > 0 ? [BAR_AREA] : []);
   return {
-    узел: units,
-    слой: [...new Set(own.map(layerOf))].sort(),
+    узел: [...units, ...near("узел")],
+    слой: [...[...new Set(own.map(layerOf))].sort(), ...near("слой")],
     // Единица из одних бочек ничего не делает сама, единица из одних листов
     // стилей не несёт кода: из ядра узла предмет у первой есть только у
     // вопроса о поверхности, у второй — о владении стилями. Остальные
@@ -8457,14 +8665,30 @@ const barPlaceOf = (where) => {
     : { unit: unitOf(f), layer: layerOf(f) };
 };
 /** Модель под строку: факты её предмета. «Чисто» про одну единицу переноса
- * обязано стоять на строке о ней, а не о соседке по правке. */
-const barModelFor = (rows, level, subject) =>
+ * обязано стоять на строке о ней, а не о соседке по правке; про соседей —
+ * на строках о файлах соседей. */
+const barModelFor = (rows, level, subject, neighbours = null) =>
   subject === "" || level === "приложение"
     ? rows
-    : rows.filter((r) => {
-        const p = barPlaceOf(r.where);
-        return level === "узел" ? p.unit === subject : p.layer === subject;
-      });
+    : subject === BAR_AREA
+      ? rows.filter((r) => {
+          const f = barAbsOf(r.where);
+          return f !== null && (neighbours?.[level]?.has(norm(f)) ?? false);
+        })
+      : rows.filter((r) => {
+          const p = barPlaceOf(r.where);
+          return level === "узел" ? p.unit === subject : p.layer === subject;
+        });
+/** Лежит ли файл в предмете строки: единица переноса, слой либо соседи. */
+const barInsideOf = (level, subject, abs, neighbours = null) =>
+  subject === "" ||
+  (subject === BAR_AREA
+    ? (neighbours?.[level]?.has(norm(abs)) ?? false)
+    : level === "узел"
+      ? unitOf(abs) === subject
+      : level === "слой"
+        ? layerOf(abs) === subject
+        : true);
 
 /** Что ЕСТЬ в предмете. Признаки узкие и замеряются текстом: по ним
  * инструмент сам проставляет «нет предмета» там, где критерий предмета не
@@ -8518,6 +8742,7 @@ const barSkeletonOf = ({
   carried,
   withBase,
   noneOf,
+  baseFiles = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const release0 = carried?.releases ?? new Map();
@@ -8644,7 +8869,11 @@ const barSkeletonOf = ({
       : [
           "писатель, связи через имя, выход наружу, размах. Графа «сдвиг» — что",
           "работа изменила против последнего коммита; каждый сдвиг получает ответ",
-          "в итоге уровня, в основании либо в находке.",
+          "в итоге уровня, в основании либо в находке. Соседи области — с их",
+          "ответственностью, источниками и фактами, которые машина видит сама.",
+          "Правка, заведшая новое состояние или новый файл, получает каталог",
+          "проекта — все источники истины и единицы слоя нового файла: второй",
+          "источник появляется без импорта оригинала, и соседей тут мало.",
         ]),
     "",
     "Собранное не правят — оно пересобирается; недостающее дописывают строкой",
@@ -8716,7 +8945,12 @@ const barSkeletonOf = ({
           "Критерии разложены по уровню, на котором их судят. Ядро уровня узла",
           "спрашивают по каждой единице переноса предмета, ядро уровня слоя — по",
           "каждому слою: у строки графа «предмет», и находка в ней называет файл",
-          "этого предмета. Остальное — одной строкой на работу.",
+          "этого предмета. Соседи из области — что предмет берёт, кто берёт его,",
+          "листы стилей и партнёры по имени — отвечают на ядро одной строкой " +
+            barQuoted(BAR_AREA) +
+            ".",
+          "Остальное — одной строкой на работу, и о предмете, и о соседях: область",
+          "читают целиком, и найденное в ней — находка того же захода.",
         ]),
     "",
     ...LEVEL_ORDER.flatMap(outcomesOf),
@@ -8751,9 +8985,11 @@ const barSkeletonOf = ({
       ? [
           "## База и документация",
           "",
-          "Ответ на каждый файл предмета ПОРОЗНЬ: правлена ли запись базы",
-          "о нём, правлен ли документ. Один ответ на оба вопроса сливает их,",
-          "а слитый ответ всегда положителен.",
+          "Ответ на каждый файл предмета и его соседей ПОРОЗНЬ: правлена ли",
+          "запись базы о нём, правлен ли документ. Один ответ на оба вопроса",
+          "сливает их, а слитый ответ всегда положителен. Соседи здесь затем,",
+          "что прочитанное ложится в базу, а правка меняет поведение и для них:",
+          "запись о соседе иначе перестаёт отвечать коду без всякого признака.",
           "",
           "Исход: " +
             barQuoted("правлено") +
@@ -8763,12 +8999,12 @@ const barSkeletonOf = ({
           "",
           BAR_BASE_HEAD,
           "| --- | --- | --- | --- |",
-          ...marks.map(
-            (m) =>
+          ...(baseFiles ?? marks.map((m) => m.file)).map(
+            (file) =>
               "| " +
-              barQuoted(m.file) +
+              barQuoted(file) +
               " | " +
-              (base0.get(m.file) ?? ["", "", ""]).join(" | ") +
+              (base0.get(file) ?? ["", "", ""]).join(" | ") +
               " |",
           ),
           "",
@@ -8833,6 +9069,8 @@ const barHolesOf = ({
   withBase,
   marks,
   subjectAbs = [],
+  neighbours = null,
+  baseFiles = null,
 }) => {
   const holes = [];
   const said = new Map();
@@ -8877,13 +9115,7 @@ const barHolesOf = ({
       : ""
     ).split(/\r?\n/),
   );
-  const insideOf = (c, s, abs) =>
-    s === "" ||
-    (c.level === "узел"
-      ? unitOf(abs) === s
-      : c.level === "слой"
-        ? layerOf(abs) === s
-        : true);
+  const insideOf = (c, s, abs) => barInsideOf(c.level, s, abs, neighbours);
   const debtNaming = (c, s) =>
     kind === "на переход"
       ? []
@@ -8988,18 +9220,10 @@ const barHolesOf = ({
       );
     // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
     // одну единицу переноса закрывал бы вопрос о другой.
-    if (subject !== "") {
-      const inside =
-        c.level === "узел"
-          ? unitOf(abs) === subject
-          : c.level === "слой"
-            ? layerOf(abs) === subject
-            : true;
-      if (!inside)
-        holes.push(
-          who + ": находка называет " + barQuoted(spot[1]) + " — вне этого предмета",
-        );
-    }
+    if (subject !== "" && !barInsideOf(c.level, subject, abs, neighbours))
+      holes.push(
+        who + ": находка называет " + barQuoted(spot[1]) + " — вне этого предмета",
+      );
     if (one.fate === "починено" && !changedNow.has(abs))
       holes.push(
         who +
@@ -9039,7 +9263,9 @@ const barHolesOf = ({
   for (const { c, subject } of expected) {
     const one = said.get(barKey(c.id, subject));
     if (one === undefined) continue;
-    const code = barModelCode(barModelFor(parsed.model, c.level, subject));
+    const code = barModelCode(
+      barModelFor(parsed.model, c.level, subject, neighbours),
+    );
     const fault = barModelFault(
       [c.id, one.outcome, flat(one.what), kind, code, c.level, one.fate].join(
         "|",
@@ -9066,7 +9292,7 @@ const barHolesOf = ({
       const spot = spotOf(one.addr);
       const abs = spot === null ? null : spotFile(spot[1]);
       if (abs === null) return subject === s;
-      return level === "узел" ? unitOf(abs) === s : layerOf(abs) === s;
+      return barInsideOf(level, s, abs, neighbours);
     }).length;
   for (const level of BAR_SUMMED)
     for (const s of levelSubjects[level] ?? []) {
@@ -9077,7 +9303,7 @@ const barHolesOf = ({
           flat(row[0]),
           flat(row[1]),
           flat(row[2]),
-          barModelCode(barModelFor(parsed.model, level, s)),
+          barModelCode(barModelFor(parsed.model, level, s, neighbours)),
           openOf(level, s),
         ].join("|"),
       );
@@ -9121,7 +9347,7 @@ const barHolesOf = ({
       const tail = file.slice(file.lastIndexOf("/") + 1);
       return !owned.some((cell) => cell.includes(tail));
     };
-    for (const { file } of marks) {
+    for (const file of baseFiles ?? marks.map((m) => m.file)) {
       const c = parsed.base.get(file);
       if (c === undefined) {
         holes.push("база: строки про " + barQuoted(file) + " нет");
@@ -9182,6 +9408,8 @@ const barProcess = ({
   repoRoot,
   changedNow,
   subjectAbs = [],
+  neighbours = null,
+  baseFiles = null,
 }) => {
   const was = barHeader(at);
   const parsedWas = was === null ? null : barRowsOf(was.body);
@@ -9220,12 +9448,25 @@ const barProcess = ({
       );
       return want.size === have.size && [...want].every((k) => have.has(k));
     })();
+  // Таблица базы — по тем же файлам: сосед, пришедший в область или ушедший
+  // из неё, иначе оставался бы без строки либо со строкой о чужом.
+  const sameBase =
+    parsedWas !== null &&
+    (() => {
+      if (!withBase) return true;
+      const want = baseFiles ?? marks.map((m) => m.file);
+      return (
+        parsedWas.base.size === want.length &&
+        want.every((f) => parsedWas.base.has(f))
+      );
+    })();
   const sameSubject =
     was !== null &&
     was.kind === kind &&
     barSameMarks(was.marks, marks) &&
     sameModel(parsedWas.model) &&
-    sameRows;
+    sameRows &&
+    sameBase;
   if (!sameSubject) {
     // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
     // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
@@ -9283,6 +9524,7 @@ const barProcess = ({
         carried: carry,
         withBase,
         noneOf,
+        baseFiles,
       }),
     );
     return {
@@ -9309,6 +9551,8 @@ const barProcess = ({
     withBase,
     marks,
     subjectAbs,
+    neighbours,
+    baseFiles,
   });
   const found = expected
     .map(({ c, subject }) => ({
@@ -9673,29 +9917,10 @@ if (mode === "bar") {
     }
     focus = under.length > 0 ? under : [hits[0]];
     kind = "на чтение";
-    // Область чтения — та же, что очерчивает досье: сам узел, то, что он
-    // берёт, то, что берёт его, и листы стилей, которых граф не видит.
-    // Соседи — по ИМЕНАМ, сквозь бочки, как у досье: по строке импорта в
-    // предмет попадал публичный вход, пустой по смыслу, а настоящие
-    // партнёры узла оставались снаружи.
-    subject = [
-      ...new Set(
-        focus
-          .flatMap((target) => {
-            const near = isStylePath(rel(target))
-              ? { own: [], viaUsers: [] }
-              : stylesNear(target);
-            return [
-              target,
-              ...usesWithVia(target).uses.keys(),
-              ...dependentsOf(target),
-              ...near.own,
-              ...near.viaUsers,
-            ];
-          })
-          .map(norm),
-      ),
-    ].sort(barByRel);
+    // Область чтения — та же, что очерчивает досье. Соседи — по ИМЕНАМ,
+    // сквозь бочки: по строке импорта в предмет попадал публичный вход,
+    // пустой по смыслу, а настоящие партнёры узла оставались снаружи.
+    subject = barAreaOf(focus);
   } else {
     subject = await barChangedSubject(repoRoot);
     if (subject === null) {
@@ -9733,12 +9958,19 @@ if (mode === "bar") {
     process.exit(0);
   }
 
+  // Область — одна на оба рода задачи: правку сверяют по тому же объёму, по
+  // которому её читают. На правке предмет при этом — правленое: его
+  // отпечатки сверяют ворота перед коммитом, а сосед, тронутый после печати,
+  // сам становится правленым и гасит её.
+  const work = focus ?? subject;
+  const area = kind === "на изменение" ? barAreaOf(work) : subject;
+  const neighbours = barNeighboursOf(work, area);
   const marks = barMarks(subject);
-  const model = barModelOf(focus ?? subject, { kind, subject });
+  const model = barModelOf(work, { kind, subject, area });
   // Предметы уровней: ядро узла спрашивают по каждой тронутой единице
-  // переноса, ядро слоя — по каждому слою. Одна строка на правку двух узлов
-  // закрывала вопрос одного ответом о другом.
-  const subjects = barSubjectsOf(focus ?? subject);
+  // переноса, ядро слоя — по каждому слою, соседей — одной строкой. Одна
+  // строка на правку двух узлов закрывала вопрос одного ответом о другом.
+  const subjects = barSubjectsOf(work, neighbours);
   const expected = barExpectedOf(live.all, subjects);
   const levelSubjects = {
     узел: subjects.узел.length ? subjects.узел : [""],
@@ -9746,8 +9978,9 @@ if (mode === "bar") {
     приложение: [""],
   };
   // Признаки беспредметности — по предмету строки: лист стилей одной
-  // единицы переноса не делает предметом стилей соседнюю.
-  const flagsAll = barFlagsOf(subject, manifestTouched);
+  // единицы переноса не делает предметом стилей соседнюю. Строки на работу
+  // отвечают за всю область.
+  const flagsAll = barFlagsOf(area, manifestTouched);
   const flagsBy = new Map();
   const noneOf = (c, s) => {
     const split = barSplitOf(c.id + "|" + c.level);
@@ -9757,9 +9990,11 @@ if (mode === "bar") {
       flagsBy.set(
         k,
         barFlagsOf(
-          subject.filter(
-            (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
-          ),
+          s === BAR_AREA
+            ? [...neighbours[split]]
+            : area.filter(
+                (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
+              ),
           manifestTouched,
         ),
       );
@@ -9789,7 +10024,9 @@ if (mode === "bar") {
     noneOf,
     repoRoot,
     changedNow,
-    subjectAbs: subject,
+    subjectAbs: area,
+    neighbours,
+    baseFiles: area.map(rel),
   });
 
   if (r.state === "напечатан") {
@@ -9834,17 +10071,24 @@ if (mode === "bar") {
         ", строк модели: " +
         model.length,
     );
+    const own = (list) => list.filter((s) => s !== BAR_AREA);
+    const near = area.filter((f) => !work.includes(f) && !isTest(f));
     console.log(
       "  единиц переноса: " +
-        (subjects.узел.length ? subjects.узел.join(", ") : "—") +
+        (own(subjects.узел).length ? own(subjects.узел).join(", ") : "—") +
         "; слоёв: " +
-        (subjects.слой.length ? subjects.слой.join(", ") : "—"),
+        (own(subjects.слой).length ? own(subjects.слой).join(", ") : "—") +
+        "; соседей в области: " +
+        near.length,
     );
     console.log("");
     console.log("  По КАЖДОМУ критерию поставить исход, читая политику, а не");
     console.log("  название в строке: название — указатель, а не критерий.");
     console.log(
-      "  Ядро узла — по каждой единице переноса, ядро слоя — по каждому слою.",
+      "  Ядро узла — по каждой единице переноса, ядро слоя — по каждому слою,",
+    );
+    console.log(
+      "  соседей — одной строкой: область читают целиком, найденное в ней — находка.",
     );
     console.log("  Затем итог по уровням — по каждому предмету: что работа");
     console.log("  на нём изменила и держится ли он; каждый сдвиг модели назван.");
@@ -9934,14 +10178,14 @@ if (mode === "levels") {
       process.exit(1);
     }
     const target = hits[0];
-    const area = [
-      ...new Set(
-        [target, ...usesWithVia(target).uses.keys(), ...dependentsOf(target)].map(
-          norm,
-        ),
-      ),
-    ];
-    const model = barModelOf([target], { kind: "на чтение", subject: area });
+    // Область та же, что у свода: замер до письма видит тех же соседей и их
+    // факты, которые потом спросит свод на правке.
+    const area = barAreaOf([target]);
+    const model = barModelOf([target], {
+      kind: "на чтение",
+      subject: area,
+      area,
+    });
     console.log("=== Уровни: " + rel(target) + " ===");
     for (const level of ["узел", "слой", "приложение"]) {
       const mine = model.filter((m) => m.level === level);
@@ -17751,7 +17995,10 @@ if (mode === "verify") {
             )
             .map((o) => barKey(o.id, o.subject)),
         );
-        const expected = barExpectedOf(live.all, barSubjectsOf(subject));
+        const expected = barExpectedOf(
+          live.all,
+          barSubjectsOf(subject, barNeighboursOf(subject, barAreaOf(subject))),
+        );
         const missing = expected.filter(
           (e) => !answered.has(barKey(e.c.id, e.subject)),
         );

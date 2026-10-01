@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -392,8 +393,11 @@ describe("ревизия сводов по истории", () => {
             !/^\s*-+\s*$/.test(c[1]) &&
             c[1].trim() !== "критерий"
           ) {
-            c[4] = " нет предмета ";
-            c[6] = " проба ревизии ";
+            // Новый файл сверяют с единицами его слоя: о повторённой логике
+            // предмет есть, и ответ опирается на каталог.
+            const versus = c[1].trim() === "A6-бис";
+            c[4] = versus ? " чисто " : " нет предмета ";
+            c[6] = versus ? " " + all + " сверено с каталогом слоя " : " проба ревизии ";
             return c.join("|");
           }
           if (c.length === 6 && /zzGone|zzKept/.test(c[1]))
@@ -1859,6 +1863,178 @@ describe("ядро по предметам уровня: правка, чтен�
       expect(section()).toContain("шаг закрыт: протоколов 5, все запечатаны");
       fs.rmSync(dir, { recursive: true, force: true });
       expect(section()).toContain("    шаг «архитектурный проход» закрыт, а протоколов нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("свод на правке — по той же области, что разбор; новое — с каталогом проекта", () => {
+  it("соседи по графу и по имени, их факты и записи; новый файл и новое состояние сверяют с каталогом", () => {
+    const box = seatEmpty("oblast-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = (rel, text) => {
+        const at = path.join(box, ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      // Лежащее до правки: общий слой берёт из приложения — против правила;
+      // ключ хранилища — общая константа, её берёт и индикатор.
+      put("src/app/zzTitle.ts", 'export const ZZ_TITLE = "t";\n');
+      put("src/shared/zzKeys/zzKeys.ts", 'export const ZZ_COUNT_KEY = "zz.count";\n');
+      put(
+        "src/shared/zzStore/zzStore.ts",
+        'import { ZZ_TITLE } from "../../app/zzTitle";\nimport { ZZ_COUNT_KEY } from "../zzKeys/zzKeys";\n\nexport const zzSave = (v: number): void => {\n  window.localStorage.setItem(ZZ_COUNT_KEY, ZZ_TITLE + v);\n};\n',
+      );
+      put(
+        "src/components/ZzMeter/ZzMeter.tsx",
+        'import { ZZ_COUNT_KEY } from "../../shared/zzKeys/zzKeys";\n\nexport function ZzMeter() {\n  return <span>{ZZ_COUNT_KEY}</span>;\n}\n',
+      );
+      const stateAt = path.join(box, ".context", "04-state.md");
+      fs.copyFileSync(path.join(box, ".claude", "seat", "templates", "04-state.md"), stateAt);
+      fs.writeFileSync(
+        stateAt,
+        fs
+          .readFileSync(stateAt, "utf8")
+          .replace(
+            "| --- | --- | --- | --- | --- |\n",
+            "| --- | --- | --- | --- | --- |\n" +
+              "| счёт в хранилище | `src/shared/zzStore/zzStore.ts` | `src/shared/zzStore/zzStore.ts` | `src/components/ZzMeter/ZzMeter.tsx` | сеанс |\n" +
+              "| заголовок окна | `src/app/zzTitle.ts` | `src/app/zzTitle.ts` | — | сеанс |\n",
+          ),
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      // Правка: новый счётчик со своим состоянием берёт хранилище и ключ.
+      put(
+        "src/components/ZzCounter/ZzCounter.tsx",
+        'import { useState } from "react";\nimport { ZZ_COUNT_KEY } from "../../shared/zzKeys/zzKeys";\nimport { zzSave } from "../../shared/zzStore/zzStore";\n\nexport function ZzCounter() {\n  const [n, setN] = useState(0);\n  const add = () => {\n    setN(n + 1);\n    zzSave(n + 1);\n  };\n  return (\n    <button title={ZZ_COUNT_KEY} onClick={add}>\n      {n}\n    </button>\n  );\n}\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      expect(tool("bar")).toContain("соседей в области: 3");
+      const proto = fs.readFileSync(protoAt, "utf8");
+      // Отпечатки — одно правленое: их сверяют ворота перед коммитом.
+      const head = proto.split("## Модель предмета")[0];
+      expect(head).toContain("| `components/ZzCounter/ZzCounter.tsx` |");
+      expect(head).not.toContain("zzStore.ts");
+      // Соседи — своим предметом ядра узла и слоя.
+      expect(proto).toContain("| A1 | `соседи` |");
+      expect(proto).toContain("| A5 | `соседи` |");
+      // Партнёр по имени-константе — сосед, хоть импорта между ними нет.
+      expect(proto).toMatch(
+        /\| сосед \| `components\/ZzMeter\/ZzMeter\.tsx` \| делит с components\/ZzCounter\/ZzCounter\.tsx имя ZZ_COUNT_KEY/,
+      );
+      // Факт соседа, который машина видит сама: ребро против правила.
+      expect(proto).toMatch(
+        /\| П\d+ \| направление \| `shared\/zzStore\/zzStore\.ts` \|[^\n]*\|  \| против правила \|/,
+      );
+      // База и документация — строка на каждый файл области.
+      for (const f of [
+        "components/ZzCounter/ZzCounter.tsx",
+        "components/ZzMeter/ZzMeter.tsx",
+        "shared/zzKeys/zzKeys.ts",
+        "shared/zzStore/zzStore.ts",
+      ])
+        expect(proto).toMatch(
+          new RegExp("^\\| `" + f.replace(/[/.]/g, "\\$&") + "` \\|  \\|  \\|  \\|$", "m"),
+        );
+      // Каталог: новый файл — единицы его слоя; новое состояние — источники
+      // проекта, которых модель ещё не показала.
+      expect(proto).toMatch(/\| каталог \| `components\/ZzMeter` \|[^\n]*\| слой \|/);
+      expect(proto).toMatch(
+        /\| каталог \| `\.context\/04-state\.md` \| «заголовок окна»[^\n]*\| источники \|/,
+      );
+      expect(proto).not.toMatch(/\| каталог \|[^\n]*«счёт в хранилище»/);
+
+      // Прилежное «чисто» по всем строкам: ребро соседа против правила
+      // печати не даёт — область читают целиком.
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const refused = tool("bar");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toMatch(
+        /A5 для `соседи`: чисто, а ребро идёт против правила направления: П\d+/,
+      );
+
+      // Сверено с соседями по графу, а каталог не назван — мало.
+      fs.rmSync(protoAt);
+      tool("bar");
+      const fresh = fs.readFileSync(protoAt, "utf8");
+      const idsOf = (...sorts) =>
+        fresh
+          .split("\n")
+          .filter((l) => /^\| П\d+ \|/.test(l) && sorts.includes(l.split("|")[2].trim()))
+          .map((l) => l.split("|")[1].trim())
+          .join(", ");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          "A6-бис": "чисто |  | сверено с соседями " + idsOf("сосед") + " | ",
+          A6: "чисто |  | сверено с источниками " + idsOf("источник", "состояние") + " | ",
+        },
+      });
+      const narrow = tool("bar");
+      expect(narrow).toMatch(
+        /A6-бис: чисто, а правка завела новый файл, а единицы его слоя в основании не названы[^:]*: П\d+/,
+      );
+      expect(narrow).toMatch(
+        /A6: чисто, а правка завела новое, а каталог источников проекта в основании не назван[^:]*: П\d+/,
+      );
+
+      // Честный свод: каталог назван, факт соседа вынесен вопросом.
+      fs.rmSync(protoAt);
+      tool("bar");
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\nВопрос о `src/shared/zzStore/zzStore.ts`.\n",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        holds: { "слой@соседи": "нет" },
+        pick: {
+          "A5@соседи": "нашлось | src/shared/zzStore/zzStore.ts:1 | общее берёт из приложения | вопрос",
+        },
+      });
+      const sealed = tool("bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain("слой `соседи` — не держится");
+      // Сверка прогона ждёт те же строки, что и режим: протокол без строк о
+      // соседях, запечатанный в обход режима, она не принимает.
+      const barSection = () =>
+        tool("verify").split("=== Планка пройдена покритериально ===")[1].split("\n===")[0];
+      expect(barSection()).toContain("свод закрыт печатью");
+      const blank = fs
+        .readFileSync(protoAt, "utf8")
+        .split("\n")
+        .filter((l) => !/^\| [^|]+ \| `соседи` \| /.test(l) || /^\| (узел|слой) \|/.test(l))
+        .join("\n")
+        .replace(/^- печать: `.*`$/m, "- печать: `нет`");
+      const forged = createHash("sha1").update(blank).digest("hex").slice(0, 12);
+      fs.writeFileSync(protoAt, blank.replace("- печать: `нет`", "- печать: `" + forged + "`"));
+      expect(barSection()).toMatch(/исхода нет у строк: [1-9][0-9]* из [0-9]+ — [^\n]*для `соседи`/);
+
+      // Разбор берёт ту же область: партнёр по имени в ней есть.
+      tool("bar", "components/ZzMeter");
+      const read = fs.readFileSync(protoAt, "utf8").split("## Модель предмета")[0];
+      expect(read).toContain("| `components/ZzCounter/ZzCounter.tsx` |");
+      expect(read).toContain("| `shared/zzStore/zzStore.ts` |");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
