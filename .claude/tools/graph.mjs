@@ -9343,8 +9343,15 @@ const barHolesOf = ({
     const owned = mapLines
       .filter((l) => l.startsWith("#"))
       .concat(mapLines.filter((l) => l.startsWith("|")).map(firstCellOf));
+    // Тест описывает не карта, а реестр тестов: его запись ищется там. Прежде
+    // «не требуется» у теста отклонялось всегда — у него нет и не может быть
+    // своей строки в карте.
+    const testsAt = CONFIG.tests == null ? null : path.join(BASE, CONFIG.tests);
+    const testsText =
+      testsAt !== null && existsSync(testsAt) ? readFileSync(testsAt, "utf8") : "";
     const unmapped = (file) => {
       const tail = file.slice(file.lastIndexOf("/") + 1);
+      if (isTest(file)) return !testsText.includes(tail);
       return !owned.some((cell) => cell.includes(tail));
     };
     for (const file of baseFiles ?? marks.map((m) => m.file)) {
@@ -9373,7 +9380,10 @@ const barHolesOf = ({
             file +
               ", база: " +
               barQuoted("не требуется") +
-              " у файла без своей записи в карте — прочитанное ложится в базу",
+              (isTest(file)
+                ? " у теста без своей записи в реестре тестов"
+                : " у файла без своей записи в карте") +
+              " — прочитанное ложится в базу",
           );
         if (c[2] === "")
           holes.push(

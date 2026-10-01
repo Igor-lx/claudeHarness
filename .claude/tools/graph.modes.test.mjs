@@ -1998,9 +1998,26 @@ describe("свод на правке — по той же области, что
         /A6: чисто, а правка завела новое, а каталог источников проекта в основании не назван[^:]*: П\d+/,
       );
 
-      // Честный свод: каталог назван, факт соседа вынесен вопросом.
+      // Честный свод: каталог назван, факт соседа вынесен вопросом. У теста
+      // «база не требуется» законно, когда его называет реестр тестов: в карте
+      // своей строки у теста нет и быть не может.
+      put(
+        "src/components/ZzCounter/tests/ZzCounter.test.tsx",
+        'import { ZzCounter } from "../ZzCounter";\n\nexport const zzProbe = ZzCounter;\n',
+      );
       fs.rmSync(protoAt);
       tool("bar");
+      const testRow = "| `components/ZzCounter/tests/ZzCounter.test.tsx` |  |  |  |";
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(testRow);
+      fs.writeFileSync(
+        protoAt,
+        fs
+          .readFileSync(protoAt, "utf8")
+          .replace(
+            testRow,
+            "| `components/ZzCounter/tests/ZzCounter.test.tsx` | не требуется | не требуется | тест описан реестром |",
+          ),
+      );
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
         "\nВопрос о `src/shared/zzStore/zzStore.ts`.\n",
@@ -2012,6 +2029,13 @@ describe("свод на правке — по той же области, что
           "A5@соседи": "нашлось | src/shared/zzStore/zzStore.ts:1 | общее берёт из приложения | вопрос",
         },
       });
+      expect(tool("bar")).toContain(
+        "ZzCounter.test.tsx, база: `не требуется` у теста без своей записи в реестре тестов",
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "08-tests.md"),
+        "\n| `src/components/ZzCounter/tests/ZzCounter.test.tsx` | проба |\n",
+      );
       const sealed = tool("bar");
       expect(sealed).toContain("печать поставлена");
       expect(sealed).toContain("слой `соседи` — не держится");
