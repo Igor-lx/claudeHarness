@@ -9752,11 +9752,19 @@ if (mode === "bar") {
       );
     return barNoSubject(c.id + "|" + flagsBy.get(k));
   };
-  const changedNow = new Set(
-    kind === "на изменение"
+  // Правленое для «починено» — всё, что тронула работа, а не один предмет:
+  // находку, которую чинит правка конвейера, конфига или записи базы, иначе
+  // записать починенной нельзя, и остаются «вопрос» с «отложено» — неправда о
+  // сделанном. Замерено на стенде: долг конвейера, починенный правкой его
+  // описания.
+  const changedNow = new Set([
+    ...(kind === "на изменение"
       ? subject
-      : ((await barChangedSubject(repoRoot)) ?? []),
-  );
+      : ((await barChangedSubject(repoRoot)) ?? [])),
+    ...((await changedPaths(repoRoot)) ?? []).map((f) =>
+      norm(path.join(repoRoot, f)),
+    ),
+  ]);
   const r = barProcess({
     at,
     kind,

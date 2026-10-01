@@ -1381,6 +1381,52 @@ describe("свод по планке от модели предмета", () => 
     }
   }, 240000);
 
+  it("починено вне кода: адрес в правленом файле любого рода, а не только в предмете", () => {
+    const box = seatEmpty("vnekoda-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.writeFileSync(path.join(box, "src", "app", "zzCi.ts"), "export const zzCi = 1;\n");
+      fs.mkdirSync(path.join(box, ".github", "workflows"), { recursive: true });
+      fs.writeFileSync(path.join(box, ".github", "workflows", "ci.yml"), "name: ci\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const fixedIn = (where) =>
+        fillBar(protoAt, {
+          release: "не нужно: проба",
+          pick: { J2: "нашлось | " + where + ":1 | конвейер не звал проверок | починено" },
+        });
+      // Конвейер правлен этой работой — находка в нём починена, хоть он и не код.
+      fixedIn(".github/workflows/ci.yml");
+      expect(tool("bar")).toContain("печать поставлена");
+      // Нетронутый файл починенным быть не может, какого бы рода он ни был.
+      fixedIn("package.json");
+      const refused = tool("bar");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toContain("`package.json` в правленом не числится");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("правка, чистая в строках, не запечатывается, пока целое не отвечено", () => {
     const box = seatEmpty("urovni-");
     try {
