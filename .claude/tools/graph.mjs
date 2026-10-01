@@ -9,7 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1401,6 +1401,10 @@ const barHeaderOf = (body) => {
     "^- строк модели от инструмента: " + BAR_TICK + "([0-9]+)" + BAR_TICK + "$",
     "m",
   ).exec(body);
+  const salt = new RegExp(
+    "^- соль чтения: " + BAR_TICK + "([0-9a-f]+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
   const rowOf = new RegExp(
     "^\\| " +
       BAR_TICK +
@@ -1422,6 +1426,7 @@ const barHeaderOf = (body) => {
     kind: kind === null ? null : kind[1],
     seal: seal === null ? null : seal[1],
     modelRows: modelRows === null ? null : Number(modelRows[1]),
+    salt: salt === null ? null : salt[1],
     marks: [...body.matchAll(rowOf)].map((h) => ({ file: h[1], mark: h[2] })),
   };
 };
@@ -1456,9 +1461,15 @@ const barRowsOf = (body) => {
   const levels = [];
   const base = new Map();
   const witnesses = [];
+  const reads = [];
   for (const line of body.split(/\r?\n/)) {
     if (!line.startsWith("| ")) continue;
     const cells = barCellsOf(line);
+    // Страница чтения: номер, описание, слово.
+    if (cells.length === 3 && /^[0-9]+$/.test(cells[0])) {
+      reads.push({ n: Number(cells[0]), spec: cells[1], word: cells[2] });
+      continue;
+    }
     if (cells.length < 4 || /^-+$/.test(cells[0])) continue;
     if (["критерий", "модель", "уровень", "файл", "свидетель"].includes(cells[0]))
       continue;
@@ -1539,7 +1550,7 @@ const barRowsOf = (body) => {
         fate: cells[5],
       });
   }
-  return { outcomes, model, levels, base, witnesses };
+  return { outcomes, model, levels, base, witnesses, reads };
 };
 
 /** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
@@ -8118,6 +8129,236 @@ const barWitnessesOf = (list, asked) => {
   ].map((w, k) => ({ ...w, id: "Св" + (k + 1) }));
 };
 
+// --- чтение: страница и её слово -----------------------------------------
+//
+// Прочитать область — работа, а не допущение, и держалась она одним
+// вниманием: протокол принимал исход по критерию, чьё тело не открывали, и
+// «чисто» о файле, которого не читали. Страницу печатает режим `bar-read`, в
+// конце каждой — слово страницы, и протокол без слова каждой страницы не
+// запечатывается. Слово доказывает одно: страница прошла через вывод, который
+// видела сессия. Понимание держат свидетели и исходы, а не слово.
+//
+// Найдено на живом рефакторе: четыре раздела ядра прочитаны целиком,
+// остальные — по заголовкам, и две находки, лежавшие в теле критерия, прошли
+// мимо.
+
+const BAR_READ_HEAD = "| страница | что | слово |";
+/** Сколько строк на странице. Страница — то, что читают за раз; длиннее —
+ * её пролистывают, короче — слов становится больше, чем страниц смысла. */
+const PAGE_LINES = 150;
+/** Срез соседа — строки, где он берёт предмет либо даёт ему своё, с
+ * соседними: соседа читают ради предмета, а не целиком. */
+const PAGE_SLICE_LINES = 80;
+/** Слово страницы — два слова из списка: опечатку в нём видно глазом. */
+const PAGE_WORDS = (
+  "берег ветер гроза дождь ель жук заря иней клён луна мост нить облако пень " +
+  "река сова тень утёс филин холм цапля чайка шмель щука эхо юла ягода бобр " +
+  "волна гора дуб ёж жёлудь зубр ива камень лис мох нерпа овраг пруд рысь " +
+  "сосна трава улей фонарь хвоя цвет чаща шишка щегол ястреб борт вереск " +
+  "галка дятел ёрш жаба злак искра кедр лёд мёд норка"
+).split(" ");
+const pageWord = (salt, spec, text) => {
+  const h = createHash("sha1")
+    .update(salt + LF + spec + LF + text)
+    .digest();
+  return (
+    PAGE_WORDS[h[0] % PAGE_WORDS.length] +
+    "-" +
+    PAGE_WORDS[h[1] % PAGE_WORDS.length]
+  );
+};
+
+/** Тела критериев планки по порядку политики: заголовок жирным и всё под
+ * ним до следующего критерия, заголовка или черты. */
+let POLICY_BODIES = null;
+const policyBodies = () => {
+  if (POLICY_BODIES !== null) return POLICY_BODIES;
+  POLICY_BODIES = [];
+  if (CONFIG.qualityScope == null) return POLICY_BODIES;
+  const scoped = path.join(BASE, CONFIG.qualityScope.policy);
+  for (const file of [scoped.replace(/quality-scoped.md$/, "quality.md"), scoped]) {
+    if (!existsSync(file)) continue;
+    let section = null;
+    let cur = null;
+    const flush = () => {
+      if (cur !== null)
+        POLICY_BODIES.push({ id: cur.id, text: cur.lines.join(LF).trimEnd() });
+      cur = null;
+    };
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const head = /^## ([A-ZА-Я])[.]\s+(.+)$/.exec(line);
+      if (head !== null || /^#{1,6}\s/.test(line) || /^---\s*$/.test(line)) {
+        flush();
+        section = head !== null ? head[1] : /^#{1,2}\s/.test(line) ? null : section;
+        continue;
+      }
+      const one = /^[*][*]([A-ZА-Я][0-9]+(?:-[а-яё]+)?)[.]\s*(.*)$/.exec(line);
+      if (one !== null && section !== null) {
+        flush();
+        cur = { id: one[1], lines: [line] };
+        continue;
+      }
+      if (cur !== null) cur.lines.push(line);
+    }
+    flush();
+  }
+  return POLICY_BODIES;
+};
+
+/** Строки файла с номерами — от `from` до `to` включительно, с единицы. */
+const numberedLines = (abs, ranges) => {
+  const lines = existsSync(abs) ? readFileSync(abs, "utf8").split(/\r?\n/) : null;
+  if (lines === null) return "файла нет";
+  const out = [];
+  ranges.forEach(([from, to], k) => {
+    if (k > 0) out.push("   …");
+    for (let i = from; i <= Math.min(to, lines.length); i += 1)
+      out.push(String(i).padStart(4) + " | " + lines[i - 1]);
+  });
+  return out.join(LF);
+};
+const rangesText = (ranges) =>
+  ranges.map(([a, b]) => (a === b ? String(a) : a + "–" + b)).join(", ");
+const rangesOf = (text) =>
+  text.split(",").map((one) => {
+    const m = /^\s*([0-9]+)(?:–([0-9]+))?\s*$/.exec(one);
+    return m === null ? [1, 0] : [Number(m[1]), Number(m[2] ?? m[1])];
+  });
+const absOfRel = (r) => barAbsOf(r) ?? norm(path.join(ROOT, r));
+
+/** Текст страницы по её описанию — одна функция на печать и на сверку:
+ * слово считается с того же текста, который видела сессия. `ids` —
+ * критерии протокола: страница политики — их тела по порядку политики. */
+const pageTextOf = (spec, ids) => {
+  const policy = /^политика: `([^`]+)`(?:–`([^`]+)`)?$/.exec(spec);
+  if (policy !== null) {
+    const list = policyBodies().filter((c) => ids.has(c.id));
+    const from = list.findIndex((c) => c.id === policy[1]);
+    const to = list.findIndex((c) => c.id === (policy[2] ?? policy[1]));
+    return from < 0 || to < from
+      ? "критериев нет"
+      : list
+          .slice(from, to + 1)
+          .map((c) => c.text)
+          .join(LF + LF);
+  }
+  const code = /^(?:код|сосед) `([^`]+)`, строки (.+)$/.exec(spec);
+  if (code !== null) return numberedLines(absOfRel(code[1]), rangesOf(code[2]));
+  return "страницы такой нет";
+};
+
+/** Страницы протокола: тела его критериев, полный текст предмета и срезы
+ * соседей. Описание страницы — её адрес: по нему `bar-read` печатает тот же
+ * текст. */
+const barReadPagesOf = ({ ids, subject = [], neighbours = [] }) => {
+  const pages = [];
+  {
+    const list = policyBodies().filter((c) => ids.has(c.id));
+    let cur = [];
+    let size = 0;
+    const flush = () => {
+      if (cur.length === 0) return;
+      pages.push(
+        "политика: " +
+          barQuoted(cur[0].id) +
+          (cur.length > 1 ? "–" + barQuoted(cur[cur.length - 1].id) : ""),
+      );
+      cur = [];
+      size = 0;
+    };
+    for (const c of list) {
+      const n = c.text.split(LF).length + 1;
+      if (cur.length > 0 && size + n > PAGE_LINES) flush();
+      cur.push(c);
+      size += n;
+    }
+    flush();
+  }
+  for (const f of [...subject].sort(barByRel)) {
+    if (!existsSync(f)) continue;
+    const count = readFileSync(f, "utf8").replace(/\r?\n$/, "").split(/\r?\n/).length;
+    for (let from = 1; from <= count; from += PAGE_LINES)
+      pages.push(
+        "код " +
+          barQuoted(rel(f)) +
+          ", строки " +
+          from +
+          "–" +
+          Math.min(count, from + PAGE_LINES - 1),
+      );
+  }
+  for (const n of [...neighbours].sort(barByRel)) {
+    if (!existsSync(n)) continue;
+    const lines = readFileSync(n, "utf8").replace(/\r?\n$/, "").split(/\r?\n/);
+    // Имена между соседом и предметом — в обе стороны: что сосед берёт у
+    // предмета и что предмет берёт у соседа.
+    const names = new Set();
+    for (const f of subject) {
+      for (const [from, to] of [
+        [n, f],
+        [f, n],
+      ])
+        for (const one of namedImportsOf.get(from) ?? [])
+          if (Array.isArray(one.names))
+            for (const x of one.names)
+              if (definerOf(one.target, x) === to && x !== "default") names.add(x);
+    }
+    const stems = subject.map((f) =>
+      path.basename(f).replace(/\.[^.]+$/, ""),
+    );
+    const hit = new Set();
+    lines.forEach((line, i) => {
+      const named = [...names].some((x) =>
+        new RegExp("(?<![\\w$])" + x.replace(/\$/g, "\\$") + "(?![\\w$])").test(line),
+      );
+      const imports = /\b(?:import|from)\b/.test(line) && stems.some((st) => line.includes(st));
+      if (named || imports)
+        for (let k = Math.max(0, i - 1); k <= Math.min(lines.length - 1, i + 1); k += 1)
+          hit.add(k + 1);
+    });
+    if (hit.size === 0)
+      for (const d of files.includes(n) ? declarationsOf(n) : [])
+        hit.add(d.line);
+    if (hit.size === 0)
+      for (let k = 1; k <= Math.min(lines.length, PAGE_SLICE_LINES); k += 1)
+        hit.add(k);
+    const sorted = [...hit].sort((a, b) => a - b).slice(0, PAGE_SLICE_LINES);
+    const ranges = [];
+    for (const k of sorted) {
+      const last = ranges[ranges.length - 1];
+      if (last !== undefined && k === last[1] + 1) last[1] = k;
+      else ranges.push([k, k]);
+    }
+    pages.push("сосед " + barQuoted(rel(n)) + ", строки " + rangesText(ranges));
+  }
+  return pages;
+};
+
+/** Раздел чтения: порядок словами и таблица страниц. */
+const barReadSection = (pages, carried) =>
+  pages.length === 0
+    ? []
+    : [
+        "## Прочитано",
+        "",
+        "Страницу печатает " +
+          barQuoted("graph.mjs bar-read N") +
+          " — либо все разом, без номера; в конце",
+        "каждой — слово страницы, и его вписывают в графу «слово». Политику",
+        "читают телом каждого критерия, код — каждой строкой, соседа — его срезом.",
+        "Слово снимают, прочитав страницу: вынутое программой — поиском по",
+        "выводу, расчётом по исходнику — подлог проверки, а не ответ. Правка",
+        "файла меняет слова его страниц: изменившееся читают заново.",
+        "",
+        BAR_READ_HEAD,
+        "| --- | --- | --- |",
+        ...pages.map(
+          (spec, k) =>
+            "| " + (k + 1) + " | " + spec + " | " + (carried.get(spec) ?? "") + " |",
+        ),
+        "",
+      ];
+
 /** Внутренность чужой единицы переноса: файл в папке другого компонента, не
  * её вход. Единица переноса — папка под объявленным слоем компонентов
  * (`componentsAt`): её
@@ -9635,9 +9876,12 @@ const barSkeletonOf = ({
   noneOf,
   baseFiles = null,
   witnesses = [],
+  reads = [],
+  salt = "",
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
+  const reads0 = carried?.reads ?? new Map();
   const release0 = carried?.releases ?? new Map();
   const base0 = carried?.baseRows ?? new Map();
   const level0 = carried?.levelRows ?? new Map();
@@ -9739,6 +9983,7 @@ const barSkeletonOf = ({
     "",
     "- род: " + barQuoted(kind),
     "- строк модели от инструмента: " + barQuoted(String(model.length)),
+    ...(reads.length ? ["- соль чтения: " + barQuoted(salt)] : []),
     BAR_NOSEAL,
     "",
     "| файл | отпечаток |",
@@ -9747,6 +9992,7 @@ const barSkeletonOf = ({
       (m) => "| " + barQuoted(m.file) + " | " + barQuoted(m.mark) + " |",
     ),
     "",
+    ...barReadSection(reads, reads0),
     "## Модель предмета",
     "",
     "Строки собрал инструмент из кода и базы, по уровням. Единица: признаки,",
@@ -9956,6 +10202,7 @@ const barCarryOf = (parsed, expected, levelSubjects) => {
     baseRows: parsed.base,
     levelRows,
     witness: new Map(parsed.witnesses.map((w) => [w.key, w.answers])),
+    reads: new Map(parsed.reads.map((r) => [r.spec, r.word])),
   };
 };
 
@@ -9976,6 +10223,8 @@ const barHolesOf = ({
   neighbours = null,
   baseFiles = null,
   witnesses = [],
+  reads = [],
+  salt = "",
 }) => {
   const holes = [];
   const said = new Map();
@@ -10229,6 +10478,28 @@ const barHolesOf = ({
   const loose = barDeltaFault(barModelCode(parsed.model) + "|" + answered);
   if (loose !== "") holes.push(loose);
 
+  // Чтение: слово каждой страницы — то, что печатает её страница сейчас.
+  // Верное слово в сообщение не идёт: его снимают со страницы.
+  if (reads.length > 0) {
+    const ids = new Set(expected.map((e) => e.c.id));
+    const got = new Map(parsed.reads.map((r) => [r.spec, r.word]));
+    reads.forEach((spec, k) => {
+      const word = (got.get(spec) ?? "").trim();
+      const call = "graph.mjs bar-read " + (k + 1);
+      if (word === "")
+        holes.push("страница " + (k + 1) + " (" + spec + "): слово не вписано — " + call);
+      else if (word !== pageWord(salt, spec, pageTextOf(spec, ids)))
+        holes.push(
+          "страница " +
+            (k + 1) +
+            " (" +
+            spec +
+            "): слово не сходится — страница изменилась либо не прочитана: " +
+            call,
+        );
+    });
+  }
+
   // Свидетели: форма каждого ответа и согласие исходов с ответами. Ответ
   // «нет» делает критерий находкой: «чисто» при нём ложно без суждения.
   if (witnesses.length > 0) {
@@ -10373,6 +10644,7 @@ const barProcess = ({
   neighbours = null,
   baseFiles = null,
   witnesses = [],
+  reads = [],
 }) => {
   const was = barHeader(at);
   const parsedWas = was === null ? null : barRowsOf(was.body);
@@ -10435,6 +10707,12 @@ const barProcess = ({
         parsedWas.witnesses[k]?.id === w.id &&
         parsedWas.witnesses[k]?.where === w.where,
     );
+  // Страницы — те же и в том же порядке: страница, пришедшая или ушедшая,
+  // иначе оставалась бы без слова либо со словом о том, чего нет.
+  const sameRead =
+    parsedWas !== null &&
+    parsedWas.reads.length === reads.length &&
+    reads.every((spec, k) => parsedWas.reads[k]?.spec === spec);
   const sameSubject =
     was !== null &&
     was.kind === kind &&
@@ -10442,7 +10720,9 @@ const barProcess = ({
     sameModel(parsedWas.model) &&
     sameRows &&
     sameBase &&
-    sameWitness;
+    sameWitness &&
+    sameRead &&
+    (reads.length === 0 || was.salt !== null);
   if (!sameSubject) {
     // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
     // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
@@ -10520,6 +10800,14 @@ const barProcess = ({
         noneOf,
         baseFiles,
         witnesses,
+        reads,
+        // Соль — на работу: новый протокол читают заново, а пересобранный
+        // сохраняет слова, пока страница не изменилась. Слово со вчерашнего
+        // протокола в истории сегодняшнюю страницу не открывает.
+        salt:
+          carry !== null && was?.salt != null
+            ? was.salt
+            : randomBytes(4).toString("hex"),
       }),
     );
     return {
@@ -10549,6 +10837,8 @@ const barProcess = ({
     neighbours,
     baseFiles,
     witnesses,
+    reads,
+    salt: was.salt ?? "",
   });
   const found = expected
     .map(({ c, subject }) => ({
@@ -10748,6 +11038,12 @@ const barTransitionPlan = (s, live) => {
       s.level === "узел"
         ? barWitnessesOf(s.files, new Set(criteria.map((c) => c.id)))
         : [],
+    // Чтение — тела критериев протокола и, у единицы переноса, её код: слой
+    // и приложение читают свои факты, а код единиц — их протоколы.
+    reads: barReadPagesOf({
+      ids: new Set(criteria.map((c) => c.id)),
+      subject: s.level === "узел" ? s.files : [],
+    }),
   };
 };
 
@@ -10996,6 +11292,13 @@ if (mode === "bar") {
     work,
     new Set(expected.map((e) => e.c.id)),
   );
+  // Страницы чтения: тела критериев протокола, полный текст предмета и срез
+  // каждого соседа — той же области, что модель.
+  const reads = barReadPagesOf({
+    ids: new Set(expected.map((e) => e.c.id)),
+    subject: work,
+    neighbours: area.filter((f) => !work.includes(f)),
+  });
   const levelSubjects = {
     узел: subjects.узел.length ? subjects.узел : [""],
     слой: subjects.слой.length ? subjects.слой : [""],
@@ -11052,6 +11355,7 @@ if (mode === "bar") {
     neighbours,
     baseFiles: area.map(rel),
     witnesses,
+    reads,
   });
 
   if (r.state === "напечатан") {
@@ -11178,6 +11482,72 @@ if (mode === "bar") {
   console.log("  виде предмета. О ВЕРНОСТИ ответа она не говорит ничего —");
   console.log(
     "  признаки планки прогоном не ловятся, и это не изображается.",
+  );
+  process.exit(0);
+}
+
+// Страницы чтения протокола свода.
+//
+// Протокол называет страницы, которые обязан пройти: тела его критериев,
+// текст предмета, срезы соседей. Режим печатает их — одну, несколько или все
+// — и в конце каждой слово страницы; слово вписывают в протокол, и без слова
+// каждой страницы печати нет. Текст страницы и слово считает одна функция и
+// здесь, и в своде: слово сходится, только если страница та же.
+if (mode === "bar-read") {
+  const NEWLINE = String.fromCharCode(10);
+  const args = process.argv.slice(3);
+  const protocolArg = args.find((a) => a.endsWith(".md"));
+  const at =
+    protocolArg !== undefined
+      ? path.resolve(protocolArg)
+      : CONFIG.barProtocol == null
+        ? null
+        : path.join(BASE, CONFIG.barProtocol);
+  const was = at === null ? null : barHeader(at);
+  if (was === null) {
+    console.log("=== Страниц нет: протокола нет ===");
+    console.log("  Сперва `graph.mjs bar` — он напечатает протокол и его страницы.");
+    process.exit(1);
+  }
+  const parsed = barRowsOf(was.body);
+  sayLooked("страниц чтения в протоколе", parsed.reads.length);
+  if (parsed.reads.length === 0 || was.salt === null) {
+    console.log("=== В протоколе страниц нет ===");
+    console.log(
+      "  Протокол напечатан прежней формой: позвать `graph.mjs bar` — он",
+    );
+    console.log("  пересоберёт его и назовёт страницы.");
+    process.exit(1);
+  }
+  const ids = new Set(parsed.outcomes.map((o) => o.id));
+  const pick = args.find((a) => !a.endsWith(".md"));
+  const wanted = new Set();
+  if (pick === undefined) for (const r of parsed.reads) wanted.add(r.n);
+  else
+    for (const [a, b] of rangesOf(pick.replace(/-/g, "–")))
+      for (let k = a; k <= b; k += 1) wanted.add(k);
+  const shown = parsed.reads.filter((r) => wanted.has(r.n));
+  if (shown.length === 0) {
+    console.log("=== Страницы с таким номером нет ===");
+    console.log("  Страниц в протоколе: " + parsed.reads.length + ".");
+    process.exit(1);
+  }
+  for (const r of shown) {
+    const text = pageTextOf(r.spec, ids);
+    console.log(
+      "=== Страница " + r.n + " из " + parsed.reads.length + ": " + r.spec + " ===",
+    );
+    console.log(text);
+    console.log(
+      "--- слово страницы " + r.n + ": " + pageWord(was.salt, r.spec, text) + " ---",
+    );
+    console.log("");
+  }
+  console.log(
+    "Слово каждой прочитанной страницы — в графу «слово» её строки раздела",
+  );
+  console.log(
+    "«Прочитано». Слово снимают, прочитав страницу, а не программой." + NEWLINE,
   );
   process.exit(0);
 }

@@ -418,6 +418,7 @@ describe("ревизия сводов по истории", () => {
         })
         .join("\n");
       fs.writeFileSync(protoAt, filled);
+      fillWords(protoAt);
       expect(tool("bar")).toContain("печать поставлена");
       git("add", "-A");
       git("commit", "-qm", "свой код со сводом", "--no-verify");
@@ -1268,7 +1269,48 @@ const fillWitness = (c) => {
 };
 /** Критерии, о которых спрашивают свидетели: «нет предмета» при них ложно. */
 const WITNESS_ASKED = ["A1", "A2", "A10", "C1", "B5", "H8"];
+/** Слова страниц чтения: проба снимает их выводом режима — в тесте это
+ * проверка механизма, а не чтение. Корень копии — ближайшая папка с обвязкой. */
+const pageWordsOf = (protoAt) => {
+  let box = path.dirname(protoAt);
+  while (!fs.existsSync(path.join(box, ".claude", "tools", "graph.mjs"))) {
+    const up = path.dirname(box);
+    if (up === box) return new Map();
+    box = up;
+  }
+  let out = "";
+  try {
+    out = execFileSync(
+      process.execPath,
+      [path.join(box, ".claude", "tools", "graph.mjs"), "bar-read", protoAt],
+      { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (e) {
+    out = String(e.stdout ?? "");
+  }
+  return new Map(
+    [...out.matchAll(/^--- слово страницы (\d+): (\S+) ---$/gm)].map((m) => [m[1], m[2]]),
+  );
+};
+/** Вписать слова страниц чтения — и ничего больше. */
+const fillWords = (protoAt) => {
+  const words = pageWordsOf(protoAt);
+  fs.writeFileSync(
+    protoAt,
+    fs
+      .readFileSync(protoAt, "utf8")
+      .split("\n")
+      .map((line) => {
+        const c = line.split("|");
+        return c.length === 5 && /^ \d+ $/.test(c[1]) && c[3].trim() === ""
+          ? "|" + c[1] + "|" + c[2] + "| " + (words.get(c[1].trim()) ?? "") + " |"
+          : line;
+      })
+      .join("\n"),
+  );
+};
 const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
+  const words = pageWordsOf(protoAt);
   const before = fs.readFileSync(protoAt, "utf8");
   const all = barRowsCited(before);
   fs.writeFileSync(
@@ -1277,6 +1319,9 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
       .split("\n")
       .map((line) => {
         const c = line.split("|");
+        // страница чтения: номер, описание, слово
+        if (c.length === 5 && /^ \d+ $/.test(c[1]) && c[3].trim() === "")
+          return "|" + c[1] + "|" + c[2] + "| " + (words.get(c[1].trim()) ?? "") + " |";
         // свидетель: единица — семь граф, объявление — восемь
         const witness = fillWitness(c);
         if (witness !== null) return witness;
@@ -1978,7 +2023,7 @@ describe("свод на правке — по той же области, что
       expect(tool("bar")).toContain("соседей в области: 3");
       const proto = fs.readFileSync(protoAt, "utf8");
       // Отпечатки — одно правленое: их сверяют ворота перед коммитом.
-      const head = proto.split("## Модель предмета")[0];
+      const head = proto.split("## Прочитано")[0].split("## Модель предмета")[0];
       expect(head).toContain("| `components/ZzCounter/ZzCounter.tsx` |");
       expect(head).not.toContain("zzStore.ts");
       // Соседи — своим предметом ядра узла и слоя.
@@ -2709,6 +2754,106 @@ describe("свидетели в своде по планке", () => {
       );
       const sealed = tool("bar", "components");
       expect(sealed).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("страницы чтения в своде по планке", () => {
+  it("слово каждой страницы, правка гасит слова своих страниц, новый протокол — новая соль", () => {
+    const box = seatEmpty("pages-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = (rel, text) => {
+        const at = path.join(box, ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      put(
+        "src/components/ZzNote/ZzNote.tsx",
+        'import { zzTrim } from "../../shared/zzText/zzText";\nexport function ZzNote({ text }: { text: string }) {\n  return zzTrim(text);\n}\n',
+      );
+      // Сосед, у которого предмет берёт: в срезе — объявление взятого.
+      put(
+        "src/shared/zzText/zzText.ts",
+        'export const zzPad = (s: string) => " " + s;\nexport const zzOther = "other";\n\n\nexport const zzTrim = (s: string) => s.trim();\n',
+      );
+      put(
+        "src/app/zzPage.ts",
+        'const zzHead = "head";\nconst zzFill = "fill";\n\nimport { ZzNote } from "../components/ZzNote/ZzNote";\n\nconst zzGap = "gap";\nexport const zzPage = () => zzHead + ZzNote({ text: zzFill }) + zzGap;\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "components/ZzNote");
+      const text = fs.readFileSync(protoAt, "utf8");
+      const rows = [...text.matchAll(/^\| (\d+) \| ([^|]+) \|  \|$/gm)].map((m) => [m[1], m[2].trim()]);
+      // Тела критериев, весь предмет, срез соседа: строки, где он берёт
+      // предмет, с соседними.
+      expect(rows[0][1]).toMatch(/^политика: `A1`–`[^`]+`$/);
+      const code = rows.find(([, spec]) => spec.startsWith("код "));
+      expect(code[1]).toBe("код `components/ZzNote/ZzNote.tsx`, строки 1–4");
+      const near = rows.filter(([, spec]) => spec.startsWith("сосед ")).map(([, spec]) => spec);
+      // Строки 4 и 7 берут предмет; с соседними — с третьей по седьмую. У
+      // соседа, у которого предмет берёт, — объявление взятого с соседней.
+      expect(near).toEqual([
+        "сосед `app/zzPage.ts`, строки 3–7",
+        "сосед `shared/zzText/zzText.ts`, строки 4–5",
+      ]);
+      expect(tool("bar-read", "1")).toContain("**A1. Узел отвечает на один вопрос.** (узел)");
+      const page = tool("bar-read", code[0]);
+      expect(page).toContain("   3 |   return zzTrim(text);");
+      const word = /^--- слово страницы \d+: (\S+) ---$/m.exec(page)[1];
+      expect(word).toMatch(/^[а-яё]+-[а-яё]+$/);
+
+      // Пустое слово и чужое слово — дыры с номером страницы; верное слово в
+      // сообщение не идёт.
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const wrong = word === "берег-берег" ? "ветер-ветер" : "берег-берег";
+      const swap = (from, to) =>
+        fs.writeFileSync(
+          protoAt,
+          fs
+            .readFileSync(protoAt, "utf8")
+            .replace("| " + code[0] + " | " + code[1] + " | " + from + " |", "| " + code[0] + " | " + code[1] + " | " + to + " |"),
+        );
+      swap(word, wrong);
+      const off = tool("bar", "components/ZzNote");
+      expect(off).toContain(
+        "страница " + code[0] + " (" + code[1] + "): слово не сходится — страница изменилась либо не прочитана: graph.mjs bar-read " + code[0],
+      );
+      expect(off).not.toContain(word);
+      swap(wrong, "");
+      expect(tool("bar", "components/ZzNote")).toContain(
+        "страница " + code[0] + " (" + code[1] + "): слово не вписано — graph.mjs bar-read " + code[0],
+      );
+      swap("", word);
+      expect(tool("bar", "components/ZzNote")).toContain("печать поставлена");
+
+      // Правка меняет слово своей страницы и только его: соль та же.
+      put(
+        "src/components/ZzNote/ZzNote.tsx",
+        'import { zzTrim } from "../../shared/zzText/zzText";\nexport function ZzNote({ text }: { text: string }) {\n  return zzTrim(text).toUpperCase();\n}\n',
+      );
+      tool("bar", "components/ZzNote");
+      const after = tool("bar", "components/ZzNote");
+      expect(after).toContain("страница " + code[0] + " (" + code[1] + "): слово не сходится");
+      expect(after).not.toMatch(/страница 1 \(политика/);
+
+      // Новый протокол — новая соль: вчерашнее слово страницу не открывает.
+      const salt = /^- соль чтения: `([0-9a-f]+)`$/m.exec(fs.readFileSync(protoAt, "utf8"))[1];
+      fs.rmSync(protoAt);
+      tool("bar", "components/ZzNote");
+      expect(/^- соль чтения: `([0-9a-f]+)`$/m.exec(fs.readFileSync(protoAt, "utf8"))[1]).not.toBe(salt);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
