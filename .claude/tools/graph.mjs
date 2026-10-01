@@ -16144,10 +16144,24 @@ if (mode === "verify") {
         for (const hit of readFileSync(src, "utf8").matchAll(/`([^`\n]+)`/g))
           spans.add(hit[1].trim());
       }
+      // Команда с доводами называет скрипт так же, как голая: обратная
+      // сторона — «Названное доктриной исполнимо» — читает её именно так, и
+      // дословное равенство здесь давало две мерки одной пары. Замерено на
+      // стенде: `npm run mutate -- --mutate <файлы>` числился неназванным.
+      const runs = new Set(
+        [...spans]
+          .map((s) =>
+            new RegExp(
+              "^" + PACKAGE_MANAGER + " run ([^\\s`]+)(?:\\s|$)",
+            ).exec(s),
+          )
+          .filter((m) => m !== null)
+          .map((m) => m[1]),
+      );
       const named = (s) =>
         spans.has(s) ||
         spans.has(`${PACKAGE_MANAGER} ${s}`) ||
-        spans.has(`${PACKAGE_MANAGER} run ${s}`);
+        runs.has(s);
       const silent = scripts.filter((s) => !named(s));
       {
         checkHead(

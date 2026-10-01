@@ -2162,6 +2162,30 @@ describe("мутационный отчёт без исполненных тес
   }, 180000);
 });
 
+describe("скрипт манифеста назван и командой с доводами", () => {
+  it("`npm run имя -- …` называет скрипт; не названный нигде — предупреждение", () => {
+    const box = seatEmpty("skripty-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts["zz-probe"] = "node -e 0";
+      pkg.scripts["zz-silent"] = "node -e 0";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      fs.appendFileSync(
+        path.join(box, "CLAUDE.md"),
+        "\n| Проба по файлам | `npm run zz-probe -- --only <файлы>` |\n",
+      );
+      const said = (
+        verifyIn(box).get("Скрипты манифеста описаны (предупреждение, прогон не роняет)") ?? []
+      ).join("\n");
+      expect(said).not.toContain("zz-probe —");
+      expect(said).toContain("zz-silent —");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("реестр мутаций считает так же, как отчёт, который читает", () => {
   it("мутант с ошибкой раннера не живой; файл, заказанный прогоном и не давший мутантов, промерен", () => {
     const box = seatEmpty("mutschet-");
