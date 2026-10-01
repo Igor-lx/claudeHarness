@@ -386,6 +386,8 @@ describe("ревизия сводов по истории", () => {
         .map((line) => {
           const c = line.split("|");
           // строка исхода: критерий, предмет, о чём, исход, адрес, что, судьба
+          const witness = fillWitness(c);
+          if (witness !== null) return witness;
           if (
             c.length === 9 &&
             !/^ П\d+ $/.test(c[1]) &&
@@ -394,8 +396,10 @@ describe("ревизия сводов по истории", () => {
             c[1].trim() !== "критерий"
           ) {
             // Новый файл сверяют с единицами его слоя: о повторённой логике
-            // предмет есть, и ответ опирается на каталог.
-            const versus = c[1].trim() === "A6-бис";
+            // предмет есть, и ответ опирается на каталог. О критериях
+            // свидетелей предмет есть тоже: ответ опирается на них.
+            const versus =
+              c[1].trim() === "A6-бис" || WITNESS_ASKED.includes(c[1].trim());
             c[4] = versus ? " чисто " : " нет предмета ";
             c[6] = versus ? " " + all + " сверено с каталогом слоя " : " проба ревизии ";
             return c.join("|");
@@ -1246,7 +1250,24 @@ const SYMPTOM_ASKED = {
   B8: ["флаги"],
 };
 const barRowsCited = (text) =>
-  [...text.matchAll(/^\| (П\d+) \|/gm)].map((m) => m[1]).join(", ") || "П1";
+  [...text.matchAll(/^\| ((?:П|Св)\d+) \|/gm)].map((m) => m[1]).join(", ") || "П1";
+/** Ответы пробы на пустые клетки свидетелей: фраза без союза, остальное — по
+ * умолчанию «хорошо». Ответ, поставленный инструментом, не трогается. */
+const WITNESS_FILL = {
+  7: ["даёт пробный ответ своду", "да", "да", "нет"],
+  8: ["делает пробную работу", "да", "да", "да", "нет"],
+};
+/** Строка свидетеля, заполненная ответами пробы; не свидетель — `null`. */
+const fillWitness = (c) => {
+  if (!/^ Св\d+ $/.test(c[1]) || WITNESS_FILL[c.length - 2] === undefined)
+    return null;
+  const fill = WITNESS_FILL[c.length - 2];
+  for (let k = 0; k < fill.length; k += 1)
+    if (c[4 + k].trim() === "") c[4 + k] = " " + fill[k] + " ";
+  return c.join("|");
+};
+/** Критерии, о которых спрашивают свидетели: «нет предмета» при них ложно. */
+const WITNESS_ASKED = ["A1", "A2", "A10", "C1", "B5", "H8"];
 const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
   const before = fs.readFileSync(protoAt, "utf8");
   const all = barRowsCited(before);
@@ -1256,6 +1277,9 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
       .split("\n")
       .map((line) => {
         const c = line.split("|");
+        // свидетель: единица — семь граф, объявление — восемь
+        const witness = fillWitness(c);
+        if (witness !== null) return witness;
         // строка модели: семь граф
         if (c.length === 9 && /^ П\d+ $/.test(c[1])) {
           if (c[2].trim() === "ресурс" && c[7].trim() === "")
@@ -1295,7 +1319,9 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
             c[3].includes("**ядро.**") ||
             (SYMPTOM_ASKED[id] ?? []).some((sort) =>
               new RegExp("^\\| П\\d+ \\| " + sort + " \\|", "m").test(before),
-            );
+            ) ||
+            // Свидетели объявлений делают предмет у имени и абстракции.
+            (["B5", "H8"].includes(id) && /^\| Св\d+ \| `[^`]+:\d+` \|/m.test(before));
           c[4] = core ? " чисто " : " нет предмета ";
           c[6] = core ? " " + all + " проба " : " проба ";
         }
@@ -1493,9 +1519,12 @@ describe("свод по планке от модели предмета", () => 
       fillBar(protoAt, { release: "не нужно: проба" });
       const lazy = fs
         .readFileSync(protoAt, "utf8")
-        .replace(/(?:П\d+, )*П\d+ проба/g, "проба")
-        .replace(/см\. (?:П\d+, )*П\d+/g, "см. выше")
-        .replace(/(?:П\d+, )*П\d+ разобраны \| да \| (?:П\d+, )*П\d+/g, "разобраны | да | проба");
+        .replace(/(?:(?:П|Св)\d+, )*(?:П|Св)\d+ проба/g, "проба")
+        .replace(/см\. (?:(?:П|Св)\d+, )*(?:П|Св)\d+/g, "см. выше")
+        .replace(
+          /(?:(?:П|Св)\d+, )*(?:П|Св)\d+ разобраны \| да \| (?:(?:П|Св)\d+, )*(?:П|Св)\d+/g,
+          "разобраны | да | проба",
+        );
       fs.writeFileSync(protoAt, lazy);
       const refused = tool("bar");
       expect(refused).not.toContain("печать поставлена");
@@ -2492,6 +2521,193 @@ describe("признаки, видимые текстом, в модели св�
           .join("\n"),
       );
       const sealed = tool("bar", "components/ZzClock");
+      expect(sealed).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("свидетели в своде по планке", () => {
+  it("фраза единицы, ответ по объявлению, вердикт по ответу", () => {
+    const box = seatEmpty("witness-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const at = path.join(box, "src", "components", "ZzCard", "ZzCard.tsx");
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      fs.writeFileSync(
+        at,
+        [
+          "export function zzActive(isVisible: boolean, isDisabled: boolean) {",
+          "  return isVisible && !isDisabled;",
+          "}",
+          "export const ZZ_LIMIT = 10;",
+          "export function ZzCard({ title, count }: { title: string; count: number }) {",
+          "  return title + count;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      // Карта называет ответственность: фразу, списанную с неё, свод не примет.
+      const mapAt = path.join(box, ".context", "00-map.md");
+      fs.appendFileSync(
+        mapAt,
+        "\n| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n" +
+          "| `src/components/ZzCard/ZzCard.tsx` | показывает карточку товара | нет | нет |\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "components/ZzCard");
+      const read = fs.readFileSync(protoAt, "utf8");
+      // Строка на единицу и на каждое объявление; ответ, которого не спросить,
+      // ставит инструмент.
+      expect(read).toContain(
+        "| Св1 | `components/ZzCard` | строк кода `7`; файлов `1`; полей состояния `0` |  |  |  | полей меньше двух |",
+      );
+      expect(read).toContain("| Св2 | `components/ZzCard/ZzCard.tsx:1` | `zzActive` |  |  |  |  |  |");
+      expect(read).toContain(
+        "| Св3 | `components/ZzCard/ZzCard.tsx:4` | `ZZ_LIMIT` |  |  |  | не абстракция | входов меньше двух |",
+      );
+      expect(read).toContain("| Св4 | `components/ZzCard/ZzCard.tsx:5` | `ZzCard` |  |  |  |  |  |");
+
+      const setRow = (id, cells) =>
+        fs.writeFileSync(
+          protoAt,
+          fs
+            .readFileSync(protoAt, "utf8")
+            .split("\n")
+            .map((line) => {
+              if (!line.startsWith("| " + id + " |")) return line;
+              const c = line.split("|");
+              cells.forEach((v, k) => {
+                if (v !== null) c[4 + k] = " " + v + " ";
+              });
+              return c.join("|");
+            })
+            .join("\n"),
+        );
+      const setOutcome = (id, rest) =>
+        fs.writeFileSync(
+          protoAt,
+          fs
+            .readFileSync(protoAt, "utf8")
+            .split("\n")
+            .map((line) => {
+              const c = line.split("|");
+              return c.length === 9 && c[1].trim() === id
+                ? "| " + id + " | " + c[2].trim() + " | x | " + rest + " |"
+                : line;
+            })
+            .join("\n"),
+        );
+      fillBar(protoAt, { release: "не нужно: проба" });
+      // Фраза, списанная с карты, и фраза с союзом без объяснения — не ответ.
+      setRow("Св1", ["Показывает карточку товара.", null, null, null]);
+      expect(tool("bar", "components/ZzCard")).toMatch(
+        /^ {4}Св1 \(components\/ZzCard\): фраза списана с карты: её пишут по коду$/m,
+      );
+      setRow("Св1", ["считает активность и рисует карточку", "да", null, null]);
+      expect(tool("bar", "components/ZzCard")).toMatch(
+        /^ {4}Св1 \(components\/ZzCard\): во фразе союз: сказать, почему вопрос один \(«да: …»\), либо «нет»$/m,
+      );
+      // «Нет» в вопросе об одной ответственности делает «чисто» ложным.
+      setRow("Св1", [null, "нет", null, null]);
+      expect(tool("bar", "components/ZzCard")).toMatch(
+        /^ {4}A1 для `components\/ZzCard`: чисто, а свидетель говорит иначе: Св1$/m,
+      );
+      // Объявление, не служащее фразе, — вторая ответственность.
+      setRow("Св1", ["показывает карточку и её ценник", "да: ценник — часть карточки", null, null]);
+      setRow("Св2", [null, "нет", null, null, "да: собирает активность из двух флагов"]);
+      const twice = tool("bar", "components/ZzCard");
+      expect(twice).toMatch(/^ {4}A1 для `components\/ZzCard`: чисто, а свидетель говорит иначе: Св2$/m);
+      expect(twice).toMatch(/^ {4}A2 для `components\/ZzCard`: чисто, а свидетель говорит иначе: Св2$/m);
+      // «Чисто» стоит на фразе единицы, «нет предмета» при живом свидетеле ложно.
+      setRow("Св2", [null, "да", null, null, "нет"]);
+      setOutcome("A1", "чисто |  | Св2 — служит |");
+      setOutcome("B5", "нет предмета |  | имён нет |");
+      const loose = tool("bar", "components/ZzCard");
+      expect(loose).toMatch(/^ {4}A1 для `components\/ZzCard`: чисто без опоры на фразу единицы: назвать Св1$/m);
+      expect(loose).toMatch(/^ {4}B5: нет предмета, а свидетели есть: Св2, Св3, Св4$/m);
+      // Свидетель не отменяет опоры на модель: ответственность из карты —
+      // строка её уровня.
+      const duty = /^\| (П\d+) \| ответственность \|/m.exec(read)[1];
+      setOutcome("A1", "чисто |  | Св1 — один вопрос, " + duty + " — карта о том же, Св2–Св4 служат ему |");
+      setOutcome("B5", "чисто |  | Св2–Св4 — имена говорят |");
+      expect(tool("bar", "components/ZzCard")).toContain("печать поставлена");
+
+      // Правленый файл гасит свидетелей о нём: они описывают прежний код.
+      fs.appendFileSync(at, "export const zzMore = () => ZZ_LIMIT;\n");
+      tool("bar", "components/ZzCard");
+      const again = fs.readFileSync(protoAt, "utf8");
+      expect(again).toContain("| Св1 | `components/ZzCard` | строк кода `8`; файлов `1`; полей состояния `0` |  |  |  | полей меньше двух |");
+      expect(again).toContain("| Св2 | `components/ZzCard/ZzCard.tsx:1` | `zzActive` |  |  |  |  |  |");
+      expect(again).toContain("| Св5 | `components/ZzCard/ZzCard.tsx:8` | `zzMore` |  |  |  |  | входов меньше двух |");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("свидетель отвечает за свою единицу, а не за соседку по правке", () => {
+    const box = seatEmpty("witness2-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      for (const [name, body] of [
+        ["ZzCard", "export function ZzCard() {\n  return 'card';\n}\nexport const zzAudit = () => 'log';\n"],
+        ["ZzTag", "export function ZzTag() {\n  return 'tag';\n}\n"],
+      ]) {
+        const at = path.join(box, "src", "components", name, name + ".tsx");
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, body);
+      }
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "components");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        holds: { "узел@components/ZzCard": "нет" },
+      });
+      const text = fs.readFileSync(protoAt, "utf8");
+      const idOf = (name) =>
+        new RegExp("^\\| (Св\\d+) \\| `[^`]+` \\| `" + name + "` \\|", "m").exec(text)[1];
+      // Объявление карточки не служит её фразе — находка карточки; ответ
+      // «чисто» о метке стоит на её свидетелях и принимается.
+      const audit = idOf("zzAudit");
+      fs.writeFileSync(
+        protoAt,
+        text
+          .split("\n")
+          .map((line) => {
+            if (line.startsWith("| " + audit + " |")) {
+              const c = line.split("|");
+              c[5] = " нет ";
+              return c.join("|");
+            }
+            const c = line.split("|");
+            return c.length === 9 && c[1].trim() === "A1" && c[2].includes("components/ZzCard")
+              ? "| A1 | " + c[2].trim() + " | x | нашлось | `src/components/ZzCard/ZzCard.tsx:4` | журнал аудита — вторая ответственность | предложено |"
+              : line;
+          })
+          .join("\n"),
+      );
+      const sealed = tool("bar", "components");
       expect(sealed).toContain("печать поставлена");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });

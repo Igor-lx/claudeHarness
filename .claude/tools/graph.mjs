@@ -27,6 +27,8 @@ import {
   barModelFault,
   barLevelFault,
   barDeltaFault,
+  barWitnessFault,
+  barWitnessVerdict,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -1453,11 +1455,40 @@ const barRowsOf = (body) => {
   const model = [];
   const levels = [];
   const base = new Map();
+  const witnesses = [];
   for (const line of body.split(/\r?\n/)) {
     if (!line.startsWith("| ")) continue;
     const cells = barCellsOf(line);
     if (cells.length < 4 || /^-+$/.test(cells[0])) continue;
-    if (["критерий", "модель", "уровень", "файл"].includes(cells[0])) continue;
+    if (["критерий", "модель", "уровень", "файл", "свидетель"].includes(cells[0]))
+      continue;
+    // Свидетель: строка единицы — семь граф, строка объявления — восемь.
+    // Ключ тот же, что у инструмента: по нему ответ переносится, когда
+    // номера сдвинулись.
+    if (/^Св[0-9]+$/.test(cells[0])) {
+      const where = barUnTick(cells[1]);
+      if (cells.length === 7)
+        witnesses.push({
+          id: cells[0],
+          kind: "единица",
+          key: "единица|" + where,
+          where,
+          answers: cells.slice(3),
+        });
+      else if (cells.length === 8)
+        witnesses.push({
+          id: cells[0],
+          kind: "объявление",
+          key:
+            "объявление|" +
+            where.replace(/:[0-9]+$/, "") +
+            "|" +
+            barUnTick(cells[2]),
+          where,
+          answers: cells.slice(3),
+        });
+      continue;
+    }
     if (/^П[0-9]+$/.test(cells[0])) {
       // Строка модели прежней формы исходом не считается: иначе её номер
       // читался бы критерием, которого в политике нет.
@@ -1508,7 +1539,7 @@ const barRowsOf = (body) => {
         fate: cells[5],
       });
   }
-  return { outcomes, model, levels, base };
+  return { outcomes, model, levels, base, witnesses };
 };
 
 /** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
@@ -7880,6 +7911,213 @@ const SYMPTOM_SORTS = [
   "флаги",
 ];
 
+// --- свидетели ----------------------------------------------------------
+//
+// Суждение — одна ли у узла ответственность, верна ли граница, говорит ли
+// имя — машине недоступно. Доступно другое: потребовать ответ по частям и
+// сверить вердикт с ответом. Свидетель — то, что сессия пишет о прочитанном
+// по коду: на какой ОДИН вопрос отвечает единица переноса — одним
+// предложением, — и что делает каждое её объявление верхнего уровня, служит
+// ли оно этому вопросу, говорит ли его имя, упрощает ли оно больше, чем стоит,
+// и не решает ли внутри то, что знал вызывающий. Ответ «нет» делает критерий
+// находкой: «чисто» при нём печать не принимает, и «чисто» называет своих
+// свидетелей номером. Верность самих ответов печать не держит — держит их
+// то, что ответ стоит строкой о каждом объявлении, а не одним словом о
+// единице.
+//
+// Найдено вопросом разработчика: ответственность узла можно назвать по коду
+// одной фразой, и вторая фраза — уже находка; ловить «то-то и то-то»
+// синтаксисом нельзя, а потребовать ответа по каждому объявлению — можно.
+
+/** Объявления верхнего уровня файла: функция, компонент, хук, класс,
+ * перечисление, константа. Типы не в счёт: они описывают контракт, а не
+ * делают работу. Абстракция — то, что вызывают либо строят; данные под
+ * именем абстракцией не являются. Входы — параметры функции; объект,
+ * разобранный на поля, даёт входом каждое поле. */
+const declarationsOf = (f) => {
+  const bare = bareCodeOf(readFileSync(f, "utf8"));
+  const starts = [0];
+  for (let k = 0; k < bare.length; k += 1)
+    if (bare[k] === "\n") starts.push(k + 1);
+  // Сколько входов у списка параметров, открытого скобкой в позиции `p`.
+  const countAt = (p) => {
+    const q = closeOf(bare, p);
+    if (q < 0) return 0;
+    const parts = topLevelParts(bare.slice(p + 1, q))
+      .map((x) => x.text.trim())
+      .filter((x) => x !== "");
+    if (parts.length === 1 && parts[0].startsWith("{")) {
+      const close = closeOf(parts[0], 0);
+      return close < 0
+        ? 1
+        : topLevelParts(parts[0].slice(1, close)).filter(
+            (x) => x.text.trim() !== "" && !x.text.trim().startsWith("..."),
+          ).length;
+    }
+    return parts.length;
+  };
+  // Входы функции, начиная с позиции за значением: стрелка, `function`,
+  // один голый параметр — либо первый довод обёртки (`memo(…)`).
+  const inputsFrom = (at, wrapped = false) => {
+    const rest = bare.slice(at, at + 400);
+    const head = /^\s*(?:async\s+)?(?:function\b[^(]*)?\(/.exec(rest);
+    if (head !== null) {
+      const p = at + head[0].length - 1;
+      if (wrapped || /^\s*(?:async\s+)?function\b/.test(rest)) return countAt(p);
+      const q = closeOf(bare, p);
+      return q >= 0 && /^\s*(?::[^=;]+?)?\s*=>/.test(bare.slice(q + 1, q + 200))
+        ? countAt(p)
+        : 0;
+    }
+    if (/^\s*(?:async\s+)?[\w$]+\s*=>/.test(rest)) return 1;
+    const call = /^\s*[\w$.]+\s*(?:<[^<>]*>)?\s*\(/.exec(rest);
+    return call === null || wrapped ? 0 : inputsFrom(at + call[0].length, true);
+  };
+  const out = [];
+  bare.split("\n").forEach((line, i) => {
+    const m =
+      /^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(function\*?|const|let|var|class|enum)\s+([\w$]+)/.exec(
+        line,
+      );
+    const anonymous =
+      m === null &&
+      /^export\s+default\s+(?:async\s+)?function\s*\*?\s*\(/.test(line);
+    if (m === null && !anonymous) return;
+    const sort = anonymous ? "function" : m[1].replace("*", "");
+    const name = anonymous ? "default" : m[2];
+    const at = starts[i] + (anonymous ? line.indexOf("function") : m[0].length);
+    const value = /^\s*(?::[^=]+)?=\s*/.exec(bare.slice(at, at + 200));
+    const inputs =
+      sort === "function"
+        ? countAt(bare.indexOf("(", at))
+        : sort === "class" || sort === "enum" || value === null
+          ? 0
+          : inputsFrom(at + value[0].length);
+    const fn =
+      sort === "function" ||
+      (value !== null &&
+        /^(?:async\s+)?(?:\(|function\b|[\w$]+\s*=>|[\w$.]+\s*(?:<[^<>]*>)?\s*\()/.test(
+          bare.slice(at + value[0].length, at + value[0].length + 200),
+        ));
+    out.push({
+      line: i + 1,
+      name,
+      abstraction: fn || sort === "class",
+      inputs,
+    });
+  });
+  return out;
+};
+
+const BAR_WITNESS_UNIT_HEAD =
+  "| свидетель | единица | факты | фраза | вопрос один | граница по смыслу | сочетания |";
+const BAR_WITNESS_DECL_HEAD =
+  "| свидетель | где | имя | что делает | служит фразе | имя говорит | упрощает | решение по входам |";
+/** Ответы, которые ставит инструмент: вопроса тут нет по построению. */
+const WITNESS_NOT_ASKED = "не спрашивается";
+const WITNESS_FEW_FIELDS = "полей меньше двух";
+const WITNESS_FEW_INPUTS = "входов меньше двух";
+const WITNESS_NOT_ABSTRACTION = "не абстракция";
+/** Какой ответ свидетеля отвечает за какой критерий: вид строки и номер
+ * ответа в ней. Единица отвечает фразой, вопросом, границей и сочетаниями;
+ * объявление — тем, что делает, служением фразе, именем, упрощением и
+ * решением по входам. */
+const WITNESS_COLUMNS = {
+  A1: [
+    ["единица", 1],
+    ["объявление", 1],
+  ],
+  A10: [["единица", 2]],
+  C1: [["единица", 3]],
+  A2: [["объявление", 4]],
+  B5: [["объявление", 2]],
+  H8: [["объявление", 3]],
+};
+
+/** Свидетели предмета: строка на единицу переноса и строка на объявление
+ * верхнего уровня её файлов. Бочки и объявления типов свидетелей не дают:
+ * бочка ничего не делает сама. `asked` — критерии этого протокола: ответ на
+ * вопрос, которого свод не задаёт, инструмент ставит сам. */
+const barWitnessesOf = (list, asked) => {
+  const code = list
+    .filter(
+      (f) =>
+        files.includes(f) &&
+        !isTest(f) &&
+        !f.endsWith(".d.ts") &&
+        !isBarrel(f),
+    )
+    .sort(barByRel);
+  const ask = (id, answer = "") => (asked.has(id) ? answer : WITNESS_NOT_ASKED);
+  const rows = [];
+  for (const u of [...new Set(code.map(unitOf))].sort()) {
+    const mine = code.filter((f) => unitOf(f) === u);
+    let lines = 0;
+    let fields = 0;
+    for (const f of mine) {
+      const text = readFileSync(f, "utf8");
+      lines += bareCodeOf(text)
+        .split("\n")
+        .filter((l) => l.trim() !== "").length;
+      fields += text
+        .split(LF)
+        .filter(
+          (l) => !/^\s*(\/\/|\*|\/\*)/.test(l) && BRIEF_SUBJECTS.state.test(l),
+        ).length;
+    }
+    rows.push({
+      kind: "единица",
+      key: "единица|" + u,
+      unit: u,
+      where: u,
+      name: "",
+      facts:
+        "строк кода " +
+        barQuoted(String(lines)) +
+        "; файлов " +
+        barQuoted(String(mine.length)) +
+        "; полей состояния " +
+        barQuoted(String(fields)),
+      // Карта — для сверки «фраза не списана»: её пишут по коду.
+      said: mine
+        .map(mapResponsibilityOf)
+        .filter((one) => one !== null)
+        .map((one) => one.split("|").join(",").split(";").join(",")),
+      auto: [
+        "",
+        ask("A1"),
+        ask("A10"),
+        fields < 2 ? WITNESS_FEW_FIELDS : ask("C1"),
+      ],
+    });
+    for (const f of mine)
+      for (const d of declarationsOf(f))
+        rows.push({
+          kind: "объявление",
+          key: "объявление|" + rel(f) + "|" + d.name,
+          unit: u,
+          where: rel(f) + ":" + d.line,
+          name: d.name,
+          facts: "",
+          said: [],
+          auto: [
+            "",
+            ask("A1"),
+            ask("B5"),
+            d.abstraction ? ask("H8") : WITNESS_NOT_ABSTRACTION,
+            d.inputs < 2 ? WITNESS_FEW_INPUTS : ask("A2"),
+          ],
+        });
+  }
+  // Номера — по порядку печати: сперва единицы, затем объявления. Иначе номер
+  // в протоколе шёл бы вразнобой, и прежний протокол не узнавал бы своих
+  // строк.
+  return [
+    ...rows.filter((w) => w.kind === "единица"),
+    ...rows.filter((w) => w.kind === "объявление"),
+  ].map((w, k) => ({ ...w, id: "Св" + (k + 1) }));
+};
+
 /** Внутренность чужой единицы переноса: файл в папке другого компонента, не
  * её вход. Единица переноса — папка под объявленным слоем компонентов
  * (`componentsAt`): её
@@ -9298,6 +9536,92 @@ const barFlagsOf = (list, manifestTouched) => {
     .join(",");
 };
 
+/** Раздел свидетелей: порядок работы словами и две таблицы. Ответ, который
+ * ставит инструмент, стоит сразу; ответ сессии переносится из прежнего
+ * протокола по ключу строки. */
+const barWitnessSection = (witnesses, carried) => {
+  if (witnesses.length === 0) return [];
+  const answers = (w) => {
+    const was = carried.get(w.key) ?? [];
+    return w.auto.map((one, k) => (one !== "" ? one : (was[k] ?? "")));
+  };
+  const units = witnesses.filter((w) => w.kind === "единица");
+  const decls = witnesses.filter((w) => w.kind === "объявление");
+  return [
+    "## Свидетели",
+    "",
+    "Свидетель — ответ о прочитанном, написанный по коду, а не по карте.",
+    "Порядок: прочитать файлы единицы переноса; написать фразу — на какой",
+    "ОДИН вопрос она отвечает, одним предложением; пройти объявления и о",
+    "каждом сказать, что оно делает. Союз во фразе — «и», «а также», «плюс»,",
+    "«затем», «а», «но» — требует ответа " +
+      barQuoted("да: почему вопрос один") +
+      " либо " +
+      barQuoted("нет") +
+      ".",
+    "Граница по смыслу — совпадает ли папка с тем, что она делает; сочетания —",
+    "есть ли у полей состояния недопустимые сочетания: " +
+      barQuoted("нет") +
+      " либо " +
+      barQuoted("есть: какие") +
+      ".",
+    "У объявления: служит ли оно фразе, говорит ли имя, что оно делает и",
+    "когда его звать, упрощает ли абстракция больше, чем стоит, и решается ли",
+    "внутри то, что вызывающий знал раньше: " +
+      barQuoted("нет") +
+      " либо " +
+      barQuoted("да: где") +
+      ".",
+    "Ответ «нет» — а у сочетаний и входов «есть» и «да» — делает критерий",
+    "находкой: «чисто» при нём не принимается, и «чисто» называет своих",
+    "свидетелей номером. Объявление, которое фразе не служит, — вторая",
+    "ответственность.",
+    "",
+    ...(units.length
+      ? [
+          "### Единицы",
+          "",
+          BAR_WITNESS_UNIT_HEAD,
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          ...units.map(
+            (w) =>
+              "| " +
+              w.id +
+              " | " +
+              barQuoted(w.unit) +
+              " | " +
+              w.facts +
+              " | " +
+              answers(w).join(" | ") +
+              " |",
+          ),
+          "",
+        ]
+      : []),
+    ...(decls.length
+      ? [
+          "### Объявления",
+          "",
+          BAR_WITNESS_DECL_HEAD,
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          ...decls.map(
+            (w) =>
+              "| " +
+              w.id +
+              " | " +
+              barQuoted(w.where) +
+              " | " +
+              barQuoted(w.name) +
+              " | " +
+              answers(w).join(" | ") +
+              " |",
+          ),
+          "",
+        ]
+      : []),
+  ];
+};
+
 /** Скелет протокола. Исходы, снятия, итог и база переносятся из `carried`:
  * правка предмета гасит печать, но не работу. */
 const barSkeletonOf = ({
@@ -9310,8 +9634,10 @@ const barSkeletonOf = ({
   withBase,
   noneOf,
   baseFiles = null,
+  witnesses = [],
 }) => {
   const said0 = carried?.said ?? new Map();
+  const witness0 = carried?.witness ?? new Map();
   const release0 = carried?.releases ?? new Map();
   const base0 = carried?.baseRows ?? new Map();
   const level0 = carried?.levelRows ?? new Map();
@@ -9475,6 +9801,7 @@ const barSkeletonOf = ({
             "",
           ];
     }),
+    ...barWitnessSection(witnesses, witness0),
     "## Исходы",
     "",
     "Исход: " +
@@ -9628,6 +9955,7 @@ const barCarryOf = (parsed, expected, levelSubjects) => {
     releases: new Map(parsed.model.map((r) => [barModelKey(r), r.release])),
     baseRows: parsed.base,
     levelRows,
+    witness: new Map(parsed.witnesses.map((w) => [w.key, w.answers])),
   };
 };
 
@@ -9647,6 +9975,7 @@ const barHolesOf = ({
   subjectAbs = [],
   neighbours = null,
   baseFiles = null,
+  witnesses = [],
 }) => {
   const holes = [];
   const said = new Map();
@@ -9900,6 +10229,53 @@ const barHolesOf = ({
   const loose = barDeltaFault(barModelCode(parsed.model) + "|" + answered);
   if (loose !== "") holes.push(loose);
 
+  // Свидетели: форма каждого ответа и согласие исходов с ответами. Ответ
+  // «нет» делает критерий находкой: «чисто» при нём ложно без суждения.
+  if (witnesses.length > 0) {
+    const answered = new Map(parsed.witnesses.map((w) => [w.key, w]));
+    for (const w of witnesses) {
+      const got = answered.get(w.key);
+      if (got === undefined) {
+        holes.push(w.id + ": строки свидетеля нет");
+        continue;
+      }
+      const fault = barWitnessFault(
+        [
+          w.kind,
+          ...(w.kind === "единица" ? [w.said.join(";")] : []),
+          ...got.answers.map(flat),
+        ].join("|"),
+      );
+      if (fault !== "")
+        holes.push(w.id + " (" + w.where + "): " + fault);
+    }
+    for (const { c, subject } of expected) {
+      const columns = WITNESS_COLUMNS[c.id];
+      const one = said.get(barKey(c.id, subject));
+      if (columns === undefined || one === undefined) continue;
+      const mine = witnesses.filter(
+        (w) => subject === "" || (subject !== BAR_AREA && w.unit === subject),
+      );
+      const code = mine.flatMap((w) => {
+        const k = columns.find(([kind]) => kind === w.kind)?.[1];
+        const got = answered.get(w.key);
+        return k === undefined || got === undefined
+          ? []
+          : [
+              w.id +
+                ":" +
+                w.kind +
+                ":" +
+                flat(got.answers[k]).split(";").join(","),
+            ];
+      });
+      const fault = barWitnessVerdict(
+        [c.id, one.outcome, flat(one.what), code.join(";")].join("|"),
+      );
+      if (fault !== "") holes.push(barWho(c.id, subject) + ": " + fault);
+    }
+  }
+
   // Вторая таблица: база и документация, по файлу предмета и порознь.
   //
   // Прежде это был вопрос прозой в другом режиме, и ответ на него держался
@@ -9996,6 +10372,7 @@ const barProcess = ({
   subjectAbs = [],
   neighbours = null,
   baseFiles = null,
+  witnesses = [],
 }) => {
   const was = barHeader(at);
   const parsedWas = was === null ? null : barRowsOf(was.body);
@@ -10046,13 +10423,26 @@ const barProcess = ({
         want.every((f) => parsedWas.base.has(f))
       );
     })();
+  // Свидетели — по тем же единицам и объявлениям и под теми же номерами:
+  // объявление, пришедшее в предмет или ушедшее из него, иначе оставалось бы
+  // без строки либо со строкой о том, чего нет.
+  const sameWitness =
+    parsedWas !== null &&
+    parsedWas.witnesses.length === witnesses.length &&
+    witnesses.every(
+      (w, k) =>
+        parsedWas.witnesses[k]?.key === w.key &&
+        parsedWas.witnesses[k]?.id === w.id &&
+        parsedWas.witnesses[k]?.where === w.where,
+    );
   const sameSubject =
     was !== null &&
     was.kind === kind &&
     barSameMarks(was.marks, marks) &&
     sameModel(parsedWas.model) &&
     sameRows &&
-    sameBase;
+    sameBase &&
+    sameWitness;
   if (!sameSubject) {
     // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
     // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
@@ -10093,6 +10483,24 @@ const barProcess = ({
       // Итог по уровням — тоже вердикт о форме целого: стоит он на коде,
       // которого больше нет, и пишется заново.
       carry.levelRows = new Map();
+      // Свидетель о правленом файле описывает прежний код: его пишут заново.
+      // Фраза единицы — тоже, если правлен хоть один её файл.
+      const touched = new Set(
+        edited.map((one) => {
+          const abs = barAbsOf(one) ?? path.join(ROOT, one);
+          return norm(abs);
+        }),
+      );
+      const touchedUnits = new Set([...touched].map((f) => unitOf(f)));
+      for (const w of witnesses) {
+        const file = w.kind === "единица" ? null : barAbsOf(w.where);
+        if (
+          w.kind === "единица"
+            ? touchedUnits.has(w.unit)
+            : file !== null && touched.has(norm(file))
+        )
+          carry.witness.delete(w.key);
+      }
     }
     const lost =
       was === null || carry !== null
@@ -10111,6 +10519,7 @@ const barProcess = ({
         withBase,
         noneOf,
         baseFiles,
+        witnesses,
       }),
     );
     return {
@@ -10139,6 +10548,7 @@ const barProcess = ({
     subjectAbs,
     neighbours,
     baseFiles,
+    witnesses,
   });
   const found = expected
     .map(({ c, subject }) => ({
@@ -10331,6 +10741,13 @@ const barTransitionPlan = (s, live) => {
     levelSubjects: { [s.level]: [s.key] },
     withBase: false,
     noneOf: (c) => barNoSubject(c.id + "|" + flags),
+    // Свидетели — у единицы переноса: на её ядро отвечают фразой и
+    // объявлениями. У слоя и приложения единиц много, и ответ о них стоит в
+    // их собственных протоколах.
+    witnesses:
+      s.level === "узел"
+        ? barWitnessesOf(s.files, new Set(criteria.map((c) => c.id)))
+        : [],
   };
 };
 
@@ -10475,6 +10892,10 @@ if (mode === "bar") {
       );
     console.log("");
     console.log(
+      "  В протоколе единицы сперва свидетели — фраза и ответ по каждому",
+    );
+    console.log("  объявлению, по коду.");
+    console.log(
       "  По КАЖДОМУ протоколу — исход в каждой строке, читая политику, а не",
     );
     console.log(
@@ -10569,6 +10990,12 @@ if (mode === "bar") {
   // строка на правку двух узлов закрывала вопрос одного ответом о другом.
   const subjects = barSubjectsOf(work, neighbours);
   const expected = barExpectedOf(live.all, subjects);
+  // Свидетели — о самом предмете: соседей читают ради предмета, и их ядро
+  // отвечает одной строкой.
+  const witnesses = barWitnessesOf(
+    work,
+    new Set(expected.map((e) => e.c.id)),
+  );
   const levelSubjects = {
     узел: subjects.узел.length ? subjects.узел : [""],
     слой: subjects.слой.length ? subjects.слой : [""],
@@ -10624,6 +11051,7 @@ if (mode === "bar") {
     subjectAbs: area,
     neighbours,
     baseFiles: area.map(rel),
+    witnesses,
   });
 
   if (r.state === "напечатан") {
@@ -10679,7 +11107,13 @@ if (mode === "bar") {
         near.length,
     );
     console.log("");
-    console.log("  По КАЖДОМУ критерию поставить исход, читая политику, а не");
+    console.log(
+      "  Сперва свидетели — по коду, а не по карте: фраза каждой единицы",
+    );
+    console.log(
+      "  одним предложением и ответ по каждому объявлению. Затем по КАЖДОМУ",
+    );
+    console.log("  критерию поставить исход, читая политику, а не");
     console.log("  название в строке: название — указатель, а не критерий.");
     console.log(
       "  Ядро узла — по каждой единице переноса, ядро слоя — по каждому слою,",
