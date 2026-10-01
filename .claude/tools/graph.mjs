@@ -676,7 +676,7 @@ if (mode === "types" || mode === "lint") {
         " — долг обязан сжиматься следом за починкой: поставить `debt." +
         mode +
         ": " +
-        found +
+        (found === 0 ? "null" : found) +
         "` в .context/graph.config.mjs",
     );
     process.exit(1);

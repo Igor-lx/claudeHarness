@@ -721,6 +721,21 @@ describe("долг ошибок типов держит обёртка комп�
       expect(statusOf(printing([colored, plain]))).toBe(0);
       expect(statusOf(printing([colored, plain, plain]))).toBe(1);
       expect(statusOf(printing([plain]))).toBe(1);
+      // Долг погашен целиком: подсказка называет пустое поле так, как его
+      // пишет семя, — иначе настройка расходится с семенем формой пустоты.
+      const paidSaid = (() => {
+        try {
+          execFileSync(process.execPath, [tool, "types", "--", ...printing([])], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          return "";
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      })();
+      expect(paidSaid).toContain("`debt.types: null`");
       // Команда упала, не назвав ни одной ошибки типов: её код уходит
       // наружу, а не подменяется вердиктом о долге.
       expect(statusOf([process.execPath, "-e", "process.exit(3)"])).toBe(3);
