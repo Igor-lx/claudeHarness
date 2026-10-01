@@ -1,5 +1,5 @@
 {
-  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с адресом виновника. Вердикт машинный целиком. Посадка бывает из нескольких файлов: нарушение формы целого — второй писатель, цикл, общий слой, берущий из приложения, внутренность, отданная наружу, — это связь узлов, и каждый из них по отдельности безупречен в строках. Такие посадки проверяют уровневый проход, а не построчный; виновники названы полем `culprits`, и находка обязана назвать хотя бы одного. Посадка второго рода — поле `into` вместо `create` — дописывает нарушение в конец СУЩЕСТВУЮЩИХ файлов проекта, выбранных случайно, роль на файл, и кладёт обычную правку в ещё один: нарушение стоит среди живого кода и не одно в правленом. Путь между ролями посадка вычисляет сама — `{{from:роль}}`; виновники — роли в `culprits`. Чего замер НЕ доказывает: посаженное новым файлом заметнее настоящего — доля этого рода оптимистична и читается как верхняя граница; посаженное в существующий код ближе к жизни, но и его сажал тот, кто знает список, — доля, замеренная автором посадок, к ловчести на чужом коде не приравнивается. Критерии-суждения — честно ли назван узел, та ли здесь граница — не сажаются вовсе и в долю не входят.",
+  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с адресом виновника. Вердикт машинный целиком. Посадка бывает из нескольких файлов: нарушение формы целого — второй писатель, цикл, общий слой, берущий из приложения, внутренность, отданная наружу, — это связь узлов, и каждый из них по отдельности безупречен в строках. Такие посадки проверяют уровневый проход, а не построчный; виновники названы полем `culprits`, и находка обязана назвать хотя бы одного. Посадка второго рода — поле `into` вместо `create` — дописывает нарушение в конец СУЩЕСТВУЮЩИХ файлов проекта, выбранных случайно, роль на файл, и кладёт обычную правку (`cover`) в ещё один: нарушение стоит среди живого кода и не одно в правленом. Имена у неё обычные, без пометки пробы; файл, где такое имя уже есть, не выбирается. В машинописный файл ложится вариант `ts` — с типами, как пишут вокруг; импорт встаёт к импортам файла, наверх. Путь между ролями посадка вычисляет сама — `{{from:роль}}`; виновники — роли в `culprits`. Чего замер НЕ доказывает: посаженное новым файлом заметнее настоящего — доля этого рода оптимистична и читается как верхняя граница; посаженное в существующий код ближе к жизни, но и его сажал тот, кто знает список, — доля, замеренная автором посадок, к ловчести на чужом коде не приравнивается. Критерии-суждения — честно ли назван узел, та ли здесь граница — не сажаются вовсе и в долю не входят.",
   "plants": [
     {
       "criterion": "B1",
@@ -173,11 +173,13 @@
       "into": [
         {
           "role": "владелец",
-          "text": "export const zzProbeRegistry = { count: 0, names: [] };"
+          "text": "export const visitLog = { count: 0, names: [] };",
+          "ts": "export const visitLog = { count: 0, names: [] as string[] };"
         },
         {
           "role": "виновник",
-          "text": "import { zzProbeRegistry } from \"{{from:владелец}}\";\n\nexport const zzProbeRemember = (name) => {\n  zzProbeRegistry.names.push(name);\n  zzProbeRegistry.count += 1;\n};"
+          "text": "import { visitLog } from \"{{from:владелец}}\";\n\nexport const recordVisit = (name) => {\n  visitLog.names.push(name);\n  visitLog.count += 1;\n};",
+          "ts": "import { visitLog } from \"{{from:владелец}}\";\n\nexport const recordVisit = (name: string): void => {\n  visitLog.names.push(name);\n  visitLog.count += 1;\n};"
         }
       ],
       "culprits": [
@@ -190,7 +192,8 @@
       "into": [
         {
           "role": "виновник",
-          "text": "export const zzProbeForget = (key) => {\n  try {\n    window.localStorage.removeItem(key);\n  } catch {\n    // nothing to do\n  }\n};"
+          "text": "export const forgetKey = (key) => {\n  try {\n    window.localStorage.removeItem(key);\n  } catch {\n    // storage may be unavailable\n  }\n};",
+          "ts": "export const forgetKey = (key: string): void => {\n  try {\n    window.localStorage.removeItem(key);\n  } catch {\n    // storage may be unavailable\n  }\n};"
         }
       ]
     },
@@ -200,7 +203,8 @@
       "into": [
         {
           "role": "виновник",
-          "text": "export const zzProbeIsLong = (text) => String(text).length > 37;"
+          "text": "export const isLongText = (text) => String(text).length > 37;",
+          "ts": "export const isLongText = (text: string): boolean => text.length > 37;"
         }
       ]
     },
@@ -210,7 +214,8 @@
       "into": [
         {
           "role": "виновник",
-          "text": "export const zzProbeLabel = (value, compact = false) =>\n  compact ? String(value) : \"value: \" + String(value);\n\nexport const zzProbeShortLabel = (value) => zzProbeLabel(value, true);"
+          "text": "export const formatValue = (value, compact = false) =>\n  compact ? String(value) : \"value: \" + String(value);\n\nexport const formatShortValue = (value) => formatValue(value, true);",
+          "ts": "export const formatValue = (value: unknown, compact = false): string =>\n  compact ? String(value) : \"value: \" + String(value);\n\nexport const formatShortValue = (value: unknown): string => formatValue(value, true);"
         }
       ]
     },
@@ -220,7 +225,8 @@
       "into": [
         {
           "role": "виновник",
-          "text": "export const zzProbeParts = (text) => {\n  const head = String(text).slice(0, 1);\n  const body = String(text).slice(1, -1);\n  const tail = String(text).slice(-1);\n  return [head, body, tail];\n};"
+          "text": "export const splitEdges = (text) => {\n  const head = text.slice(0, 1);\n  const body = text.slice(1, -1);\n  const tail = text.slice(-1);\n  return [head, body, tail];\n};",
+          "ts": "export const splitEdges = (text: string): [string, string, string] => {\n  const head = text.slice(0, 1);\n  const body = text.slice(1, -1);\n  const tail = text.slice(-1);\n  return [head, body, tail];\n};"
         }
       ]
     },
@@ -230,7 +236,8 @@
       "into": [
         {
           "role": "виновник",
-          "text": "let zzProbeCalls = 0;\n\nexport const zzProbeNextId = (prefix) => {\n  zzProbeCalls += 1;\n  return prefix + zzProbeCalls;\n};"
+          "text": "let issued = 0;\n\nexport const nextId = (prefix) => {\n  issued += 1;\n  return prefix + issued;\n};",
+          "ts": "let issued = 0;\n\nexport const nextId = (prefix: string): string => {\n  issued += 1;\n  return prefix + issued;\n};"
         }
       ]
     },
@@ -240,19 +247,25 @@
       "into": [
         {
           "role": "виновник",
-          "text": "export const zzProbeAudit = (action, payload) => {\n  console.info(\"[audit]\", action, JSON.stringify(payload));\n};"
+          "text": "export const logAction = (action, payload) => {\n  console.info(\"[audit]\", action, JSON.stringify(payload));\n};",
+          "ts": "export const logAction = (action: string, payload: unknown): void => {\n  console.info(\"[audit]\", action, JSON.stringify(payload));\n};"
         }
       ]
     },
     {
       "criterion": "H6-тер",
-      "why": "сокращения вместо слов: res, cfg, tmp",
+      "why": "сокращения вместо слов: val, cfg, tmp",
       "into": [
         {
           "role": "виновник",
-          "text": "export const zzProbeRes = (cfg) => {\n  const tmp = cfg.val;\n  return tmp;\n};"
+          "text": "export const readVal = (cfg) => {\n  const tmp = cfg.val;\n  return tmp;\n};",
+          "ts": "export const readVal = (cfg: { val: number }): number => {\n  const tmp = cfg.val;\n  return tmp;\n};"
         }
       ]
     }
-  ]
+  ],
+  "cover": {
+    "text": "export const normalizeLabel = (value) => String(value).trim();",
+    "ts": "export const normalizeLabel = (value: unknown): string => String(value).trim();"
+  }
 }

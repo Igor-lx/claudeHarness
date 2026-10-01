@@ -1910,6 +1910,24 @@ describe("ядро по предметам уровня: правка, чтен�
       // спрашивают, а не закрывают заготовкой правки.
       expect(app).toMatch(/^\| R1 \|/m);
       expect(app).not.toContain("манифест этой правкой не тронут");
+      // Политику переход читает один раз — страницами протокола приложения,
+      // телами ядра узла и слоя и всех критериев приложения; протокол
+      // единицы читает её код, слой — свои факты.
+      const pages = (text) =>
+        [...text.matchAll(/^\| \d+ \| ((?:политика|код|сосед)[^|]+) \|  \|$/gm)].map((m) => m[1].trim());
+      expect(pages(app).length).toBeGreaterThan(0);
+      expect(pages(app).every((one) => one.startsWith("политика: "))).toBe(true);
+      expect(pages(cart)).toEqual([
+        "код `components/zzCart/zzCart.tsx`, строки 1–8",
+        "код `components/zzCart/zzTotal.ts`, строки 1–1",
+      ]);
+      expect(pages(fs.readFileSync(path.join(dir, "layer--components.md"), "utf8"))).toEqual([]);
+      const policy = execFileSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "bar-read", path.join(dir, "app.md")],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      for (const id of ["A1", "A5", "A6", "G7"]) expect(policy).toContain("**" + id + ". ");
       // У бочки из ядра узла предмет есть только у вопроса о поверхности.
       const barrel = fs.readFileSync(path.join(dir, "node--components--index.ts.md"), "utf8");
       expect(barrel).toContain("| B7 | `components/index.ts` |");
@@ -2701,6 +2719,81 @@ describe("свидетели в своде по планке", () => {
     }
   }, 300000);
 
+  it("на правке объявление получает свидетеля, только если правка его коснулась", () => {
+    const box = seatEmpty("witness3-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const at = path.join(box, "src", "shared", "zzMath", "zzMath.ts");
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      const body = (third) =>
+        [
+          "export const zzAdd = (a: number, b: number): number => a + b;",
+          "",
+          "export const zzSub = (a: number, b: number): number => {",
+          "  return a - b;",
+          "};",
+          "",
+          "export const zzMul = (a: number, b: number): number => " + third + ";",
+          "",
+        ].join("\n");
+      fs.writeFileSync(at, body("a * b"));
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      // Правка тела одной функции — свидетель у неё одной; фраза единицы есть.
+      fs.writeFileSync(at, body("b * a"));
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const one = fs.readFileSync(protoAt, "utf8");
+      expect(one).toContain("| Св1 | `shared/zzMath` |");
+      expect(one).toContain("| Св2 | `shared/zzMath/zzMath.ts:7` | `zzMul` |");
+      expect(one).not.toContain("`zzAdd`");
+      expect(one).not.toContain("`zzSub`");
+      // Правка внутри тела, а не в строке объявления, — тоже касание.
+      fs.writeFileSync(at, body("a * b").replace("  return a - b;", "  return a - b - 0;"));
+      fs.rmSync(protoAt);
+      tool("bar");
+      const two = fs.readFileSync(protoAt, "utf8");
+      expect(two).toContain("| Св2 | `shared/zzMath/zzMath.ts:3` | `zzSub` |");
+      expect(two).not.toContain("`zzMul`");
+      // Новый файл тронут целиком: свидетель у каждого его объявления.
+      fs.writeFileSync(at, body("a * b"));
+      fs.writeFileSync(
+        path.join(path.dirname(at), "zzPow.ts"),
+        "export const zzSquare = (a: number): number => a * a;\nexport const zzCube = (a: number): number => a * a * a;\n",
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      const fresh = fs.readFileSync(protoAt, "utf8");
+      expect(fresh).toContain("`zzSquare`");
+      expect(fresh).toContain("`zzCube`");
+      fs.rmSync(path.join(path.dirname(at), "zzPow.ts"));
+      // Задача чтения — свидетели всех объявлений.
+      fs.rmSync(protoAt);
+      tool("bar", "shared/zzMath");
+      const read = fs.readFileSync(protoAt, "utf8");
+      for (const name of ["zzAdd", "zzSub", "zzMul"]) expect(read).toContain("`" + name + "`");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("свидетель отвечает за свою единицу, а не за соседку по правке", () => {
     const box = seatEmpty("witness2-");
     try {
@@ -2799,7 +2892,15 @@ describe("страницы чтения в своде по планке", () => 
       const rows = [...text.matchAll(/^\| (\d+) \| ([^|]+) \|  \|$/gm)].map((m) => [m[1], m[2].trim()]);
       // Тела критериев, весь предмет, срез соседа: строки, где он берёт
       // предмет, с соседними.
-      expect(rows[0][1]).toMatch(/^политика: `A1`–`[^`]+`$/);
+      // Тела только тех критериев, на которые отвечает сессия: лозунг (A8) и
+      // замеренная беспредметность (A5-бис — парных копий нет) разрывают
+      // диапазон, и страница их тел не печатает.
+      expect(rows[0][1]).toMatch(/^политика: `A1`–`A5`, `A5-тер`–`A7`, `A9`–/);
+      const first = tool("bar-read", "1");
+      expect(first).not.toContain("**A8.");
+      expect(first).not.toContain("**A5-бис.");
+      // Диапазон — все тела между концами, а не одни концы.
+      for (const id of ["A1", "A2", "A4", "A5", "A5-тер", "A7"]) expect(first).toContain("**" + id + ". ");
       const code = rows.find(([, spec]) => spec.startsWith("код "));
       expect(code[1]).toBe("код `components/ZzNote/ZzNote.tsx`, строки 1–4");
       const near = rows.filter(([, spec]) => spec.startsWith("сосед ")).map(([, spec]) => spec);
@@ -2927,14 +3028,35 @@ describe("проба планки в существующем коде", () => {
       const one = all.plants.find((p) => p.criterion === "C4" && Array.isArray(p.into));
       expect(one).toBeDefined();
       fs.writeFileSync(probes, JSON.stringify({ ...all, plants: [one] }));
+      // Два файла без имён посадки — с импортом наверху; прочие файлы кода
+      // эти имена уже несут, и посадка обязана их обойти.
       for (const [rel, text] of [
-        ["src/shared/zzA/zzA.ts", "export const zzA = (n) => n + 1;\n"],
-        ["src/shared/zzB/zzB.ts", "export const zzB = (n) => n - 1;\n"],
+        ["src/shared/zzA/zzA.ts", 'import { useMemo } from "react";\n\nexport const zzA = (n: number): number => n + 1;\n'],
+        ["src/shared/zzB/zzB.ts", 'import { useMemo } from "react";\n\nexport const zzB = (n: number): number => n - 1;\n'],
         ["src/components/ZzC/ZzC.tsx", "export function ZzC() {\n  return 'c';\n}\n"],
+        ["src/components/ZzD/ZzD.tsx", "export function ZzD() {\n  return 'd';\n}\n"],
+        ["src/components/ZzE/ZzE.tsx", "export function ZzE() {\n  return 'e';\n}\n"],
       ]) {
         fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
         fs.writeFileSync(path.join(box, rel), text);
       }
+      const codeUnder = (dir) =>
+        fs.readdirSync(path.join(box, dir), { withFileTypes: true }).flatMap((e) =>
+          e.isDirectory()
+            ? e.name === "tests"
+              ? []
+              : codeUnder(dir + "/" + e.name)
+            : /\.tsx?$/.test(e.name) && !e.name.endsWith(".d.ts")
+              ? [dir + "/" + e.name]
+              : [],
+        );
+      const busy = codeUnder("src").filter((rel) => !/\/zz[AB]\.ts$/.test(rel));
+      expect(busy.length).toBeGreaterThanOrEqual(3);
+      for (const rel of busy)
+        fs.appendFileSync(
+          path.join(box, rel),
+          "\nexport const visitLog = 0;\nexport const recordVisit = (): string => \"busy\";\n",
+        );
       const run = (cwd, ...args) => {
         try {
           return execFileSync(
@@ -2948,7 +3070,7 @@ describe("проба планки в существующем коде", () => {
       };
       // Род «новым файлом» флагом отсекается: сажать нечего.
       expect(run(box, "bar-probe", "--new")).toContain("=== Сажать нечего ===");
-      const planted = run(box, "bar-probe", "--existing");
+      const planted = run(box, "bar-probe", "--existing", "--seed=11");
       sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
       const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
       expect(sandbox).not.toBeNull();
@@ -2959,11 +3081,19 @@ describe("проба планки в существующем коде", () => {
       // ещё один файл получил обычную правку.
       const culprit = mark.files[0];
       const text = fs.readFileSync(culprit, "utf8");
-      const spec = /import \{ zzProbeRegistry \} from "([^"]+)";/.exec(text)[1];
+      // Импорт — к импортам файла, наверх; тело — с типами, как пишут вокруг.
+      expect(text.split("\n")[1]).toMatch(/^import \{ visitLog \} from "[^"]+";$/);
+      expect(text).toContain("export const recordVisit = (name: string): void => {");
+      expect(text).not.toMatch(/zzProbe/);
+      const spec = /import \{ visitLog \} from "([^"]+)";/.exec(text)[1];
       const owner = ["", ".ts", ".tsx"]
         .map((ext) => path.resolve(path.dirname(culprit), spec) + ext)
         .find((f) => fs.existsSync(f));
-      expect(fs.readFileSync(owner, "utf8")).toContain("export const zzProbeRegistry");
+      expect(fs.readFileSync(owner, "utf8")).toContain("export const visitLog = { count: 0, names: [] as string[] };");
+      // Файлы, где имя посадки уже было, она обошла.
+      expect([culprit, owner].map((f) => path.basename(f)).sort()).toEqual(["zzA.ts", "zzB.ts"]);
+      for (const rel of busy)
+        expect(fs.readFileSync(path.join(sandbox, rel), "utf8").match(/visitLog/g)?.length).toBe(1);
       const changed = execFileSync("git", ["status", "--porcelain"], { cwd: sandbox, encoding: "utf8" })
         .split("\n")
         .filter(Boolean);
@@ -2977,7 +3107,7 @@ describe("проба планки в существующем коде", () => {
       );
       const parts = relCulprit.split("/");
       const unit = parts.length >= 3 ? parts.slice(0, 2).join("/") : relCulprit;
-      const line = text.split("\n").findIndex((l) => l.includes("zzProbeRegistry.names.push")) + 1;
+      const line = text.split("\n").findIndex((l) => l.includes("visitLog.names.push")) + 1;
       fs.appendFileSync(
         path.join(sandbox, ".context", "13-questions.md"),
         "\nВопрос о `src/" + relCulprit + "`.\n",
@@ -3009,6 +3139,52 @@ describe("проба планки в существующем коде", () => {
       fs.rmSync(box, { recursive: true, force: true });
       if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
       if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
+});
+
+describe("проба планки: зерно", () => {
+  it("одно зерно — одна и та же посадка", () => {
+    const box = seatEmpty("probaseed-");
+    const boxes = [];
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      const all = JSON.parse(fs.readFileSync(probes, "utf8"));
+      for (let k = 0; k < 6; k += 1) {
+        const rel = "src/components/ZzS" + k + "/ZzS" + k + ".tsx";
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), "export function ZzS" + k + "() {\n  return " + k + ";\n}\n");
+      }
+      const run = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const plantOnce = () => {
+        const out = run("bar-probe", "--existing", "--seed=5");
+        const sandbox = /песочница: (.+)/.exec(out)[1].trim();
+        const id = /bar-probe (\d+)/.exec(out)[1];
+        boxes.push(sandbox, path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json"));
+        const mark = JSON.parse(fs.readFileSync(boxes[boxes.length - 1], "utf8"));
+        const changed = execFileSync("git", ["status", "--porcelain"], { cwd: sandbox, encoding: "utf8" })
+          .split("\n")
+          .filter(Boolean)
+          .sort()
+          .join(";");
+        return mark.criterion + "|" + path.relative(sandbox, mark.files[0]) + "|" + changed;
+      };
+      const first = plantOnce();
+      for (let k = 0; k < 3; k += 1) expect(plantOnce()).toBe(first);
+      expect(all.plants.length).toBeGreaterThan(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      for (const one of boxes) fs.rmSync(one, { recursive: true, force: true });
     }
   }, 240000);
 });

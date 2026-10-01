@@ -6983,7 +6983,22 @@ if (mode === "bar-probe") {
     : process.argv.includes("--new")
       ? "новым файлом"
       : null;
-  const plants = JSON.parse(readFileSync(at, "utf8")).plants.filter(
+  const probeBook = JSON.parse(readFileSync(at, "utf8"));
+  // Зерно делает посадку повторимой: одно и то же посаженное можно дать двум
+  // сессиям и сравнить их, а тест — проверить без случая. Без зерна выбор
+  // случаен.
+  const seedArg = process.argv.find((a) => a.startsWith("--seed="));
+  let seedState =
+    seedArg === undefined ? null : Number(seedArg.slice("--seed=".length)) >>> 0;
+  const random = () => {
+    if (seedState === null) return Math.random();
+    seedState = (seedState + 0x6d2b79f5) >>> 0;
+    let t = seedState;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const plants = probeBook.plants.filter(
     (p) => only === null || kindOf(p) === only,
   );
   const ledgerAt =
@@ -7004,7 +7019,7 @@ if (mode === "bar-probe") {
     const id = String(Date.now()).slice(-8);
     const box = path.join(tmpdir(), "bar-probe-" + id);
     const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
-    const plant = plants[Math.floor(Math.random() * plants.length)];
+    const plant = plants[Math.floor(random() * plants.length)];
     rmSync(box, { recursive: true, force: true });
     sandboxTree(path.join(BASE, ".."), box);
     sandboxManifests(
@@ -7065,6 +7080,11 @@ if (mode === "bar-probe") {
       // проекта, а в ещё один ложится обычная правка — нарушение не одно в
       // правленом и не в файле, заведённом ради пробы. Файлы — разные: роль
       // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`.
+      //
+      // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
+      // вариант с типами, импорт встаёт к импортам файла. Файл, где такое имя
+      // уже есть, не выбирается — иначе посадка ломала бы его объявлением-
+      // двойником, и находкой стала бы поломка, а не посаженное.
       const pool = files
         .filter(
           (f) =>
@@ -7075,25 +7095,59 @@ if (mode === "bar-probe") {
         )
         .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
       for (let k = pool.length - 1; k > 0; k -= 1) {
-        const j = Math.floor(Math.random() * (k + 1));
+        const j = Math.floor(random() * (k + 1));
         [pool[k], pool[j]] = [pool[j], pool[k]];
       }
-      const need = plant.into.length + 1;
-      if (pool.length < need) {
-        console.log("=== Проба не посажена ===");
-        console.log(
-          "  Посадке в существующий код нужно файлов кода: " +
-            need +
-            ", а в проекте их " +
-            pool.length +
-            ".",
+      const typed = (f) => /\.[cm]?tsx?$/.test(f);
+      const bodyFor = (one, f) =>
+        (typed(f) && one.ts !== undefined ? one.ts : one.text)
+          .split("\n")
+          .join(NEWLINE);
+      const namesIn = (text) =>
+        [
+          ...text.matchAll(
+            /\b(?:const|let|var|function|class)\s+([\w$]+)|import\s*\{([^}]*)\}/g,
+          ),
+        ].flatMap((m) =>
+          m[1] !== undefined
+            ? [m[1]]
+            : m[2]
+                .split(",")
+                .map((x) => x.trim().split(/\s+as\s+/).pop())
+                .filter(Boolean),
         );
-        rmSync(box, { recursive: true, force: true });
-        process.exit(1);
+      const clashes = (f, one) =>
+        namesIn(one.text + NEWLINE + (one.ts ?? "")).some((n) =>
+          new RegExp("(?<![\\w$])" + n.replace(/\$/g, "\\$") + "(?![\\w$])").test(
+            readFileSync(f, "utf8"),
+          ),
+        );
+      const taken = new Set();
+      const pickFor = (one) => {
+        const f = pool.find((x) => !taken.has(x) && !clashes(x, one));
+        if (f !== undefined) taken.add(f);
+        return f;
+      };
+      const cover = probeBook.cover ?? {
+        text: "export const normalizeLabel = (value) => String(value).trim();",
+      };
+      const roleFile = new Map();
+      for (const one of [...plant.into, cover]) {
+        const f = pickFor(one);
+        if (f === undefined) {
+          console.log("=== Проба не посажена ===");
+          console.log(
+            "  Посадке в существующий код нужно файлов кода без её имён: " +
+              (plant.into.length + 1) +
+              ", а нашлось " +
+              taken.size +
+              ".",
+          );
+          rmSync(box, { recursive: true, force: true });
+          process.exit(1);
+        }
+        roleFile.set(one === cover ? "правка" : (one.role ?? "виновник"), f);
       }
-      const roleFile = new Map(
-        plant.into.map((one, k) => [one.role ?? "виновник", pool[k]]),
-      );
       const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
       const specFrom = (from, to) => {
         let r = norm(path.relative(path.dirname(from), to)).replace(
@@ -7103,31 +7157,48 @@ if (mode === "bar-probe") {
         if (!r.startsWith(".")) r = "./" + r;
         return r;
       };
-      const append = (f, text) => {
-        const was = readFileSync(inBox(f), "utf8");
+      // Импорт встаёт за последним импортом файла, тело — в конец. Файл без
+      // импортов получает импорт вместе с телом: модуль это допускает.
+      const place = (f, text) => {
+        const lines = text.split(NEWLINE);
+        const imports = lines.filter((l) => /^import\b/.test(l));
+        const body = lines
+          .filter((l) => !/^import\b/.test(l))
+          .join(NEWLINE)
+          .replace(/^\n+/, "");
+        let was = readFileSync(inBox(f), "utf8");
+        let last = -1;
+        for (const m of was.matchAll(IMPORT_FROM))
+          if (/^\s*import\b/.test(m[0].replace(/^\n/, "")))
+            last = Math.max(last, m.index + m[0].length);
+        for (const m of was.matchAll(IMPORT_BARE))
+          last = Math.max(last, m.index + m[0].length);
+        if (imports.length > 0 && last >= 0) {
+          const cut = was.indexOf(NEWLINE, last);
+          const at = cut < 0 ? was.length : cut;
+          was = was.slice(0, at) + NEWLINE + imports.join(NEWLINE) + was.slice(at);
+        }
+        const tail =
+          imports.length > 0 && last < 0
+            ? imports.join(NEWLINE) + NEWLINE + NEWLINE + body
+            : body;
         writeFileSync(
           inBox(f),
-          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + text + NEWLINE,
+          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + tail + NEWLINE,
         );
       };
       for (const one of plant.into) {
         const f = roleFile.get(one.role ?? "виновник");
-        append(
+        place(
           f,
-          one.text
-            .split("\n")
-            .join(NEWLINE)
-            .replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
-              specFrom(f, roleFile.get(role)),
-            ),
+          bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
+            specFrom(f, roleFile.get(role)),
+          ),
         );
       }
-      append(
-        pool[plant.into.length],
-        "export const zzProbeCover = (value) => String(value).trim();",
-      );
-      culprits = (plant.culprits ?? [...roleFile.keys()]).map((role) =>
-        norm(inBox(roleFile.get(role))),
+      place(roleFile.get("правка"), bodyFor(cover, roleFile.get("правка")));
+      culprits = (plant.culprits ?? plant.into.map((one) => one.role ?? "виновник")).map(
+        (role) => norm(inBox(roleFile.get(role))),
       );
     } else {
       const creates = Array.isArray(plant.create) ? plant.create : [plant.create];
@@ -8152,11 +8223,35 @@ const WITNESS_COLUMNS = {
   H8: [["объявление", 3]],
 };
 
+/** Объявления, которых коснулась правка: новая либо изменённая строка в их
+ * пределах — от строки объявления до строки следующего. Новый файл тронут
+ * целиком. Тот же признак новой строки, что у сдвига модели. */
+const touchedDeclarations = (f, decls) => {
+  const head = headTextOf(f);
+  if (head === null) return decls;
+  const was = new Set(head.split(/\r?\n/).map((l) => l.trim()));
+  const lines = readFileSync(f, "utf8").split(/\r?\n/);
+  return decls.filter((d, k) => {
+    const end = k + 1 < decls.length ? decls[k + 1].line - 1 : lines.length;
+    for (let i = d.line; i <= end; i += 1) {
+      const t = (lines[i - 1] ?? "").trim();
+      if (t !== "" && !was.has(t)) return true;
+    }
+    return false;
+  });
+};
+
 /** Свидетели предмета: строка на единицу переноса и строка на объявление
  * верхнего уровня её файлов. Бочки и объявления типов свидетелей не дают:
  * бочка ничего не делает сама. `asked` — критерии этого протокола: ответ на
- * вопрос, которого свод не задаёт, инструмент ставит сам. */
-const barWitnessesOf = (list, asked) => {
+ * вопрос, которого свод не задаёт, инструмент ставит сам.
+ *
+ * На задаче изменения объявление получает свидетеля, только если правка его
+ * коснулась: прочие отвечали в своде, который их заводил, а строка на каждое
+ * объявление правленого файла превращала правку одной строки в опрос о
+ * тридцати функциях, и ответ сползал к «да» подряд. Фраза единицы
+ * спрашивается всегда: новое объявление судят против неё. */
+const barWitnessesOf = (list, asked, { change = false } = {}) => {
   const code = list
     .filter(
       (f) =>
@@ -8209,7 +8304,9 @@ const barWitnessesOf = (list, asked) => {
       ],
     });
     for (const f of mine)
-      for (const d of declarationsOf(f))
+      for (const d of change
+        ? touchedDeclarations(f, declarationsOf(f))
+        : declarationsOf(f))
         rows.push({
           kind: "объявление",
           key: "объявление|" + rel(f) + "|" + d.name,
@@ -8333,21 +8430,47 @@ const rangesOf = (text) =>
   });
 const absOfRel = (r) => barAbsOf(r) ?? norm(path.join(ROOT, r));
 
+/** Описание страницы политики: критерии подряд по порядку ВСЕЙ политики
+ * сжимаются в диапазон, пропуск разрывает его. Описание самодостаточно:
+ * страницу печатают по нему, не зная, какие критерии стояли в протоколе, —
+ * иначе печать и сверка разрешали бы его по разным наборам. */
+const policySpecOf = (list) => {
+  const all = policyBodies().map((c) => c.id);
+  const runs = [];
+  for (const c of list) {
+    const k = all.indexOf(c.id);
+    const last = runs[runs.length - 1];
+    if (last !== undefined && k === last.to + 1) last.to = k;
+    else runs.push({ from: k, to: k });
+  }
+  return (
+    "политика: " +
+    runs
+      .map((r) =>
+        r.from === r.to
+          ? barQuoted(all[r.from])
+          : barQuoted(all[r.from]) + "–" + barQuoted(all[r.to]),
+      )
+      .join(", ")
+  );
+};
+
 /** Текст страницы по её описанию — одна функция на печать и на сверку:
- * слово считается с того же текста, который видела сессия. `ids` —
- * критерии протокола: страница политики — их тела по порядку политики. */
-const pageTextOf = (spec, ids) => {
-  const policy = /^политика: `([^`]+)`(?:–`([^`]+)`)?$/.exec(spec);
+ * слово считается с того же текста, который видела сессия. */
+const pageTextOf = (spec) => {
+  const policy = /^политика: (.+)$/.exec(spec);
   if (policy !== null) {
-    const list = policyBodies().filter((c) => ids.has(c.id));
-    const from = list.findIndex((c) => c.id === policy[1]);
-    const to = list.findIndex((c) => c.id === (policy[2] ?? policy[1]));
-    return from < 0 || to < from
-      ? "критериев нет"
-      : list
-          .slice(from, to + 1)
-          .map((c) => c.text)
-          .join(LF + LF);
+    const all = policyBodies();
+    const at = (id) => all.findIndex((c) => c.id === id);
+    const out = [];
+    for (const run of policy[1].split(", ")) {
+      const m = /^`([^`]+)`(?:–`([^`]+)`)?$/.exec(run);
+      const from = m === null ? -1 : at(m[1]);
+      const to = m === null ? -1 : at(m[2] ?? m[1]);
+      if (from < 0 || to < from) return "критериев нет";
+      for (let k = from; k <= to; k += 1) out.push(all[k].text);
+    }
+    return out.join(LF + LF);
   }
   const code = /^(?:код|сосед) `([^`]+)`, строки (.+)$/.exec(spec);
   if (code !== null) return numberedLines(absOfRel(code[1]), rangesOf(code[2]));
@@ -8365,11 +8488,7 @@ const barReadPagesOf = ({ ids, subject = [], neighbours = [] }) => {
     let size = 0;
     const flush = () => {
       if (cur.length === 0) return;
-      pages.push(
-        "политика: " +
-          barQuoted(cur[0].id) +
-          (cur.length > 1 ? "–" + barQuoted(cur[cur.length - 1].id) : ""),
-      );
+      pages.push(policySpecOf(cur));
       cur = [];
       size = 0;
     };
@@ -10588,14 +10707,13 @@ const barHolesOf = ({
   // Чтение: слово каждой страницы — то, что печатает её страница сейчас.
   // Верное слово в сообщение не идёт: его снимают со страницы.
   if (reads.length > 0) {
-    const ids = new Set(expected.map((e) => e.c.id));
     const got = new Map(parsed.reads.map((r) => [r.spec, r.word]));
     reads.forEach((spec, k) => {
       const word = (got.get(spec) ?? "").trim();
       const call = "graph.mjs bar-read " + (k + 1);
       if (word === "")
         holes.push("страница " + (k + 1) + " (" + spec + "): слово не вписано — " + call);
-      else if (word !== pageWord(salt, spec, pageTextOf(spec, ids)))
+      else if (word !== pageWord(salt, spec, pageTextOf(spec)))
         holes.push(
           "страница " +
             (k + 1) +
@@ -11145,10 +11263,27 @@ const barTransitionPlan = (s, live) => {
       s.level === "узел"
         ? barWitnessesOf(s.files, new Set(criteria.map((c) => c.id)))
         : [],
-    // Чтение — тела критериев протокола и, у единицы переноса, её код: слой
-    // и приложение читают свои факты, а код единиц — их протоколы.
+    // Чтение. Политику переход читает ОДИН раз — страницами протокола
+    // приложения, телами всех критериев перехода, на которые отвечает сессия:
+    // у каждой единицы те же тела, и страница на каждую была бы той же
+    // страницей по числу единиц. Протокол единицы читает её код; слой читает
+    // свои факты, а код единиц — их протоколы.
     reads: barReadPagesOf({
-      ids: new Set(criteria.map((c) => c.id)),
+      ids:
+        s.level === "приложение"
+          ? new Set(
+              live.all
+                .filter(
+                  (c) =>
+                    (c.level === "приложение" ||
+                      ((c.level === "узел" || c.level === "слой") &&
+                        barCoreCriterion(c.id))) &&
+                    !c.slogan &&
+                    barNoSubject(c.id + "|" + flags) === "",
+                )
+                .map((c) => c.id),
+            )
+          : new Set(),
       subject: s.level === "узел" ? s.files : [],
     }),
   };
@@ -11398,14 +11533,8 @@ if (mode === "bar") {
   const witnesses = barWitnessesOf(
     work,
     new Set(expected.map((e) => e.c.id)),
+    { change: kind === "на изменение" },
   );
-  // Страницы чтения: тела критериев протокола, полный текст предмета и срез
-  // каждого соседа — той же области, что модель.
-  const reads = barReadPagesOf({
-    ids: new Set(expected.map((e) => e.c.id)),
-    subject: work,
-    neighbours: area.filter((f) => !work.includes(f)),
-  });
   const levelSubjects = {
     узел: subjects.узел.length ? subjects.узел : [""],
     слой: subjects.слой.length ? subjects.слой : [""],
@@ -11434,6 +11563,19 @@ if (mode === "bar") {
       );
     return barNoSubject(c.id + "|" + flagsBy.get(k));
   };
+  // Страницы чтения: тела критериев, на которые отвечает сессия, полный текст
+  // предмета и срез каждого соседа — той же области, что модель. Лозунг и
+  // замеренную беспредметность инструмент проставил сам: тело такого
+  // критерия читать незачем, и страница о нём была бы лишней работой.
+  const reads = barReadPagesOf({
+    ids: new Set(
+      expected
+        .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
+        .map(({ c }) => c.id),
+    ),
+    subject: work,
+    neighbours: area.filter((f) => !work.includes(f)),
+  });
   // Правленое для «починено» — всё, что тронула работа, а не один предмет:
   // находку, которую чинит правка конвейера, конфига или записи базы, иначе
   // записать починенной нельзя, и остаются «вопрос» с «отложено» — неправда о
@@ -11626,7 +11768,6 @@ if (mode === "bar-read") {
     console.log("  пересоберёт его и назовёт страницы.");
     process.exit(1);
   }
-  const ids = new Set(parsed.outcomes.map((o) => o.id));
   const pick = args.find((a) => !a.endsWith(".md"));
   const wanted = new Set();
   if (pick === undefined) for (const r of parsed.reads) wanted.add(r.n);
@@ -11640,7 +11781,7 @@ if (mode === "bar-read") {
     process.exit(1);
   }
   for (const r of shown) {
-    const text = pageTextOf(r.spec, ids);
+    const text = pageTextOf(r.spec);
     console.log(
       "=== Страница " + r.n + " из " + parsed.reads.length + ": " + r.spec + " ===",
     );
