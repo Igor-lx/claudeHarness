@@ -431,6 +431,8 @@ export const MODEL_LEVEL = {
   движение: "узел",
   мёртвое: "узел",
   обобщение: "единица",
+  дубль: "единица",
+  всегда: "единица",
   необязательные: "единица",
   целое: "узел",
   вид: "узел",
@@ -643,6 +645,8 @@ export const BAR_SIGNALS = [
   { ids: ["A15"], sort: "создаёт", words: "узел создаёт соисполнителя сам, и в основании не сказано, почему тот не приходит входом" },
   { ids: ["B12", "A1-тер"], sort: "команда", words: "функция и меняет, и отвечает, и в основании не сказано почему" },
   { ids: ["H4"], sort: "мёртвое", words: "объявление без обращений, и в основании не сказано, зачем оно" },
+  { ids: ["A6", "B11"], sort: "дубль", words: "у числа в этом файле уже есть имя, и в основании не сказано, почему значение стоит дважды" },
+  { ids: ["H1"], sort: "всегда", words: "условие истинно либо ложно всегда, и в основании не сказано, зачем оно" },
   { ids: ["B3"], sort: "целое", words: "вход берут целиком ради одного поля, и в основании не сказано почему" },
   { ids: ["B10"], sort: "обобщение", words: "у параметра типа нет ограничения, и в основании не сказано, что подойдёт" },
   { ids: ["B13"], sort: "вид", words: "потребитель проверяет вид своей реализации, и в основании не сказано, какой контракт она не держит" },
@@ -776,13 +780,11 @@ export const BAR_ATTENTION = {
   "A8-бис": "граница области названа словами в базе и документации, а не в коде",
   "B2-бис": "единообразие — свойство всех узлов разом: одно по смыслу под разными именами текстом не опознать",
   B6: "безопасная сторона умолчания зависит от смысла входа; булево умолчание спрашивает `B1`",
-  B11: "что из значений — настройка, решает смысл; число по месту спрашивает `H7`",
   C2: "соглашение на месте вызова без знания инварианта неотличимо от конструкции",
   E13: "граница отказа — свойство композиции целиком, её отсутствие не видно ни в одной строке",
   F3: "что замыканию нужно, а что нет, — суждение о времени жизни захваченного",
   F4: "ссылка на элемент в коллекции без знания, удалён ли он, неотличима от законной",
   G7: "бюджет живёт в записях проекта числом; есть ли он — вопрос к базе, а не к строке",
-  H1: "объяснимость строки — суждение о каждой строке",
   H2: "второй способ одного выглядит как первый: идиомы проекта сверяют чтением `10-idioms.md`",
   H6: "одно слово в двух смыслах опознаётся только смыслом",
   "H8-бис": "устойчиво ли понятие под абстракцией — суждение; свидетель «упрощает» отвечает о цене, а не о смысле",
@@ -1580,6 +1582,8 @@ const GLOBAL_BASES = new Set(
 const DOM_SEGMENTS = new Set(
   "current style dataset target currentTarget classList parentNode parentElement childNodes children length value env".split(" "),
 );
+/** Числа, которым имя не нужно: ноль, единица и двойка читаются как есть. */
+const NUMBER_NAMELESS = new Set([0, 1, 2]);
 /** Сколько необязательных полей одного типа делают вопрос о союзе. */
 const OPTIONAL_FROM = 3;
 /** Имена, которые объявляют «взять и изменить» сами. */
@@ -1912,9 +1916,23 @@ const codeSignalsOf = (file, text, own) => {
         const p = m.index + m[0].length - 1;
         const q = closeOf(bare, p);
         if (q < 0) return;
-        const arrow = /^\s*(?::[^=;{()]+?)?\s*=>\s*\{/.exec(bare.slice(q + 1, q + 200));
+        const arrow = /^\s*(?::[^=;{()]+?)?\s*=>\s*(\{)?/.exec(bare.slice(q + 1, q + 200));
         if (arrow === null) return;
         params = bare.slice(p + 1, q);
+        if (arrow[1] === undefined) {
+          // Тело-выражение: от стрелки до точки с запятой верхнего уровня.
+          const from = q + arrow[0].length;
+          let depth = 0;
+          let end = from;
+          for (; end < bare.length; end += 1) {
+            const c = bare[end];
+            if (c === "(" || c === "[" || c === "{") depth += 1;
+            else if (c === ")" || c === "]" || c === "}") depth -= 1;
+            if (depth < 0 || (depth === 0 && c === ";")) break;
+          }
+          bodies.push({ name: m[1], at: m.index + m[0].indexOf(m[1]), params, from: from - 1, to: end });
+          return;
+        }
         b = q + arrow[0].length;
       }
       bodies.push({
@@ -1953,7 +1971,14 @@ const codeSignalsOf = (file, text, own) => {
         if (after === null) bare1 = false;
         else fields.add(after[1]);
       }
-      if (uses.length > 0 && bare1 && fields.size === 1)
+      // Ссылка отдаёт себя полем `current`, коллекция — длиной: это
+      // устройство самого входа, а не целое ради поля.
+      if (
+        uses.length > 0 &&
+        bare1 &&
+        fields.size === 1 &&
+        !["current", "length", "size"].some((own) => fields.has(own))
+      )
         at("целое", one.at, name + "." + [...fields][0]);
     }
   }
@@ -1993,6 +2018,22 @@ const codeSignalsOf = (file, text, own) => {
     const shrinks = new RegExp("(?<![\\w$.])" + name + "\\s*\\.\\s*(?:delete|clear|splice|shift|pop)\\s*\\(|\\bdelete\\s+" + name + "\\s*\\[|(?<![\\w$.])" + name + "\\s*\\.\\s*length\\s*=(?!=)").test(bare);
     if (grows && !shrinks) at("кэш", m.index + m[0].indexOf(m[1]), m[1]);
   }
+  // Число, у которого в этом файле уже есть имя: второе место для одного
+  // значения, и разойдутся они при первой правке одного из двух.
+  const valueNames = new Map();
+  each(/(?:^|\n)(?:export\s+)?const\s+([\w$]+)\s*(?::[^=\n]+)?=\s*(-?\d[\d_]*(?:\.\d+)?)\s*;/g, bare, (m) => {
+    const value = Number(m[2].replace(/_/g, ""));
+    if (!NUMBER_NAMELESS.has(value) && !valueNames.has(value))
+      valueNames.set(value, { name: m[1], at: m.index + m[0].indexOf(m[2]) });
+  });
+  if (valueNames.size > 0)
+    each(/(?<![\w$.])\d[\d_]*(?:\.\d+)?(?![\w$])/g, bare, (m) => {
+      const named = valueNames.get(Number(m[0].replace(/_/g, "")));
+      if (named !== undefined && named.at !== m.index)
+        at("дубль", m.index, m[0] + " — уже " + named.name);
+    });
+  // Условие, истинное либо ложное всегда: длина не бывает отрицательной.
+  each(/\.\s*length\s*(?:>=\s*0|>\s*-\s*1|<\s*0)(?![\w.])/g, bare, (m) => at("всегда", m.index, m[0]));
   // Несколько эффектов одного узла: результат не смеет зависеть от их порядка.
   const effects = [...bare.matchAll(/\buse(?:Layout)?Effect\s*\(/g)];
   if (effects.length >= 2) at("порядок", effects[0].index, "эффектов " + effects.length);
@@ -2014,6 +2055,15 @@ const codeSignalsOf = (file, text, own) => {
     );
     if (optional.length >= OPTIONAL_FROM) at("необязательные", m.index, m[1] + ": " + optional.length);
   });
+  // Хвост после возврата: строка блока за `return` недостижима никогда.
+  for (const [k, row] of bareLines.entries()) {
+    if (!/^\s*return\b[^{}]*;\s*$/.test(row)) continue;
+    const next = bareLines.slice(k + 1).findIndex((x) => x.trim() !== "");
+    if (next < 0) continue;
+    const after = bareLines[k + 1 + next].trim();
+    if (!/^(?:\}|case\b|default\b|function\b)/.test(after))
+      line("мёртвое", k + 2 + next, after, "после возврата");
+  }
   for (const [k, row] of bareLines.entries()) {
     const m = /^(?:const|let|var|function\*?|class)\s+([\w$]+)/.exec(row);
     if (m === null) continue;
@@ -2866,7 +2916,7 @@ export const PREDICATE_CASES = [
   ["barHoldOf", "G3|лозунг", "лозунг"],
   ["barHoldOf", "B4|", "вопрос модели: кортеж"],
   ["barHoldOf", "D1|", "сверка: «Строгость компилятора там, где проверяются типы»"],
-  ["barHoldOf", "H1|", "вниманием: объяснимость строки — суждение о каждой строке"],
+  ["barHoldOf", "J4|", "вниманием: метод проверки и пример для него — работа, а не текст кода"],
   ["barHoldOf", "Z9|", ""],
   // --- commentlessOf, escapeRe, joinsTwo: общие помощники разбора ---
   ["commentlessOf", "a // b", "a     "],
@@ -2880,13 +2930,21 @@ export const PREDICATE_CASES = [
   ["bareCodeOf", "a + b", "a + b"],
   ["bareCodeOf", "f(\"x;y\")", "f(\"   \")"],
   // --- signalsSummary: признаки по всей планке ---
+  ["signalsSummary", "src/a.ts\nexport const columns = 12;\nexport const width = (total: number) => total / 12;", "2:дубль"],
+  ["signalsSummary", "src/a.ts\nexport const columns = 12;\nexport const width = (total: number) => total / columns;", ""],
+  ["signalsSummary", "src/a.ts\nexport const visible = (items: string[]) => items.length >= 0 && items.length > 0;", "1:всегда"],
+  ["signalsSummary", "src/a.ts\nexport const visible = (items: string[]) => items.length > 0;", ""],
+  ["signalsSummary", "src/a.ts\ntype P = { id: string; name: string };\nexport const greet = (profile: P): string =>\n  \"hi \" + profile.name;", "2:целое"],
+  ["signalsSummary", "src/a.ts\ntype P = { id: string; name: string };\nexport const greet = (profile: P): string =>\n  \"hi \" + profile.name + profile.id;", ""],
+  ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  return String(count);\n  const unit = count;\n  return unit;\n};", "3:мёртвое/после возврата"],
+  ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  if (count === 0) return \"none\";\n  return String(count);\n};", ""],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items;\n};", "1:целое"],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items.length + order.tax;\n};", ""],
   ["signalsSummary", "src/a.ts\nexport function first<T>(xs: T[]) {\n  return xs[0];\n}", "1:обобщение"],
   ["signalsSummary", "src/a.ts\nexport function first<T extends object>(xs: T[]) {\n  return xs[0];\n}", ""],
   ["signalsSummary", "src/a.ts\nimport { Store } from \"./store\";\nexport const isStore = (x) => x instanceof Store;", "2:вид"],
   ["signalsSummary", "src/a.ts\nexport const isErr = (x) => x instanceof Error;", ""],
-  ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.city;", "1:сквозь"],
+  ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.city;", "1:целое;1:сквозь"],
   ["signalsSummary", "src/a.ts\nexport const w = (ref) => ref.current.style.width;", ""],
   ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);", "1:кэш"],
   ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);\nexport const forget = (k) => seen.delete(k);", ""],
