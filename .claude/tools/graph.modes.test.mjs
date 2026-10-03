@@ -4356,3 +4356,258 @@ describe("тесты обвязки — своей командой, вне пр
     }
   }, 120000);
 });
+
+describe("признаки по всей планке в модели свода", () => {
+  const toolIn = (box) => (...args) => {
+    try {
+      return execFileSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } catch (e) {
+      return String(e.stdout ?? "");
+    }
+  };
+  const putIn = (box) => (rel, text) => {
+    const at = path.join(box, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, text);
+  };
+  /** Строки модели протокола: вид, где, сдвиг, пометка. */
+  const modelOf = (box) =>
+    [
+      ...fs
+        .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
+        .matchAll(
+          /^\| П\d+ \| ([^|]+) \| `([^`]*)` \|[^\n]*?\| ([^|\n]*) \| ([^|\n]*) \| [^|\n]* \|$/gm,
+        ),
+    ].map((m) => ({
+      sort: m[1].trim(),
+      where: m[2],
+      delta: m[3].trim(),
+      mark: m[4].trim(),
+    }));
+  const has = (rows, sort, mark, where) =>
+    rows.some(
+      (r) =>
+        r.sort === sort &&
+        r.mark === mark &&
+        (where === undefined || r.where.startsWith(where)),
+    );
+
+  it("код, лист стилей и тест дают строки; мёртвый раздел — нет", () => {
+    const box = seatEmpty("whole-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      put(
+        "src/components/ZzPanel/ZzPanel.tsx",
+        [
+          'import { useState } from "react";',
+          "",
+          "// workaround for the double render",
+          "export function ZzPanel({ items }: { items: string[] }) {",
+          "  const [open, setOpen] = useState(false);",
+          "  const load = async () => {",
+          '    const res = await fetch("/zz");',
+          "    setOpen(res.ok);",
+          "  };",
+          "  return (",
+          "    <div onClick={load}>",
+          "      <ul>{items.map((x, i) => <li key={i}>{x}</li>)}</ul>",
+          "      {open && <p>{items.length}</p>}",
+          "    </div>",
+          "  );",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      put("src/components/ZzPanel/ZzPanel.css", ".zzPanel { color: red !important; }\n");
+      put(
+        "src/components/ZzPanel/tests/ZzPanel.test.tsx",
+        [
+          'import { it, vi } from "vitest";',
+          'import { ZzPanel } from "../ZzPanel";',
+          'vi.mock("../ZzPanel");',
+          'it("renders", () => {',
+          "  ZzPanel({ items: [] });",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      tool("bar", "components/ZzPanel");
+      const rows = modelOf(box);
+      for (const [sort, mark] of [
+        ["комментарий", "предупреждение"],
+        ["имя", "булево"],
+        ["имя", "сокращение"],
+        ["внешнее", "сеть"],
+        ["разметка", ""],
+        ["гонка", "без отмены"],
+        ["список", "ключ по позиции"],
+        ["доступность", "не кнопка"],
+        ["тест", "подмена"],
+        ["тест", "без утверждения"],
+        ["тесты", ""],
+      ])
+        expect(has(rows, sort, mark), sort + "/" + mark).toBe(true);
+      // Раздел стилей объявлен неприменимым: о листе не спросит ни один
+      // живой критерий, и строки о нём в модели нет.
+      expect(rows.some((r) => r.sort === "стиль")).toBe(false);
+      const facts = path.join(box, ".context", "01-facts.md");
+      fs.writeFileSync(
+        facts,
+        fs
+          .readFileSync(facts, "utf8")
+          .replace("| O. Стили и адаптивность | нет |", "| O. Стили и адаптивность | да |"),
+      );
+      tool("bar", "components/ZzPanel");
+      expect(
+        has(modelOf(box), "стиль", "важнее всех", "components/ZzPanel/ZzPanel.css"),
+      ).toBe(true);
+      // «Чисто» без номера строки признака — вопрос без ответа.
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { H3: "чисто |  | комментарии в порядке | " },
+      });
+      expect(tool("bar", "components/ZzPanel")).toMatch(
+        /H3: чисто, а в предмете есть комментарии, и в основании не сказано, что каждый прошёл четыре вопроса: П\d+/,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
+  it("мутационный замер файла: не мерен, устарел, оставил выживших", () => {
+    const box = seatEmpty("mutrow-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      put("src/shared/zzMut/zzMut.ts", "export const zzMut = (n: number) => n + 1;\n");
+      put(
+        "src/shared/zzMut/tests/zzMut.test.ts",
+        'import { expect, it } from "vitest";\nimport { zzMut } from "../zzMut";\nit("adds", () => {\n  expect(zzMut(1)).toBe(2);\n});\n',
+      );
+      const cfg = fs.readFileSync(path.join(box, ".context", "graph.config.mjs"), "utf8");
+      fs.writeFileSync(
+        path.join(box, ".context", cfg.match(/mutationConfig: "([^"]+)"/)[1]),
+        JSON.stringify({ mutate: ["src/shared/zzMut/zzMut.ts"] }),
+      );
+      const ledgerAt = path.join(box, ".context", cfg.match(/mutationLedger: "([^"]+)"/)[1]);
+      const markOf = () =>
+        modelOf(box).find((r) => r.sort === "мутации")?.mark ?? "строки нет";
+      tool("bar", "shared/zzMut/zzMut.ts");
+      expect(markOf()).toBe("не мерено");
+      fs.writeFileSync(
+        ledgerAt,
+        JSON.stringify({ "src/shared/zzMut/zzMut.ts": { killed: 3, alive: 0, hash: "000000000000" } }),
+      );
+      tool("bar", "shared/zzMut/zzMut.ts");
+      expect(markOf()).toBe("устарело");
+      const stamp = createHash("sha1")
+        .update(fs.readFileSync(path.join(box, "src", "shared", "zzMut", "zzMut.ts"), "utf8"))
+        .digest("hex")
+        .slice(0, 12);
+      fs.writeFileSync(
+        ledgerAt,
+        JSON.stringify({ "src/shared/zzMut/zzMut.ts": { killed: 3, alive: 2, hash: stamp } }),
+      );
+      tool("bar", "shared/zzMut/zzMut.ts");
+      expect(markOf()).toBe("выжили");
+      // Чистый замер на нынешнем содержимом — вопроса нет, и строки нет.
+      fs.writeFileSync(
+        ledgerAt,
+        JSON.stringify({ "src/shared/zzMut/zzMut.ts": { killed: 5, alive: 0, hash: stamp } }),
+      );
+      tool("bar", "shared/zzMut/zzMut.ts");
+      expect(markOf()).toBe("строки нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
+  it("граф: повтор, постоянный довод, тесты, союз, приглушение, зависимость", () => {
+    const box = seatEmpty("graph-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const block = [
+        "  const total = values.reduce((sum, one) => sum + one.weight, 0);",
+        "  const ready = values.filter((one) => one.weight > limit && one.enabled);",
+        "  const names = ready.map((one) => one.name.trim().toLowerCase());",
+        "  const unique = names.filter((name, at) => names.indexOf(name) === at);",
+        "  const share = unique.length / Math.max(total, 1);",
+        "  return { total, unique, share };",
+      ];
+      const shape = "values: { weight: number; enabled: boolean; name: string }[], limit: number";
+      put(
+        "src/shared/zzMath/zzMath.ts",
+        [
+          "export const zzScale = (value: number, factor: number) => value * factor;",
+          "export const zzSum = (" + shape + ") => {",
+          ...block,
+          "};",
+          "export const zzFrame = (step: FrameRequestCallback) => requestAnimationFrame(step);",
+          "",
+        ].join("\n"),
+      );
+      put(
+        "src/shared/zzMath/zzCopy.ts",
+        ["export const zzOther = (" + shape + ") => {", ...block, "};", ""].join("\n"),
+      );
+      put(
+        "src/app/zzUse.ts",
+        [
+          'import { zzScale } from "../shared/zzMath/zzMath";',
+          "export const zzA = (a: number) => zzScale(a, 2);",
+          "export const zzB = (b: number) => zzScale(b, 2);",
+          "",
+        ].join("\n"),
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "00-map.md"),
+        [
+          "",
+          "## Проба союза",
+          "",
+          "| Файл | Отвечает за | Состояние | Эффекты |",
+          "| --- | --- | --- | --- |",
+          "| `src/shared/zzMath/zzMath.ts` | масштабирует значения и считает сводку | нет | нет |",
+          "",
+        ].join("\n"),
+      );
+      tool("bar", "shared/zzMath/zzMath.ts");
+      const text = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      const rows = modelOf(box);
+      expect(has(rows, "повтор", "", "shared/zzMath/zzMath.ts")).toBe(true);
+      expect(text).toMatch(/повторены в `shared\/zzMath\/zzCopy\.ts:\d+`/);
+      expect(text).toMatch(/zzScale\(…\): довод 2 всегда `2`, мест вызова `2`/);
+      expect(has(rows, "тесты", "нет")).toBe(true);
+      expect(has(rows, "ответственность", "союз")).toBe(true);
+      // Кадры есть, а приглушённого движения нет нигде в проекте.
+      expect(has(rows, "приглушение", "нет", "проект")).toBe(true);
+
+      // Правка, добавившая зависимость диапазоном, спрашивает о ней.
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.dependencies = { ...(pkg.dependencies ?? {}), "zz-lib": "^1.0.0" };
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      fs.appendFileSync(path.join(box, "src", "app", "zzUse.ts"), "export const zzC = 3;\n");
+      tool("bar");
+      expect(has(modelOf(box), "зависимость", "диапазон")).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});

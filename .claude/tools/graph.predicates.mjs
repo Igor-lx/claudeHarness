@@ -223,20 +223,21 @@ export const barNoSubject = (row) => {
     return "файла кода в предмете правки нет";
 
   // Правка без единого листа стилей. `C7-бис` и `O5` сюда НЕ идут: у них
-  // второй конец в коде, и правка кода их предмета касается.
+  // второй конец в коде, и правка кода их предмета касается. `O3` и `O4-тер`
+  // — тоже: число раскладки и размер окна берут и кодом, и без листа.
   const STYLE_ONLY = new Set([
     "O1",
     "O2",
     "O2-бис",
-    "O3",
     "O4",
     "O4-бис",
-    "O4-тер",
     "O4-кватер",
     "O5-бис",
   ]);
   if (STYLE_ONLY.has(id) && no("style"))
     return "листа стилей в предмете правки нет";
+  if ((id === "O3" || id === "O4-тер") && no("style") && no("code"))
+    return "ни листа стилей, ни кода в предмете правки нет";
 
   // «Нет предмета» ставится только по признаку-НАДМНОЖЕСТВУ: признак
   // обязан покрывать всё, о чём критерий, иначе машина объявляет чистым то,
@@ -244,7 +245,9 @@ export const barNoSubject = (row) => {
   // закрывались признаком «асинхронное», а устаревший результат там жил в
   // подписке и таймере — и дефект этого самого критерия прошёл свод
   // строкой «нет предмета». Движение задаётся и листом, и кодом кадров.
-  if (id === "N6" && no("style") && no("time"))
+  // Жизненный цикл движения — тоже: переход листом стилей — движение без
+  // единого таймера в коде.
+  if ((id === "N6" || id === "N1") && no("style") && no("time"))
     return "ни листа стилей, ни кадров и таймеров в предмете правки нет";
 
   // Критерии о СУЩЕСТВУЮЩИХ тестах. `J2`, `J3`, `J9-бис`, `J9-тер` тут
@@ -265,7 +268,7 @@ export const barNoSubject = (row) => {
   // Отложенное во времени: эффект, таймер, наблюдатель, кадровый цикл.
   // `C5` сюда не входит: порядок бывает и без времени — синхронная рассылка
   // подписчикам, порядок подключения, порядок инициализации модулей.
-  const ABOUT_TIME = new Set(["C12", "F4", "M3", "N1", "N3"]);
+  const ABOUT_TIME = new Set(["C12", "F4", "M3", "N3"]);
   if (ABOUT_TIME.has(id) && no("time"))
     return "ни эффекта, ни таймера, ни наблюдателя в предмете правки нет";
 
@@ -386,6 +389,59 @@ export const MODEL_LEVEL = {
   размах: "приложение",
   каталог: "приложение",
   радиус: "приложение",
+  // Признаки по всей планке. Единица — то, что видно в строке; узел — то,
+  // что видно по файлу целиком; приложение — то, что видно только по проекту.
+  внешнее: "единица",
+  запись: "единица",
+  время: "единица",
+  обход: "единица",
+  страж: "единица",
+  бросок: "единица",
+  раскладка: "единица",
+  поиск: "единица",
+  комментарий: "единица",
+  имя: "единица",
+  величина: "единица",
+  мемо: "единица",
+  однократно: "единица",
+  эффект: "единица",
+  команда: "единица",
+  постоянный: "единица",
+  тест: "единица",
+  стиль: "единица",
+  доступность: "единица",
+  вставка: "единица",
+  журнал: "единица",
+  измерение: "единица",
+  текст: "единица",
+  разметка: "узел",
+  пакет: "узел",
+  гонка: "узел",
+  список: "узел",
+  частое: "узел",
+  контекст: "узел",
+  ограничение: "узел",
+  требование: "узел",
+  переходы: "узел",
+  проброс: "узел",
+  размер: "узел",
+  создаёт: "узел",
+  тесты: "узел",
+  мутации: "узел",
+  движение: "узел",
+  мёртвое: "узел",
+  обобщение: "единица",
+  необязательные: "единица",
+  целое: "узел",
+  вид: "узел",
+  сквозь: "узел",
+  кэш: "узел",
+  порядок: "узел",
+  идентификаторы: "узел",
+  близнец: "приложение",
+  повтор: "приложение",
+  зависимость: "приложение",
+  приглушение: "приложение",
 };
 
 /** Уровни прохода по порядку: от строки к целому. */
@@ -541,6 +597,102 @@ export const BAR_SIGNALS = [
   { ids: ["B8"], sort: "флаги", mark: "вход", words: "булевых полей во входах россыпь, и в основании не сказано, почему это не тип-состояние" },
   { ids: ["A9"], sort: "порознь", words: "потребители берут из узла непересекающиеся части, и в основании не сказано, почему это один узел" },
   { ids: ["A16"], sort: "место", words: "общий узел берёт одна единица переноса, и в основании не сказано, почему он не лежит в ней" },
+  // --- признаки по всей планке: разбор каждого критерия вопросом «чем он
+  // держится» нашёл, что у этих нарушение видно текстом без суждения ---
+  { ids: ["A1"], sort: "ответственность", mark: "союз", words: "описание узла требует союза, и в основании не сказано, почему вопрос один" },
+  { ids: ["E6", "E7"], sort: "перехват", words: "в предмете есть перехват ошибки, и в основании не сказано, ожидаемый ли это отказ и какова стратегия восстановления" },
+  { ids: ["H4"], sort: "поверхность", mark: "лишнее", words: "в поверхности есть имена, которых снаружи не берёт никто, и в основании не сказано, не мёртвые ли они" },
+  { ids: ["B9"], sort: "поверхность", delta: "снято", words: "правка сняла имя с поверхности, и в основании не назван путь миграции" },
+  { ids: ["K1", "K2", "E3", "D3"], sort: "внешнее", words: "предмет берёт данные снаружи, и в основании не сказано, где неизвестное становится известным" },
+  { ids: ["A14", "A11"], sort: "внешнее", words: "предмет обращается наружу сам, и в основании не сказано, почему это не порт либо почему он сам порт" },
+  { ids: ["K3", "K4", "L4"], sort: "внешнее", mark: "сеть", words: "предмет ходит в сеть, и в основании не сказано о форме ответа, трёх состояниях данных и политике таймаута" },
+  { ids: ["K5"], sort: "внешнее", mark: "хранилище", words: "предмет держит данные в хранилище, и в основании не сказано, что станет со старой формой записи" },
+  { ids: ["C13", "L3", "E12"], sort: "запись", words: "предмет пишет наружу, и в основании не сказано, что даст повтор и сбой посередине" },
+  { ids: ["Q3"], sort: "запись", mark: "хранилище", words: "предмет пишет в хранилище, и в основании не сказано, нет ли там чувствительного" },
+  { ids: ["C10", "A14", "A9-кватер"], sort: "время", words: "предмет берёт время либо случай на месте, и в основании не сказано, почему не входом" },
+  { ids: ["A5-тер", "C11"], sort: "разметка", words: "файл разметки обращается наружу либо ко времени, и в основании не сказано, почему это не дело другого слоя" },
+  { ids: ["D2"], sort: "обход", words: "в предмете обходят компилятор, и в основании не сказано, почему здесь иначе нельзя" },
+  { ids: ["D3"], sort: "обход", mark: "любое", words: "в предмете тип «любое», и в основании не сказано, почему не «неизвестное»" },
+  { ids: ["B6-бис"], sort: "обход", mark: "не пусто", words: "в предмете утверждают «не пусто», и в основании не сказано, почему вход не обязательный" },
+  { ids: ["E2"], sort: "страж", words: "в предмете ранний выход по сравнению, и в основании не сказано, тотален ли он на нечисле и пустом" },
+  { ids: ["E5"], sort: "страж", scope: "fresh", words: "правка меняет ответ на краевом входе, и в основании не названо записанное решение о нём" },
+  { ids: ["E8", "E6"], sort: "бросок", words: "предмет бросает ошибку, и в основании не сказано, несёт ли она контекст и ожидаемый ли это отказ" },
+  { ids: ["E10", "E12"], sort: "пакет", words: "предмет выполняет пакет операций, и в основании не сказано, что при частичном отказе" },
+  { ids: ["C9", "L1", "L2", "L3", "L5", "L6", "E9"], sort: "гонка", words: "асинхронный результат пишется в состояние, и в основании не сказано, что при двух запусках, отмене и уходе потребителя" },
+  { ids: ["E11", "M4", "G6-бис"], sort: "список", words: "предмет рисует список, и в основании не сказано о пустом списке, ключах и длине" },
+  { ids: ["G4-бис", "G1"], sort: "контекст", words: "значение поставщика собирается на каждом проходе, и в основании не сказано почему" },
+  { ids: ["G2", "G4", "G6"], sort: "частое", words: "в предмете обработчик частого события, и в основании не сказано, назван ли горячий путь и что на нём выделяется" },
+  { ids: ["O5", "O3"], sort: "раскладка", words: "предмет меряет раскладку кодом, и в основании не сказано, не спорит ли это с правилами стилей" },
+  { ids: ["G5", "G1"], sort: "раскладка", mark: "чтение и запись", words: "чтение раскладки стоит рядом с записью в разметку, и в основании не сказано, сгруппированы ли они" },
+  { ids: ["O4-тер"], sort: "раскладка", mark: "окно", words: "размер берётся у окна, и в основании не сказано, владеет ли окно этим размером" },
+  { ids: ["G6-кватер", "G1"], sort: "поиск", words: "поиск по коллекции стоит внутри обхода, и в основании не сказано, почему не словарь" },
+  { ids: ["H3"], sort: "комментарий", words: "в предмете есть комментарии, и в основании не сказано, что каждый прошёл четыре вопроса" },
+  { ids: ["H5"], sort: "комментарий", mark: "предупреждение", words: "комментарий предупреждает о слабом месте, и в основании не сказано, почему оно описано, а не переписано" },
+  { ids: ["B2"], sort: "требование", words: "комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
+  { ids: ["J9-бис"], sort: "ограничение", words: "в предмете объявлено ограничение, и в основании не назван тест, который его держит" },
+  { ids: ["H6-бис"], sort: "имя", mark: "булево", words: "булево названо не утверждением, и в основании не сказано почему" },
+  { ids: ["H6-тер"], sort: "имя", mark: "сокращение", words: "в предмете сокращённые имена, и в основании не сказано, термины ли это предметной области" },
+  { ids: ["H7-бис"], sort: "величина", words: "у величины нет единицы в имени, и в основании не сказано, где её единица" },
+  { ids: ["C15", "M6", "G8"], sort: "мемо", words: "в предмете есть запомненное, и в основании не сказано, всем ли оно ключуется и замерена ли нужда" },
+  { ids: ["M1", "M2"], sort: "однократно", words: "эффект рассчитан на один запуск, и в основании не сказано, что при повторном монтаже" },
+  { ids: ["M5"], sort: "однократно", mark: "захват", words: "однократный эффект читает состояние, и в основании не сказано, почему значение не устареет" },
+  { ids: ["C12", "C7", "G1"], sort: "эффект", words: "эффект только записывает выведенное, и в основании не сказано, почему это не вычисление" },
+  { ids: ["C8-тер", "C8-бис"], sort: "переходы", words: "одно состояние меняют из многих мест, и в основании не сказано, где собраны переходы" },
+  { ids: ["A10"], sort: "проброс", words: "вход только передаётся дальше, и в основании не сказано, почему граница проведена здесь" },
+  { ids: ["A10", "A9", "A1"], sort: "размер", words: "узел велик, и в основании не сказано, почему это одна граница" },
+  { ids: ["A15"], sort: "создаёт", words: "узел создаёт соисполнителя сам, и в основании не сказано, почему тот не приходит входом" },
+  { ids: ["B12", "A1-тер"], sort: "команда", words: "функция и меняет, и отвечает, и в основании не сказано почему" },
+  { ids: ["H4"], sort: "мёртвое", words: "объявление без обращений, и в основании не сказано, зачем оно" },
+  { ids: ["B3"], sort: "целое", words: "вход берут целиком ради одного поля, и в основании не сказано почему" },
+  { ids: ["B10"], sort: "обобщение", words: "у параметра типа нет ограничения, и в основании не сказано, что подойдёт" },
+  { ids: ["B13"], sort: "вид", words: "потребитель проверяет вид своей реализации, и в основании не сказано, какой контракт она не держит" },
+  { ids: ["B14"], sort: "сквозь", words: "узел идёт цепочкой сквозь соседей, и в основании не сказано, почему значение не приходит входом" },
+  { ids: ["C3"], sort: "кэш", words: "контейнер модуля растёт и не чистится, и в основании не названо правило вытеснения" },
+  { ids: ["C5"], sort: "порядок", words: "у узла несколько эффектов, и в основании не сказано, не держится ли результат на их порядке" },
+  { ids: ["D4"], sort: "идентификаторы", words: "однотипные идентификаторы разного смысла, и в основании не сказано, чем их не перепутают" },
+  { ids: ["D5"], sort: "необязательные", words: "у типа россыпь необязательных полей, и в основании не сказано, почему не размеченный союз" },
+  { ids: ["F1"], sort: "ресурс", words: "у ресурса в основании не назван владелец его жизненного цикла" },
+  { ids: ["I5"], sort: "повтор", words: "строки повторены в другом месте, и в основании не сказано, не цена ли это объявленной изоляции" },
+  { ids: ["A3"], sort: "постоянный", words: "вход на каждом месте вызова один и тот же, и в основании не сказано, почему это вход" },
+  { ids: ["A5-бис"], sort: "близнец", words: "у файла есть парная копия, и в основании не сказано, сведена ли правка в обе" },
+  { ids: ["J3"], sort: "тесты", words: "в основании не сказано, покрывают ли тесты файла смысл, а не строки" },
+  { ids: ["J9-бис"], sort: "тесты", mark: "нет", words: "тестов, называющих файл, нет, и в основании не сказано, что держит его инварианты" },
+  { ids: ["J10"], sort: "мутации", mark: ["не мерено", "устарело", "выжили"], words: "мутационный замер не мерен, устарел либо оставил выживших, и в основании это не названо" },
+  { ids: ["J1"], sort: "мутации", mark: "выжили", words: "под мутациями выжили мутанты, и в основании не сказано, почему тесты их не убивают" },
+  { ids: ["A6-бис"], sort: "повтор", words: "строки предмета повторены в другом месте, и в основании не сказано, почему логика не вынесена" },
+  { ids: ["A9-тер"], sort: "повтор", mark: "условие", words: "условие повторено в другом месте, и в основании не сказано, где собрано правило" },
+  { ids: ["R1", "R2", "R3"], sort: "зависимость", words: "правка добавила зависимость, и в основании нет её обоснования, размера и проверки на дубль" },
+  { ids: ["R1-бис"], sort: "зависимость", mark: "диапазон", words: "версия зависимости задана диапазоном, и в основании это не названо" },
+  { ids: ["J1"], sort: "тест", mark: "без утверждения", words: "тест без утверждения, и в основании не сказано, чем он падает" },
+  { ids: ["J7"], sort: "тест", mark: "подмена", words: "тест подменяет часть системы, и в основании не сказано, что подмена не прячет" },
+  { ids: ["J5"], sort: "тест", mark: "различие", words: "тест проверяет «изменилось», и в основании не сказано, различает ли значение" },
+  { ids: ["J6"], sort: "тест", mark: "снимок", words: "тест сверяет снимок, и в основании не сказано, наблюдаемое ли это поведение" },
+  { ids: ["O2"], sort: "стиль", mark: "важнее всех", words: "в листе принудительное переопределение, и в основании не сказано почему" },
+  { ids: ["O4"], sort: "стиль", mark: "перелом", words: "точка перелома задана числом, и в основании не сказано, что она меняет" },
+  { ids: ["O4-тер"], sort: "стиль", mark: "вьюпорт", words: "размер берётся от окна, и в основании не сказано, владеет ли окно этим размером" },
+  { ids: ["O4-бис"], sort: "стиль", mark: "повтор величины", words: "величина оформления повторена, и в основании не сказано, почему не переменная" },
+  { ids: ["G5-бис"], sort: "стиль", mark: "раскладка в движении", words: "движение идёт свойствами раскладки, и в основании не сказано почему" },
+  { ids: ["G6-тер"], sort: "стиль", mark: "слой композитора", words: "лист выносит слой композитора, и в основании не сказано почему" },
+  { ids: ["P2"], sort: "стиль", mark: "без фокуса", words: "видимый фокус снят, и в основании не сказано, чем он заменён" },
+  { ids: ["O2-бис"], sort: "стиль", mark: "вне слоя", words: "лист вне объявленных слоёв каскада, и в основании не сказано почему" },
+  { ids: ["O4-кватер"], sort: "стиль", mark: "смешанные имена", words: "имена классов в двух соглашениях, и в основании не сказано почему" },
+  { ids: ["N1", "N2", "N4", "N5"], sort: "движение", words: "в предмете есть движение, и в основании не сказано о его жизненном цикле, прерывании и фоне" },
+  { ids: ["N3", "G4"], sort: "движение", mark: "кадры", words: "в предмете кадровый цикл, и в основании не сказано, не завязан ли он на проход рендера" },
+  { ids: ["N6", "P6"], sort: "приглушение", words: "движение есть, а приглушённого варианта нет нигде, и в основании это не названо" },
+  { ids: ["P3", "P1", "P3-бис"], sort: "доступность", mark: "не кнопка", words: "нажатие повешено на элемент без родной семантики, и в основании не сказано, как он работает с клавиатуры" },
+  { ids: ["P3-бис", "P1"], sort: "доступность", mark: "указатель", words: "обработчик повешен на способ ввода, и в основании не сказано, что даёт клавиатура" },
+  { ids: ["P4"], sort: "доступность", mark: "без имени", words: "у элемента не видно доступного имени, и в основании не сказано, откуда оно" },
+  { ids: ["P4-бис"], sort: "доступность", mark: "состояние", words: "состояние видно только классом, и в основании не сказано, как о нём узнает вспомогательная технология" },
+  { ids: ["P2"], sort: "доступность", mark: "фокус", words: "фокус переводится кодом, и в основании не сказано, куда и почему" },
+  { ids: ["P5"], sort: "доступность", mark: "без объявления", words: "сообщение появляется без объявления, и в основании не сказано, как о нём узнают" },
+  { ids: ["Q1"], sort: "вставка", mark: "разметка", words: "в предмете вставка разметки, и в основании не сказано, чем она обеззаражена" },
+  { ids: ["Q2"], sort: "вставка", mark: "адрес", words: "предмет переходит по значению, и в основании не сказано, где адрес проверен" },
+  { ids: ["Q4"], sort: "вставка", mark: "сторонний", words: "в предмете сторонний код, и в основании не сказано, чем он изолирован" },
+  { ids: ["S2", "S5", "Q3"], sort: "журнал", words: "предмет пишет в журнал, и в основании не сказано о форме записи, поставке и чувствительном" },
+  { ids: ["S3", "S4", "S5"], sort: "измерение", words: "в предмете измерение, и в основании не сказано о его цене и выключении" },
+  { ids: ["T1", "T4"], sort: "текст", mark: "в разметке", words: "текст для человека вшит в разметку, и в основании не сказано почему" },
+  { ids: ["T2"], sort: "текст", mark: "формат", words: "величина форматируется без региона, и в основании не сказано почему" },
+  { ids: ["T3"], sort: "текст", mark: "множественное", words: "множественное число выбрано сравнением с единицей, и в основании не сказано о правилах языка" },
 ];
 
 /** Факты, которые режут сами: «чисто» при них ложно без суждения, а
@@ -682,7 +834,10 @@ export const barModelFault = (row) => {
   const rowsOf = (spec) => {
     const marks = spec.mark === undefined ? null : [spec.mark].flat();
     const list = model.filter(
-      (m) => m.sort === spec.sort && (marks === null || marks.includes(m.mark)),
+      (m) =>
+        m.sort === spec.sort &&
+        (marks === null || marks.includes(m.mark)) &&
+        (spec.delta === undefined || m.delta.split(", ").includes(spec.delta)),
     );
     if (spec.scope === "fresh") return fresh(list);
     if (spec.scope === "brought") return brought(list);
@@ -844,6 +999,9 @@ const witnessPlain = (x) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
+/** Есть ли во фразе союз, делящий её надвое: «считает раскладку и публикует
+ * переменные» — два вопроса. Один источник на свидетеля и на строку модели. */
+export const joinsTwo = (text) => WITNESS_JOIN.test(witnessPlain(text));
 
 /** Форма свидетеля — чистая часть.
  *
@@ -1128,6 +1286,842 @@ export const commentRunsOf = (text) => {
   close();
   return runs.join(SEP1);
 };
+// --- признаки по всей планке: чистая часть --------------------------------
+//
+// Разбор всей планки — по каждому критерию вопрос «чем держится» — показал,
+// что больше половины критериев держались одним вниманием, хотя у многих
+// нарушение видно текстом без суждения: обращение к сети из файла разметки,
+// приведение типа, асинхронный результат без отмены, ключ по позиции,
+// комментарий, текст для человека в разметке. Здесь распознаватели этих
+// признаков. Каждый — вопрос своему критерию, а не приговор: «чисто» по
+// критерию называет строку модели номером и говорит, почему нарушения нет.
+// Распознаватели чистые — текст на входе, признаки на выходе, — и каждый
+// держит таблица случаев с обеими сторонами: признак и похожее без него.
+
+/** Комментарии и строки текста: `[от, до, род]`; у строки — без кавычек.
+ * Кавычка не переходит через перевод строки: незакрытая — это апостроф в
+ * тексте разметки, и гасить за ней весь файл значило бы ослепнуть. */
+const spansOf = (text) => {
+  const out = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const d = text[i + 1];
+    if (c === "/" && (d === "/" || d === "*")) {
+      const end =
+        d === "/" ? text.indexOf(NEWLINE, i) : text.indexOf("*/", i + 2);
+      const stop = end < 0 ? text.length : d === "/" ? end : end + 2;
+      out.push([i, stop, "comment"]);
+      i = stop;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      let k = i + 1;
+      while (k < text.length && text[k] !== c && (c === "`" || text[k] !== NEWLINE))
+        k += text[k] === "\\" ? 2 : 1;
+      if (k < text.length && text[k] === c) {
+        out.push([i + 1, k, "string"]);
+        i = k + 1;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return out;
+};
+const blankSpans = (text, spans) => {
+  const out = text.split("");
+  for (const [from, to] of spans)
+    for (let k = from; k < to; k += 1)
+      if (out[k] !== NEWLINE && out[k] !== "\r") out[k] = " ";
+  return out.join("");
+};
+
+/** Код без комментариев и без содержимого строк: длина и строки прежние, так
+ * что позиции и номера строк те же. Число в строке и слово в комментарии кодом
+ * не являются. */
+export const bareCodeOf = (text) => blankSpans(text, spansOf(text));
+/** Код без комментариев, строки на месте: признаки, которым нужен текст
+ * строки, — `method: "POST"`, `role="button"`. */
+export const commentlessOf = (text) =>
+  blankSpans(
+    text,
+    spansOf(text).filter(([, , kind]) => kind === "comment"),
+  );
+
+/** Закрывающая скобка для открывающей в позиции `at`; несбалансировано — -1. */
+export const closeOf = (text, at) => {
+  const pairs = { "(": ")", "[": "]", "{": "}" };
+  const stack = [pairs[text[at]]];
+  for (let k = at + 1; k < text.length; k += 1) {
+    const c = text[k];
+    if (pairs[c] !== undefined) stack.push(pairs[c]);
+    else if (c === ")" || c === "]" || c === "}") {
+      if (stack.pop() !== c) return -1;
+      if (stack.length === 0) return k;
+    }
+  }
+  return -1;
+};
+
+/** Части списка через запятую верхнего уровня: текст и позиция каждой от
+ * `base` — начала списка в разбираемом тексте. */
+export const topLevelParts = (inner, base) => {
+  const parts = [];
+  let depth = 0;
+  let from = 0;
+  for (let k = 0; k <= inner.length; k += 1) {
+    const c = inner[k];
+    if (c === "(" || c === "[" || c === "{") depth += 1;
+    else if (c === ")" || c === "]" || c === "}") depth -= 1;
+    else if ((c === "," && depth === 0) || k === inner.length) {
+      parts.push({ text: inner.slice(from, k), at: base + from });
+      from = k + 1;
+    }
+  }
+  return parts;
+};
+
+/** Номер строки по позиции в тексте. */
+const lineIndexOf = (text) => {
+  const starts = [0];
+  for (let k = 0; k < text.length; k += 1)
+    if (text[k] === NEWLINE) starts.push(k + 1);
+  return (at) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= at) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+};
+/** Текст как образец: каждый знак значит сам себя. */
+export const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Признак: вид, строка, образец, пометка. Образец — без разделителей
+ * строки модели: он уходит в её клетку. */
+const signalSink = (text) => {
+  const lineAt = lineIndexOf(text);
+  const hits = [];
+  return {
+    hits,
+    at: (sort, at, sample = "", mark = "") =>
+      hits.push({ sort, line: lineAt(at), sample: signalSample(sample), mark }),
+    line: (sort, line, sample = "", mark = "") =>
+      hits.push({ sort, line, sample: signalSample(sample), mark }),
+  };
+};
+const signalSample = (x) =>
+  String(x)
+    .replace(/[\s;|:]+/g, " ")
+    .trim()
+    .slice(0, 40);
+
+/** Обращения наружу: пометка — род внешнего. */
+const OUTSIDE_KINDS = [
+  [
+    "сеть",
+    /\bfetch\s*\(|\baxios\b(?:\s*\.\s*[a-z]+)?\s*\(|\bnew\s+(?:XMLHttpRequest|WebSocket|EventSource)\s*\(|\bnavigator\s*\.\s*sendBeacon\s*\(/g,
+  ],
+  [
+    "хранилище",
+    /\b(?:localStorage|sessionStorage|indexedDB)\b|\bdocument\s*\.\s*cookie\b|\bcaches\s*\.\s*(?:open|match|keys|delete)\s*\(/g,
+  ],
+  [
+    "адрес",
+    /\blocation\s*\.\s*(?:search|hash|href|pathname)\b|\bnew\s+URLSearchParams\s*\(|\buse(?:SearchParams|Params|Location)\s*\(/g,
+  ],
+  ["окружение", /\bprocess\s*\.\s*env\b|\bimport\s*\.\s*meta\s*\.\s*env\b/g],
+  ["разбор", /\bJSON\s*\.\s*parse\s*\(/g],
+  ["сообщение", /\bpostMessage\s*\(|\.\s*onmessage\b/g],
+];
+/** Запись наружу: повтор её удваивает, а многошаговая — расходится. */
+const WRITE_KINDS = [
+  ["сеть", /\baxios\s*\.\s*(?:post|put|patch|delete)\s*\(/g],
+  [
+    "хранилище",
+    /\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|removeItem|clear)\s*\(|\bdocument\s*\.\s*cookie\s*=(?!=)/g,
+  ],
+];
+const WRITE_METHOD = /\bmethod\s*:\s*["'`](?:POST|PUT|PATCH|DELETE)["'`]/gi;
+const CLOCK =
+  /\bDate\s*\.\s*now\s*\(|\bnew\s+Date\s*\(\s*\)|\bperformance\s*\.\s*now\s*\(|\bMath\s*\.\s*random\s*\(|\bcrypto\s*\.\s*(?:randomUUID|getRandomValues)\s*\(/g;
+/** Имя булева — утверждение; заглавные — константа, имя ей дано. */
+const BOOL_NAME =
+  /^(?:is|has|have|can|could|should|must|was|were|will|did|does|needs?|allows?|may)(?=[A-Z0-9_])|^[A-Z][A-Z0-9_]*$/;
+/** Сокращения, которых не бывает терминами предметной области: экономят
+ * символы автору и стоят чтения всем остальным. Одиночные буквы — короткие
+ * имена, а не сокращения, и сюда не входят. */
+const ABBREVIATIONS = new Set(
+  "res req resp cfg conf tmp hdl hndl btn cnt msg val obj arr str num elem el cb fn func opts cur curr len mgr ctrl svc idx ctx evt ev err buf lbl img desc calc util utils dst addr ptr pkg cmd txt sz".split(
+    " ",
+  ),
+);
+/** Величины, у которых есть единица: время, длина, скорость, доля. */
+const QUANTITY =
+  "(?:[Dd]uration|[Dd]elay|[Tt]imeout|[Ii]nterval|[Tt]ime|[Ww]ait|[Tt]tl|[Gg]ap|[Oo]ffset|[Ss]ize|[Ww]idth|[Hh]eight|[Dd]istance|[Ss]peed|[Mm]argin|[Pp]adding|[Rr]adius|[Tt]hreshold|[Pp]eriod|[Ll]ifetime|DURATION|DELAY|TIMEOUT|INTERVAL|TIME|WAIT|TTL|GAP|OFFSET|SIZE|WIDTH|HEIGHT|DISTANCE|SPEED|MARGIN|PADDING|RADIUS|THRESHOLD|PERIOD|LIFETIME)";
+const UNIT_SUFFIX =
+  /(?:ms|millis(?:econds)?|secs?|seconds|px|rem|em|pct|percent|deg|rad|frames|fps|hz|kb|mb|bytes|count|ratio|factor|mins?|minutes|hours|days)$/i;
+/** Слова комментария, предупреждающие о слабом месте: место описано, а не
+ * переписано. */
+const WARNING_WORDS =
+  /\b(?:hack|hacky|workaround|careful|caution|fragile|beware|temporary|kludge)\b|do(?:n't| not) touch|осторожн|костыл|обходн|временн|хрупк|не трогать/i;
+/** Слова комментария, ставящие условие вызывающему: требование, которое не
+ * выражено типом. */
+const OBLIGATION_WORDS =
+  /\b(?:must(?: not)? (?:be|call)|only (?:after|before|once|when)|never call|do(?:n't| not) (?:call|pass|change|mutate)|has to be|callers? (?:must|should)|should be (?:stable|memoized)|keep (?:it )?stable)\b|обязан|только после|только до|нельзя (?:менять|звать|вызывать|передавать)|вызывающ/i;
+const CONSTRAINT_MARK = /\b(?:CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/;
+/** Сеттер состояния — `setЧто-то(`; таймеры `setTimeout`, `setInterval` и
+ * `setImmediate` записью состояния не являются, хотя пишутся так же. */
+const SETTER = "(?<![\\w$.])set(?!Timeout\\b|Interval\\b|Immediate\\b)[A-Z][\\w$]*\\s*\\(";
+/** Порог размера узла в строках кода: «компонент на сотни строк». */
+const SIZE_FROM = 300;
+/** Сколько мест, меняющих одно состояние, делают вопрос о переходах. */
+const TRANSITIONS_FROM = 3;
+/** Пропы, которые передают дальше по их назначению: это не граница. */
+const FORWARD_FREE = new Set(["children", "className", "style", "key", "ref", "id", "as"]);
+/** Входы, которые берут ради одного поля законно: событие, пропы, служебное. */
+const WHOLE_FREE = /^(?:e|ev|evt|event|props|_[\w$]*|args|rest|ctx|context)$/;
+/** Начала цепочек, которые не соседи, а среда: глобальные объекты и модули. */
+const GLOBAL_BASES = new Set(
+  "window document process console navigator location globalThis this styles classes theme import module exports require event e ev evt".split(" "),
+);
+/** Звенья цепочки, принадлежащие разметке и ссылкам, а не соседу. */
+const DOM_SEGMENTS = new Set(
+  "current style dataset target currentTarget classList parentNode parentElement childNodes children length value env".split(" "),
+);
+/** Сколько необязательных полей одного типа делают вопрос о союзе. */
+const OPTIONAL_FROM = 3;
+/** Имена, которые объявляют «взять и изменить» сами. */
+const COMMAND_QUERY_NAMES =
+  /^(?:use[A-Z]|[A-Z]|pop|take|shift|next|increment|decrement|consume|pull|dequeue|claim|acquire|reserve|toggle)/;
+
+/** Признаки текста в файле кода: `{ sort, line, sample, mark }`.
+ *
+ * `own` — местные имена, взятые импортом из файлов проекта: создание такого
+ * соисполнителя внутри узла — вопрос о его передаче входом. */
+const codeSignalsOf = (file, text, own) => {
+  const bare = bareCodeOf(text);
+  const plain = commentlessOf(text);
+  const { hits, at, line } = signalSink(text);
+  const markup = /\.(?:tsx|jsx)$/.test(file);
+  const each = (re, src, fn) => {
+    for (const m of src.matchAll(re)) fn(m);
+  };
+  const lines = text.split(NEWLINE);
+  const bareLines = bare.split(NEWLINE);
+
+  // --- снаружи: сеть, хранилище, адрес, окружение, разбор, сообщения ------
+  const outsideKinds = new Set();
+  let reached = -1;
+  for (const [mark, re] of OUTSIDE_KINDS)
+    each(re, bare, (m) => {
+      at("внешнее", m.index, m[0], mark);
+      outsideKinds.add(mark);
+      if (reached < 0 || m.index < reached) reached = m.index;
+    });
+  each(/addEventListener\s*\(\s*["']message["']/g, plain, (m) => {
+    at("внешнее", m.index, "message", "сообщение");
+    outsideKinds.add("сообщение");
+  });
+  for (const [mark, re] of WRITE_KINDS)
+    each(re, bare, (m) => at("запись", m.index, m[0], mark));
+  each(WRITE_METHOD, plain, (m) => at("запись", m.index, m[0], "сеть"));
+  each(CLOCK, bare, (m) => {
+    at("время", m.index, m[0]);
+    outsideKinds.add("время");
+    if (reached < 0 || m.index < reached) reached = m.index;
+  });
+  if (markup && outsideKinds.size > 0)
+    at("разметка", reached, [...outsideKinds].join(", "));
+
+  // --- обход компилятора --------------------------------------------------
+  each(/:\s*any\b|\bas\s+any\b|<any>/g, bare, (m) => at("обход", m.index, m[0], "любое"));
+  const bareLineAt = lineIndexOf(bare);
+  each(
+    /\bas\s+(?:unknown\s+as\s+)?(?:[A-Z_$][\w$.]*|string|number|boolean|object|never|bigint|symbol)\b/g,
+    bare,
+    (m) => {
+    const row = bareLines[bareLineAt(m.index) - 1] ?? "";
+    // Переименование в импорте и реэкспорте — не приведение типа.
+    if (!/^\s*(?:import\b|export\s*(?:type\s*)?[{*])/.test(row))
+      at("обход", m.index, m[0], "приведение");
+    },
+  );
+  each(/(?:\/\/|\/\*)[^\n]*?(@ts-(?:ignore|expect-error|nocheck)|eslint-disable[\w-]*)/g, text, (m) =>
+    at("обход", m.index, m[1], "подавление"),
+  );
+  each(/[\w$)\]]!(?=[.)\],;[])/g, bare, (m) => at("обход", m.index, m[0], "не пусто"));
+
+  // --- отказы -------------------------------------------------------------
+  each(
+    /\bif\s*\(\s*!?\s*[\w$.]+(?:\[[^\]\n]*\])?\s*(?:<=|<|>=|>)\s*-?[\w$.]+\s*\)\s*\{?\s*(?:return|throw|continue|break)\b/g,
+    bare,
+    (m) => at("страж", m.index, m[0].replace(/\)\s*\{?\s*\w+$/, ")")),
+  );
+  each(/\bthrow\s+(?:new\s+)?[\w$.]+|\bPromise\s*\.\s*reject\s*\(/g, bare, (m) => at("бросок", m.index, m[0]));
+  each(/\bPromise\s*\.\s*(?:all|allSettled|race|any)\s*\(/g, bare, (m) => at("пакет", m.index, m[0]));
+  each(/\.\s*forEach\s*\(\s*async\b/g, bare, (m) => at("пакет", m.index, "forEach(async"));
+  each(/\b(?:for|while)\s*\(/g, bare, (m) => {
+    const q = closeOf(bare, m.index + m[0].length - 1);
+    if (q < 0) return;
+    const b = bare.indexOf("{", q);
+    if (b < 0 || bare.slice(q + 1, b).trim() !== "") return;
+    const e = closeOf(bare, b);
+    if (e > b && /\bawait\b/.test(bare.slice(b, e))) at("пакет", m.index, "await в цикле");
+  });
+
+  // --- асинхронное: результат пишется в состояние --------------------------
+  const pending = [...bare.matchAll(/\bawait\b|\.\s*then\s*\(/g)];
+  if (pending.length > 0 && new RegExp(SETTER + "|\\bthis\\s*\\.\\s*setState\\s*\\(").test(bare)) {
+    const guarded =
+      /\bAbortController\b|\bsignal\b|\bcancel\w*|\bignore\b|\b(?:is)?[mM]ounted\b|\b(?:is)?[aA]ctive\b|\bstale\b|\brequestId\b|\blatest\w*/.test(
+        bare,
+      );
+    for (const m of pending.slice(0, 6))
+      at("гонка", m.index, m[0].includes("then") ? ".then" : "await", guarded ? "" : "без отмены");
+  }
+
+  // --- разметка: список, частые события, раскладка, поставщик ---------------
+  if (markup) {
+    const positional = /\bkey=\{\s*(?:i|idx|index|[\w$]*Index)\s*\}/.test(bare);
+    each(/\{\s*[\w$]+(?:\s*\??\.\s*[\w$]+)*\s*\??\.\s*map\s*\(/g, bare, (m) =>
+      at("список", m.index, m[0].replace(/^\{\s*/, ""), positional ? "ключ по позиции" : ""),
+    );
+    each(/\bvalue=\{\s*[{[]/g, bare, (m) => at("контекст", m.index, "value"));
+  }
+  each(
+    /\bon(?:Scroll|MouseMove|PointerMove|TouchMove|Wheel|Drag|DragOver)\s*=|\brequestAnimationFrame\s*\(|\bnew\s+ResizeObserver\s*\(/g,
+    bare,
+    (m) => at("частое", m.index, m[0]),
+  );
+  each(
+    /addEventListener\s*\(\s*["'](?:scroll|mousemove|pointermove|touchmove|wheel|resize|drag|dragover)["']/g,
+    plain,
+    (m) => at("частое", m.index, m[0].replace(/^addEventListener\s*\(\s*/, "")),
+  );
+  const layoutWrites =
+    /\.\s*style\s*\.\s*[\w$]+\s*=(?!=)|\.\s*style\s*\.\s*setProperty\s*\(|\bclassList\s*\.\s*(?:add|remove|toggle)\s*\(/.test(
+      bare,
+    );
+  each(
+    /\bgetBoundingClientRect\s*\(|\.\s*(?:offset(?:Width|Height|Top|Left)|client(?:Width|Height)|scroll(?:Top|Left|Width|Height))\b|\bgetComputedStyle\s*\(/g,
+    bare,
+    (m) => at("раскладка", m.index, m[0], layoutWrites ? "чтение и запись" : "чтение"),
+  );
+  each(/\bwindow\s*\.\s*(?:inner|outer)(?:Width|Height)\b|\bvisualViewport\b/g, bare, (m) =>
+    at("раскладка", m.index, m[0], "окно"),
+  );
+
+  // --- поиск по коллекции внутри обхода -------------------------------------
+  const loops = [];
+  each(/\.\s*(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex)\s*\(/g, bare, (m) => {
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q > p) loops.push([p, q]);
+  });
+  each(/\b(?:for|while)\s*\(/g, bare, (m) => {
+    const q = closeOf(bare, m.index + m[0].length - 1);
+    if (q < 0) return;
+    const b = bare.indexOf("{", q);
+    if (b < 0 || bare.slice(q + 1, b).trim() !== "") return;
+    const e = closeOf(bare, b);
+    if (e > b) loops.push([b, e]);
+  });
+  const searched = new Set();
+  for (const [from, to] of loops)
+    for (const m of bare
+      .slice(from, to)
+      .matchAll(/(?<![\w$.])([\w$]+)\s*\.\s*(find|findIndex|indexOf|includes|filter|some)\s*\(/g)) {
+      if (/^(?:Object|Array|Math|String|Number|JSON|Promise|Reflect)$/.test(m[1])) continue;
+      if (searched.has(from + m.index)) continue;
+      searched.add(from + m.index);
+      at("поиск", from + m.index, m[1] + "." + m[2]);
+    }
+
+  // --- комментарии: каждый, предупреждающие, требующие, ограничения --------
+  for (const run of (commentRunsOf(text) || "").split(SEP1).filter(Boolean)) {
+    const [, from, , rows] = run.split(SEP2).map((x, k) => (k === 0 ? x : Number(x)));
+    const said = lines.slice(from - 1, from - 1 + rows).join(" ");
+    const sample = said.replace(/^\s*(?:\/\/+|\/\*+|\*)\s*/, "");
+    line("комментарий", from, sample, WARNING_WORDS.test(said) ? "предупреждение" : "");
+    if (OBLIGATION_WORDS.test(said)) line("требование", from, sample);
+    if (CONSTRAINT_MARK.test(said)) line("ограничение", from, sample);
+  }
+
+  // --- имена: булево без утверждения, сокращения ---------------------------
+  const named = new Set();
+  const nameHit = (name, index, mark) => {
+    if (named.has(mark + name)) return;
+    named.add(mark + name);
+    at("имя", index, name, mark);
+  };
+  const booleans = [
+    /\bconst\s*\[\s*([\w$]+)\s*,\s*[\w$]+\s*\]\s*=\s*(?:React\s*\.\s*)?useState\s*(?:<\s*boolean\s*>)?\s*\(\s*(?:true|false)\s*\)/g,
+    /\b(?:const|let|var)\s+([\w$]+)\s*(?::\s*boolean\s*)?=\s*(?:true|false)\b(?!\s*[&|?])/g,
+    /(?<=[\s,({;])([\w$]+)\s*\??\s*:\s*boolean\b/g,
+  ];
+  for (const re of booleans)
+    each(re, bare, (m) => {
+      if (!BOOL_NAME.test(m[1])) nameHit(m[1], m.index + m[0].indexOf(m[1]), "булево");
+    });
+  const declared = [
+    /\b(?:const|let|var)\s+([\w$]+)/g,
+    /\bfunction\s*\*?\s*([\w$]+)/g,
+    /\bcatch\s*\(\s*([\w$]+)/g,
+    /(?<![\w$.])([\w$]+)\s*=>/g,
+  ];
+  for (const re of declared)
+    each(re, bare, (m) => {
+      if (ABBREVIATIONS.has(m[1].toLowerCase()))
+        nameHit(m[1], m.index + m[0].indexOf(m[1]), "сокращение");
+    });
+  each(/\(([^()]*)\)\s*(?::[^=;{()]+)?=>|\bfunction\s*\*?\s*[\w$]*\s*\(([^()]*)\)/g, bare, (m) => {
+    const list = m[1] ?? m[2] ?? "";
+    for (const one of list.split(/[\s,{}[\]:=.]+/))
+      if (ABBREVIATIONS.has(one.toLowerCase()))
+        nameHit(one, m.index + m[0].indexOf(one), "сокращение");
+  });
+
+  // --- величина без единицы --------------------------------------------------
+  for (const re of [
+    new RegExp("\\b(?:const|let|var)\\s+([\\w$]*" + QUANTITY + ")\\s*(?::[^=\\n]+)?=\\s*-?\\d", "g"),
+    new RegExp("(?<=[{,]\\s*)([\\w$]*" + QUANTITY + ")\\s*:\\s*-?\\d", "g"),
+  ])
+    each(re, bare, (m) => {
+      if (!UNIT_SUFFIX.test(m[1].replace(/_/g, ""))) at("величина", m.index, m[1]);
+    });
+
+  // --- модель рендера: запомненное, эффекты, переходы, проброс --------------
+  each(
+    /\b(?:React\s*\.\s*)?(?:useMemo|useCallback|memo)\s*\(|\bcomputed\s*\(|\bmemoize\w*\s*\(/g,
+    bare,
+    (m) => at("мемо", m.index, m[0]),
+  );
+  const stateNames = [
+    ...bare.matchAll(/\bconst\s*\[\s*([\w$]+)\s*,\s*set[\w$]*\s*\]\s*=\s*(?:React\s*\.\s*)?useState\b/g),
+  ].map((m) => m[1]);
+  each(/\buse(?:Layout)?Effect\s*\(/g, bare, (m) => {
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q < 0) return;
+    const parts = topLevelParts(bare.slice(p + 1, q), p + 1)
+      .map((x) => x.text.trim())
+      .filter((x) => x !== "");
+    if (parts.length === 0) return;
+    const body = parts[0];
+    const deps = parts.length > 1 ? parts[parts.length - 1] : null;
+    if (deps !== null && deps.replace(/\s+/g, "") === "[]") {
+      const reads = stateNames.some((n) =>
+        new RegExp("(?<![\\w$.])" + escapeRe(n) + "(?![\\w$])").test(body),
+      );
+      const schedules = /\bset(?:Interval|Timeout)\s*\(|\baddEventListener\s*\(|\.\s*subscribe\s*\(/.test(body);
+      at("однократно", m.index, "эффект с пустыми зависимостями", reads && schedules ? "захват" : "");
+      return;
+    }
+    if (deps === null) return;
+    const arrow = /^(?:async\s*)?\(\s*\)\s*=>\s*([\s\S]*)$/.exec(body);
+    if (arrow === null) return;
+    let inner = arrow[1].trim();
+    if (inner.startsWith("{") && closeOf(inner, 0) === inner.length - 1)
+      inner = inner.slice(1, -1);
+    const statements = inner
+      .split(/[;\n]/)
+      .map((x) => x.trim())
+      .filter((x) => x !== "");
+    if (
+      statements.length > 0 &&
+      statements.every((x) => new RegExp("^" + SETTER + "[\\s\\S]*\\)$").test(x))
+    )
+      at("эффект", m.index, statements[0].replace(/\(.*$/, ""), "только запись");
+  });
+  const setters = new Map();
+  each(/(?<![\w$.])(set(?!Timeout\b|Interval\b|Immediate\b)[A-Z][\w$]*)\s*\(/g, bare, (m) => {
+    if (!setters.has(m[1])) setters.set(m[1], []);
+    setters.get(m[1]).push(m.index);
+  });
+  for (const [name, places] of setters)
+    if (places.length >= TRANSITIONS_FROM)
+      at("переходы", places[0], name + " ×" + places.length);
+  if (markup)
+    each(
+      /\bfunction\s+[A-Z][\w$]*\s*\(\s*\{|\bconst\s+[A-Z][\w$]*\s*(?::[^=\n]+)?=\s*(?:(?:React\s*\.\s*)?(?:memo|forwardRef)\s*\(\s*(?:function\s*[\w$]*\s*)?)?\(\s*\{/g,
+      bare,
+      (m) => {
+        const open = m.index + m[0].length - 1;
+        const close = closeOf(bare, open);
+        if (close < 0) return;
+        const rest = bare.slice(close);
+        for (const part of topLevelParts(bare.slice(open + 1, close), open + 1)) {
+          let local = part.text.trim();
+          if (local === "" || local.startsWith("...")) continue;
+          if (local.includes(":")) local = local.split(":")[1];
+          local = local.split("=")[0].trim();
+          if (!/^[A-Za-z_$][\w$]*$/.test(local) || FORWARD_FREE.has(local)) continue;
+          // Имя атрибута разметки (`title=`) — не обращение к пропу.
+          const uses = [
+            ...rest.matchAll(
+              new RegExp("(?<![\\w$.])" + escapeRe(local) + "(?![\\w$])(?!\\s*=(?![=>]))", "g"),
+            ),
+          ];
+          const forwards = [...rest.matchAll(new RegExp("[\\w$-]+=\\{\\s*" + escapeRe(local) + "\\s*\\}", "g"))];
+          if (uses.length > 0 && uses.length === forwards.length)
+            at("проброс", close + uses[0].index, local);
+        }
+      },
+    );
+
+  // --- узел: размер, создание соисполнителя, команда-запрос, мёртвое ------
+  const codeLines = bareLines.filter((x) => x.trim() !== "").length;
+  if (codeLines >= SIZE_FROM) line("размер", 1, "строк кода " + codeLines);
+  const classes = new Set([...bare.matchAll(/\bclass\s+([A-Z][\w$]*)/g)].map((m) => m[1]));
+  each(/\bnew\s+([A-Z][\w$]*)\s*\(|\b([A-Z][\w$]*)\s*\.\s*(?:getInstance|instance)\b/g, bare, (m) => {
+    const name = m[1] ?? m[2];
+    if (own.has(name) || classes.has(name)) at("создаёт", m.index, m[0]);
+  });
+  const moduleLets = [...bare.matchAll(/(?:^|\n)(?:export\s+)?let\s+([\w$]+)/g)].map((m) => m[1]);
+  const writesRe = new RegExp(
+    [
+      SETTER,
+      "\\.\\s*(?:setItem|removeItem)\\s*\\(",
+      "\\bthis\\s*\\.\\s*[\\w$]+\\s*(?:[-+*/%]|\\*\\*)?=(?!=)",
+      "\\bdispatch\\s*\\(",
+      ...moduleLets.map(
+        (n) =>
+          "(?<![\\w$.])" + escapeRe(n) + "\\s*(?:[-+*/%]|\\*\\*)?=(?!=)|(?:\\+\\+|--)\\s*" + escapeRe(n) + "\\b|\\b" + escapeRe(n) + "\\s*(?:\\+\\+|--)",
+      ),
+    ].join("|"),
+  );
+  const bodies = [];
+  each(
+    /(?:^|\n)[ \t]*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([\w$]+)\s*(?:<[^<>]*>)?\s*\(/g,
+    bare,
+    (m) => {
+      const p = m.index + m[0].length - 1;
+      const q = closeOf(bare, p);
+      if (q < 0) return;
+      const b = bare.indexOf("{", q);
+      if (b < 0 || !/^\s*(?::[^{]*)?$/.test(bare.slice(q + 1, b))) return;
+      bodies.push({
+        name: m[1],
+        at: m.index + m[0].indexOf(m[1]),
+        params: bare.slice(p + 1, q),
+        from: b,
+        to: closeOf(bare, b),
+      });
+    },
+  );
+  each(
+    /(?:^|\n)[ \t]*(?:export\s+)?const\s+([\w$]+)\s*(?::[^=\n]+)?=\s*(?:async\s+)?(?:\(|([\w$]+)\s*=>\s*\{)/g,
+    bare,
+    (m) => {
+      let b = -1;
+      let params = m[2] ?? "";
+      if (m[0].endsWith("{")) b = m.index + m[0].length - 1;
+      else {
+        const p = m.index + m[0].length - 1;
+        const q = closeOf(bare, p);
+        if (q < 0) return;
+        const arrow = /^\s*(?::[^=;{()]+?)?\s*=>\s*\{/.exec(bare.slice(q + 1, q + 200));
+        if (arrow === null) return;
+        params = bare.slice(p + 1, q);
+        b = q + arrow[0].length;
+      }
+      bodies.push({
+        name: m[1],
+        at: m.index + m[0].indexOf(m[1]),
+        params,
+        from: b,
+        to: closeOf(bare, b),
+      });
+    },
+  );
+  for (const one of bodies) {
+    if (one.to < 0 || COMMAND_QUERY_NAMES.test(one.name)) continue;
+    // Вложенные функции — отложенная работа, а не работа этой функции.
+    let inner = bare.slice(one.from + 1, one.to);
+    for (const m of inner.matchAll(/=>\s*\{|\bfunction\b[^{]*\{/g)) {
+      const b = m.index + m[0].length - 1;
+      const e = closeOf(inner, b);
+      if (e > b) inner = inner.slice(0, b + 1) + " ".repeat(e - b - 1) + inner.slice(e);
+    }
+    if (/\breturn\s+[^\s;}]/.test(inner) && writesRe.test(inner))
+      at("команда", one.at, one.name);
+  }
+  // Вход, из которого берут одно поле: узлу нужен элемент, а дают целое.
+  for (const one of bodies) {
+    if (one.to < 0) continue;
+    const body = bare.slice(one.from + 1, one.to);
+    for (const part of topLevelParts(one.params, 0)) {
+      const name = /^\s*([A-Za-z_$][\w$]*)\s*(?:[?:=]|$)/.exec(part.text)?.[1];
+      if (name === undefined || WHOLE_FREE.test(name)) continue;
+      const uses = [...body.matchAll(new RegExp("(?<![\\w$.])" + escapeRe(name) + "(?![\\w$])", "g"))];
+      const fields = new Set();
+      let bare1 = true;
+      for (const u of uses) {
+        const after = /^\s*\??\.\s*([A-Za-z_$][\w$]*)/.exec(body.slice(u.index + name.length));
+        if (after === null) bare1 = false;
+        else fields.add(after[1]);
+      }
+      if (uses.length > 0 && bare1 && fields.size === 1)
+        at("целое", one.at, name + "." + [...fields][0]);
+    }
+  }
+  // Обобщение без ограничения: «сюда подойдёт что угодно».
+  each(
+    /\bfunction\s*\*?\s*[\w$]*\s*<([^<>()]+)>\s*\(|=\s*(?:async\s+)?<([^<>()]+)>\s*\(|\b(?:type|interface|class)\s+[\w$]+\s*<([^<>]+)>/g,
+    bare,
+    (m) => {
+      for (const part of (m[1] ?? m[2] ?? m[3]).split(",")) {
+        const t = part.trim();
+        if (/^[A-Z][\w$]*(?:\s*=.*)?$/.test(t) && !/\bextends\b/.test(t))
+          at("обобщение", m.index, t.split("=")[0].trim());
+      }
+    },
+  );
+  // Проверка вида своей реализации: особый случай одной из подстановок.
+  each(/\binstanceof\s+([A-Z][\w$]*)/g, bare, (m) => {
+    if (own.has(m[1]) || classes.has(m[1])) at("вид", m.index, m[0]);
+  });
+  // Цепочка сквозь соседей: узел знает устройство чужих узлов.
+  each(
+    /(?<![\w$.])([a-z_$][\w$]*)((?:\s*\??\.\s*[A-Za-z_$][\w$]*){3,})(?![\w$]|\s*\()/g,
+    bare,
+    (m) => {
+      if (GLOBAL_BASES.has(m[1])) return;
+      const segments = m[2].split(/\??\./).map((x) => x.trim()).filter(Boolean);
+      if (segments.some((x) => DOM_SEGMENTS.has(x))) return;
+      at("сквозь", m.index, m[1] + "." + segments.join("."));
+    },
+  );
+  // Кэш без вытеснения: контейнер модуля растёт и ни разу не чистится.
+  for (const m of bare.matchAll(
+    /(?:^|\n)(?:export\s+)?const\s+([\w$]+)\s*(?::[^=\n]+)?=\s*(?:new\s+(?:Map|Set)\s*(?:<[^>]*>)?\s*\(|\[\s*\]|\{\s*\})/g,
+  )) {
+    const name = escapeRe(m[1]);
+    const grows = new RegExp("(?<![\\w$.])" + name + "\\s*(?:\\.\\s*(?:set|add|push|unshift)\\s*\\(|\\[[^\\]]+\\]\\s*=(?!=))").test(bare);
+    const shrinks = new RegExp("(?<![\\w$.])" + name + "\\s*\\.\\s*(?:delete|clear|splice|shift|pop)\\s*\\(|\\bdelete\\s+" + name + "\\s*\\[|(?<![\\w$.])" + name + "\\s*\\.\\s*length\\s*=(?!=)").test(bare);
+    if (grows && !shrinks) at("кэш", m.index + m[0].indexOf(m[1]), m[1]);
+  }
+  // Несколько эффектов одного узла: результат не смеет зависеть от их порядка.
+  const effects = [...bare.matchAll(/\buse(?:Layout)?Effect\s*\(/g)];
+  if (effects.length >= 2) at("порядок", effects[0].index, "эффектов " + effects.length);
+  // Однотипные идентификаторы: два вида ключей одной строкой перепутают.
+  const ids = new Map();
+  each(/\b([\w$]*(?:Id|ID))\s*\??\s*:\s*(?:string|number)\b/g, bare, (m) => {
+    if (!ids.has(m[1])) ids.set(m[1], m.index);
+  });
+  if (ids.size >= 2) at("идентификаторы", [...ids.values()][0], [...ids.keys()].join(", "));
+  // Россыпь необязательных полей вместо размеченного союза. Входы компонента
+  // сюда не идут: их россыпь спрашивает критерий о флагах.
+  each(/\b(?:type|interface)\s+([A-Z][\w$]*)[^{=;]*?(?:=\s*)?\{/g, bare, (m) => {
+    if (/Props$/.test(m[1])) return;
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(bare, open);
+    if (close < 0) return;
+    const optional = topLevelParts(bare.slice(open + 1, close).replace(/;/g, ","), 0).filter((x) =>
+      /^\s*(?:readonly\s+)?[\w$]+\s*\?\s*:/.test(x.text),
+    );
+    if (optional.length >= OPTIONAL_FROM) at("необязательные", m.index, m[1] + ": " + optional.length);
+  });
+  for (const [k, row] of bareLines.entries()) {
+    const m = /^(?:const|let|var|function\*?|class)\s+([\w$]+)/.exec(row);
+    if (m === null) continue;
+    const seen = bare.match(new RegExp("(?<![\\w$.])" + escapeRe(m[1]) + "(?![\\w$])", "g")) ?? [];
+    if (seen.length === 1) line("мёртвое", k + 1, m[1]);
+  }
+
+  // --- движение, доступность, вставка, журнал, текст -------------------------
+  each(/\brequestAnimationFrame\s*\(/g, bare, (m) => at("движение", m.index, m[0], "кадры"));
+  each(/\.\s*animate\s*\(|\bmotion\s*\.\s*[a-z]+\b|\bgsap\s*\.|\buseSpring\s*\(/g, bare, (m) =>
+    at("движение", m.index, m[0], "код"),
+  );
+  if (markup) {
+    each(
+      /<(?:div|span|li|td|tr|p|section|article|img|label)\b[^<>]*?\bon(?:Click|MouseDown|MouseUp|PointerDown|PointerUp|KeyDown)\s*=/g,
+      bare,
+      (m) => at("доступность", m.index, m[0].split(/\s/)[0], "не кнопка"),
+    );
+    each(/\brole\s*=\s*["']button["']/g, plain, (m) => at("доступность", m.index, "role=button", "не кнопка"));
+    each(
+      /\bon(?:MouseDown|MouseUp|MouseEnter|MouseLeave|TouchStart|TouchEnd|PointerDown|PointerUp)\s*=/g,
+      bare,
+      (m) => at("доступность", m.index, m[0].replace(/\s*=$/, ""), "указатель"),
+    );
+    each(/<button\b([^<>]*)>\s*<(?:svg|img|Icon|[A-Z][\w$]*Icon)\b/g, bare, (m) => {
+      if (!/\baria-label(?:ledby)?\b|\btitle\s*=/.test(m[1])) at("доступность", m.index, "button", "без имени");
+    });
+    each(/<img\b(?![^<>]*\balt\s*=)[^<>]*>/g, bare, (m) => at("доступность", m.index, "img", "без имени"));
+    if (!/\bdisabled\s*=|\baria-disabled\b|\baria-busy\b/.test(plain))
+      each(/className\s*=\s*\{?\s*[`"'][^`"'\n]*\b(?:disabled|loading|busy|pending)\b/g, plain, (m) =>
+        at("доступность", m.index, "className", "состояние"),
+      );
+    each(/\.\s*focus\s*\(\s*\)|\bautoFocus\b/g, bare, (m) => at("доступность", m.index, m[0], "фокус"));
+    if (!/\baria-live\b|\brole\s*=\s*["'](?:status|alert)["']/.test(plain))
+      each(
+        /(?:\b|(?<=[a-z]))(?:error|err|message|msg|status|notice|warning|success|toast|alert)\w*\s*&&\s*\(?\s*</gi,
+        bare,
+        (m) => at("доступность", m.index, m[0].replace(/\s*&&[\s\S]*$/, ""), "без объявления"),
+      );
+  }
+  each(
+    /\bdangerouslySetInnerHTML\b|\.\s*(?:innerHTML|outerHTML)\s*=(?!=)|\binsertAdjacentHTML\s*\(|\bdocument\s*\.\s*write\s*\(/g,
+    bare,
+    (m) => at("вставка", m.index, m[0], "разметка"),
+  );
+  each(
+    /(?<!\b(?:const|let|var)\s+)\b(?:window\s*\.\s*)?location(?:\s*\.\s*href)?\s*=(?!=)|\blocation\s*\.\s*(?:assign|replace)\s*\(|\bwindow\s*\.\s*open\s*\(|\bhref=\{/g,
+    bare,
+    (m) => at("вставка", m.index, m[0], "адрес"),
+  );
+  each(/\beval\s*\(|\bnew\s+Function\s*\(|<script\b|<iframe\b/g, bare, (m) => at("вставка", m.index, m[0], "сторонний"));
+  each(/createElement\s*\(\s*["'](?:script|iframe)["']/g, plain, (m) => at("вставка", m.index, m[0], "сторонний"));
+  each(/\bconsole\s*\.\s*(?:log|info|debug|warn|error|trace|table|dir)\s*\(/g, bare, (m) => at("журнал", m.index, m[0]));
+  each(
+    /\bperformance\s*\.\s*(?:mark|measure)\s*\(|\bconsole\s*\.\s*time(?:End|Log)?\s*\(|\bnew\s+PerformanceObserver\s*\(/g,
+    bare,
+    (m) => at("измерение", m.index, m[0]),
+  );
+  if (markup) {
+    each(/(?<![=-])>([^<>{}]*\p{L}[^<>{}]*)<\/?[A-Za-z]/gu, bare, (m) =>
+      at("текст", m.index + 1, m[1].trim(), "в разметке"),
+    );
+    each(/\b(?:title|placeholder|alt|aria-label|label)\s*=\s*["']([^"'\n]*\p{L}[^"'\n]*)["']/gu, plain, (m) =>
+      at("текст", m.index, m[1], "в разметке"),
+    );
+  }
+  each(/\.\s*toFixed\s*\(|\.\s*toLocale(?:Date|Time)?String\s*\(\s*\)/g, bare, (m) => at("текст", m.index, m[0], "формат"));
+  each(/(?:===?|!==?)\s*1\s*\?\s*["'`]/g, plain, (m) => at("текст", m.index, m[0], "множественное"));
+  return hits;
+};
+
+/** Признаки листа стилей. `project.layered` — проект объявил порядок слоёв
+ * каскада: лист вне слоя тогда выигрывает спор без признака. */
+const styleSignalsOf = (text, project) => {
+  const bare = blankSpans(
+    text,
+    spansOf(text).filter(([, , kind]) => kind === "comment"),
+  );
+  const { hits, at, line } = signalSink(text);
+  const each = (re, fn) => {
+    for (const m of bare.matchAll(re)) fn(m);
+  };
+  each(/!important\b/g, (m) => at("стиль", m.index, m[0], "важнее всех"));
+  each(/@media[^{]*?\b\d+(?:\.\d+)?(?:px|em|rem)\b/g, (m) => at("стиль", m.index, m[0], "перелом"));
+  each(/(?<![\w-])\d+(?:\.\d+)?(?:vh|dvh|svh|lvh|vw)\b/g, (m) => at("стиль", m.index, m[0], "вьюпорт"));
+  const values = new Map();
+  each(
+    /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\([^)]*\)|(?<![\w.-])(?:[3-9]|\d{2,})(?:\.\d+)?px\b/g,
+    (m) => {
+      const row = bare.slice(bare.lastIndexOf(NEWLINE, m.index) + 1, m.index);
+      if (/--[\w-]+\s*:/.test(row)) return;
+      const k = m[0].toLowerCase().replace(/\s+/g, "");
+      if (!values.has(k)) values.set(k, []);
+      values.get(k).push(m.index);
+    },
+  );
+  for (const [value, places] of values)
+    if (places.length >= 2) at("стиль", places[0], value + " ×" + places.length, "повтор величины");
+  each(
+    /\btransition(?:-property)?\s*:[^;{}]*\b(?:width|height|top|left|right|bottom|margin[\w-]*|padding[\w-]*|all)\b/g,
+    (m) => at("стиль", m.index, m[0].split(":")[0], "раскладка в движении"),
+  );
+  each(/@keyframes\s+[\w-]+\s*\{/g, (m) => {
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(bare, open);
+    if (close > open && /\b(?:width|height|top|left|right|bottom|margin|padding)\s*:/.test(bare.slice(open, close)))
+      at("стиль", m.index, m[0].replace(/\s*\{$/, ""), "раскладка в движении");
+  });
+  each(/\bwill-change\s*:|\btranslateZ\s*\(|\btranslate3d\s*\(/g, (m) => at("стиль", m.index, m[0], "слой композитора"));
+  if (!/:focus-visible\b/.test(bare))
+    each(/\boutline\s*:\s*(?:none|0)\b/g, (m) => at("стиль", m.index, m[0], "без фокуса"));
+  if (project.layered && !/@layer\b/.test(bare)) line("стиль", 1, "@layer", "вне слоя");
+  const names = [...bare.matchAll(/(?<![\w-])\.([a-zA-Z][\w-]*)(?=[^{};]*\{)/g)];
+  const camel = names.filter((m) => /^[a-z]+[A-Z]/.test(m[1]));
+  const kebab = names.filter((m) => /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(m[1]));
+  if (camel.length > 0 && kebab.length > 0) {
+    const fewer = camel.length <= kebab.length ? camel : kebab;
+    at("стиль", fewer[0].index, "." + fewer[0][1], "смешанные имена");
+  }
+  each(
+    /\btransition\s*:[^;{}]*\b(?:transform|opacity|top|left|right|bottom|width|height|margin|all)\b|\banimation(?:-name)?\s*:|@keyframes\b/g,
+    (m) => at("движение", m.index, m[0].split(/[\s:]/)[0], "стиль"),
+  );
+  const lines = text.split(NEWLINE);
+  for (const run of (commentRunsOf(text) || "").split(SEP1).filter(Boolean)) {
+    const [, from, , rows] = run.split(SEP2).map((x, k) => (k === 0 ? x : Number(x)));
+    const said = lines.slice(from - 1, from - 1 + rows).join(" ");
+    line(
+      "комментарий",
+      from,
+      said.replace(/^\s*\/\*+\s*/, ""),
+      WARNING_WORDS.test(said) ? "предупреждение" : "",
+    );
+  }
+  return hits;
+};
+
+/** Признаки тестового файла: тест без утверждения, подмена, проверка
+ * «изменилось» и сверка снимка. */
+const testSignalsOf = (text) => {
+  const bare = bareCodeOf(text);
+  const { hits, at } = signalSink(text);
+  for (const m of bare.matchAll(/\b(?:it|test)(?:\s*\.\s*(?:only|concurrent|skip))?\s*\(/g)) {
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q < 0) continue;
+    const parts = topLevelParts(bare.slice(p + 1, q), p + 1);
+    if (parts.length < 2) continue;
+    const body = parts.slice(1).map((x) => x.text).join(",");
+    if (!/\bexpect\w*\s*[.(]|\bassert\w*\s*[.(]|\.\s*should\b/.test(body))
+      at("тест", m.index, m[0].replace(/\s*\($/, ""), "без утверждения");
+  }
+  for (const m of bare.matchAll(
+    /\b(?:vi|jest)\s*\.\s*(?:mock|doMock|spyOn|fn|stubGlobal|stubEnv)\s*\(|\bsinon\s*\.\s*\w+\s*\(/g,
+  ))
+    at("тест", m.index, m[0].replace(/\s*\($/, ""), "подмена");
+  for (const m of bare.matchAll(/\.\s*not\s*\.\s*(?:toBe|toEqual|toStrictEqual)\s*\(/g))
+    at("тест", m.index, m[0].replace(/^\.\s*/, "").replace(/\s*\($/, ""), "различие");
+  for (const m of bare.matchAll(/\.\s*toMatch(?:Inline)?Snapshot\s*\(/g))
+    at("тест", m.index, "snapshot", "снимок");
+  return hits;
+};
+
+/** Признаки файла: `{ sort, line, sample, mark }`. Род файла называет
+ * зовущий — `тест`, `стиль` либо `код`: тест он узнаёт и по объявленной папке
+ * тестов, которой здесь нет. `own` — местные имена, взятые импортом из файлов
+ * проекта; `layered` — проект объявил порядок слоёв каскада. */
+export const signalsOf = (file, text, { kind, own, layered }) =>
+  kind === "тест"
+    ? testSignalsOf(text)
+    : kind === "стиль"
+      ? styleSignalsOf(text, { layered })
+      : codeSignalsOf(file, text, own);
+
+/** Признаки файла одной строкой — для таблицы случаев. Первая строка входа —
+ * путь файла и, через черту, `слои`, если проект объявил порядок слоёв;
+ * дальше — текст. Местные имена проекта — то, что взято относительным
+ * импортом. Выход — `строка:вид/пометка` через точку с запятой. */
+export const signalsSummary = (input) => {
+  const cut = input.indexOf(NEWLINE);
+  const [file, flag] = (cut < 0 ? input : input.slice(0, cut)).split("|");
+  const text = cut < 0 ? "" : input.slice(cut + 1);
+  const own = new Set();
+  for (const m of text.matchAll(/import\s+([^;"']*?)\s*from\s*["']\.{1,2}\//g))
+    for (const name of m[1].replace(/[{}]/g, " ").split(/[\s,]+/))
+      if (/^[A-Za-z_$][\w$]*$/.test(name) && name !== "as" && name !== "type") own.add(name);
+  const hits = signalsOf(file, text, {
+    kind: isTestPath(file) ? "тест" : isStylePath(file) ? "стиль" : "код",
+    own,
+    layered: flag === "слои",
+  });
+  return hits
+    .map((h) => h.line + ":" + h.sort + (h.mark === "" ? "" : "/" + h.mark))
+    .join(SEP1);
+};
+
 export const PREDICATE_CASES = [
   // --- commentRunsOf: ряды комментариев, длина в СЛОВАХ ---
   ["commentRunsOf", "const a = 1;", ""],
@@ -1190,8 +2184,19 @@ export const PREDICATE_CASES = [
   // --- barNoSubject: беспредметен ли критерий на этой правке ---
   ["barNoSubject", "D1|code=0,style=1", "файла кода в предмете правки нет"],
   ["barNoSubject", "D1|code=1,style=1", ""],
-  ["barNoSubject", "O3|code=1,style=0", "листа стилей в предмете правки нет"],
-  ["barNoSubject", "O3|code=1,style=1", ""],
+  ["barNoSubject", "O2|code=1,style=0", "листа стилей в предмете правки нет"],
+  ["barNoSubject", "O2|code=1,style=1", ""],
+  // дефект: число раскладки и размер окна берут и кодом — без листа
+  // предмет у `O3` и `O4-тер` есть, пока есть код
+  ["barNoSubject", "O3|code=1,style=0", ""],
+  ["barNoSubject", "O4-тер|code=0,style=0", "ни листа стилей, ни кода в предмете правки нет"],
+  // дефект: переход листом стилей — движение без единого таймера в коде
+  ["barNoSubject", "N1|code=1,style=1,time=0", ""],
+  [
+    "barNoSubject",
+    "N1|code=1,style=0,time=0",
+    "ни листа стилей, ни кадров и таймеров в предмете правки нет",
+  ],
   // дефект: `O5` про расхождение кода со стилями — правка кода его касается
   ["barNoSubject", "O5|code=1,style=0", ""],
   [
@@ -1769,6 +2774,137 @@ export const PREDICATE_CASES = [
   ["touchesRuntime", "src/a/README.md", false],
   ["touchesRuntime", "src/a/tests/b.test.tsx", false],
   ["touchesRuntime", "src/a/b.test.ts", false],
+  // --- commentlessOf, escapeRe, joinsTwo: общие помощники разбора ---
+  ["commentlessOf", "a // b", "a     "],
+  ["commentlessOf", 'f("x")', 'f("x")'],
+  ["escapeRe", "a.b", "a\\.b"],
+  ["escapeRe", "ab", "ab"],
+  ["joinsTwo", "считает раскладку и публикует переменные", true],
+  ["joinsTwo", "считает раскладку", false],
+  // --- bareCodeOf: комментарии и содержимое строк гасятся, позиции те же ---
+  ["bareCodeOf", "a // b", "a     "],
+  ["bareCodeOf", "a + b", "a + b"],
+  ["bareCodeOf", "f(\"x;y\")", "f(\"   \")"],
+  // --- signalsSummary: признаки по всей планке ---
+  ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items;\n};", "1:целое"],
+  ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items.length + order.tax;\n};", ""],
+  ["signalsSummary", "src/a.ts\nexport function first<T>(xs: T[]) {\n  return xs[0];\n}", "1:обобщение"],
+  ["signalsSummary", "src/a.ts\nexport function first<T extends object>(xs: T[]) {\n  return xs[0];\n}", ""],
+  ["signalsSummary", "src/a.ts\nimport { Store } from \"./store\";\nexport const isStore = (x) => x instanceof Store;", "2:вид"],
+  ["signalsSummary", "src/a.ts\nexport const isErr = (x) => x instanceof Error;", ""],
+  ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.city;", "1:сквозь"],
+  ["signalsSummary", "src/a.ts\nexport const w = (ref) => ref.current.style.width;", ""],
+  ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);\nexport const forget = (k) => seen.delete(k);", ""],
+  ["signalsSummary", "src/a.ts\nuseEffect(() => a(), [x]);\nuseEffect(() => b(), [y]);", "1:порядок"],
+  ["signalsSummary", "src/a.ts\nuseEffect(() => a(), [x]);", ""],
+  ["signalsSummary", "src/a.ts\nexport const f = (userId: string, itemId: string) => userId + itemId;", "1:идентификаторы"],
+  ["signalsSummary", "src/a.ts\nexport const f = (userId: string, count: number) => userId + count;", ""],
+  ["signalsSummary", "src/a.ts\nexport type State = { data?: string; error?: string; ready?: number };", "1:необязательные"],
+  ["signalsSummary", "src/a.ts\nexport type ButtonProps = { a?: string; b?: string; c?: number };", ""],
+  // Пара на признак: сам признак и похожее без него. Первая строка входа —
+  // путь файла, по нему выбирается разбор: код, лист стилей либо тест.
+  ["signalsSummary", "src/a.ts\nexport const r = fetch(url);", "1:внешнее/сеть"],
+  ["signalsSummary", "src/a.ts\nexport const r = prefetch(url);", ""],
+  ["signalsSummary", "src/a.ts\nexport const v = localStorage.getItem(k);", "1:внешнее/хранилище"],
+  ["signalsSummary", "src/a.ts\nexport const q = new URLSearchParams(location.search);", "1:внешнее/адрес;1:внешнее/адрес"],
+  ["signalsSummary", "src/a.ts\nexport const mode = process.env.MODE;", "1:внешнее/окружение"],
+  ["signalsSummary", "src/a.ts\nexport const data = JSON.parse(text);", "1:внешнее/разбор"],
+  ["signalsSummary", "src/a.ts\nexport const data = JSON.stringify(value);", ""],
+  ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"message\", onMessage);", "1:внешнее/сообщение"],
+  ["signalsSummary", "src/a.ts\nlocalStorage.setItem(k, v);", "1:внешнее/хранилище;1:запись/хранилище"],
+  ["signalsSummary", "src/a.ts\nawait fetch(url, { method: \"POST\" });", "1:внешнее/сеть;1:запись/сеть"],
+  ["signalsSummary", "src/a.ts\nawait fetch(url, { method: \"GET\" });", "1:внешнее/сеть"],
+  ["signalsSummary", "src/a.ts\nexport const at = Date.now();", "1:время"],
+  ["signalsSummary", "src/a.ts\nexport const at = new Date(stamp);", ""],
+  ["signalsSummary", "src/a.tsx\nexport const A = () => <p>{Date.now()}</p>;", "1:время;1:разметка"],
+  ["signalsSummary", "src/a.ts\nexport const x: any = read();", "1:обход/любое"],
+  ["signalsSummary", "src/a.ts\nexport const x: unknown = read();", ""],
+  ["signalsSummary", "src/a.ts\nexport const element = node as HTMLElement;", "1:обход/приведение"],
+  ["signalsSummary", "src/a.ts\nimport { a as b } from \"./b\";", ""],
+  ["signalsSummary", "src/a.ts\nexport { a as b } from \"./b\";", ""],
+  ["signalsSummary", "src/a.ts\n// @ts-ignore\ngo();", "1:обход/подавление;1:комментарий"],
+  ["signalsSummary", "src/a.ts\nref.current!.focus();", "1:обход/не пусто"],
+  ["signalsSummary", "src/a.ts\nif (a !== b) go();", ""],
+  ["signalsSummary", "src/a.ts\nif (width <= 0) return;", "1:страж"],
+  ["signalsSummary", "src/a.ts\nif (!(width > 0)) return;", ""],
+  ["signalsSummary", "src/a.ts\nthrow new Error(\"x\");", "1:бросок"],
+  ["signalsSummary", "src/a.ts\nawait Promise.all(jobs);", "1:пакет"],
+  ["signalsSummary", "src/a.ts\nfor (const j of jobs) {\n  await run(j);\n}", "1:пакет"],
+  ["signalsSummary", "src/a.ts\nfor (const j of jobs) {\n  run(j);\n}", ""],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  setValue(v);\n};", "2:гонка/без отмены"],
+  ["signalsSummary", "src/a.ts\nexport const go = async (signal) => {\n  const v = await load(signal);\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  await load();\n  setTimeout(done, 1);\n};", ""],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x) => <li key={x}>{x}</li>)}</ul>;", "1:список"],
+  ["signalsSummary", "src/a.tsx\nexport const P = () => <Ctx.Provider value={{ a, b }} />;", "1:контекст"],
+  ["signalsSummary", "src/a.tsx\nexport const P = () => <Ctx.Provider value={state} />;", ""],
+  ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"scroll\", onScroll);", "1:частое"],
+  ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"click\", onClick);", ""],
+  ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;\nnode.style.width = w + \"px\";", "1:раскладка/чтение и запись"],
+  ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;", "1:раскладка/чтение"],
+  ["signalsSummary", "src/a.ts\nexport const h = window.innerHeight;", "1:раскладка/окно"],
+  ["signalsSummary", "src/a.ts\nexport const out = items.filter((x) => ids.includes(x.id));", "1:поиск"],
+  ["signalsSummary", "src/a.ts\nexport const out = items.filter((x) => x.name.includes(q));", ""],
+  ["signalsSummary", "src/a.ts\n// workaround for the race\ngo();", "1:комментарий/предупреждение"],
+  ["signalsSummary", "src/a.ts\n// callers must call init first\ngo();", "1:комментарий;1:требование"],
+  ["signalsSummary", "src/a.ts\n// CONSTRAINT — width never shrinks\ngo();", "1:комментарий;1:ограничение"],
+  ["signalsSummary", "src/a.ts\ngo(); // trailing note", ""],
+  ["signalsSummary", "src/a.ts\nlet open = false;\nuse(open);", "1:имя/булево"],
+  ["signalsSummary", "src/a.ts\nlet isOpen = false;\nuse(isOpen);", ""],
+  ["signalsSummary", "src/a.ts\nconst cfg = load();\nuse(cfg);", "1:имя/сокращение"],
+  ["signalsSummary", "src/a.ts\nconst config = load();\nuse(config);", ""],
+  ["signalsSummary", "src/a.ts\nexport const delay = 300;", "1:величина"],
+  ["signalsSummary", "src/a.ts\nexport const delayMs = 300;", ""],
+  ["signalsSummary", "src/a.ts\nexport const v = useMemo(() => calc(a), [a]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nuseEffect(() => {\n  start();\n}, []);", "1:однократно"],
+  ["signalsSummary", "src/a.ts\nconst [count, setCount] = useState(0);\nuseEffect(() => {\n  const id = setInterval(() => log(count), 1);\n  return () => clearInterval(id);\n}, []);", "2:однократно/захват"],
+  ["signalsSummary", "src/a.ts\nuseEffect(() => {\n  setFull(first + last);\n}, [first, last]);", "1:эффект/только запись"],
+  ["signalsSummary", "src/a.ts\nuseEffect(() => {\n  setFull(first + last);\n  track(first);\n}, [first, last]);", ""],
+  ["signalsSummary", "src/a.ts\na ? setMode(1) : b ? setMode(2) : setMode(3);", "1:переходы"],
+  ["signalsSummary", "src/a.ts\na ? setMode(1) : setMode(2);", ""],
+  ["signalsSummary", "src/a.tsx\nexport function Card({ title }) {\n  return <Head title={title} />;\n}", "2:проброс"],
+  ["signalsSummary", "src/a.tsx\nexport function Card({ title }) {\n  return <Head title={title.trim()} />;\n}", ""],
+  ["signalsSummary", "src/a.ts\nimport { Store } from \"./store\";\nexport const make = () => new Store();", "2:создаёт"],
+  ["signalsSummary", "src/a.ts\nexport const make = () => new Map();", ""],
+  ["signalsSummary", "src/a.ts\nexport const read = (k) => {\n  setLast(k);\n  return cache[k];\n};", "1:команда"],
+  ["signalsSummary", "src/a.ts\nexport const read = (k) => {\n  return cache[k];\n};", ""],
+  ["signalsSummary", "src/a.ts\nconst unused = 1;\nexport const used = 2;", "1:мёртвое"],
+  ["signalsSummary", "src/a.ts\nconst kept = 1;\nexport const used = kept;", ""],
+  ["signalsSummary", "src/a.ts\nrequestAnimationFrame(step);", "1:частое;1:движение/кадры"],
+  ["signalsSummary", "src/a.tsx\nexport const B = () => <div onClick={go}>x</div>;", "1:доступность/не кнопка;1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const B = () => <button onClick={go}>x</button>;", "1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const I = () => <img src={s} />;", "1:доступность/без имени"],
+  ["signalsSummary", "src/a.tsx\nexport const I = () => <img src={s} alt={a} />;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const E = () => <div>{error && <p>{error}</p>}</div>;", "1:доступность/без объявления"],
+  ["signalsSummary", "src/a.tsx\nexport const E = () => <div role=\"alert\">{error && <p>{error}</p>}</div>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const H = () => <div dangerouslySetInnerHTML={{ __html: h }} />;", "1:вставка/разметка"],
+  ["signalsSummary", "src/a.ts\nwindow.open(url);", "1:вставка/адрес"],
+  ["signalsSummary", "src/a.ts\nexport const location = useHere();", ""],
+  ["signalsSummary", "src/a.ts\nconsole.log(state);", "1:журнал"],
+  ["signalsSummary", "src/a.ts\nperformance.mark(\"start\");", "1:измерение"],
+  ["signalsSummary", "src/a.tsx\nexport const T = () => <input placeholder=\"Search\" />;", "1:текст/в разметке"],
+  ["signalsSummary", "src/a.ts\nexport const label = price.toFixed(2);", "1:текст/формат"],
+  ["signalsSummary", "src/a.ts\nexport const word = n === 1 ? \"item\" : \"items\";", "1:текст/множественное"],
+  ["signalsSummary", "src/a.css\n.a { color: red !important; }", "1:стиль/важнее всех"],
+  ["signalsSummary", "src/a.css\n@media (min-width: 640px) { .a { color: red; } }", "1:стиль/перелом"],
+  ["signalsSummary", "src/a.css\n.a { height: 100vh; }", "1:стиль/вьюпорт"],
+  ["signalsSummary", "src/a.css\n.a { color: #123456; }\n.b { color: #123456; }", "1:стиль/повтор величины"],
+  ["signalsSummary", "src/a.css\n:root { --c: #123456; }\n.b { color: #123456; }", ""],
+  ["signalsSummary", "src/a.css\n.a { transition: width 0.2s; }", "1:стиль/раскладка в движении;1:движение/стиль"],
+  ["signalsSummary", "src/a.css\n.a { transition: transform 0.2s; }", "1:движение/стиль"],
+  ["signalsSummary", "src/a.css\n.a { will-change: transform; }", "1:стиль/слой композитора"],
+  ["signalsSummary", "src/a.css\n.a { outline: none; }", "1:стиль/без фокуса"],
+  ["signalsSummary", "src/a.css\n.a { outline: none; }\n.a:focus-visible { outline: 2px solid; }", ""],
+  ["signalsSummary", "src/a.css|слои\n.a { color: red; }", "1:стиль/вне слоя"],
+  ["signalsSummary", "src/a.css|слои\n@layer components { .a { color: red; } }", ""],
+  ["signalsSummary", "src/a.css\n.cardTitle { color: red; }\n.card-body { color: red; }", "1:стиль/смешанные имена"],
+  ["signalsSummary", "src/a.css\n.cardTitle { color: red; }\n.cardBody { color: red; }", ""],
+  ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  run();\n});", "1:тест/без утверждения"],
+  ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  expect(run()).toBe(1);\n});", ""],
+  ["signalsSummary", "src/tests/a.test.ts\nvi.mock(\"./api\");", "1:тест/подмена"],
+  ["signalsSummary", "src/tests/a.test.ts\nit(\"keys\", () => {\n  expect(key(a)).not.toBe(key(b));\n});", "2:тест/различие"],
+  ["signalsSummary", "src/tests/a.test.ts\nit(\"view\", () => {\n  expect(view()).toMatchSnapshot();\n});", "2:тест/снимок"],
 ];
 
 /**

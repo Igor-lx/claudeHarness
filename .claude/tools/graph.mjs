@@ -29,6 +29,14 @@ import {
   barDeltaFault,
   barWitnessFault,
   barWitnessVerdict,
+  bareCodeOf,
+  commentlessOf,
+  closeOf,
+  topLevelParts,
+  signalsOf,
+  escapeRe,
+  joinsTwo,
+  BAR_SIGNALS,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -734,7 +742,7 @@ const PACKAGE_MANAGER = (() => {
  * зовущей ничего — сверка слепла на отсутствующей команде. Замерено
  * фальсификацией свежей посадки. */
 function scriptCallsIn(body, scripts = null) {
-  const pm = PACKAGE_MANAGER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pm = escapeRe(PACKAGE_MANAGER);
   const name = "([^\\s&|;]+)";
   const calls = [];
   for (const piece of String(body ?? "").split("&&")) {
@@ -1342,6 +1350,15 @@ const barChangedSubject = async (repoRoot) => {
  * сверка исполнимости — совпала ли область хоть с чем-нибудь. Свой матчер у
  * каждого разошёлся бы при первом же образце нового вида.
  */
+/** Отпечаток содержимого: реестр мутаций переживает клон, где у всех файлов
+ * одна свежая метка времени. Концы строк нормализуются — иначе одна и та же
+ * строка в CRLF и LF даёт разные отпечатки. */
+const contentStamp = (f) =>
+  createHash("sha1")
+    .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
+    .digest("hex")
+    .slice(0, 12);
+
 const globsToTest = (globs) => {
   const toRe = (glob) => {
     let out = "";
@@ -6657,11 +6674,7 @@ if (mode === "mutated") {
   // Содержимое, а не время: реестр переживает клон, где mtime у всех файлов
   // одинаковый и новее любой записи. Концы строк нормализуются — иначе одна
   // и та же строка в CRLF и LF даёт разные хеши.
-  const stamp = (f) =>
-    createHash("sha1")
-      .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
-      .digest("hex")
-      .slice(0, 12);
+  const stamp = contentStamp;
 
   const ledger = existsSync(ledgerPath) ? readJson(ledgerPath, {}) : {};
 
@@ -7490,7 +7503,7 @@ const layerTables = () => {
   const headRe = (text) =>
     text == null
       ? { test: () => false }
-      : new RegExp("^#+.*" + text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      : new RegExp("^#+.*" + escapeRe(text));
   const RULES_HEAD = headRe(CONFIG.rulesHeading);
   const ISOLATION_HEAD = headRe(CONFIG.isolationHeading);
   const ROW_RE = /^\|(.+)\|(.+)\|(.*)\|\s*$/;
@@ -7666,75 +7679,6 @@ const WRITER_KINDS = [
 // о нём молчала — правки взятого, состояния модуля, пустого перехвата и
 // кортежа она не знала, и «чисто» по этим критериям держалось одним вниманием.
 
-/** Код без комментариев и без содержимого строк: длина и строки прежние, так
- * что позиции и номера строк те же. Число в строке и слово в комментарии кодом
- * не являются. Кавычка не переходит через перевод строки: незакрытая — это
- * апостроф в тексте разметки, и гасить за ней весь файл значило бы ослепнуть. */
-const bareCodeOf = (text) => {
-  const out = text.split("");
-  const blank = (from, to) => {
-    for (let k = from; k < to; k += 1)
-      if (out[k] !== "\n" && out[k] !== "\r") out[k] = " ";
-  };
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    const d = text[i + 1];
-    if (c === "/" && (d === "/" || d === "*")) {
-      const end =
-        d === "/" ? text.indexOf("\n", i) : text.indexOf("*/", i + 2);
-      const stop = end < 0 ? text.length : d === "/" ? end : end + 2;
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      let k = i + 1;
-      while (k < text.length && text[k] !== c && (c === "`" || text[k] !== "\n"))
-        k += text[k] === "\\" ? 2 : 1;
-      if (k < text.length && text[k] === c) {
-        blank(i + 1, k);
-        i = k + 1;
-        continue;
-      }
-    }
-    i += 1;
-  }
-  return out.join("");
-};
-
-/** Закрывающая скобка для открывающей в позиции `at`; несбалансировано — -1. */
-const closeOf = (text, at) => {
-  const pairs = { "(": ")", "[": "]", "{": "}" };
-  const stack = [pairs[text[at]]];
-  for (let k = at + 1; k < text.length; k += 1) {
-    const c = text[k];
-    if (pairs[c] !== undefined) stack.push(pairs[c]);
-    else if (c === ")" || c === "]" || c === "}") {
-      if (stack.pop() !== c) return -1;
-      if (stack.length === 0) return k;
-    }
-  }
-  return -1;
-};
-
-/** Части списка через запятую верхнего уровня, со смещением каждой. */
-const topLevelParts = (inner) => {
-  const parts = [];
-  let depth = 0;
-  let from = 0;
-  for (let k = 0; k <= inner.length; k += 1) {
-    const c = inner[k];
-    if (c === "(" || c === "[" || c === "{") depth += 1;
-    else if (c === ")" || c === "]" || c === "}") depth -= 1;
-    else if ((c === "," && depth === 0) || k === inner.length) {
-      parts.push({ text: inner.slice(from, k), at: from });
-      from = k + 1;
-    }
-  }
-  return parts;
-};
-
 /** Местные имена, которые файл берёт импортом из файлов ПРОЕКТА: имя → файл.
  * Пакеты не в счёт: их устройство — предмет раздела о зависимостях. Импорт
  * одних типов — тоже: менять в нём нечего. */
@@ -7809,7 +7753,7 @@ const symptomsOf = (f) => {
   const hits = [];
   const hit = (sort, at, sample, mark = "") =>
     hits.push({ sort, line: lineAt(at), sample, mark });
-  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const esc = escapeRe;
   const tail = "(?:\\s*\\.\\s*[\\w$]+|\\s*\\[[^\\]\\n]*\\])";
   const changes = (name) => [
     new RegExp(
@@ -7886,13 +7830,13 @@ const symptomsOf = (f) => {
       /^\s*(?::\s*[^{;=()]+?)?\s*\{/.test(after) &&
       (isFunction || (word !== "" && !NOT_A_CALLEE.has(word)));
     if (!isArrow && !isBody) continue;
-    for (const part of topLevelParts(bare.slice(p + 1, q))) {
+    for (const part of topLevelParts(bare.slice(p + 1, q), p + 1)) {
       const t = part.text.trim();
       if (
         /^(?:\.\.\.)?[\w$]+\s*\??\s*:\s*boolean\b/.test(t) ||
         /^[\w$]+\s*(?::[^=]*)?=\s*(?:true|false)$/.test(t)
       )
-        hit("флаг", p + 1 + part.at, t.split(/[?:=]/)[0].trim());
+        hit("флаг", part.at, t.split(/[?:=]/)[0].trim());
     }
   }
   // Булев довод в вызове своей функции: своя — объявленная в файле либо
@@ -7917,7 +7861,7 @@ const symptomsOf = (f) => {
     if (/^\s*(?::\s*[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 160)))
       continue;
     if (
-      topLevelParts(bare.slice(p + 1, q)).some((a) =>
+      topLevelParts(bare.slice(p + 1, q), p + 1).some((a) =>
         /^(?:true|false)$/.test(a.text.trim()),
       )
     )
@@ -7952,7 +7896,7 @@ const symptomsOf = (f) => {
     const open = m.index + m[0].length - 1;
     const close = closeOf(bare, open);
     if (close < 0 || /^\s*[.[]/.test(bare.slice(close + 1, close + 4))) continue;
-    const parts = topLevelParts(bare.slice(open + 1, close))
+    const parts = topLevelParts(bare.slice(open + 1, close), open + 1)
       .map((x) => x.text.trim())
       .filter((x) => x !== "");
     if (parts.length >= TUPLE_FROM && !parts.some((x) => x.startsWith("...")))
@@ -8001,6 +7945,10 @@ const symptomsOf = (f) => {
   if (typeFlags.length >= TYPE_FLAGS_FROM)
     for (const m of typeFlags) hit("флаги", m.index, "", "вход");
 
+  // Признаки по всей планке — чистый разбор словаря.
+  hits.push(
+    ...signalsOf(f, text, { kind: "код", own: new Set(bindings.keys()), layered: false }),
+  );
   SYMPTOMS.set(f, hits);
   return hits;
 };
@@ -8078,7 +8026,10 @@ const symptomWhat = (sort, mark, list) => {
         ? (mark === "состояние"
             ? "булевых полей состояния "
             : "булевых полей в типах ") + barQuoted(String(list.length))
-        : SYMPTOM_WORDS[sort];
+        : (SYMPTOM_WORDS[sort] ??
+            SIGNAL_TITLES[sort + "|" + mark] ??
+            SIGNAL_TITLES[sort] ??
+            sort);
   return (
     title +
     ": " +
@@ -8090,7 +8041,374 @@ const symptomWhat = (sort, mark, list) => {
     )
   );
 };
-/** Виды строк модели, которые дают признаки текста. */
+/** Признаки по всей планке — строкой модели: что это. */
+const SIGNAL_TITLES = {
+  "внешнее|сеть": "обращение к сети",
+  "внешнее|хранилище": "обращение к хранилищу",
+  "внешнее|адрес": "чтение адреса страницы",
+  "внешнее|окружение": "переменные окружения",
+  "внешнее|разбор": "разбор пришедшего текста",
+  "внешнее|сообщение": "сообщения между окнами",
+  "запись|сеть": "запись в сеть",
+  "запись|хранилище": "запись в хранилище",
+  время: "время либо случай берутся на месте",
+  разметка: "файл разметки обращается наружу либо ко времени",
+  "обход|любое": "тип «любое»",
+  "обход|приведение": "приведение типа",
+  "обход|подавление": "подавление проверки",
+  "обход|не пусто": "утверждение «не пусто»",
+  страж: "ранний выход по сравнению",
+  бросок: "бросок ошибки",
+  пакет: "пакет операций",
+  "гонка|без отмены": "асинхронный результат пишется в состояние, отмены не видно",
+  гонка: "асинхронный результат пишется в состояние",
+  "список|ключ по позиции": "список в разметке, ключ по позиции",
+  список: "список в разметке",
+  контекст: "значение поставщика собирается на каждом проходе",
+  частое: "обработчик частого события",
+  "раскладка|чтение": "чтение раскладки",
+  "раскладка|чтение и запись": "чтение раскладки рядом с записью",
+  "раскладка|окно": "размер окна",
+  поиск: "поиск по коллекции внутри обхода",
+  "комментарий|предупреждение": "комментарий предупреждает о слабом месте",
+  комментарий: "комментарий",
+  требование: "комментарий ставит условие вызывающему",
+  ограничение: "объявленное ограничение",
+  "имя|булево": "булево названо не утверждением",
+  "имя|сокращение": "сокращённое имя",
+  величина: "величина без единицы в имени",
+  мемо: "запомненное",
+  "однократно|захват": "однократный эффект читает состояние",
+  однократно: "эффект с пустыми зависимостями",
+  "эффект|только запись": "эффект только записывает выведенное",
+  переходы: "одно состояние меняют из многих мест",
+  проброс: "вход только передаётся дальше",
+  размер: "размер узла",
+  создаёт: "узел создаёт соисполнителя",
+  команда: "функция и меняет, и отвечает",
+  мёртвое: "объявление без обращений",
+  "движение|кадры": "кадровый цикл",
+  "движение|код": "движение кодом",
+  "движение|стиль": "движение листом стилей",
+  "доступность|не кнопка": "нажатие на элементе без родной семантики",
+  "доступность|указатель": "обработчик способа ввода",
+  "доступность|без имени": "элемент без доступного имени",
+  "доступность|состояние": "состояние видно только классом",
+  "доступность|фокус": "фокус переводится кодом",
+  "доступность|без объявления": "сообщение появляется без объявления",
+  "вставка|разметка": "вставка разметки",
+  "вставка|адрес": "переход по значению",
+  "вставка|сторонний": "сторонний код",
+  журнал: "запись в журнал",
+  измерение: "измерение",
+  "текст|в разметке": "текст для человека в разметке",
+  "текст|формат": "форматирование без региона",
+  "текст|множественное": "множественное число сравнением с единицей",
+  "стиль|важнее всех": "принудительное переопределение",
+  "стиль|перелом": "точка перелома числом",
+  "стиль|вьюпорт": "размер от окна",
+  "стиль|повтор величины": "величина оформления повторена",
+  "стиль|раскладка в движении": "движение свойствами раскладки",
+  "стиль|слой композитора": "вынесенный слой композитора",
+  "стиль|без фокуса": "видимый фокус снят",
+  "стиль|вне слоя": "лист вне слоя каскада",
+  "стиль|смешанные имена": "имена классов в двух соглашениях",
+  "тест|без утверждения": "тест без утверждения",
+  "тест|подмена": "подмена в тесте",
+  "тест|различие": "тест проверяет «изменилось»",
+  "тест|снимок": "сверка снимка",
+  целое: "вход берут целиком ради одного поля",
+  обобщение: "параметр типа без ограничения",
+  вид: "проверка вида своей реализации",
+  сквозь: "цепочка сквозь соседей",
+  кэш: "контейнер модуля растёт и не чистится",
+  порядок: "несколько эффектов одного узла",
+  идентификаторы: "однотипные идентификаторы",
+  необязательные: "россыпь необязательных полей",
+};
+/** Виды строк, что заводятся только ради вопроса к своему критерию: строка
+ * встаёт в модель, пока хоть один такой критерий живой. Иначе раздел планки,
+ * объявленный неприменимым, оставлял бы строки, о которых не спросит никто. */
+const QUESTION_SORTS = new Set([
+  ...Object.keys(SIGNAL_TITLES).map((k) => k.split("|")[0]),
+  "тесты",
+  "мутации",
+  "близнец",
+  "повтор",
+  "постоянный",
+  "зависимость",
+  "приглушение",
+]);
+
+/** Проект объявил порядок слоёв каскада: лист вне слоя тогда выигрывает
+ * спор без признака. */
+let LAYERED_CACHE = null;
+const layeredProject = () => {
+  if (LAYERED_CACHE === null)
+    LAYERED_CACHE = styleFiles.some((f) =>
+      /@layer\s+[\w-]+\s*,/.test(readFileSync(f, "utf8")),
+    );
+  return LAYERED_CACHE;
+};
+/** Приглушённое движение где-нибудь в проекте — в листе либо в коде. */
+let REDUCED_CACHE = null;
+const reducedMotionInProject = () => {
+  if (REDUCED_CACHE === null)
+    REDUCED_CACHE = [...files, ...styleFiles].some((f) =>
+      /prefers-reduced-motion|useReducedMotion|reducedMotion/.test(
+        readFileSync(f, "utf8"),
+      ),
+    );
+  return REDUCED_CACHE;
+};
+
+/** Мутационный замер файла: не мерен, устарел, оставил выживших — либо
+ * `null`, когда прогона нет или файл вне его области. */
+let MUTATION_CACHE = null;
+const mutationRowOf = (f) => {
+  if (MUTATION_CACHE === null) {
+    MUTATION_CACHE = { scope: null, ledger: {} };
+    const cfg =
+      CONFIG.mutationConfig == null
+        ? null
+        : path.join(BASE, CONFIG.mutationConfig);
+    const globs = cfg !== null && existsSync(cfg) ? (readJson(cfg, {}).mutate ?? []) : [];
+    if (globs.length > 0 && !globs.every((g) => /^<.*>$/.test(String(g).trim()))) {
+      const at = path.join(BASE, CONFIG.mutationLedger);
+      MUTATION_CACHE = {
+        scope: globsToTest(globs),
+        ledger: existsSync(at) ? readJson(at, {}) : {},
+      };
+    }
+  }
+  if (MUTATION_CACHE.scope === null) return null;
+  const key = norm(path.relative(REPO_AT, f));
+  if (!MUTATION_CACHE.scope(key)) return null;
+  const row = MUTATION_CACHE.ledger[key];
+  if (row === undefined)
+    return { mark: "не мерено", what: "под мутациями не был ни разу" };
+  const score =
+    "убито " + barQuoted(String(row.killed)) + ", выжило " + barQuoted(String(row.alive));
+  if (row.hash !== contentStamp(f))
+    return { mark: "устарело", what: "замер на прежнем содержимом: " + score };
+  return { mark: row.alive > 0 ? "выжили" : "", what: score };
+};
+
+/** Повтор строк: окно из стольких подряд значимых строк, не короче стольких
+ * знаков; меньшее окно ловит скобки и привычные обёртки. Сравнивается код со
+ * строками-литералами: разметка с другими подписями — не повтор логики. */
+const CLONE_ROWS = 6;
+const CLONE_CHARS = 160;
+/** Условие, повторённое в другом месте: не короче стольких знаков и с
+ * логической связкой — одиночное сравнение повторяется законно. */
+const CONDITION_CHARS = 24;
+let CLONES_CACHE = null;
+const cloneIndex = () => {
+  if (CLONES_CACHE !== null) return CLONES_CACHE;
+  const windows = new Map();
+  const conditions = new Map();
+  for (const f of files) {
+    if (isTest(f) || f.endsWith(".d.ts")) continue;
+    const code = commentlessOf(readFileSync(f, "utf8"));
+    const rows = code
+      .split(LF)
+      .map((x, i) => ({ t: x.trim().replace(/\s+/g, " "), n: i + 1 }))
+      .filter(
+        (r) =>
+          r.t !== "" &&
+          !/^(?:import\b|export\s*(?:type\s*)?[{*]|[)}\]>;,]+$)/.test(r.t),
+      );
+    for (let k = 0; k + CLONE_ROWS <= rows.length; k += 1) {
+      const chunk = rows
+        .slice(k, k + CLONE_ROWS)
+        .map((r) => r.t)
+        .join(LF);
+      if (chunk.length < CLONE_CHARS) continue;
+      if (!windows.has(chunk)) windows.set(chunk, []);
+      windows
+        .get(chunk)
+        .push({ file: f, from: rows[k].n, to: rows[k + CLONE_ROWS - 1].n });
+    }
+    const bare = bareCodeOf(code);
+    for (const m of bare.matchAll(/\bif\s*\(/g)) {
+      const p = m.index + m[0].length - 1;
+      const q = closeOf(bare, p);
+      if (q < 0) continue;
+      const cond = code.slice(p + 1, q).trim().replace(/\s+/g, " ");
+      if (cond.length < CONDITION_CHARS || !/&&|\|\|/.test(cond)) continue;
+      if (!conditions.has(cond)) conditions.set(cond, []);
+      conditions.get(cond).push({ file: f, line: code.slice(0, p).split(LF).length });
+    }
+  }
+  CLONES_CACHE = { windows, conditions };
+  return CLONES_CACHE;
+};
+/** Повторы файла: его строки, повторённые в другом месте проекта, —
+ * диапазоном на каждого партнёра, — и его условия, повторённые там же. */
+const repeatsOf = (f) => {
+  const { windows, conditions } = cloneIndex();
+  const byPartner = new Map();
+  for (const list of windows.values()) {
+    if (list.length < 2) continue;
+    for (const mine of list.filter((x) => x.file === f))
+      for (const other of list) {
+        if (other === mine) continue;
+        // Своё перекрывающееся окно — та же строка, а не повтор.
+        if (other.file === f && other.from <= mine.to && mine.from <= other.to)
+          continue;
+        const k = other.file;
+        const was = byPartner.get(k);
+        byPartner.set(k, {
+          from: Math.min(was?.from ?? mine.from, mine.from),
+          to: Math.max(was?.to ?? mine.to, mine.to),
+          at: was?.at ?? other.from,
+        });
+      }
+  }
+  const out = [...byPartner]
+    .sort((a, b) => barByRel(a[0], b[0]))
+    .map(([other, r]) => ({
+      line: r.from,
+      mark: "",
+      what: "строки " + r.from + "–" + r.to + " повторены в " + barQuoted(rel(other) + ":" + r.at),
+    }));
+  for (const [cond, list] of conditions) {
+    const mine = list.filter((x) => x.file === f);
+    const others = list.filter((x) => x.file !== f);
+    if (mine.length > 0 && others.length > 0)
+      out.push({
+        line: mine[0].line,
+        mark: "условие",
+        what:
+          "условие " +
+          barQuoted(cond.slice(0, 60)) +
+          " повторено в " +
+          barQuoted(rel(others[0].file) + ":" + others[0].line),
+      });
+  }
+  return out;
+};
+
+/** Литерал места вызова: число, булево, пустота, строка без подстановки. */
+const LITERAL =
+  /^(?:-?\d[\d_]*(?:\.\d+)?|true|false|null|undefined|"[^"\n]*"|'[^'\n]*'|`[^`$\n]*`)$/;
+/** Мест вызова не меньше двух: у одного вызова любой довод «всегда один». */
+const CONSTANT_SITES_FROM = 2;
+/** Входы, что на каждом месте вызова приходят одним значением: не вход, а
+ * константа внутри либо ветка, которой нет. Места вызова — сам файл и те,
+ * кто берёт имя у него, сквозь бочки; переименованный импорт не виден. */
+const constantInputsOf = (f) => {
+  const out = [];
+  const names = [...(exportsOf.get(f) ?? [])].filter(
+    (n) => NAME_RE.test(n) && n !== "default",
+  );
+  if (names.length === 0) return out;
+  const pool = [
+    f,
+    ...[...dependentsOf(f)].filter((u) => !isTest(u) && files.includes(u)),
+  ];
+  const takes = (u, name) =>
+    u === f ||
+    (namedImportsOf.get(u) ?? []).some(
+      (one) =>
+        Array.isArray(one.names) &&
+        one.names.includes(name) &&
+        definerOf(one.target, name) === f,
+    );
+  for (const name of names) {
+    const calls = [];
+    const tags = [];
+    for (const u of pool) {
+      if (!takes(u, name)) continue;
+      const text = readFileSync(u, "utf8");
+      const bare = bareCodeOf(text);
+      for (const m of bare.matchAll(
+        new RegExp("(?<![\\w$.])" + escapeRe(name) + "\\s*\\(", "g"),
+      )) {
+        if (
+          /\b(?:function\s*\*?|const|let|var)\s+$/.test(
+            bare.slice(Math.max(0, m.index - 20), m.index),
+          )
+        )
+          continue;
+        const p = m.index + m[0].length - 1;
+        const q = closeOf(bare, p);
+        if (q < 0 || /^\s*(?::[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 120)))
+          continue;
+        calls.push(
+          topLevelParts(bare.slice(p + 1, q), p + 1).map((a) =>
+            text.slice(a.at, a.at + a.text.length).trim(),
+          ),
+        );
+      }
+      for (const m of bare.matchAll(
+        new RegExp("<" + escapeRe(name) + "(?![\\w$.])([^<>]*?)/?>", "g"),
+      )) {
+        const attrs = new Map();
+        for (const a of text
+          .slice(m.index, m.index + m[0].length)
+          .matchAll(/([\w-]+)=(?:("[^"]*"|'[^']*')|\{\s*([^{}]*?)\s*\})/g))
+          attrs.set(a[1], (a[2] ?? a[3] ?? "").trim());
+        tags.push(attrs);
+      }
+    }
+    if (calls.length >= CONSTANT_SITES_FROM) {
+      const width = Math.min(...calls.map((c) => c.length));
+      for (let i = 0; i < width; i += 1) {
+        const first = calls[0][i];
+        if (LITERAL.test(first) && calls.every((c) => c[i] === first))
+          out.push(
+            name + "(…): довод " + (i + 1) + " всегда " + barQuoted(first) +
+              ", мест вызова " + barQuoted(String(calls.length)),
+          );
+      }
+    }
+    if (tags.length >= CONSTANT_SITES_FROM)
+      for (const [attr, first] of tags[0])
+        if (LITERAL.test(first) && tags.every((t) => t.get(attr) === first))
+          out.push(
+            "<" + name + "> " + attr + " всегда " + barQuoted(first) +
+              ", мест " + barQuoted(String(tags.length)),
+          );
+  }
+  return out;
+};
+
+/** Зависимости, которые правка добавила или переставила: имя, версия, где. */
+const manifestShiftsOf = () => {
+  if (CONFIG.manifest == null) return [];
+  const at = path.join(BASE, CONFIG.manifest);
+  if (!existsSync(at)) return [];
+  const now = readJson(at, {});
+  let was = {};
+  try {
+    was = JSON.parse(headTextOf(at) ?? "{}");
+  } catch {
+    // Прежний манифест не разобрать — сдвиг считается от пустого: каждая
+    // зависимость названа, и о каждой спросят.
+    was = {};
+  }
+  const out = [];
+  for (const part of [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ])
+    for (const [name, spec] of Object.entries(now[part] ?? {})) {
+      const before = (was[part] ?? {})[name];
+      if (before === spec) continue;
+      out.push({
+        what:
+          name + "@" + spec + " в " + part + (before === undefined ? " — новая" : " — было " + before),
+        mark: /^[\^~]|[*x]|>=|\|\|/.test(String(spec)) ? "диапазон" : "",
+      });
+    }
+  return out;
+};
+
+/** Виды строк модели, которые дают признаки текста кода: прежние и по всей
+ * планке, кроме тех, что дают лист стилей, тест и граф. */
 const SYMPTOM_SORTS = [
   "число",
   "флаг",
@@ -8099,6 +8417,20 @@ const SYMPTOM_SORTS = [
   "мутация",
   "модульное",
   "флаги",
+  ...[...QUESTION_SORTS].filter(
+    (sort) =>
+      ![
+        "стиль",
+        "тест",
+        "тесты",
+        "мутации",
+        "близнец",
+        "повтор",
+        "постоянный",
+        "зависимость",
+        "приглушение",
+      ].includes(sort),
+  ),
 ];
 
 // --- свидетели ----------------------------------------------------------
@@ -8133,14 +8465,14 @@ const declarationsOf = (f) => {
   const countAt = (p) => {
     const q = closeOf(bare, p);
     if (q < 0) return 0;
-    const parts = topLevelParts(bare.slice(p + 1, q))
+    const parts = topLevelParts(bare.slice(p + 1, q), p + 1)
       .map((x) => x.text.trim())
       .filter((x) => x !== "");
     if (parts.length === 1 && parts[0].startsWith("{")) {
       const close = closeOf(parts[0], 0);
       return close < 0
         ? 1
-        : topLevelParts(parts[0].slice(1, close)).filter(
+        : topLevelParts(parts[0].slice(1, close), 1).filter(
             (x) => x.text.trim() !== "" && !x.text.trim().startsWith("..."),
           ).length;
     }
@@ -8643,7 +8975,7 @@ const unitOf = (f) => {
   const r = rel(f);
   for (const layer of CONFIG.componentsAt ?? ["components"]) {
     const m = new RegExp(
-      "^" + layer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/([^/]+)/",
+      "^" + escapeRe(layer) + "/([^/]+)/",
     ).exec(r);
     if (m !== null) return layer + "/" + m[1];
   }
@@ -8779,7 +9111,7 @@ const owedBy = (ends, names = []) => {
 const namesCriterion = (text, id) =>
   new RegExp(
     "(^|[^\\p{L}\\p{N}-])" +
-      id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      escapeRe(id) +
       "(?![\\p{L}\\p{N}-])",
     "u",
   ).test(text);
@@ -9131,12 +9463,38 @@ const RADIUS_SHOWN = 8;
  * ни один их критерий. */
 const barModelOf = (
   focus,
-  { kind, subject, only = null, lead = [], area = [] },
+  { kind, subject, only = null, lead = [], area = [], asked = null },
 ) => {
   const out = [];
-  const want = (sort) => only === null || only.has(sort);
+  // Строка, что есть только ради вопроса к своему критерию, встаёт в модель,
+  // пока о её виде и пометке спрашивает хоть один живой критерий: `asked` —
+  // живые критерии протокола. Иначе раздел планки, объявленный неприменимым,
+  // оставлял бы строки, о которых не спросит никто.
+  const askedKeys =
+    asked === null
+      ? null
+      : new Set(
+          BAR_SIGNALS.filter((s) => s.ids.some((id) => asked.has(id))).flatMap(
+            (s) =>
+              s.mark === undefined
+                ? [s.sort + "|*"]
+                : [s.mark].flat().map((m) => s.sort + "|" + m),
+          ),
+        );
+  const askedSorts =
+    askedKeys === null ? null : new Set([...askedKeys].map((k) => k.split("|")[0]));
+  const want = (sort) =>
+    (only === null || only.has(sort)) &&
+    (askedSorts === null || !QUESTION_SORTS.has(sort) || askedSorts.has(sort));
   const add = (sort, where, what, mark = "", delta = "", release = "") => {
     if (!want(sort)) return;
+    if (
+      askedKeys !== null &&
+      QUESTION_SORTS.has(sort) &&
+      !askedKeys.has(sort + "|*") &&
+      !askedKeys.has(sort + "|" + mark)
+    )
+      return;
     out.push({
       level: MODEL_LEVEL[sort],
       sort,
@@ -9183,6 +9541,33 @@ const barModelOf = (
     if (h === undefined) return null;
     return new Set((h ?? "").split(/\r?\n/).map((l) => l.trim()));
   };
+  // Признаки строкой модели: строка на вид и пометку, места — по номерам.
+  // Вопрос, а не приговор: отвечает критерий вида. Сдвиг — новая строка.
+  const addSignals = (f, hits) => {
+    const was = headLines(f);
+    const lines = readFileSync(f, "utf8").split(LF);
+    const groups = new Map();
+    for (const h of hits) {
+      if (!want(h.sort)) continue;
+      const k = h.sort + "|" + h.mark;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(h);
+    }
+    for (const [k, list] of groups) {
+      const [sort, mark] = k.split("|");
+      list.sort((a, b) => a.line - b.line);
+      add(
+        sort,
+        rel(f) + ":" + list[0].line,
+        symptomWhat(sort, mark, list),
+        mark,
+        was !== null &&
+          list.some((h) => !was.has((lines[h.line - 1] ?? "").trim()))
+          ? "новое"
+          : "",
+      );
+    }
+  };
   const headEdges = (x) => {
     if (!change || !inSubject.has(x)) return importsOf.get(x) ?? new Set();
     const h = headCode(x);
@@ -9195,7 +9580,19 @@ const barModelOf = (
   const seenRecords = new Set();
   const seenKeys = new Set();
 
+  const subjectRel = new Set(subject.map(rel));
   for (const f of focus) {
+    // Лист стилей: его признаки — о каскаде, движении и комментариях.
+    if (styleFiles.includes(f)) {
+      addSignals(
+        f,
+        signalsOf(f, readFileSync(f, "utf8"), {
+          kind: "стиль",
+          layered: layeredProject(),
+        }),
+      );
+      continue;
+    }
     if (!files.includes(f) || isTest(f)) continue;
     const where = rel(f);
     const fresh = newTargets(f);
@@ -9206,11 +9603,13 @@ const barModelOf = (
     // --- узел ------------------------------------------------------------
     if (want("ответственность")) {
       const said = mapResponsibilityOf(f);
+      // Союз в описании — два вопроса у одного узла: пометка спрашивает
+      // об этом критерий ответственности.
       add(
         "ответственность",
         where,
         said === null ? "в карте не описан" : said.slice(0, 140),
-        said === null ? "нет" : "да",
+        said === null ? "нет" : joinsTwo(said) ? "союз" : "да",
       );
     }
     if (want("поверхность")) {
@@ -9304,30 +9703,49 @@ const barModelOf = (
         );
       }
     });
-    // Признаки, видимые текстом: строка на вид и пометку, места — по
-    // номерам. Вопрос, а не приговор: отвечает критерий вида.
-    if (SYMPTOM_SORTS.some(want)) {
-      const groups = new Map();
-      for (const h of symptomsOf(f)) {
-        if (!want(h.sort)) continue;
-        const k = h.sort + "|" + h.mark;
-        if (!groups.has(k)) groups.set(k, []);
-        groups.get(k).push(h);
-      }
-      for (const [k, list] of groups) {
-        const [sort, mark] = k.split("|");
-        list.sort((a, b) => a.line - b.line);
-        add(
-          sort,
-          where + ":" + list[0].line,
-          symptomWhat(sort, mark, list),
-          mark,
-          list.some((h) => isNewLine(lines[h.line - 1] ?? "")) ? "новое" : "",
-        );
-      }
-    }
+    if (SYMPTOM_SORTS.some(want)) addSignals(f, symptomsOf(f));
     for (const one of want("место") || want("порознь") ? placeSymptomsOf(f) : [])
       add(one.sort, where, one.what);
+
+    // Чем файл проверен: тесты, называющие его, и мутационный замер. Нет
+    // тестов — вопрос о закреплённых инвариантах; замер не мерен, устарел
+    // либо оставил выживших — вопрос о том, умеют ли тесты падать.
+    if (want("тесты") && !f.endsWith(".d.ts") && !isBarrel(f)) {
+      const { direct, byName, near } = testsFor(f);
+      const named = [...direct, ...byName];
+      add(
+        "тесты",
+        where,
+        named.length > 0
+          ? "называют файл: " + listCell(named.map(rel))
+          : "тестов, называющих файл, нет" +
+              (near.length > 0
+                ? "; доходят через узлы: " + listCell(near.map(([t]) => rel(t)))
+                : ""),
+        named.length > 0 ? "" : "нет",
+      );
+      // Замер спрашивают, когда до файла доходит хоть один тест: без тестов
+      // мутанты выживают все, и вопрос о нём — вопрос о тестах, а не о замере.
+      const measured =
+        (testReach().get(f) ?? []).length > 0 && want("мутации")
+          ? mutationRowOf(f)
+          : null;
+      if (measured !== null) add("мутации", where, measured.what, measured.mark);
+    }
+    // Парная копия: тронул одну — вот близнец.
+    for (const twin of want("близнец") && (CONFIG.forks ?? []).length > 0
+      ? twinsOf(where)
+      : [])
+      add(
+        "близнец",
+        where,
+        "парная копия: " + barQuoted(twin),
+        change && !subjectRel.has(twin) ? "не тронута" : "",
+      );
+    for (const r of want("повтор") ? repeatsOf(f) : [])
+      add("повтор", where + ":" + r.line, r.what, r.mark);
+    for (const what of want("постоянный") ? constantInputsOf(f) : [])
+      add("постоянный", where, what);
 
     // --- слой ------------------------------------------------------------
     const layer = layerOf(f);
@@ -9495,6 +9913,37 @@ const barModelOf = (
       );
     }
   }
+
+  // Тесты предмета — их признаки: без утверждения, подмена, «изменилось»,
+  // снимок. Тест читают ради кода, который он держит.
+  if (want("тест")) {
+    const related = new Set();
+    for (const f of focus) {
+      if (isTest(f)) related.add(f);
+      else if (files.includes(f)) {
+        const { direct, byName } = testsFor(f);
+        for (const t of [...direct, ...byName]) related.add(t);
+      }
+    }
+    for (const t of [...related].sort(barByRel))
+      addSignals(t, signalsOf(t, readFileSync(t, "utf8"), { kind: "тест" }));
+  }
+  // Движение без приглушённого варианта — вопрос о проекте целиком: признак
+  // ищется по всем листам и всему коду, а не по предмету.
+  if (
+    want("приглушение") &&
+    out.some((m) => m.sort === "движение") &&
+    !reducedMotionInProject()
+  )
+    add(
+      "приглушение",
+      "проект",
+      "движение есть, а приглушённого движения нет ни в коде, ни в листах стилей",
+      "нет",
+    );
+  // Зависимости, которые правка добавила или переставила.
+  for (const one of change && want("зависимость") ? manifestShiftsOf() : [])
+    add("зависимость", CONFIG.manifest, one.what, one.mark);
 
   // Соседи предмета по графу — в обе стороны: что он берёт, кто берёт его,
   // и файлы единиц переноса того, что он берёт. Правку сверяют не саму с
@@ -10208,7 +10657,10 @@ const barSkeletonOf = ({
     "",
     "Строки собрал инструмент из кода и базы, по уровням. Единица: признаки,",
     "видимые текстом, — число без имени, булев параметр либо довод, перехват",
-    "ошибки, ответ кортежем. Узел: что он делает по карте, его поверхность,",
+    "ошибки, ответ кортежем — и так по всей планке: обращение наружу, время,",
+    "обход компилятора, комментарий, имя, текст для человека, тест предмета.",
+    "Строка-вопрос встаёт, только если о ней спрашивает живой критерий. Узел:",
+    "что он делает по карте, его поверхность, тесты файла и замер,",
     "зависимости, потребители, состояние, ресурсы, правка взятого импортом,",
     "изменяемое на уровне модуля, россыпь булевых полей, потребители,",
     "берущие порознь. Слой: слой и единица переноса, рёбра против правила и",
@@ -11224,11 +11676,21 @@ const barTransitionPlan = (s, live) => {
           },
         ]
       : [];
+  // Виды строк — основа уровня и те, о которых спрашивают критерии этого
+  // протокола: строка, о которой не спросит ни один его критерий, — чтение
+  // впустую.
+  const asked = new Set(criteria.map((c) => c.id));
   const model = barModelOf(s.files, {
     kind: "на переход",
     subject: s.files,
-    only: BAR_TRANSITION_SORTS[s.level],
+    only: new Set([
+      ...BAR_TRANSITION_SORTS[s.level],
+      ...BAR_SIGNALS.filter((one) => one.ids.some((id) => asked.has(id))).map(
+        (one) => one.sort,
+      ),
+    ]),
     lead,
+    asked,
   });
   // Предмет перехода — проект вместе с манифестом: заготовка «манифест этой
   // правкой не тронут» закрывала бы вопросы о его зависимостях.
@@ -11507,7 +11969,12 @@ if (mode === "bar") {
   const area = kind === "на изменение" ? barAreaOf(work) : subject;
   const neighbours = barNeighboursOf(work, area);
   const marks = barMarks(subject);
-  const model = barModelOf(work, { kind, subject, area });
+  const model = barModelOf(work, {
+    kind,
+    subject,
+    area,
+    asked: new Set(live.all.map((c) => c.id)),
+  });
   // Предметы уровней: ядро узла спрашивают по каждой тронутой единице
   // переноса, ядро слоя — по каждому слою, соседей — одной строкой. Одна
   // строка на правку двух узлов закрывала вопрос одного ответом о другом.
