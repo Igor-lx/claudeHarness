@@ -37,6 +37,11 @@ import {
   escapeRe,
   joinsTwo,
   BAR_SIGNALS,
+  BAR_CUTS,
+  BAR_PRESENT,
+  BAR_CHECKS,
+  BAR_ATTENTION,
+  barHoldOf,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -12249,6 +12254,94 @@ if (mode === "bar-read") {
   console.log(
     "«Прочитано». Слово снимают, прочитав страницу, а не программой." + NEWLINE,
   );
+  process.exit(0);
+}
+
+// Чем держится каждый критерий планки — матрица по всей политике.
+//
+// Критерий держится вопросом модели, срезом, свидетелем, основанием ядра,
+// фактом либо сверкой прогона — или записанной причиной, почему его держит
+// одно внимание. Режим печатает матрицу и краснеет, когда у критерия нет ни
+// того, ни другого, когда данные называют критерий, которого в политике нет,
+// когда внимание записано при машинном держателе и когда названной сверки нет.
+// Найдено вопросом разработчика: признаки модели росли от находок на стенде,
+// и ответить, сколько критериев держится одним вниманием, было нечем, —
+// замером их оказалось больше половины.
+if (mode === "bar-hold") {
+  const policy =
+    CONFIG.qualityScope == null
+      ? null
+      : path.join(BASE, CONFIG.qualityScope.policy);
+  const all =
+    policy === null
+      ? []
+      : [
+          ...barCriteria(policy.replace(/quality-scoped.md$/, "quality.md")),
+          ...barCriteria(policy),
+        ];
+  sayLooked("критериев планки", all.length);
+  if (all.length === 0) {
+    console.log("=== Планки нет: чем держится критерий, спросить не о чем ===");
+    process.exit(1);
+  }
+  const kinds = new Map(
+    ["ядро", "свидетель", "вопрос модели", "срез", "факт", "сверка", "вниманием", "лозунг"].map(
+      (k) => [k, 0],
+    ),
+  );
+  const holes = [];
+  console.log("=== Чем держится каждый критерий планки ===");
+  console.log("| критерий | уровень | чем держится |");
+  console.log("| --- | --- | --- |");
+  for (const c of all) {
+    const held = barHoldOf(c.id + "|" + (c.slogan ? "лозунг" : ""));
+    if (held === "") holes.push(c.id);
+    for (const part of held === "" ? [] : held.split(" · ")) {
+      const k = part.split(":")[0];
+      if (kinds.has(k)) kinds.set(k, kinds.get(k) + 1);
+    }
+    console.log(
+      "| " + c.id + " | " + (c.level ?? "—") + " | " +
+        (held === "" ? "НЕТ РЕШЕНИЯ" : held.split("|").join("\\|")) + " |",
+    );
+  }
+  console.log(
+    "  итого: " + [...kinds].map(([k, n]) => k + " " + n).join("; "),
+  );
+  const ids = new Set(all.map((c) => c.id));
+  const named = new Set([
+    ...BAR_SIGNALS.flatMap((s) => s.ids),
+    ...BAR_CUTS.flatMap((c) => c.ids),
+    ...Object.keys(BAR_PRESENT),
+    ...Object.keys(WITNESS_COLUMNS),
+    ...Object.values(BAR_FACT_CRITERIA).flat(),
+    ...Object.keys(BAR_CHECKS),
+    ...Object.keys(BAR_ATTENTION),
+  ]);
+  const problems = [
+    ...holes.map((id) => id + ": нет решения, чем держится, — ни держателя, ни записанной причины"),
+    ...[...named]
+      .filter((id) => !ids.has(id))
+      .sort()
+      .map((id) => id + ": данные называют критерий, которого в политике нет"),
+    ...Object.keys(BAR_ATTENTION)
+      .filter((id) => {
+        const held = barHoldOf(id + "|");
+        return held !== "" && !held.startsWith("вниманием");
+      })
+      .sort()
+      .map((id) => id + ": записано вниманием, а держатель есть — запись лишняя"),
+    ...[...new Set(Object.values(BAR_CHECKS).flat())]
+      .filter((one) => !CHECK_SECTIONS.includes(one))
+      .sort()
+      .map((one) => "«" + one + "»: сверки с таким названием нет"),
+  ];
+  if (problems.length > 0) {
+    console.log("=== Матрица не сходится: " + problems.length + " ===");
+    for (const one of problems) console.log("  " + one);
+    process.exit(1);
+  }
+  console.log("  у каждого критерия есть решение, чем он держится");
   process.exit(0);
 }
 

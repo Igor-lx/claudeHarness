@@ -4611,3 +4611,57 @@ describe("признаки по всей планке в модели свода
     }
   });
 });
+
+describe("чем держится каждый критерий планки", () => {
+  it("матрица сходится и краснеет на каждой из четырёх поломок", () => {
+    const box = seatEmpty("hold-");
+    try {
+      const vocab = path.join(box, ".claude", "tools", "graph.predicates.mjs");
+      const clean = fs.readFileSync(vocab, "utf8");
+      const run = () => {
+        try {
+          return {
+            code: 0,
+            out: execFileSync(
+              process.execPath,
+              [path.join(box, ".claude", "tools", "graph.mjs"), "bar-hold"],
+              { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+            ),
+          };
+        } catch (e) {
+          return { code: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      const ok = run();
+      expect(ok.code).toBe(0);
+      expect(ok.out).toContain("у каждого критерия есть решение, чем он держится");
+      expect(ok.out).toMatch(/^\| B4 \| единица \| вопрос модели: кортеж \|$/m);
+      const broken = (from, to) => {
+        expect(clean.split(from).length, from).toBe(2);
+        fs.writeFileSync(vocab, clean.replace(from, to));
+        const got = run();
+        fs.writeFileSync(vocab, clean);
+        expect(got.code).toBe(1);
+        return got.out;
+      };
+      // Критерий без держателя и без записанной причины.
+      expect(
+        broken('  S1: "способ узнать об отказе в бою живёт вне предмета, у проекта он один",\n', ""),
+      ).toContain("S1: нет решения, чем держится");
+      // Данные называют критерий, которого в политике нет.
+      expect(
+        broken('  J2: "правило о правилах', '  Z8: "нет такого",\n  J2: "правило о правилах'),
+      ).toContain("Z8: данные называют критерий, которого в политике нет");
+      // Внимание записано при машинном держателе.
+      expect(
+        broken('  J2: "правило о правилах', '  B4: "лишняя запись",\n  J2: "правило о правилах'),
+      ).toContain("B4: записано вниманием, а держатель есть");
+      // Названной сверки нет.
+      expect(
+        broken('  U3: ["Точечные исключения линта", "Выключения правил линта"],', '  U3: ["Исключения, которых нет"],'),
+      ).toContain("«Исключения, которых нет»: сверки с таким названием нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
