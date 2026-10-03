@@ -3020,6 +3020,36 @@ describe("вывод инструмента в канал доходит цел�
   );
 });
 
+describe("таблица, переехавшая из объявленного файла, — не копия", () => {
+  it("прежний адрес таблицы сверок в настройке называется переездом, а не копией", () => {
+    const box = seatEmpty("twin-");
+    try {
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const clean = fs.readFileSync(cfg, "utf8");
+      const from = 'file: "../.claude/tools/checks.md",';
+      expect(clean.split(from).length).toBe(2);
+      // Настройка проекта, не обновлённая после переезда таблицы.
+      fs.writeFileSync(cfg, clean.replace(from, 'file: "../.claude/rules/base-format.md",'));
+      let out = "";
+      try {
+        out = execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (e) {
+        out = String(e.stdout ?? "");
+      }
+      expect(out).toMatch(
+        /\.claude\/tools\/checks\.md:\d+ — таблица, объявленная в (?:\.\.\/)?\.claude\/rules\/base-format\.md, лежит здесь, а там её нет\. Поправить поле настройки, а не снимать таблицу/,
+      );
+      expect(out).not.toContain("копия таблицы, объявленной в");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 const readdirOf = (dir) => fs.readdirSync(dir).filter((n) => n.endsWith(".md"));
 
 describe("проба планки из нескольких файлов", () => {

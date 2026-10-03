@@ -19228,8 +19228,18 @@ if (mode === "verify") {
     declaredTables.push([CONFIG.checksTable.heading, CONFIG.checksTable.file]);
   if (CONFIG.findings != null)
     declaredTables.push([CONFIG.findings.heading, CONFIG.findings.file]);
+  // Таблица, которой в объявленном файле нет, а есть в другом, — не копия, а
+  // переезд, не дошедший до настройки. Совет «сослаться, а не повторять»
+  // велел бы снять единственный её экземпляр. Замерено обновлением стенда:
+  // таблица сверок переехала из правил в справочник, поле настройки
+  // осталось прежним, и сверка звала справочник копией.
   for (const [head, file] of declaredTables) {
     const home = norm(path.join(BASE, file));
+    const atHome =
+      existsSync(home) &&
+      unfenced(readFileSync(home, "utf8"))
+        .split(NEWLINE)
+        .some((line) => line.trim() === head.trim());
     for (const [name, at] of docSources) {
       if (norm(at) === home || fromTemplates(at)) continue;
       unfenced(readFileSync(at, "utf8"))
@@ -19237,7 +19247,9 @@ if (mode === "verify") {
         .forEach((line, i) => {
           if (line.trim() === head.trim())
             tableTwin.push(
-              `${name}:${i + 1} — копия таблицы, объявленной в ${rel0(home)}. Сослаться на неё, а не повторять`,
+              atHome
+                ? `${name}:${i + 1} — копия таблицы, объявленной в ${rel0(home)}. Сослаться на неё, а не повторять`
+                : `${name}:${i + 1} — таблица, объявленная в ${rel0(home)}, лежит здесь, а там её нет. Поправить поле настройки, а не снимать таблицу`,
             );
         });
     }
@@ -19246,7 +19258,7 @@ if (mode === "verify") {
     n: declaredTables.length,
     unit: "таблиц, объявленных настройкой",
   });
-  console.log(`  копий вне своего файла: ${tableTwin.length}`);
+  console.log(`  таблиц вне своего файла: ${tableTwin.length}`);
   for (const d of tableTwin) console.log("    " + d);
 
   // 14a-6. Перечень папок полки полный.
