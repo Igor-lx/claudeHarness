@@ -4098,6 +4098,23 @@ const reportUnknown = (given) => {
  * Заголовок сверки печатается только через `checkHead`, и незаявленный роняет
  * прогон на месте: иначе сверку можно было бы завести, нигде её не описав, а
  * ровно это с таблицей однажды и случилось. */
+/** Модель качества, с которой сверяется карта в политике: ISO/IEC 25010,
+ * редакция 2023 года. Безопасность — security, раздел Q планки;
+ * безвредность — safety, вред людям и среде. */
+const QUALITY_CHARACTERISTICS = [
+  "функциональная пригодность",
+  "производительность",
+  "совместимость",
+  "взаимодействие с пользователем",
+  "надёжность",
+  "безопасность",
+  "сопровождаемость",
+  "гибкость",
+  "безвредность",
+];
+const QUALITY_MAP_HEADING =
+  "| Характеристика | Разделы и критерии планки | Вне планки и чем держится |";
+
 const CHECK_SECTIONS = [
   "Покрытие карты",
   "Покрытие тестов",
@@ -4156,6 +4173,7 @@ const CHECK_SECTIONS = [
   "Проза целиком попадает в корпус сверок",
   "Строка таблицы по ширине шапки",
   "Ссылка на критерий планки несёт его заголовок",
+  "Характеристика качества названа в планке",
   "Таблица состава лежит в одном месте",
   "Файлы обвязки видны git",
   "Концы строк рабочего дерева сходятся с объявленными",
@@ -19104,6 +19122,73 @@ if (mode === "verify") {
   });
   console.log(`  без своего заголовка: ${critRefDrift.length}`);
   for (const d of critRefDrift) console.log("    " + d);
+
+  // 14a-4-бис. Характеристика качества названа в планке.
+  //
+  // Планка судит код, а модель качества продукта шире, и печать свода читали
+  // как сертификат продукта. Карта в политике сверяет планку с ISO/IEC 25010
+  // редакции 2023 года: на каждую характеристику — разделы и критерии, которые
+  // её держат, либо слова «вне планки» и чем она держится. Без сверки правка
+  // политики выронила бы класс молча, а карта описывала бы раздел, которого
+  // нет. Найдено разбором двух внешних мнений о полноте планки:
+  // функциональной пригодности в ней не было вовсе.
+  const qualityMapDrift = [];
+  let qualityMapRows = 0;
+  {
+    const core = shelfAt("rules/quality.md");
+    const files = [core, shelfAt("rules/quality-scoped.md")].filter(
+      (one) => one !== null && existsSync(one),
+    );
+    if (core !== null && existsSync(core)) {
+      const letters = new Set();
+      const ids = new Set();
+      for (const f of files) {
+        for (const m of readFileSync(f, "utf8").matchAll(/^## ([A-Z])\. /gm))
+          letters.add(m[1]);
+        for (const c of barCriteria(f)) ids.add(c.id);
+      }
+      const lines = readFileSync(core, "utf8").split(NEWLINE);
+      const at = lines.findIndex((l) => l.trim() === QUALITY_MAP_HEADING);
+      if (at < 0)
+        qualityMapDrift.push(`шапка карты не найдена: ${QUALITY_MAP_HEADING}`);
+      else {
+        const { rows, problem } = tableAfter(lines, at);
+        if (problem !== null) qualityMapDrift.push(problem);
+        const seen = new Set();
+        for (const row of rows) {
+          qualityMapRows += 1;
+          const [name, held, outside] = row
+            .split("|")
+            .slice(1, -1)
+            .map((c) => c.trim());
+          if (!QUALITY_CHARACTERISTICS.includes(name))
+            qualityMapDrift.push(`«${name}»: такой характеристики в модели нет`);
+          else if (seen.has(name))
+            qualityMapDrift.push(`«${name}»: строка задвоена`);
+          seen.add(name);
+          const named = held === "—" ? [] : held.split(",").map((s) => s.trim());
+          for (const one of named)
+            if (!letters.has(one) && !ids.has(one))
+              qualityMapDrift.push(
+                `«${name}»: ${one} — ни раздела, ни критерия с таким именем в планке нет`,
+              );
+          if (named.length === 0 && !(outside ?? "").startsWith("вне планки"))
+            qualityMapDrift.push(
+              `«${name}»: разделов не названо, а третья графа не говорит «вне планки»`,
+            );
+        }
+        for (const name of QUALITY_CHARACTERISTICS)
+          if (!seen.has(name))
+            qualityMapDrift.push(`«${name}»: строки в карте нет`);
+      }
+    }
+  }
+  checkHead("Характеристика качества названа в планке", {
+    n: qualityMapRows,
+    unit: "строк карты характеристик",
+  });
+  console.log(`  расхождений с моделью качества: ${qualityMapDrift.length}`);
+  for (const d of qualityMapDrift) console.log("    " + d);
 
   // 14a-5. Таблица состава лежит в одном месте.
   //
