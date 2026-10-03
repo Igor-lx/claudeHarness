@@ -262,6 +262,47 @@
           "ts": "export const readVal = (cfg: { val: number }): number => {\n  const tmp = cfg.val;\n  return tmp;\n};"
         }
       ]
+    },
+    {
+      "criterion": "A6",
+      "why": "номер страницы живёт в адресе страницы и в модульной переменной — два источника одного факта",
+      "create": {
+        "path": "zzPlantPager.ts",
+        "text": "let page = 1;\n\nexport const setPage = (next: number): void => {\n  page = next;\n};\n\nexport const pageNow = (): number =>\n  Number(new URLSearchParams(window.location.search).get(\"page\") ?? page);\n"
+      }
+    },
+    {
+      "criterion": "A6",
+      "why": "тема живёт во внешнем хранилище и в состоянии компонента — два источника одного факта",
+      "culprits": [
+        "zzPlantThemeStore.ts"
+      ],
+      "create": [
+        {
+          "path": "zzPlantThemeStore.ts",
+          "text": "import { create } from \"zustand\";\n\nexport const usePlantTheme = create(() => ({ dark: false }));\n"
+        },
+        {
+          "path": "zzPlantThemeView.tsx",
+          "text": "import { useState } from \"react\";\n\nexport const PlantThemeView = () => {\n  const [dark] = useState(false);\n  return <p>{dark ? \"dark\" : \"light\"}</p>;\n};\n"
+        }
+      ]
+    },
+    {
+      "criterion": "A6",
+      "why": "язык читается из cookie, а рядом лежит в состоянии — два источника одного факта",
+      "create": {
+        "path": "zzPlantLocale.ts",
+        "text": "export const plantLocale = (): string =>\n  /(?:^|; )locale=([^;]*)/.exec(document.cookie)?.[1] ?? \"en\";\n"
+      }
+    },
+    {
+      "criterion": "A6",
+      "why": "пользователь лежит в кэше запроса и копией в памяти — два источника одного факта",
+      "create": {
+        "path": "zzPlantUser.ts",
+        "text": "import { useQuery } from \"@tanstack/react-query\";\n\nexport const usePlantUser = () =>\n  useQuery({ queryKey: [\"user\"], queryFn: () => fetch(\"/api/user\").then((r) => r.json()) });\n"
+      }
     }
   ],
   "cover": {

@@ -34,6 +34,7 @@ import {
   closeOf,
   topLevelParts,
   signalsOf,
+  stateFormOf,
   escapeRe,
   joinsTwo,
   BAR_SIGNALS,
@@ -41,6 +42,9 @@ import {
   BAR_PRESENT,
   BAR_CHECKS,
   BAR_ATTENTION,
+  BAR_FORMS,
+  BAR_FORMS_SPLIT,
+  barFormsOf,
   barHoldOf,
   barSplitOf,
   barOwedOf,
@@ -2331,6 +2335,10 @@ const TEST_DIRS = (CONFIG.testDirs ?? []).map((one) =>
 const isTest = (f) =>
   isTestPath(f) || TEST_DIRS.some((d) => f.startsWith(d + "/"));
 
+/** Формы состояния, которые строка модели называет одним кодом: их узнаёт
+ * всякий читающий. Прочие формы строка называет словом. */
+const STATE_FORMS_PLAIN = new Set(["хук состояния", "хранилище браузера"]);
+
 /** Образцы ПРЕДМЕТА файлов базы, кладущихся по находке: состояние и порядок.
  *
  * Один набор на весь инструмент. Спрашивают его двое — сверка, требующая
@@ -2357,9 +2365,10 @@ const BRIEF_SUBJECTS = {
   // localStorage, файла состояния не получал вовсе — при том что состояние у
   // него переживает не отрисовку, а весь сеанс. Требование стояло, ловца не
   // было: тот же класс, что у мутационной настройки и у таблицы связей.
-  state: new RegExp(
-    "\\buseState\\s*[\\(<]|\\buseRef\\s*[\\(<]|\\buseReducer\\s*[\\(<]|\\buseId\\s*[\\(<]|\\buseSyncExternalStore\\s*[\\(<]|\\blocalStorage\\b|\\bsessionStorage\\b|\\bindexedDB\\b",
-  ),
+  // Формы перечислены словарём, `STATE_FORMS`: адрес страницы, cookie,
+  // модульная переменная, внешнее хранилище и кэш запроса — тоже источники
+  // одного факта, и прежде второй такой источник модель не показывала вовсе.
+  state: { test: (text) => stateFormOf(text) !== "" },
   timing: new RegExp(
     "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
   ),
@@ -8734,6 +8743,21 @@ const pageWord = (salt, spec, text) => {
   );
 };
 
+/** Формы нарушения, которых держатель критерия не видит, — хвостом его
+ * страницы. Сессия читает страницу, судя критерий, и форма, которой модель
+ * не покажет, стоит перед ней там же, где тело: «чисто» по такой форме — на
+ * чтении, а не на модели. */
+const formsTailOf = (id) => {
+  const forms = BAR_FORMS_SPLIT[id];
+  if (forms?.forms === undefined) return "";
+  return (
+    LF +
+    LF +
+    "Вне держателя — проверяется чтением:" +
+    forms.forms.map((f) => LF + "- " + f.form + " — " + f.why).join("")
+  );
+};
+
 /** Тела критериев планки по порядку политики: заголовок жирным и всё под
  * ним до следующего критерия, заголовка или черты. */
 let POLICY_BODIES = null;
@@ -8748,7 +8772,10 @@ const policyBodies = () => {
     let cur = null;
     const flush = () => {
       if (cur !== null)
-        POLICY_BODIES.push({ id: cur.id, text: cur.lines.join(LF).trimEnd() });
+        POLICY_BODIES.push({
+          id: cur.id,
+          text: cur.lines.join(LF).trimEnd() + formsTailOf(cur.id),
+        });
       cur = null;
     };
     for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
@@ -9724,11 +9751,12 @@ const barModelOf = (
     if (want("состояние") || want("ресурс"))
     lines.forEach((line, i) => {
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
-      if (BRIEF_SUBJECTS.state.test(line))
+      const form = stateFormOf(line);
+      if (form !== "")
         add(
           "состояние",
           where + ":" + (i + 1),
-          line.trim().slice(0, 70),
+          (STATE_FORMS_PLAIN.has(form) ? "" : form + ": ") + line.trim().slice(0, 70),
           owesState ? "нет" : "да",
           isNewLine(line) ? "новое" : "",
         );
@@ -11576,12 +11604,21 @@ const barProcess = ({
       ).length,
     };
   const seal = barSealOf(body);
+  // «Чисто» по критерию, у держателя которого есть формы вне его взгляда,
+  // стоит по этим формам на чтении: печать называет, сколько таких.
+  const clean = expected.filter(
+    ({ c, subject }) => said.get(barKey(c.id, subject))?.outcome === "чисто",
+  );
+  const reading = {
+    clean: clean.length,
+    beyond: clean.filter(({ c }) => BAR_FORMS_SPLIT[c.id]?.forms !== undefined).length,
+  };
   // Печать уже стоит и сходится с телом — протокол закрыт на этом виде
   // предмета, и повторный зов об этом и говорит. Прежде он отвечал «правлен
   // после печати» про нетронутый протокол.
   if (was.seal !== null && was.seal !== "нет") {
     if (was.seal === seal)
-      return { state: "запечатан", seal, found, levels, already: true };
+      return { state: "запечатан", seal, found, levels, reading, already: true };
     // Печать пишется ЗАМЕНОЙ строки «печать: нет». Если печать стоит и не
     // сходится, протокол правлен после неё: правка после печати её гасит,
     // и перепечатывать значило бы разрешить править исходы под уже
@@ -11589,7 +11626,7 @@ const barProcess = ({
     return { state: "правлен" };
   }
   writeFileSync(at, body.split(BAR_NOSEAL).join("- печать: " + barQuoted(seal)));
-  return { state: "запечатан", seal, found, levels, already: false };
+  return { state: "запечатан", seal, found, levels, reading, already: false };
 };
 
 /** Папка протоколов перехода — рядом с файлом перехода, по его имени. Её
@@ -12223,6 +12260,10 @@ if (mode === "bar") {
     console.log(
       "    " + who + " " + one.addr + " — " + one.what + " (" + one.fate + ")",
     );
+  console.log(
+    "  «чисто»: " + r.reading.clean + "; из них у критериев с формами вне держателя: " +
+      r.reading.beyond + " — по этим формам ответ стоит на чтении, а не на модели",
+  );
   console.log("");
   console.log("  Печать говорит: по каждому критерию дан ответ, и дан на этом");
   console.log("  виде предмета. О ВЕРНОСТИ ответа она не говорит ничего —");
@@ -12330,9 +12371,28 @@ if (mode === "bar-hold") {
     ),
   );
   const holes = [];
+  // Посадки проб — по критерию, из книги проб обвязки; исходы — из журнала
+  // проб проекта, если он заведён. Проба держит критерий целиком, а не одну
+  // его форму: посаженное нарушение — одна форма из многих.
+  const probeAt = path.join(TOOL_DIR, "bar-probes.json");
+  const plantsOf = new Map();
+  for (const p of existsSync(probeAt) ? (readJson(probeAt, {}).plants ?? []) : [])
+    plantsOf.set(p.criterion, (plantsOf.get(p.criterion) ?? 0) + 1);
+  const ledgerAt =
+    CONFIG.barProbeLedger == null ? null : path.join(BASE, CONFIG.barProbeLedger);
+  const runs = ledgerAt !== null && existsSync(ledgerAt) ? (readJson(ledgerAt, {}).runs ?? []) : [];
+  const caught = new Set(runs.filter((r) => r.verdict === "поймано").map((r) => r.criterion));
+  const machineOf = (held) =>
+    held !== "" && held !== "лозунг" && !held.startsWith("вниманием");
+  const formFaults = [];
+  let machine = 0;
+  let closed = 0;
+  let beyond = 0;
+  let beyondCriteria = 0;
+  let planted = 0;
   console.log("=== Чем держится каждый критерий планки ===");
-  console.log("| критерий | уровень | чем держится |");
-  console.log("| --- | --- | --- |");
+  console.log("| критерий | уровень | чем держится | вне держателя | посадок |");
+  console.log("| --- | --- | --- | --- | --- |");
   for (const c of all) {
     const held = barHoldOf(c.id + "|" + (c.slogan ? "лозунг" : ""));
     if (held === "") holes.push(c.id);
@@ -12340,14 +12400,57 @@ if (mode === "bar-hold") {
       const k = part.split(":")[0];
       if (kinds.has(k)) kinds.set(k, kinds.get(k) + 1);
     }
+    const isMachine = machineOf(held);
+    const said = barFormsOf(c.id);
+    const forms = BAR_FORMS_SPLIT[c.id]?.forms;
+    if (isMachine) machine += 1;
+    if (isMachine && said === "")
+      formFaults.push(c.id + ": нет решения, каких форм нарушения держатель не видит");
+    if (!isMachine && said !== "" && held !== "")
+      formFaults.push(c.id + ": формы вне держателя записаны у критерия без машинного держателя — запись лишняя");
+    if (said.startsWith("не по форме"))
+      formFaults.push(c.id + ": решение о формах записано " + said);
+    if (said === "закрыто") closed += 1;
+    if (forms !== undefined) {
+      beyond += forms.length;
+      beyondCriteria += 1;
+    }
+    const plants = plantsOf.get(c.id) ?? 0;
+    if (isMachine && plants > 0) planted += 1;
+    const formsCell =
+      said === ""
+        ? isMachine
+          ? "НЕТ РЕШЕНИЯ"
+          : "—"
+        : forms !== undefined
+          ? forms.map((f) => f.form).join("; ")
+          : said;
     console.log(
       "| " + c.id + " | " + (c.level ?? "—") + " | " +
-        (held === "" ? "НЕТ РЕШЕНИЯ" : held.split("|").join("\\|")) + " |",
+        (held === "" ? "НЕТ РЕШЕНИЯ" : held.split("|").join("\\|")) + " | " +
+        formsCell.split("|").join("\\|") + " | " +
+        (plants === 0 ? "—" : plants + (caught.has(c.id) ? ", поймано" : "")) + " |",
     );
   }
   console.log(
     "  итого: " + [...kinds].map(([k, n]) => k + " " + n).join("; "),
   );
+  console.log(
+    "  формы вне держателя: " + beyond + " у " + beyondCriteria +
+      " критериев; закрытых наборов: " + closed + " из " + machine +
+      " с машинным держателем",
+  );
+  console.log(
+    "  с посадками проб: " + planted + " из " + machine +
+      " с машинным держателем" +
+      (ledgerAt === null
+        ? ""
+        : "; поймано хотя бы раз по журналу проб: " + caught.size),
+  );
+  console.log(
+    "  «Чисто» по форме вне держателя стоит на чтении: формы печатаются на",
+  );
+  console.log("  странице критерия, которую сессия читает, судя.");
   const ids = new Set(all.map((c) => c.id));
   const named = new Set([
     ...BAR_SIGNALS.flatMap((s) => s.ids),
@@ -12357,9 +12460,11 @@ if (mode === "bar-hold") {
     ...Object.values(BAR_FACT_CRITERIA).flat(),
     ...Object.keys(BAR_CHECKS),
     ...Object.keys(BAR_ATTENTION),
+    ...Object.keys(BAR_FORMS),
   ]);
   const problems = [
     ...holes.map((id) => id + ": нет решения, чем держится, — ни держателя, ни записанной причины"),
+    ...formFaults,
     ...[...named]
       .filter((id) => !ids.has(id))
       .sort()
@@ -12381,7 +12486,9 @@ if (mode === "bar-hold") {
     for (const one of problems) console.log("  " + one);
     process.exit(1);
   }
-  console.log("  у каждого критерия есть решение, чем он держится");
+  console.log(
+    "  у каждого критерия есть решение, чем он держится, а у машинного — и каких форм держатель не видит",
+  );
   process.exit(0);
 }
 
