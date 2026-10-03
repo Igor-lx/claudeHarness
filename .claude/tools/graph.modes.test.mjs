@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -3044,6 +3044,84 @@ describe("таблица, переехавшая из объявленного �
         /\.claude\/tools\/checks\.md:\d+ — таблица, объявленная в (?:\.\.\/)?\.claude\/rules\/base-format\.md, лежит здесь, а там её нет\. Поправить поле настройки, а не снимать таблицу/,
       );
       expect(out).not.toContain("копия таблицы, объявленной в");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("файл читается один раз, а не на каждое имя или якорь", () => {
+  // Счёт работы, а не время: время зависит от машины, а число чтений файла
+  // предмета — нет. Модуль, подгруженный перед инструментом, считает чтения
+  // файла предмета. Прежде постоянство доводов перечитывало и разбирало файл
+  // на каждое его имя, а сверка якорей — на каждый якорь: работа росла как
+  // квадрат длины файла.
+  const withCounter = (box) => {
+    const counter = path.join(box, "zz-count-reads.mjs");
+    fs.writeFileSync(
+      counter,
+      [
+        'import fs from "node:fs";',
+        'import { syncBuiltinESMExports } from "node:module";',
+        "let reads = 0;",
+        "const real = fs.readFileSync;",
+        "fs.readFileSync = function (file, ...rest) {",
+        '  if (typeof file === "string" && file.endsWith("ZzWide.ts")) reads += 1;',
+        "  return real.call(this, file, ...rest);",
+        "};",
+        "syncBuiltinESMExports();",
+        'process.on("exit", () => process.stderr.write("ZZ_READS=" + reads + "\\n"));',
+        "",
+      ].join("\n"),
+    );
+    const at = path.join(box, "src", "shared", "zzWide", "ZzWide.ts");
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    // Файл в `count` имён, свод по нему, затем `mode` со счётчиком чтений.
+    return (count, mode) => {
+      const rows = Array.from({ length: count }, (_, k) => "export const zzLine" + k + " = " + k + ";");
+      fs.writeFileSync(at, rows.join("\n") + "\n");
+      fs.rmSync(path.join(box, ".context", "bar-protocol.md"), { force: true });
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      if (mode !== "bar") spawnSync(process.execPath, [graph, "bar", "shared/zzWide"], { cwd: box, encoding: "utf8" });
+      const got = spawnSync(
+        process.execPath,
+        ["--import", counter, graph, ...(mode === "bar" ? ["bar", "shared/zzWide"] : [mode])],
+        { cwd: box, encoding: "utf8" },
+      );
+      return Number(/ZZ_READS=(\d+)/.exec(got.stderr ?? "")?.[1] ?? "-1");
+    };
+  };
+
+  it("свод: число чтений файла предмета не растёт с числом его имён", () => {
+    const box = seatEmpty("reads-");
+    try {
+      const readsFor = withCounter(box);
+      const few = readsFor(50, "bar");
+      const many = readsFor(600, "bar");
+      // Свод дошёл до модели: иначе чтений мало в обоих прогонах, и тест
+      // проходил бы на упавшем инструменте.
+      const protocol = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      expect(protocol).toMatch(/^\| П1 \| /m);
+      expect(protocol).toContain("zzLine599");
+      expect(few).toBeGreaterThan(0);
+      expect(many - few).toBeLessThan(10);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("сверка базы: число чтений файла не растёт с числом якорей на него", () => {
+    const box = seatEmpty("anchors-");
+    try {
+      const readsFor = withCounter(box);
+      // Протокол свода называет строку каждого объявления: на файл в `600`
+      // имён — `600` якорей.
+      const few = readsFor(50, "verify");
+      const many = readsFor(600, "verify");
+      const protocol = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      expect(protocol).toContain("`shared/zzWide/ZzWide.ts:600`");
+      expect(few).toBeGreaterThan(0);
+      expect(many - few).toBeLessThan(10);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

@@ -8345,68 +8345,75 @@ const constantInputsOf = (f) => {
     f,
     ...[...dependentsOf(f)].filter((u) => !isTest(u) && files.includes(u)),
   ];
-  const takes = (u, name) =>
-    u === f ||
-    (namedImportsOf.get(u) ?? []).some(
-      (one) =>
-        Array.isArray(one.names) &&
-        one.names.includes(name) &&
-        definerOf(one.target, name) === f,
-    );
-  for (const name of names) {
-    const calls = [];
-    const tags = [];
-    for (const u of pool) {
-      if (!takes(u, name)) continue;
-      const text = readFileSync(u, "utf8");
-      const bare = bareCodeOf(text);
-      for (const m of bare.matchAll(
-        new RegExp("(?<![\\w$.])" + escapeRe(name) + "\\s*\\(", "g"),
-      )) {
-        if (
-          /\b(?:function\s*\*?|const|let|var)\s+$/.test(
-            bare.slice(Math.max(0, m.index - 20), m.index),
-          )
+  // Имена узла, которые файл берёт у него; свой файл — все.
+  const takenBy = (u) => {
+    if (u === f) return new Set(names);
+    const got = new Set();
+    for (const one of namedImportsOf.get(u) ?? [])
+      if (Array.isArray(one.names))
+        for (const n of one.names)
+          if (calls.has(n) && definerOf(one.target, n) === f) got.add(n);
+    return got;
+  };
+  // Файл читается и разбирается ОДИН раз, и вызовы и теги всех имён узла
+  // собираются одним проходом. Прежде файл перечитывался и разбирался заново
+  // на каждое имя — работа росла как квадрат его длины: замерено на файле в
+  // `3000` строк, `25` с из `27` всего свода.
+  const calls = new Map(names.map((n) => [n, []]));
+  const tags = new Map(names.map((n) => [n, []]));
+  for (const u of pool) {
+    const wanted = takenBy(u);
+    if (wanted.size === 0) continue;
+    const text = readFileSync(u, "utf8");
+    const bare = bareCodeOf(text);
+    for (const m of bare.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
+      if (!wanted.has(m[1])) continue;
+      if (
+        /\b(?:function\s*\*?|const|let|var)\s+$/.test(
+          bare.slice(Math.max(0, m.index - 20), m.index),
         )
-          continue;
-        const p = m.index + m[0].length - 1;
-        const q = closeOf(bare, p);
-        if (q < 0 || /^\s*(?::[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 120)))
-          continue;
-        calls.push(
-          topLevelParts(bare.slice(p + 1, q), p + 1).map((a) =>
-            text.slice(a.at, a.at + a.text.length).trim(),
-          ),
-        );
-      }
-      for (const m of bare.matchAll(
-        new RegExp("<" + escapeRe(name) + "(?![\\w$.])([^<>]*?)/?>", "g"),
-      )) {
-        const attrs = new Map();
-        for (const a of text
-          .slice(m.index, m.index + m[0].length)
-          .matchAll(/([\w-]+)=(?:("[^"]*"|'[^']*')|\{\s*([^{}]*?)\s*\})/g))
-          attrs.set(a[1], (a[2] ?? a[3] ?? "").trim());
-        tags.push(attrs);
-      }
+      )
+        continue;
+      const p = m.index + m[0].length - 1;
+      const q = closeOf(bare, p);
+      if (q < 0 || /^\s*(?::[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 120)))
+        continue;
+      calls.get(m[1]).push(
+        topLevelParts(bare.slice(p + 1, q), p + 1).map((a) =>
+          text.slice(a.at, a.at + a.text.length).trim(),
+        ),
+      );
     }
-    if (calls.length >= CONSTANT_SITES_FROM) {
-      const width = Math.min(...calls.map((c) => c.length));
+    for (const m of bare.matchAll(/<([A-Za-z_$][\w$]*)(?![\w$.])([^<>]*?)\/?>/g)) {
+      if (!wanted.has(m[1])) continue;
+      const attrs = new Map();
+      for (const a of text
+        .slice(m.index, m.index + m[0].length)
+        .matchAll(/([\w-]+)=(?:("[^"]*"|'[^']*')|\{\s*([^{}]*?)\s*\})/g))
+        attrs.set(a[1], (a[2] ?? a[3] ?? "").trim());
+      tags.get(m[1]).push(attrs);
+    }
+  }
+  for (const name of names) {
+    const sites = calls.get(name);
+    if (sites.length >= CONSTANT_SITES_FROM) {
+      const width = Math.min(...sites.map((c) => c.length));
       for (let i = 0; i < width; i += 1) {
-        const first = calls[0][i];
-        if (LITERAL.test(first) && calls.every((c) => c[i] === first))
+        const first = sites[0][i];
+        if (LITERAL.test(first) && sites.every((c) => c[i] === first))
           out.push(
             name + "(…): довод " + (i + 1) + " всегда " + barQuoted(first) +
-              ", мест вызова " + barQuoted(String(calls.length)),
+              ", мест вызова " + barQuoted(String(sites.length)),
           );
       }
     }
-    if (tags.length >= CONSTANT_SITES_FROM)
-      for (const [attr, first] of tags[0])
-        if (LITERAL.test(first) && tags.every((t) => t.get(attr) === first))
+    const marks = tags.get(name);
+    if (marks.length >= CONSTANT_SITES_FROM)
+      for (const [attr, first] of marks[0])
+        if (LITERAL.test(first) && marks.every((t) => t.get(attr) === first))
           out.push(
             "<" + name + "> " + attr + " всегда " + barQuoted(first) +
-              ", мест " + barQuoted(String(tags.length)),
+              ", мест " + barQuoted(String(marks.length)),
           );
   }
   return out;
@@ -13335,6 +13342,17 @@ if (mode === "verify") {
   // Таблицы слоёв разбирает общий помощник: их читает и модель свода, и два
   // разбора одной таблицы разошлись бы первой же правкой формы.
   const { rules, isolation, rulesHeadSeen, isolationHeadSeen } = layerTables();
+  // Строки файла под якорем читаются один раз на файл, а не на каждый якорь.
+  // Якорей на один файл бывают тысячи — протокол свода называет строку
+  // каждого объявления, — и чтение на каждый росло как их число, умноженное
+  // на длину файла: замерено песочницей с файлом в `3000` строк, `3001`
+  // чтение одного файла за прогон.
+  const anchorLines = new Map();
+  const linesAt = (file) => {
+    if (!anchorLines.has(file))
+      anchorLines.set(file, readFileSync(file, "utf8").split(NEWLINE));
+    return anchorLines.get(file);
+  };
 
   for (const name of readdirSync(BASE)) {
     // README базы описывает ФОРМЫ записи и приводит примеры: якорь с номером,
@@ -13413,7 +13431,7 @@ if (mode === "verify") {
           continue;
         }
         anchors++;
-        const body = readFileSync(file, "utf8").split(NEWLINE);
+        const body = linesAt(file);
         const lines = body.length;
         const last = Number(numbers[numbers.length - 1]);
         if (last > lines)
@@ -13443,7 +13461,7 @@ if (mode === "verify") {
         // Второй адрес — не цитата, а следующий якорь.
         if (/^[^\s]*:\d+(-\d+)?$/.test(m[4])) continue;
         cited++;
-        const body = readFileSync(file, "utf8").split(NEWLINE);
+        const body = linesAt(file);
         const from = Number(m[2]);
         const to = Number(m[3] ?? m[2]);
         if (!body.slice(from - 1, to).some((l) => l.includes(m[4]))) {
