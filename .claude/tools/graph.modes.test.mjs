@@ -2979,6 +2979,47 @@ describe("страницы чтения в своде по планке", () => 
   }, 300000);
 });
 
+describe("вывод инструмента в канал доходит целиком", () => {
+  // Читающий берёт вывод из канала не сразу: оболочка ждёт две секунды, и за
+  // это время инструмент успевает всё напечатать и выйти. Без блокирующего
+  // потока `process.exit()` обрывал недописанное, и до читающего доходил
+  // один буфер канала — последние страницы со своими словами терялись. На
+  // Windows канал устроен иначе, и оболочки с паузой там нет.
+  it.skipIf(process.platform === "win32")(
+    "все страницы чтения доходят до медленного читающего",
+    () => {
+      const box = seatEmpty("pipe-");
+      try {
+        const graph = path.join(box, ".claude", "tools", "graph.mjs");
+        const at = path.join(box, "src", "components", "ZzNote", "ZzNote.tsx");
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        // Предмет длинный: его страницы кода вместе с телами критериев
+        // больше буфера канала с запасом.
+        const rows = Array.from({ length: 1200 }, (_, k) => "export const zzLine" + k + ' = "строка ' + k + '";');
+        fs.writeFileSync(at, rows.join("\n") + "\n");
+        try {
+          execFileSync(process.execPath, [graph, "bar", "components/ZzNote"], {
+            cwd: box,
+            stdio: "ignore",
+          });
+        } catch {
+          // Протокол напечатан, печати нет — так и ждут: читать его страницы.
+        }
+        const out = execFileSync("sh", ["-c", '"$0" "$1" bar-read | (sleep 2; cat)', process.execPath, graph], {
+          cwd: box,
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        expect(Buffer.byteLength(out)).toBeGreaterThan(64 * 1024);
+        expect(out).toContain("Слово снимают, прочитав страницу, а не программой.");
+      } finally {
+        fs.rmSync(box, { recursive: true, force: true });
+      }
+    },
+    300000,
+  );
+});
+
 const readdirOf = (dir) => fs.readdirSync(dir).filter((n) => n.endsWith(".md"));
 
 describe("проба планки из нескольких файлов", () => {
