@@ -973,6 +973,8 @@ const OUT_OF_TREE = new Set([
 // адреса стояли семью отдельными полями, и «полку с собой не берём» означало
 // погасить каждое: инструкция называла одно, посадка ломалась на шести.
 const SHELF = CONFIG.shelf == null ? null : path.join(BASE, CONFIG.shelf);
+// The checks table moved out of rules/: rules files load into every session.
+const SHELF_CHECKS_TABLE = SHELF === null ? null : path.join(SHELF, "tools/checks.md");
 
 /** Корень проекта: папка над базой.
  *
@@ -15957,8 +15959,8 @@ if (mode === "verify") {
     if (existsSync(at))
       disarmed.push("план перехода уже есть, а CONFIG.transition пуст");
   }
-  if (CONFIG.checksTable == null && SHELF !== null) {
-    const at = path.join(SHELF, "rules/base-format.md");
+  if (CONFIG.checksTable == null && SHELF_CHECKS_TABLE !== null) {
+    const at = SHELF_CHECKS_TABLE;
     if (
       existsSync(at) &&
       readFileSync(at, "utf8").includes("| Что сверяется |")
@@ -19897,11 +19899,21 @@ if (mode === "verify") {
       const head = rows.findIndex((l) =>
         l.startsWith(CONFIG.checksTable.heading),
       );
-      if (head < 0)
+      if (head < 0) {
+        const shelfHas =
+          SHELF_CHECKS_TABLE !== null &&
+          path.resolve(at) !== path.resolve(SHELF_CHECKS_TABLE) &&
+          existsSync(SHELF_CHECKS_TABLE) &&
+          readFileSync(SHELF_CHECKS_TABLE, "utf8").includes(
+            CONFIG.checksTable.heading,
+          );
         checksTableDrift.push(
-          `шапка таблицы не найдена: ${CONFIG.checksTable.heading}`,
+          `шапка таблицы не найдена: ${CONFIG.checksTable.heading}` +
+            (shelfHas
+              ? ` — таблица лежит в ${path.relative(BASE, SHELF_CHECKS_TABLE)}: поправьте поле checksTable.file`
+              : ""),
         );
-      else {
+      } else {
         const named = [];
         const { rows: tableRows, problem: tableProblem } = tableAfter(
           rows,

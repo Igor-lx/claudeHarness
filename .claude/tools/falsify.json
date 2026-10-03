@@ -124,7 +124,7 @@
     },
     {
       "section": "Таблица сверок описывает существующие сверки",
-      "file": ".claude/rules/base-format.md",
+      "file": ".claude/tools/checks.md",
       "find": "| Ссылки markdown | адрес в круглых скобках",
       "replace": "| Ссылки markdownn | адрес в круглых скобках"
     },
@@ -157,7 +157,7 @@
     },
     {
       "section": "Строка таблицы по ширине шапки",
-      "file": ".claude/rules/base-format.md",
+      "file": ".claude/tools/checks.md",
       "find": "| Строка таблицы по ширине шапки |",
       "replace": "| Строка таблицы по ширине шапки | проба |"
     },

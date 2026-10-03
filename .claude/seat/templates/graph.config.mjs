@@ -311,7 +311,7 @@ export const CONFIG = {
    *
    * `null` — таблицы нет, и состав сверок не сверяется. */
   checksTable: {
-    file: "../.claude/rules/base-format.md",
+    file: "../.claude/tools/checks.md",
     heading: "| Что сверяется | Как |",
   },
   /** Порог длины списка исключений: сверх него прогон предупреждает.
