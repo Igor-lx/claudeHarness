@@ -303,6 +303,71 @@
         "path": "zzPlantUser.ts",
         "text": "import { useQuery } from \"@tanstack/react-query\";\n\nexport const usePlantUser = () =>\n  useQuery({ queryKey: [\"user\"], queryFn: () => fetch(\"/api/user\").then((r) => r.json()) });\n"
       }
+    },
+    {
+      "criterion": "A2",
+      "why": "решение собирается внутри узла из двух входов, которые зовущий уже знает: active = isVisible && !isDisabled",
+      "into": [
+        {
+          "text": "export function renderSaveLabel(isVisible, isDisabled, label) {\n  const active = isVisible && !isDisabled;\n  return active ? label : \"\";\n}",
+          "ts": "export function renderSaveLabel(isVisible: boolean, isDisabled: boolean, label: string): string {\n  const active = isVisible && !isDisabled;\n  return active ? label : \"\";\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "A10",
+      "why": "валюта проходит насквозь через два уровня, которые сами её не используют: граница проведена не там",
+      "into": [
+        {
+          "role": "низ",
+          "text": "export function formatAmount(amount, currency) {\n  return currency + \" \" + amount.toFixed(2);\n}",
+          "ts": "export function formatAmount(amount: number, currency: string): string {\n  return currency + \" \" + amount.toFixed(2);\n}"
+        },
+        {
+          "role": "середина",
+          "text": "import { formatAmount } from \"{{from:низ}}\";\nexport function receiptLine(item, currency) {\n  return item.title + \" \" + formatAmount(item.price, currency);\n}",
+          "ts": "import { formatAmount } from \"{{from:низ}}\";\nexport function receiptLine(item: { title: string; price: number }, currency: string): string {\n  return item.title + \" \" + formatAmount(item.price, currency);\n}"
+        },
+        {
+          "role": "верх",
+          "text": "import { receiptLine } from \"{{from:середина}}\";\nexport function receiptText(items, currency) {\n  return items.map((item) => receiptLine(item, currency)).join(\"\\n\");\n}",
+          "ts": "import { receiptLine } from \"{{from:середина}}\";\nexport function receiptText(items: { title: string; price: number }[], currency: string): string {\n  return items.map((item) => receiptLine(item, currency)).join(\"\\n\");\n}"
+        }
+      ],
+      "culprits": [
+        "верх",
+        "середина"
+      ]
+    },
+    {
+      "criterion": "B5",
+      "why": "имя обещает проверку, а узел возвращает нормализованную строку и ничего не проверяет",
+      "into": [
+        {
+          "text": "export function isValidEmail(value) {\n  return value.trim().toLowerCase();\n}",
+          "ts": "export function isValidEmail(value: string): string {\n  return value.trim().toLowerCase();\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "C1",
+      "why": "четыре булевых поля статуса запроса дают шестнадцать сочетаний, валидны четыре — это размеченный союз, а не поля",
+      "into": [
+        {
+          "text": "export function createRequestState() {\n  return { isIdle: true, isLoading: false, isSuccess: false, isError: false };\n}",
+          "ts": "export type RequestState = {\n  isIdle: boolean;\n  isLoading: boolean;\n  isSuccess: boolean;\n  isError: boolean;\n};\nexport function createRequestState(): RequestState {\n  return { isIdle: true, isLoading: false, isSuccess: false, isError: false };\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "H8",
+      "why": "обобщённый форматтер со стратегиями, из которых есть одна: слой, который надо понять, ничего не упрощает",
+      "into": [
+        {
+          "text": "export function createFormatter(options) {\n  const strategies = { plain: (value) => String(value) };\n  const pick = strategies[options.kind] ?? strategies.plain;\n  return { format: (value) => pick(value) };\n}",
+          "ts": "export function createFormatter(options: { kind: string }): { format: (value: unknown) => string } {\n  const strategies: Record<string, (value: unknown) => string> = { plain: (value) => String(value) };\n  const pick = strategies[options.kind] ?? strategies.plain;\n  return { format: (value) => pick(value) };\n}"
+        }
+      ]
     }
   ],
   "cover": {
