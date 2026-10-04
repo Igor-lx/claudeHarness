@@ -693,6 +693,24 @@
       }
     },
     {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"command\": \"node .claude/tools/graph.mjs stop --hook\"",
+      "replace": "\"command\": \"node .claude/tools/graph.mjs stop\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"matcher\": \"Bash\"",
+      "replace": "\"matcher\": \"Edit\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"command\": \"node .claude/tools/graph.mjs stop --session\"",
+      "replace": "\"command\": \"node .claude/tools/graph.mjs stop\""
+    },
+    {
       "section": "Решения адресуемы",
       "create": {
         "path": "{решения}/9999-zz-proba.md",

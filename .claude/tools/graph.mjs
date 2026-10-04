@@ -4324,6 +4324,7 @@ const CHECK_SECTIONS = [
   "Находки закрыты",
   "Шаги перехода закрывают измерение",
   "Напоминание о переходе включено",
+  "Ворота конца хода и страж обхода включены",
   "Объявленный долг назван планом перехода",
   "Объявленный долг не больше фактического",
   "План перехода не потерялся",
@@ -25114,6 +25115,74 @@ if (mode === "verify") {
         : "  хук среды зовёт режим `transition`: напоминание печатается при правке",
   );
   for (const h of hookOff) console.log("    " + h);
+
+  // Ворота конца хода и страж обхода стоят хуками среды, и держат их только
+  // настройки: режим, который никто не зовёт, не останавливает ничего, и
+  // прогон при этом зелёный. Хуки приезжают семенем, а проект со своим файлом
+  // настроек дописывает их на посадке — пропуск там не виден ничем, кроме
+  // этой сверки. Сессию, стартовавшую выше проекта, она не видит: настройки
+  // проекта тогда не читаются вовсе (`environment.md`).
+  const gateHooksOff = [];
+  {
+    const at = shelfAt("settings.json");
+    let parsed = null;
+    if (at === null || !existsSync(at))
+      gateHooksOff.push("файла настроек среды нет: хуки ставить некуда");
+    else
+      try {
+        parsed = JSON.parse(readFileSync(at, "utf8"));
+      } catch {
+        gateHooksOff.push("файл настроек среды не разбирается: " + rel0(at));
+      }
+    if (parsed !== null) {
+      // Пустой образец и звёздочка у среды значат «любой инструмент».
+      const fits = (matcher, tool) => {
+        if (matcher == null || matcher === "" || matcher === "*") return true;
+        try {
+          return new RegExp("^(?:" + matcher + ")$").test(tool);
+        } catch {
+          return matcher === tool;
+        }
+      };
+      const calls = (event, tool) =>
+        (Array.isArray(parsed.hooks?.[event]) ? parsed.hooks[event] : [])
+          .filter((g) => tool === undefined || fits(g?.matcher, tool))
+          .flatMap((g) => (g?.hooks ?? []).map((h) => String(h?.command ?? "")));
+      const need = [
+        [
+          "Stop",
+          undefined,
+          "graph.mjs stop --hook",
+          "конец хода: режим `stop --hook` не зовётся — ход кончается с правкой без свода",
+        ],
+        [
+          "PreToolUse",
+          "Bash",
+          "graph.mjs guard --hook",
+          "вызов Bash: режим `guard --hook` не зовётся — коммит мимо ворот проходит без вопроса",
+        ],
+        [
+          "SessionStart",
+          undefined,
+          "graph.mjs stop --session",
+          "начало сессии: режим `stop --session` не зовётся — пауза и след не печатаются",
+        ],
+      ];
+      for (const [event, tool, call, why] of need)
+        if (!calls(event, tool).some((c) => c.includes(call)))
+          gateHooksOff.push(why);
+    }
+  }
+  checkHead("Ворота конца хода и страж обхода включены", {
+    n: 3,
+    unit: "хуков среды",
+  });
+  console.log(
+    gateHooksOff.length
+      ? "  не стоит: " + gateHooksOff.length
+      : "  хуки стоят: конец хода, вызов Bash, начало сессии",
+  );
+  for (const h of gateHooksOff) console.log("    " + h);
 
   // Долг — разрешение, выданное НА ВРЕМЯ, и оно обязано сжиматься следом за
   // работой. Переход описывает код, неописанного не остаётся — а поле долга
