@@ -11606,22 +11606,114 @@ const barLintRowOf = ({ lint, c, files, asked }) => {
   };
 };
 
-/** Строка печати о держателе «линт»: прогнан ли и сколько строк поставил.
- * `made` — исходы, которые машина поставила строкам с предметом. */
-const barLintLine = (lint, made) => {
-  if (lint.state !== "прогнан")
-    return (
-      "  линт недоступен: " +
-      lint.why +
-      " — строки держателя «линт» отвечает сессия"
+/** Сверки прогона по всему репозиторию: название → `{ looked, found }` —
+ * сколько осмотрено и сколько строк находок. Зовут сам инструмент режимом
+ * `verify`; не отработал — `null`. Осмотрено ноль — сверка не смотрела
+ * ничего, и её молчание опорой не служит. */
+const barChecksOf = (repoRoot) => {
+  const run = spawnSync(
+    process.execPath,
+    [fileURLToPath(import.meta.url), "verify"],
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (typeof run.stdout !== "string" || !run.stdout.includes("=== ")) return null;
+  const found = new Map();
+  let at = null;
+  for (const line of run.stdout.split(LF)) {
+    const head = /^=== (.+) ===$/.exec(line);
+    if (head !== null) {
+      at = { looked: 0, found: 0 };
+      found.set(head[1], at);
+      continue;
+    }
+    if (at === null) continue;
+    const looked = /^ {2}осмотрено [^:]+: (\d+)/.exec(line);
+    if (looked !== null) at.looked += Number(looked[1]);
+    if (/^ {4}\S/.test(line)) at.found += 1;
+  }
+  return found;
+};
+
+/** Срез, который режет без суждения и без записи решения: строка модели с
+ * его пометкой — «нашлось» с её адресом. Срез, законный при записи решения
+ * либо только на новом, машина не ставит: о нём судит печать. */
+const barCutRowOf = (c, model) => {
+  for (const cut of BAR_CUTS) {
+    if (!cut.ids.includes(c.id) || cut.held === true || cut.scope !== undefined)
+      continue;
+    const row = model.find(
+      (m) => m.sort === cut.sort && [cut.mark].flat().includes(m.mark),
     );
+    const spot = row === undefined ? null : /^`?(.+?:[0-9]+)`?$/.exec(row.where);
+    if (spot !== null)
+      return {
+        outcome: "нашлось",
+        addr: spot[1],
+        what: ("срез: " + row.what).split("|").join("/"),
+        by: "срез",
+      };
+  }
+  return null;
+};
+
+/** Исход строки, который ставит машина, либо `null`: нарушение линта и
+ * срез — «нашлось»; «чисто» — только когда каждый машинный держатель
+ * критерия из линта и сверок отвечает и молчит, а модель вопроса не задала.
+ * Сверка молчит, если осмотрела предмет и не нашла ничего по всему
+ * репозиторию; срез и факт «чисто» не дают — они видят одну форму. */
+const barMachineRowOf = ({ lint, checks, c, files, model, asked }) => {
+  const lintSays =
+    BAR_LINT[c.id] === undefined
+      ? undefined
+      : barLintRowOf({ lint, c, files, asked });
+  if (lintSays?.outcome === "нашлось") return { ...lintSays, by: "линт" };
+  const cut = barCutRowOf(c, model);
+  if (cut !== null) return cut;
+  if (asked || lintSays === null) return null;
+  const names = BAR_CHECKS[c.id];
+  if (names === undefined)
+    return lintSays === undefined ? null : { ...lintSays, by: "линт" };
+  const quiet =
+    checks !== null &&
+    names.every(
+      (n) => (checks.get(n)?.looked ?? 0) > 0 && checks.get(n).found === 0,
+    );
+  if (!quiet) return null;
+  const said =
+    "сверка " +
+    names.map((n) => "«" + n + "»").join(", ") +
+    " — нарушений нет по всему репозиторию";
+  const tail = "; формы вне держателя — на чтении";
+  return {
+    outcome: "чисто",
+    addr: "",
+    what:
+      lintSays === undefined
+        ? said + tail
+        : lintSays.what.replace(tail, "; " + said + tail),
+    by: lintSays === undefined ? "сверка" : "линт",
+  };
+};
+
+/** Строка печати о машинных исходах: прогнаны ли линт и сверки и сколько
+ * строк машина поставила. `made` — исходы строкам с предметом. */
+const barMachineLine = (lint, checks, made) => {
+  const by = (who) => made.filter((one) => one.by === who).length;
   return (
-    "  линт: прогнан по файлам кода предмета — " +
-    lint.files +
-    "; строк держателя «линт» поставил сам — " +
+    "  машина поставила исход строкам — " +
     made.length +
-    ", из них «нашлось» — " +
-    made.filter((one) => one.outcome === "нашлось").length
+    " (линтом — " +
+    by("линт") +
+    ", сверкой — " +
+    by("сверка") +
+    ", срезом — " +
+    by("срез") +
+    "), из них «нашлось» — " +
+    made.filter((one) => one.outcome === "нашлось").length +
+    (lint.state === "прогнан"
+      ? "; линт прогнан по файлам кода предмета — " + lint.files
+      : "; линт недоступен: " + lint.why) +
+    (checks === null ? "; сверки не отработали" : "; сверки прогнаны")
   );
 };
 
@@ -11638,7 +11730,7 @@ const barSkeletonOf = ({
   witnesses = [],
   reads = [],
   salt = "",
-  lintRow = null,
+  machineRow = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
@@ -11676,7 +11768,9 @@ const barSkeletonOf = ({
     // строку без прежнего исхода заполняет линт, если может.
     const was = said0.get(barKey(c.id, subject));
     const machine =
-      c.slogan || none !== "" || lintRow === null ? null : lintRow(c, subject);
+      c.slogan || none !== "" || machineRow === null
+        ? null
+        : machineRow(c, subject);
     const keep =
       !c.slogan &&
       none === "" &&
@@ -12462,6 +12556,7 @@ const barProcess = ({
   witnesses = [],
   reads = [],
   lintRow = null,
+  machineRow = null,
 }) => {
   const was = barHeader(at);
   const parsedWas = was === null ? null : barRowsOf(was.body);
@@ -12625,7 +12720,7 @@ const barProcess = ({
           carry !== null && was?.salt != null
             ? was.salt
             : randomBytes(4).toString("hex"),
-        lintRow,
+        machineRow,
       }),
     );
     return {
@@ -13241,9 +13336,23 @@ if (mode === "bar") {
     s !== ""
       ? null
       : barLintRowOf({ lint, c, files: lintFiles, asked: barAskedOf(c, model) });
-  const lintMade = expected
+  // Сверки прогона и срезы модели — те же машинные держатели: строку, где
+  // они решают, машина заполняет тоже.
+  const checks = barChecksOf(repoRoot);
+  const machineRow = (c, s) =>
+    s !== ""
+      ? null
+      : barMachineRowOf({
+          lint,
+          checks,
+          c,
+          files: lintFiles,
+          model,
+          asked: barAskedOf(c, model),
+        });
+  const machineMade = expected
     .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
-    .map(({ c, subject: one }) => lintRow(c, one))
+    .map(({ c, subject: one }) => machineRow(c, one))
     .filter((one) => one !== null);
   // Правленое для «починено» — всё, что тронула работа, а не один предмет:
   // находку, которую чинит правка конвейера, конфига или записи базы, иначе
@@ -13275,11 +13384,12 @@ if (mode === "bar") {
     witnesses,
     reads,
     lintRow,
+    machineRow,
   });
 
   if (r.state === "напечатан") {
     console.log("=== Свод по планке: протокол напечатан ===");
-    console.log(barLintLine(lint, lintMade));
+    console.log(barMachineLine(lint, checks, machineMade));
     if (r.carried > 0)
       console.log(
         "  исходы перенесены: " +
@@ -13365,7 +13475,7 @@ if (mode === "bar") {
       ", файлов: " +
       marks.length,
   );
-  console.log(barLintLine(lint, lintMade));
+  console.log(barMachineLine(lint, checks, machineMade));
   if (r.state === "правлен") {
     console.log(
       "  ПЕЧАТЬ НЕ ПОСТАВЛЕНА: протокол уже закрыт и правлен после этого." +

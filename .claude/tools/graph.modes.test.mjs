@@ -4734,7 +4734,7 @@ describe("признаки по всей планке в модели свода
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 
   it("парная копия и повторённое условие — строками модели", () => {
     const box = seatEmpty("twin-");
@@ -4764,7 +4764,7 @@ describe("признаки по всей планке в модели свода
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 
   it("мутационный замер файла: не мерен, устарел, оставил выживших", () => {
     const box = seatEmpty("mutrow-");
@@ -4812,7 +4812,7 @@ describe("признаки по всей планке в модели свода
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 
   it("граф: повтор, постоянный довод, тесты, союз, приглушение, зависимость", () => {
     const box = seatEmpty("graph-");
@@ -4895,7 +4895,7 @@ describe("признаки по всей планке в модели свода
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 });
 
 describe("чем держится каждый критерий планки", () => {
@@ -4958,7 +4958,7 @@ describe("чем держится каждый критерий планки", (
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 
   it("матрица сходится и краснеет на каждой из девяти поломок", () => {
     const box = seatEmpty("hold-");
@@ -5067,7 +5067,7 @@ describe("чем держится каждый критерий планки", (
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 });
 
 /**
@@ -5106,7 +5106,9 @@ describe("свод: строки держателя «линт» ставит м
         "export function zz(x) {\n  try {\n    JSON.parse(x);\n  } catch {}\n  return x === NaN ? 0 : 1;\n}\n",
       );
       // Нарушение — исход ставит машина, с адресом и правилом.
-      expect(bar(withLint)).toMatch(/линт: прогнан по файлам кода предмета — 1; строк держателя «линт» поставил сам — 2, из них «нашлось» — 2/);
+      expect(bar(withLint)).toMatch(
+        /машина поставила исход строкам — \d+ \(линтом — 2, сверкой — \d+, срезом — 0\), из них «нашлось» — 2; линт прогнан по файлам кода предмета — 1; сверки прогнаны/,
+      );
       const found = rowOf("E1");
       expect(found?.[1].trim()).toBe("нашлось");
       expect(found?.[2].trim()).toBe("app/zzLint.js:4");
@@ -5127,10 +5129,25 @@ describe("свод: строки держателя «линт» ставит м
       expect(rowOf("E2")?.[1].trim()).toBe("чисто");
       expect(rowOf("E2")?.[3]).toContain("линт: use-isnan — нарушений нет");
       expect(rowOf("E1")?.[1].trim()).toBe("");
-      // Линта у проекта нет — строки остаются сессии, и печать это называет.
+      // Сверка, осмотревшая предмет и не нашедшая ничего, — «чисто» от
+      // машины; срез, который правило линта не видит, — «нашлось».
+      expect(rowOf("R6")?.[1].trim()).toBe("чисто");
+      expect(rowOf("R6")?.[3]).toContain("сверка «Диапазон среды объявлен»");
+      // Сверка, не осмотревшая ничего, опорой не служит: гарантий в коробке
+      // нет, и строка о новой возможности остаётся сессии.
+      expect(rowOf("J12")?.[1].trim()).toBe("");
+      fs.writeFileSync(code, "export function zz(p) {\n  return p.catch(() => {});\n}\n");
+      fs.rmSync(protoAt);
+      expect(bar(withLint)).toMatch(/машина поставила исход строкам — \d+ \(линтом — \d+, сверкой — \d+, срезом — 1\)/);
+      expect(rowOf("E1")?.[1].trim()).toBe("нашлось");
+      expect(rowOf("E1")?.[2].trim()).toBe("app/zzLint.js:2");
+      expect(rowOf("E1")?.[3]).toContain("срез: пустой перехват");
+      // Линта у проекта нет — его строки остаются сессии, и печать это
+      // называет; сверки отвечают и без него.
       fs.rmSync(protoAt);
       expect(bar({ ...process.env, NODE_PATH: "" })).toContain("линт недоступен: пакета `eslint` у проекта нет");
       expect(rowOf("E2")?.[1].trim()).toBe("");
+      expect(rowOf("R6")?.[1].trim()).toBe("чисто");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
