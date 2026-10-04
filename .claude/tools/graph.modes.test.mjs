@@ -5107,3 +5107,82 @@ describe("конец жизни сохранённого и запись о со
     }
   }, 300000);
 });
+
+/**
+ * Рост стоимости с объёмом данных: узел с подпиской, нарисованный в обходе
+ * списка, берёт её на каждый элемент.
+ */
+describe("рост стоимости с объёмом данных", () => {
+  const putIn = (box) => (rel, text) => {
+    const at = path.join(box, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, text);
+  };
+  const toolIn = (box) => (...args) => {
+    try {
+      return execFileSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } catch (e) {
+      return String(e.stdout ?? "");
+    }
+  };
+
+  it("узел с подпиской, нарисованный в обходе списка, — строкой роста и вопросом G9", () => {
+    const box = seatEmpty("per-item-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = toolIn(box);
+      const put = putIn(box);
+      put(
+        "src/components/ZzRow/ZzRow.tsx",
+        [
+          'import { useEffect } from "react";',
+          "",
+          "export function ZzRow({ id }: { id: string }) {",
+          "  useEffect(() => {",
+          "    const on = () => undefined;",
+          '    window.addEventListener("resize", on);',
+          '    return () => window.removeEventListener("resize", on);',
+          "  }, []);",
+          "  return <li>{id}</li>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      const list = (cls) =>
+        put(
+          "src/app/zzList.tsx",
+          'import { ZzRow } from "../components/ZzRow/ZzRow";\n\nexport function ZzList({ ids }: { ids: string[] }) {\n  return <ul className="' +
+            cls +
+            '">{ids.map((id) => <ZzRow key={id} id={id} />)}</ul>;\n}\n',
+        );
+      list("a");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      list("b");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(
+        "| рост | `app/zzList.tsx:4` | ZzRow из components/ZzRow/ZzRow.tsx — подписка на каждый элемент списка: слушатель события |  | на элемент |  |",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { G9: "чисто |  | список короткий | " },
+      });
+      expect(tool("bar")).toMatch(
+        /G9: чисто, а работа растёт с объёмом данных, и в основании не назван её рост[^:]*: П\d+/,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

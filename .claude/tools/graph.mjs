@@ -7690,21 +7690,55 @@ const directionFaults = () => {
 
 /** Захват ресурса и его снятие: пара образцов на род. */
 const RESOURCE_KINDS = [
-  { take: /\baddEventListener\s*\(/, give: /\bremoveEventListener\s*\(/ },
-  { take: /\bsetTimeout\s*\(/, give: /\bclearTimeout\s*\(/ },
-  { take: /\bsetInterval\s*\(/, give: /\bclearInterval\s*\(/ },
+  { name: "слушатель события", take: /\baddEventListener\s*\(/, give: /\bremoveEventListener\s*\(/ },
+  { name: "таймер", take: /\bsetTimeout\s*\(/, give: /\bclearTimeout\s*\(/ },
+  { name: "интервал", take: /\bsetInterval\s*\(/, give: /\bclearInterval\s*\(/ },
   {
+    name: "кадр",
     take: /\brequestAnimationFrame\s*\(/,
     give: /\bcancelAnimationFrame\s*\(/,
   },
-  { take: /\.subscribe\s*\(/, give: /\bunsubscribe\b/ },
-  { take: /\bnew\s+\w*Observer\s*\(/, give: /\.disconnect\s*\(|\.unobserve\s*\(/ },
-  { take: /\bnew\s+(?:WebSocket|EventSource|Worker)\s*\(/, give: /\.close\s*\(|\.terminate\s*\(/ },
-  { take: /\bnew\s+AbortController\s*\(/, give: /\.abort\s*\(/ },
+  { name: "подписка", take: /\.subscribe\s*\(/, give: /\bunsubscribe\b/ },
+  { name: "наблюдатель", take: /\bnew\s+\w*Observer\s*\(/, give: /\.disconnect\s*\(|\.unobserve\s*\(/ },
+  { name: "соединение", take: /\bnew\s+(?:WebSocket|EventSource|Worker)\s*\(/, give: /\.close\s*\(|\.terminate\s*\(/ },
+  { name: "отмена", take: /\bnew\s+AbortController\s*\(/, give: /\.abort\s*\(/ },
   // Эффект фреймворка: снятие — возвращаемая им функция, и опознать её
   // по строке нельзя; клетку ставит сессия.
-  { take: /\buse(?:Layout|Insertion)?Effect\s*\(/, give: null },
+  { name: "эффект", take: /\buse(?:Layout|Insertion)?Effect\s*\(/, give: null },
 ];
+
+/** Подписки, которые узел берёт: захваты ресурсов со снятием. Узел,
+ * нарисованный в обходе списка, берёт их на каждый элемент. */
+const subscriptionsOf = (f) => {
+  const text = codeOf(readFileSync(f, "utf8"));
+  return RESOURCE_KINDS.filter((k) => k.give !== null && k.take.test(text)).map(
+    (k) => k.name,
+  );
+};
+/** Узлы, которые файл рисует в обходе списка разметкой, и их подписки:
+ * `{ line, name, target, takes }`. */
+const perItemTakesOf = (f) => {
+  const src = readFileSync(f, "utf8");
+  const bare = bareCodeOf(src);
+  const bindings = importBindingsOf(f, src);
+  const lineAt = (i) => bare.slice(0, i).split(LF).length;
+  const out = [];
+  const seen = new Set();
+  for (const m of bare.matchAll(/\.\s*(?:map|flatMap)\s*\(/g)) {
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q <= p) continue;
+    for (const t of bare.slice(p, q).matchAll(/<([A-Z][\w$]*)/g)) {
+      const target = bindings.get(t[1]);
+      if (target === undefined || seen.has(t[1])) continue;
+      const takes = subscriptionsOf(target);
+      if (takes.length === 0) continue;
+      seen.add(t[1]);
+      out.push({ line: lineAt(p + t.index), name: t[1], target, takes });
+    }
+  }
+  return out;
+};
 
 /** Запись во внешнее хранилище: ключ — первый довод вызова. Второй файл,
  * пишущий тот же ключ, — второй писатель одного источника истины, и в
@@ -8132,6 +8166,9 @@ const SIGNAL_TITLES = {
   "раскладка|чтение и запись": "чтение раскладки рядом с записью",
   "раскладка|окно": "размер окна",
   поиск: "поиск по коллекции внутри обхода",
+  "рост|та же коллекция": "обход той же коллекции внутри её обхода",
+  "рост|без предела": "состояние-список только дописывают",
+  "рост|на элемент": "подписка на каждый элемент списка",
   "комментарий|предупреждение": "комментарий предупреждает о слабом месте",
   комментарий: "комментарий",
   требование: "комментарий ставит условие вызывающему",
@@ -10327,6 +10364,33 @@ const barModelOf = (
     }
   }
 
+  // Подписка на каждый элемент списка: узел с подпиской, нарисованный в
+  // обходе, берёт её столько раз, сколько элементов, и рост этот виден только
+  // на длинном списке. Строка встаёт у файла, который рисует такой обход, —
+  // правленого либо рисующего правленый узел.
+  if (want("рост")) {
+    const parents = new Set();
+    for (const f of focus) {
+      if (!files.includes(f) || isTest(f)) continue;
+      parents.add(f);
+      for (const u of dependentsOf(f)) if (!isTest(u)) parents.add(u);
+    }
+    for (const g of [...parents].sort(barByRel))
+      for (const one of perItemTakesOf(g)) {
+        if (!inFocus.has(g) && !inFocus.has(one.target)) continue;
+        add(
+          "рост",
+          rel(g) + ":" + one.line,
+          one.name +
+            " из " +
+            rel(one.target) +
+            " — подписка на каждый элемент списка: " +
+            one.takes.join(", "),
+          "на элемент",
+        );
+      }
+  }
+
   // Конец жизни сохранённого. Запись в хранилище переживает перезагрузку и
   // выход пользователя; строка называет каждый ключ, который пишет узел
   // области, его писателей и то, что его снимает. Ключ, который не снимает
@@ -12516,6 +12580,7 @@ if (mode === "bar") {
     "  «чисто»: " + r.reading.clean + "; из них у критериев с формами вне держателя: " +
       r.reading.beyond + " — по этим формам ответ стоит на чтении, а не на модели",
   );
+
   // Что продукт обещает, решает разработчик, а не печать: полноту таблицы
   // гарантий относительно замысла машина не видит. Поэтому сдвиг таблицы
   // печатается дословно — для отчёта, где его и читают.

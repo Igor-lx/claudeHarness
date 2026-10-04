@@ -445,6 +445,7 @@ export const MODEL_LEVEL = {
   вид: "узел",
   сквозь: "узел",
   кэш: "узел",
+  рост: "узел",
   порядок: "узел",
   идентификаторы: "узел",
   близнец: "приложение",
@@ -643,6 +644,12 @@ export const BAR_SIGNALS = [
   { ids: ["G5", "G1"], sort: "раскладка", mark: "чтение и запись", words: "чтение раскладки стоит рядом с записью в разметку, и в основании не сказано, сгруппированы ли они" },
   { ids: ["O4-тер"], sort: "раскладка", mark: "окно", words: "размер берётся у окна, и в основании не сказано, владеет ли окно этим размером" },
   { ids: ["G6-кватер", "G1"], sort: "поиск", words: "поиск по коллекции стоит внутри обхода, и в основании не сказано, почему не словарь" },
+  // Рост стоимости с объёмом данных: обход той же коллекции в её обходе,
+  // состояние, которое только дописывают, подписка на каждый элемент списка,
+  // контейнер без вытеснения и поиск внутри обхода.
+  { ids: ["G9"], sort: "рост", words: "работа растёт с объёмом данных, и в основании не назван её рост и то, что его ограничивает" },
+  { ids: ["G9"], sort: "поиск", words: "поиск по коллекции стоит внутри обхода, и в основании не назван рост с длиной коллекции" },
+  { ids: ["G9"], sort: "кэш", words: "контейнер модуля растёт и не чистится, и в основании не сказано, чем ограничен его рост" },
   { ids: ["H3"], sort: "комментарий", words: "в предмете есть комментарии, и в основании не сказано, что каждый прошёл четыре вопроса" },
   { ids: ["H5"], sort: "комментарий", mark: "предупреждение", words: "комментарий предупреждает о слабом месте, и в основании не сказано, почему оно описано, а не переписано" },
   { ids: ["B2"], sort: "требование", words: "комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
@@ -1174,6 +1181,11 @@ export const BAR_FORMS = {
   "G6-тер": [
     "слой композитора из кода: `willChange` в объекте стилей, `translateZ` строкой — признак листа видит `will-change`, `translateZ` и `translate3d` в листах",
     "слой от свойства, которое создаёт его без подсказки: `position: fixed`, `filter`, видео — признак видит явные подсказки",
+  ],
+  G9: [
+    "рост через рекурсию, через обход дерева и через обход внутри обхода разных коллекций одной длины — признак видит ту же коллекцию по имени, поиск внутри обхода и контейнер модуля",
+    "состояние, растущее через хранилище, контекст либо внешний стор, и рост на сервере — признак видит хук состояния и контейнер модуля",
+    "подписка на элемент через свой хук либо через обёртку — признак видит подписку в файле узла, который рисуют в обходе",
   ],
   "G6-кватер": [
     "поиск по коллекции в обходе через свой помощник либо в обходе другого файла — признак видит методы поиска внутри обхода в одном теле",
@@ -2411,6 +2423,61 @@ const codeSignalsOf = (file, text, own) => {
       searched.add(from + m.index);
       at("поиск", from + m.index, m[1] + "." + m[2]);
     }
+
+  // --- рост с объёмом данных ------------------------------------------------
+  // Обход той же коллекции внутри её обхода — работа растёт квадратом длины.
+  // Коллекция — цепочка имён целиком: `x.items` внутри обхода `items` — другая.
+  const CHAIN = String.raw`((?:[\w$]+\s*\??\.\s*)*[\w$]+)\s*\??\.\s*`;
+  const chainOf = (raw) => raw.replace(/[\s?]/g, "");
+  const walks = [];
+  each(
+    new RegExp("(?<![\\w$.])" + CHAIN + "(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex)\\s*\\(", "g"),
+    bare,
+    (m) => {
+      const p = m.index + m[0].length - 1;
+      const q = closeOf(bare, p);
+      if (q > p) walks.push([p, q, chainOf(m[1])]);
+    },
+  );
+  each(/\bfor\s*\(\s*(?:const|let|var)\s+[^;()]*?\s+of\s+([\w$.?]+)\s*\)/g, bare, (m) => {
+    const q = m.index + m[0].length - 1;
+    const b = bare.indexOf("{", q);
+    if (b < 0 || bare.slice(q + 1, b).trim() !== "") return;
+    const e = closeOf(bare, b);
+    if (e > b) walks.push([b, e, chainOf(m[1])]);
+  });
+  const squared = new Set();
+  for (const [from, to, outer] of walks)
+    for (const m of bare
+      .slice(from, to)
+      .matchAll(
+        new RegExp("(?<![\\w$.])" + CHAIN + "(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex|indexOf|includes)\\s*\\(", "g"),
+      )) {
+      if (chainOf(m[1]) !== outer || squared.has(from + m.index)) continue;
+      squared.add(from + m.index);
+      at("рост", from + m.index, outer + " внутри обхода " + outer, "та же коллекция");
+    }
+  // Состояние-список, которое только дописывают: ни среза, ни отбора, ни
+  // сброса — растёт, пока жив узел.
+  for (const m of bare.matchAll(
+    /\bconst\s*\[\s*([\w$]+)\s*,\s*(set[\w$]+)\s*\]\s*=\s*use(?:State|Reducer)\b/g,
+  )) {
+    const [name, setter] = [m[1], m[2]];
+    const calls = [];
+    for (const c of bare.matchAll(new RegExp("(?<![\\w$.])" + escapeRe(setter) + "\\s*\\(", "g"))) {
+      const p = c.index + c[0].length - 1;
+      const q = closeOf(bare, p);
+      if (q > p) calls.push([c.index, bare.slice(p, q + 1)]);
+    }
+    const appends = calls.filter(([, args]) =>
+      /\[\s*\.\.\.\s*[\w$.]+\s*,|\.\s*concat\s*\(/.test(args),
+    );
+    const bounded = calls.some(([, args]) =>
+      /\.\s*(?:slice|filter|splice)\s*\(|\(\s*\[\s*\]\s*\)|\.length\s*[<>]/.test(args),
+    );
+    if (appends.length > 0 && !bounded)
+      at("рост", appends[0][0], name + " дописывают через " + setter, "без предела");
+  }
 
   // --- комментарии: каждый, предупреждающие, требующие, ограничения --------
   for (const run of (commentRunsOf(text) || "").split(SEP1).filter(Boolean)) {
@@ -3654,6 +3721,10 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.city;", "1:целое;1:сквозь"],
   ["signalsSummary", "src/a.ts\nexport const w = (ref) => ref.current.style.width;", ""],
   ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nconst items = [\"x\", \"y\"];\nexport const pairs = () => items.map((a) => items.map((b) => a + b));", "2:рост/та же коллекция"],
+  ["signalsSummary", "src/a.ts\nconst items = [\"x\", \"y\"];\nconst other = [\"z\"];\nexport const pairs = () => items.map((a) => other.map((b) => a + b));", ""],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x]);", "2:рост/без предела"],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x].slice(1));", ""],
   ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);\nexport const forget = (k) => seen.delete(k);", ""],
   ["signalsSummary", "src/a.ts\nuseEffect(() => a(), [x]);\nuseEffect(() => b(), [y]);", "1:порядок"],
   ["signalsSummary", "src/a.ts\nuseEffect(() => a(), [x]);", ""],
