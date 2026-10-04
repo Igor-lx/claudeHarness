@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  sandboxEscape,
   barRowFault,
   barNoSubject,
   barCoreCriterion,
@@ -4853,6 +4854,13 @@ if (mode === "falsify") {
       // устройстве проекта.
       if (subjectless(r.section) || idleByNote(r.section)) {
         idle.push(r.section + " — предмета в этом проекте нет");
+        continue;
+      }
+      // Адрес выше корня песочницы указывает в рабочее дерево — такой рецепт
+      // не исполняется вовсе.
+      const outside = sandboxEscape(r);
+      if (outside !== "") {
+        broken.push(r.section + " — адрес выводит из песочницы: " + outside);
         continue;
       }
       if (Array.isArray(r.edits)) {

@@ -4101,6 +4101,18 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMIT } from \"../add\";\nexpect(add(1, 2)).toBe(LIMIT);", "2:тест/ожидание из кода"],
   ["signalsSummary", "src/tests/a.test.ts\nimport { add } from \"../add\";\nassert.equal(add(1, 2), add(2, 1));", "2:тест/ожидание из кода"],
   ["signalsSummary", "src/tests/a.test.ts\nimport { add, Overflow } from \"../add\";\nexpect(add(1, 2)).toBe(3);\nexpect(() => add(1e9, 1e9)).toThrow(Overflow);", ""],
+  // --- sandboxEscape: адрес рецепта, выводящий из песочницы ---
+  ["sandboxEscape", { create: { path: "docs/adr/9999-a.md", text: "" } }, ""],
+  ["sandboxEscape", { create: { path: "../docs/adr/9999-a.md", text: "" } }, "../docs/adr/9999-a.md"],
+  // подъём, вернувшийся внутрь, из песочницы не выводит
+  ["sandboxEscape", { file: "docs/../src/a.ts", find: "a", replace: "b" }, ""],
+  ["sandboxEscape", { edits: [{ mkdir: "src" }, { mkdir: "src/../../x" }] }, "src/../../x"],
+  ["sandboxEscape", { create: { path: "..\\x.md", text: "" } }, "..\\x.md"],
+  ["sandboxEscape", { edits: [{ file: "a.md", appendFrom: { seed: "../s.md", startsWith: "|" } }] }, "../s.md"],
+  // переименование: одиночного — от корня, шага составного — от папки файла
+  ["sandboxEscape", { file: "docs/a.md", rename: "../b.md" }, "../b.md"],
+  ["sandboxEscape", { edits: [{ file: "docs/a.md", rename: "../b.md" }] }, ""],
+  ["sandboxEscape", { edits: [{ file: "a.md", rename: "../b.md" }] }, "../b.md"],
 ];
 
 /**
@@ -4253,6 +4265,42 @@ export const classifyRun = (clean, after, section) => {
       };
   }
   return { how: "nowhere" };
+};
+
+/** Первый адрес рецепта фальсификации, выводящий из песочницы, — иначе
+ * пустая строка.
+ *
+ * Песочница лежит внутри корня репозитория, и адрес, поднимающийся выше её
+ * корня, после склейки с ней указывает в рабочее дерево: рецепт кладёт
+ * поломку туда, где работают, и прогон, оборванный посередине, её там
+ * оставляет. Такой адрес приходит из поля настройки — папка решений или
+ * настроек, объявленная выше корня, — и из рецепта проекта, написанного
+ * руками. Переименование одиночного рецепта считается от корня песочницы,
+ * шага составного — от папки его файла: так их исполняет режим. */
+export const sandboxEscape = (recipe) => {
+  const climbs = (p) => {
+    let depth = 0;
+    for (const part of String(p).replace(/\\/g, "/").split("/")) {
+      if (part === "..") depth -= 1;
+      else if (part !== "" && part !== ".") depth += 1;
+      if (depth < 0) return true;
+    }
+    return false;
+  };
+  for (const step of recipe.edits ?? [recipe]) {
+    const own = [
+      step.file,
+      step.create?.path,
+      step.mkdir,
+      step.copyTo,
+      step.appendFrom?.seed,
+    ].find((p) => p !== undefined && climbs(p));
+    if (own !== undefined) return own;
+    if (step.rename === undefined) continue;
+    const from = recipe.edits === undefined ? "" : (step.file ?? "") + "/..";
+    if (climbs(from + "/" + step.rename)) return step.rename;
+  }
+  return "";
 };
 
 /** Красен ли прогон — по НАПЕЧАТАННОМУ, а не по перечню имён.
