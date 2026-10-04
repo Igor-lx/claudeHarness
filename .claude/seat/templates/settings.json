@@ -134,6 +134,20 @@
           {
             "type": "command",
             "command": "node .claude/tools/graph.mjs transition"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/tools/graph.mjs stop --session"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/tools/graph.mjs stop --hook"
           }
         ]
       }

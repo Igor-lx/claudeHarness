@@ -367,6 +367,72 @@ describe("страж обхода ворот", () => {
   });
 });
 
+/**
+ * Ворота конца хода спрашивают свод с рабочего дерева, когда сессия
+ * заканчивает ход. Держит: отказ без свода, пауза только на свой вид правки,
+ * клапан против петли со следом для следующей сессии и снятие всего этого
+ * запечатанным сводом.
+ */
+describe("ворота конца хода", () => {
+  it("отказ, пауза на вид правки, клапан со следом, печать снимает всё", () => {
+    const box = seatEmpty("stop-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=stop", "-c", "user.email=stop@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [graph, ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const hook = () =>
+        spawnSync(process.execPath, [graph, "stop", "--hook"], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      expect(hook().status).toBe(0);
+      const at = path.join(box, "src", "app", "zzStop.ts");
+      fs.writeFileSync(at, "export const zzStop = 1;\n");
+      const stopped = hook();
+      expect(stopped.status).toBe(2);
+      expect(stopped.stderr).toContain("app/zzStop.ts");
+      tool("stop", "--pause", "жду ответа о границе");
+      expect(hook().status).toBe(0);
+      // Правка после паузы: пауза о прежнем виде, ход снова не кончается.
+      fs.writeFileSync(at, "export const zzStop = 2;\n");
+      expect(hook().status).toBe(2);
+      expect(hook().status).toBe(2);
+      // Третий отказ подряд — клапан: ход кончается, след остаётся.
+      expect(hook().status).toBe(0);
+      const told = tool("stop", "--session");
+      expect(told).toContain("ход кончен без свода");
+      expect(told).not.toContain("незаконченная работа");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain("печать поставлена");
+      expect(hook().status).toBe(0);
+      expect(tool("stop", "--session")).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");

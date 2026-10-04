@@ -6035,6 +6035,173 @@ if (mode === "gate") {
   );
   process.exit(1);
 }
+// --- stop: ворота конца хода -------------------------------------------------
+//
+// Ворота перед коммитом стоят там, где коммитят, а коммитит разработчик — по
+// своей команде, часто после ухода сессии. Сессия, кончившаяся без коммита,
+// не проходила ворот ни разу: свод досматривали, когда разработчик коммитил,
+// уже без контекста той работы. Хук конца хода спрашивает то же, что ворота,
+// и тем же помощником, но с РАБОЧЕГО ДЕРЕВА и в момент, когда сессия
+// заканчивает ход.
+//
+// Ход кончается и тогда, когда работа не закончена: вопрос разработчику на
+// развилке. Для этого пауза — запись с причиной, годная только для этого вида
+// правки. Петлю исключает счётчик: на третьем отказе подряд по одному виду
+// правки ход пропускается, и остаётся след, который печатает начало
+// следующей сессии. Состояние лежит в папке git: оно принадлежит
+// незакоммиченной правке и живёт там же, где она.
+if (mode === "stop") {
+  const NEWLINE = String.fromCharCode(10);
+  const flag =
+    ["--hook", "--pause", "--session"].find((f) => process.argv.includes(f)) ??
+    null;
+  if (flag === "--hook" && !process.stdin.isTTY)
+    try {
+      readFileSync(0);
+    } catch {
+      // Событие среды не нужно: решение принимается по рабочему дереву.
+    }
+  let gitDir = null;
+  try {
+    gitDir = path.resolve(
+      REPO_AT,
+      execFileSync("git", ["rev-parse", "--git-dir"], {
+        cwd: REPO_AT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim(),
+    );
+  } catch {
+    gitDir = null;
+  }
+  const stateAt =
+    gitDir === null ? null : path.join(gitDir, "claude-harness-stop.json");
+  const state =
+    stateAt !== null && existsSync(stateAt) ? readJson(stateAt, {}) : {};
+  const save = () => {
+    if (stateAt !== null)
+      writeFileSync(stateAt, JSON.stringify(state, null, 2) + NEWLINE);
+  };
+  const subject = gitDir === null ? null : await barChangedSubject(REPO_AT);
+  const want = subject === null ? [] : barMarks(subject);
+  const named = want.map((m) => m.file);
+  const digest = barDigest(want.map((m) => m.file + " " + m.mark).join(NEWLINE));
+  const protoAt =
+    CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
+  const body =
+    protoAt !== null && existsSync(protoAt) ? readFileSync(protoAt, "utf8") : null;
+  const fault = want.length === 0 ? "" : barCoverFault(want, body);
+  const paused = state.pause?.digest === digest && want.length > 0;
+  const day = (iso) => String(iso ?? "").slice(0, 10);
+
+  if (flag === "--pause") {
+    const reason = process.argv
+      .slice(process.argv.indexOf("--pause") + 1)
+      .join(" ")
+      .trim();
+    if (reason === "") {
+      console.log(
+        "  Пауза без причины не ставится: причину печатает начало следующей сессии.",
+      );
+      process.exit(1);
+    }
+    if (want.length === 0) {
+      console.log("  Правки кода нет — пауза не нужна.");
+      process.exit(0);
+    }
+    state.pause = { digest, reason, at: new Date().toISOString(), files: named };
+    state.blocks = null;
+    save();
+    console.log("=== Пауза поставлена ===");
+    sayLooked("файлов правки", want.length);
+    console.log("  причина: " + reason);
+    console.log(
+      "  годна, пока правка не меняется; изменилась — свод либо новая пауза",
+    );
+    process.exit(0);
+  }
+
+  if (flag === "--session") {
+    const said = [];
+    if (state.pause != null)
+      said.push(
+        "незаконченная работа — " +
+          state.pause.reason +
+          " (" +
+          day(state.pause.at) +
+          "; файлы: " +
+          state.pause.files.join(", ") +
+          ")",
+      );
+    if (state.trace != null)
+      said.push(
+        "ход кончен без свода — " +
+          state.trace.fault +
+          " (" +
+          day(state.trace.at) +
+          "; файлы: " +
+          state.trace.files.join(", ") +
+          ")",
+      );
+    if (said.length) console.log("Обвязка: " + said.join("; ") + ".");
+    process.exit(0);
+  }
+
+  if (flag === "--hook") {
+    if (want.length === 0 || fault === "") {
+      // Правка накрыта сводом либо ушла в коммит: пауза и след больше ни о чём.
+      if (state.pause != null || state.trace != null || state.blocks != null) {
+        state.pause = null;
+        state.trace = null;
+        state.blocks = null;
+        save();
+      }
+      process.exit(0);
+    }
+    if (paused) process.exit(0);
+    // Пауза о другом виде правки ни о чём: правка изменилась после неё.
+    if (state.pause != null) state.pause = null;
+    const count =
+      state.blocks?.digest === digest ? (state.blocks.count ?? 0) + 1 : 1;
+    if (count >= 3) {
+      state.trace = { digest, at: new Date().toISOString(), files: named, fault };
+      state.blocks = null;
+      save();
+      process.exit(0);
+    }
+    state.blocks = { digest, count };
+    save();
+    process.stderr.write(
+      "Обвязка: ход кончается, а правка кода не накрыта сводом по планке — " +
+        fault +
+        ".\n" +
+        "Файлы: " +
+        named.join(", ") +
+        ".\n" +
+        "Работа закончена — свод: `node .claude/tools/graph.mjs bar`, ответы по протоколу, печать.\n" +
+        'Работа не закончена (ждёт ответа разработчика, прервана на развилке) — пауза с причиной: `node .claude/tools/graph.mjs stop --pause "<причина>"`; причину печатает начало следующей сессии.\n',
+    );
+    process.exit(2);
+  }
+
+  console.log("=== Ворота конца хода ===");
+  sayLooked("файлов правки", want.length);
+  if (gitDir === null)
+    console.log("  git недоступен — ворота конца хода проверить нечем");
+  else if (want.length === 0)
+    console.log("  правки кода нет — свод не спрашивается");
+  else if (fault === "") console.log("  свод покрывает правку: ход заканчивается");
+  else if (paused) console.log("  пауза: " + state.pause.reason);
+  else console.log("    не накрыто сводом: " + fault);
+  if (state.trace != null)
+    console.log(
+      "    след: ход кончен без свода " +
+        day(state.trace.at) +
+        " — " +
+        state.trace.fault,
+    );
+  process.exit(want.length > 0 && fault !== "" && !paused ? 1 : 0);
+}
 if (mode === "twins") {
   sayLooked("объявленных пар форков", (CONFIG.forks ?? []).length);
   const NEWLINE = String.fromCharCode(10);
