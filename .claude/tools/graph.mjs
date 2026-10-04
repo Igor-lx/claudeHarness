@@ -50,6 +50,7 @@ import {
   barGripOf,
   BAR_GRIPS,
   BAR_TIERS,
+  testFileBlindOf,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -13071,6 +13072,12 @@ if (mode === "bar-hold") {
       formFaults.push(c.id + ": формы вне держателя записаны у критерия, которого держит одно внимание, — запись лишняя");
     if (said.startsWith("не по форме"))
       formFaults.push(c.id + ": решение о формах записано " + said);
+    // Закрытый набор обещает, что держатель видит каждую форму; у критерия,
+    // чьи строки о тестовом файле не встают, это неправда по построению.
+    if (said === "закрыто" && testFileBlindOf(c.id) !== "")
+      formFaults.push(
+        c.id + ": набор закрыт, а строки критерия о тестовом файле не встают",
+      );
     if (said === "закрыто") closed += 1;
     if (forms !== undefined) {
       beyond += forms.length;

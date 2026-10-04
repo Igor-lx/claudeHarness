@@ -1509,10 +1509,55 @@ const splitForms = (raw) => {
   return { forms };
 };
 
+/** Виды строк, которые встают о тестовом файле: признаки теста и его
+ * комментарии. Прочие строки единицы и узла встают о модулях и листах: тест
+ * читают ради кода, который он держит. */
+const TEST_FILE_SORTS = new Set(["тест", "комментарий", "требование", "ограничение"]);
+/** Форма вне держателя, общая критериям, чьи строки единицы и узла встают о
+ * модулях, а о тестовом файле нет, и сверки, которая могла бы читать тесты,
+ * нет. Вычисляется, а не пишется в `BAR_FORMS`: таких критериев больше
+ * сотни, и запись у каждого разошлась бы с распознавателем теста при первой
+ * его правке. Листа стилей она не касается: стиля в тесте нет. */
+export const TEST_FILE_FORM =
+  "нарушение внутри тестового файла — о тесте модель спрашивает признаки теста и его комментарии, а строки этого критерия встают о модулях";
+/** Строки критерия о тестовом файле не встают: «да» либо пусто. Только у
+ * ядра планки, разделов `A`–`J`: правило о коде действует и на тест. Разделы
+ * по применимости судят предмет продукта — сеть, доступность, стили, — а
+ * тест в поставку не идёт. Сверку не спрашивают: закрытость набора — о
+ * строках модели, а не о сверке. */
+export const testFileBlindOf = (id) => {
+  if (!/^[A-J][0-9]/.test(id)) return "";
+  const sorts = [
+    ...BAR_SIGNALS.filter((s) => s.ids.includes(id)).map((s) => s.sort),
+    ...BAR_CUTS.filter((c) => c.ids.includes(id)).map((c) => c.sort),
+    ...Object.entries(BAR_FACT_CRITERIA)
+      .filter(([, ids]) => ids.includes(id))
+      .map(([sort]) => sort),
+  ].filter((sort) => MODEL_LEVEL[sort] === "единица" || MODEL_LEVEL[sort] === "узел");
+  if (sorts.length === 0) return "";
+  if (sorts.some((sort) => TEST_FILE_SORTS.has(sort) || sort === "стиль")) return "";
+  return "да";
+};
+/** Общая форма о тестовом файле у критерия либо пустая строка. Сверка
+ * прогона, читающая тесты, видит в них свою форму, поэтому у критерия со
+ * сверкой форма не пишется: какие формы видит сверка, записано у него. */
+export const testFileFormOf = (id) =>
+  testFileBlindOf(id) !== "" && BAR_CHECKS[id] === undefined ? TEST_FILE_FORM : "";
+
 /** Решения о формах, разобранные по критерию: из них печатают страницу
- * критерия и матрицу. */
+ * критерия и матрицу. Общая форма о тестовом файле дописывается к списку;
+ * закрытый набор при ней — противоречие, и его ловит `bar-hold`. */
 export const BAR_FORMS_SPLIT = Object.fromEntries(
-  Object.entries(BAR_FORMS).map(([id, raw]) => [id, splitForms(raw)]),
+  Object.entries(BAR_FORMS).map(([id, raw]) => {
+    const one = splitForms(raw);
+    const extra = testFileFormOf(id);
+    return [
+      id,
+      one.forms !== undefined && extra !== ""
+        ? { forms: [...one.forms, ...splitForms([extra]).forms] }
+        : one,
+    ];
+  }),
 );
 
 /** Решение о формах критерия одной строкой: пусто — решения нет; `закрыто`;
@@ -3879,9 +3924,23 @@ export const PREDICATE_CASES = [
   ["barGripOf", "J9|", "вниманием"],
   ["barGripOf", "G3|лозунг", "лозунг"],
   ["barGripOf", "Z9|", ""],
+  ["testFileFormOf", "H7", TEST_FILE_FORM],
+  ["testFileFormOf", "B4", TEST_FILE_FORM],
+  ["testFileFormOf", "H3", ""],
+  ["testFileFormOf", "J1", ""],
+  ["testFileFormOf", "D1", ""],
+  ["testFileFormOf", "O2", ""],
+  ["testFileFormOf", "R1", ""],
+  ["testFileFormOf", "P4", ""],
+  ["testFileFormOf", "H4", ""],
+  ["testFileBlindOf", "H4", "да"],
+  ["testFileBlindOf", "H7", "да"],
+  ["testFileBlindOf", "H3", ""],
+  ["testFileBlindOf", "P4", ""],
   // --- barFormsOf: решение о формах вне держателя ---
   ["barFormsOf", "H3", "закрыто"],
-  ["barFormsOf", "B4", "форм: 3"],
+  // Три записанные формы и общая — о тестовом файле.
+  ["barFormsOf", "B4", "форм: 4"],
   ["barFormsOf", "J4", ""],
   ["barFormsOf", "Z9", ""],
   // --- commentlessOf, escapeRe, joinsTwo: общие помощники разбора ---
