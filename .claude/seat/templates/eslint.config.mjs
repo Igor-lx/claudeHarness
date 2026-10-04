@@ -15,26 +15,73 @@
 //    одних и тех же строках, и правка «под линт» ломает формат, а правка «под
 //    формат» ломает линт. Это первая причина, по которой конфиг едет шаблоном:
 //    установленный линтер без этой строки создаёт работу, а не убирает.
-// 2. Проверка типов включена в линт (`recommendedTypeChecked` +
+// 2. Проверка типов включена в линт (`strictTypeChecked` +
 //    `projectService`). Правила, которым нужен тип, — единственные, что ловят
-//    «плавающий» промис, ненужный `await`, сравнение несравнимого. Без
-//    `projectService` они молча не работают: конфиг выглядит настроенным.
+//    «плавающий» промис, ненужный `await`, сравнение несравнимого,
+//    неисчерпывающий выбор. Без `projectService` они молча не работают:
+//    конфиг выглядит настроенным.
 // 3. Правила React-хуков включены во ВСЁМ репозитории, включая правила
 //    компилятора. Они же защищают от StrictMode и конкурентного рендера,
 //    поэтому нужны и там, где компилятор выключен.
 // 4. Генерируемые папки исключены. Песочница мутационного прогона держит копию
 //    всего дерева: не исключив её, линт проверяет проект дважды и сообщает о
 //    файлах, которых никто не писал.
-//
-// ЧЕГО ЗДЕСЬ НЕТ НАМЕРЕННО: списка «наших» правил. Правило заводят по факту —
-// когда дефект уже прошёл мимо, — а не впрок; свод качества лежит в
-// `quality.md` и линтом не заменяется.
+// 5. Правила, решающие форму нарушения критерия планки без суждения: глубина
+//    и сложность, магические числа, переприсвоение довода, исчерпывающий
+//    выбор, ключ элемента списка, утечка из эффекта, опасная разметка,
+//    доступность, повторы. Правило здесь стоит потому,
+//    что держит критерий `quality.md` (`J2`: что можно проверить машиной,
+//    проверяется машиной); правило, не держащее ни одного критерия, впрок не
+//    заводят. Пакеты выбраны по совместимости с закреплённым `eslint`:
+//    `eslint-plugin-react` и `eslint-plugin-jsx-a11y` его не поддерживают, и их
+//    заменяют `@eslint-react/eslint-plugin` и `eslint-plugin-jsx-a11y-x`.
 import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
+import eslintReact from "@eslint-react/eslint-plugin";
+import jsxA11y from "eslint-plugin-jsx-a11y-x";
+import sonarjs from "eslint-plugin-sonarjs";
 import prettier from "eslint-config-prettier/flat";
+
+// Правила сверх наборов, общие исходникам на TypeScript и на JavaScript: в
+// наборе их нет либо они стоят предупреждением, которое цепочку не роняет.
+// Пороги — первое приближение, и меняют их решением с записью, а не
+// выключением правила.
+const OWN = {
+  complexity: ["error", 10],
+  "max-depth": ["error", 3],
+  "max-params": ["error", 4],
+  "max-nested-callbacks": ["error", 3],
+  "no-param-reassign": "error",
+  // Чётность и половина — законные числа; остальное получает имя (`H7`).
+  "@typescript-eslint/no-magic-numbers": [
+    "error",
+    {
+      ignore: [-1, 0, 1, 2],
+      ignoreEnums: true,
+      ignoreNumericLiteralTypes: true,
+      ignoreReadonlyClassProperties: true,
+      ignoreTypeIndexes: true,
+      ignoreArrayIndexes: true,
+    },
+  ],
+  "react-hooks/exhaustive-deps": "error",
+  "@eslint-react/web-api-no-leaked-event-listener": "error",
+  "@eslint-react/web-api-no-leaked-interval": "error",
+  "@eslint-react/web-api-no-leaked-timeout": "error",
+  "@eslint-react/web-api-no-leaked-resize-observer": "error",
+  "@eslint-react/web-api-no-leaked-intersection-observer": "error",
+  "@eslint-react/web-api-no-leaked-fetch": "error",
+  "@eslint-react/dom-no-dangerously-set-innerhtml": "error",
+  "@eslint-react/dom-no-script-url": "error",
+  "@eslint-react/dom-no-unsafe-iframe-sandbox": "error",
+  "@eslint-react/dom-no-missing-iframe-sandbox": "error",
+  "@eslint-react/dom-no-unsafe-target-blank": "error",
+  "@eslint-react/no-unstable-context-value": "error",
+  "@eslint-react/no-unstable-default-props": "error",
+};
 
 export default tseslint.config(
   {
@@ -82,8 +129,11 @@ export default tseslint.config(
     ignores: ["*.config.{ts,mts,cts}"],
     extends: [
       js.configs.recommended,
-      ...tseslint.configs.recommendedTypeChecked,
+      ...tseslint.configs.strictTypeChecked,
       reactHooks.configs.flat["recommended-latest"],
+      eslintReact.configs["strict-type-checked"],
+      jsxA11y.configs.recommended,
+      sonarjs.configs.recommended,
     ],
     languageOptions: {
       ecmaVersion: 2022,
@@ -95,6 +145,9 @@ export default tseslint.config(
     },
     plugins: { "react-refresh": reactRefresh },
     rules: {
+      ...OWN,
+      "@typescript-eslint/switch-exhaustiveness-check": "error",
+      "@eslint-react/no-unused-props": "error",
       "react-refresh/only-export-components": [
         "warn",
         { allowConstantExport: true },
@@ -123,8 +176,11 @@ export default tseslint.config(
     ignores: ["*.config.{js,mjs,cjs}", "eslint.config.mjs"],
     extends: [
       js.configs.recommended,
-      ...tseslint.configs.recommended,
+      ...tseslint.configs.strict,
       reactHooks.configs.flat["recommended-latest"],
+      eslintReact.configs.strict,
+      jsxA11y.configs.recommended,
+      sonarjs.configs.recommended,
     ],
     languageOptions: {
       ecmaVersion: 2022,
@@ -132,10 +188,36 @@ export default tseslint.config(
     },
     plugins: { "react-refresh": reactRefresh },
     rules: {
+      ...OWN,
       "react-refresh/only-export-components": [
         "warn",
         { allowConstantExport: true },
       ],
+    },
+  },
+
+  // ПРАВИЛА, КОТОРЫЕ УЖЕ ДЕРЖИТ ДРУГОЙ ДЕРЖАТЕЛЬ. Второй держатель того же
+  // печатал бы одно нарушение дважды, а выход, который повторяется, перестают
+  // читать.
+  {
+    rules: {
+      // Маркеры отложенной работы держит сверка «Найденное — исправлено, а не
+      // отложено»: она отличает маркер от его имени в обратных кавычках и
+      // ведёт долг живого кода. Sonar краснел на описании маркера.
+      "sonarjs/todo-tag": "off",
+      "sonarjs/fixme-tag": "off",
+      // Правила компилятора React держит `react-hooks`, официальная
+      // реализация; набор `@eslint-react` несёт их копии.
+      "@eslint-react/rules-of-hooks": "off",
+      "@eslint-react/exhaustive-deps": "off",
+      "@eslint-react/purity": "off",
+      "@eslint-react/set-state-in-effect": "off",
+      "@eslint-react/set-state-in-render": "off",
+      "@eslint-react/static-components": "off",
+      "@eslint-react/no-nested-component-definitions": "off",
+      "@eslint-react/use-memo": "off",
+      "@eslint-react/error-boundaries": "off",
+      "@eslint-react/unsupported-syntax": "off",
     },
   },
 
@@ -181,6 +263,13 @@ export default tseslint.config(
       "react-hooks/globals": "off",
       "react-hooks/refs": "off",
     },
+  },
+
+  // Ожидаемое в тесте пишется литералом: `J13` требует знать его независимо
+  // от проверяемого кода, а имя константы тянуло бы его из кода.
+  {
+    files: ["**/tests/**/*.{ts,tsx,js,jsx}"],
+    rules: { "@typescript-eslint/no-magic-numbers": "off" },
   },
 
   // ПРОЕКТНЫХ ПОСЛАБЛЕНИЙ НЕТ: кода в проекте ещё нет, и гасить нечего.
