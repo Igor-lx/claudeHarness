@@ -15,6 +15,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
 // «к какому файлу относится этот вопрос» должно быть записано ОДИН раз.
@@ -11418,6 +11419,212 @@ const barCatalogLine = () => {
   );
 };
 
+// --- держатель «линт» в своде ----------------------------------------------
+//
+// Строки критериев, которые держит линт (`BAR_LINT`), машина заполняет сама:
+// нарушение правила в файлах кода предмета — «нашлось» с адресом и правилом;
+// правила молчат, исключения на месте нет, а модель о критерии вопроса не
+// задала — «чисто» с опорой на линт. Прежде цепочка краснела на нарушении, а
+// протокол спрашивал о том же сессию, и её «чисто» могло спорить с машиной,
+// не давая признака. Зовут линт проекта — тот же, что гоняет цепочка.
+
+/** Файл кода, который разбирает линт. */
+const BAR_LINTABLE = /\.[cm]?[jt]sx?$/;
+
+/** Разовый скрипт линта: нарушения по файлам и правила, которые конфиг
+ * проекта включает ошибкой для каждого файла. Без второго «чисто» о правиле,
+ * которого конфиг проекта не включает, не стоит ничего. */
+const BAR_LINT_SCRIPT = [
+  'import { pathToFileURL } from "node:url";',
+  "const [entry, ...files] = process.argv.slice(1);",
+  "const { ESLint } = await import(pathToFileURL(entry).href);",
+  "const lint = new ESLint({ cwd: process.cwd(), warnIgnored: false });",
+  "const results = await lint.lintFiles(files);",
+  "const level = (v) => { const r = Array.isArray(v) ? v[0] : v; return { off: 0, warn: 1, error: 2 }[r] ?? r; };",
+  "const enabled = {};",
+  "for (const f of files) {",
+  "  if (await lint.isPathIgnored(f)) continue;",
+  "  const config = await lint.calculateConfigForFile(f);",
+  "  enabled[f] = Object.entries(config.rules ?? {}).filter(([, v]) => level(v) === 2).map(([k]) => k);",
+  "}",
+  "process.stdout.write(JSON.stringify({ enabled, results: results.map((r) => ({ filePath: r.filePath, messages: r.messages.map((m) => ({ ruleId: m.ruleId, severity: m.severity, line: m.line, message: m.message })) })) }));",
+].join(LF);
+
+/** Линт проекта по файлам кода: `{ state, why, files, linted, enabled, hits,
+ * exempt }`. `linted` — файлы, по которым линт ответил; `enabled` — файл →
+ * правила, включённые ошибкой; `hits` — файл → нарушения ошибкой; `exempt` —
+ * файл → строки с точечным исключением и правилами в нём (пустой список — все
+ * правила). Линта нет либо он упал — `недоступен`. */
+const barLintOf = (repoRoot, list) => {
+  const files = list.filter((f) => BAR_LINTABLE.test(f));
+  const none = (why) => ({
+    state: "недоступен",
+    why,
+    files: files.length,
+    linted: new Set(),
+    enabled: new Map(),
+    hits: new Map(),
+    exempt: new Map(),
+  });
+  if (files.length === 0) return none("в предмете нет файлов кода");
+  let entry = null;
+  try {
+    entry = createRequire(path.join(repoRoot, "package.json")).resolve("eslint");
+  } catch {
+    entry = null;
+  }
+  if (entry === null) return none("пакета `eslint` у проекта нет");
+  const run = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", BAR_LINT_SCRIPT, entry, ...files],
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  let report = null;
+  if (run.status === 0) {
+    try {
+      report = JSON.parse(run.stdout);
+    } catch {
+      report = null;
+    }
+  }
+  if (report === null || !Array.isArray(report.results))
+    return none(
+      "линт не отработал: " +
+        (String(run.stderr ?? "").trim().split(LF)[0] || "код " + run.status),
+    );
+  const linted = new Set();
+  const hits = new Map();
+  for (const one of report.results) {
+    linted.add(norm(one.filePath));
+    const found = (one.messages ?? [])
+      .filter((m) => m.severity === 2 && typeof m.ruleId === "string")
+      .map((m) => ({ rule: m.ruleId, line: m.line, words: m.message }));
+    if (found.length > 0) hits.set(norm(one.filePath), found);
+  }
+  const enabled = new Map(
+    Object.entries(report.enabled ?? {}).map(([f, rules]) => [norm(f), new Set(rules)]),
+  );
+  const exempt = new Map();
+  for (const f of files) {
+    const rows = [];
+    readFileSync(f, "utf8")
+      .split(/\r?\n/)
+      .forEach((line, k) => {
+        const m =
+          /(?:\/\/|\/\*)\s*eslint-disable(?:-next-line|-line)?(?![\w-])([^\n]*)/.exec(
+            line,
+          );
+        if (m === null) return;
+        const named = m[1]
+          .replace(/\*\/.*$/, "")
+          .split("--")[0]
+          .split(",")
+          .map((r) => r.trim())
+          .filter((r) => r !== "");
+        rows.push({ line: k + 1, rules: named });
+      });
+    if (rows.length > 0) exempt.set(norm(f), rows);
+  }
+  return {
+    state: "прогнан",
+    why: "",
+    files: files.length,
+    linted,
+    enabled,
+    hits,
+    exempt,
+  };
+};
+
+/** Модель задала о критерии свой вопрос: встала строка признака либо среза,
+ * о которой он спрашивает, либо критерий — архитектурное ядро. Тогда «чисто»
+ * обязано назвать строку модели, и опоры на линт ему мало. */
+const barAskedOf = (c, model) =>
+  barCoreCriterion(c.id) ||
+  [...BAR_SIGNALS, ...BAR_CUTS].some(
+    (one) =>
+      one.ids.includes(c.id) &&
+      model.some(
+        (m) =>
+          m.sort === one.sort &&
+          (one.mark === undefined || [one.mark].flat().includes(m.mark)),
+      ),
+  );
+
+/** Исход строки держателя «линт», который ставит машина, либо `null`: тогда
+ * отвечает сессия — держателя нет, линт недоступен, файл предмета линт не
+ * разобрал, конфиг проекта не включает ошибкой хотя бы одно правило
+ * критерия, правило снято точечным исключением либо модель задала о критерии
+ * свой вопрос. Нарушение ставится всегда: линт его видит, а судьбу выбирает
+ * сессия. */
+const barLintRowOf = ({ lint, c, files, asked }) => {
+  const rules = BAR_LINT[c.id];
+  if (rules === undefined || lint.state !== "прогнан" || files.length === 0)
+    return null;
+  const mine = new Set(files);
+  const hits = [...lint.hits]
+    .filter(([f]) => mine.has(f))
+    .flatMap(([f, list]) =>
+      list.filter((h) => rules.includes(h.rule)).map((h) => ({ ...h, file: f })),
+    );
+  if (hits.length > 0) {
+    const [first] = hits;
+    return {
+      outcome: "нашлось",
+      addr: rel(first.file) + ":" + first.line,
+      what: (
+        "линт: " +
+        first.rule +
+        " — " +
+        first.words +
+        (hits.length > 1 ? "; ещё нарушений `" + (hits.length - 1) + "`" : "")
+      )
+        .split("|")
+        .join("/"),
+    };
+  }
+  const exempted = [...lint.exempt]
+    .filter(([f]) => mine.has(f))
+    .some(([, rows]) =>
+      rows.some(
+        (d) => d.rules.length === 0 || d.rules.some((r) => rules.includes(r)),
+      ),
+    );
+  const unarmed = files.some(
+    (f) =>
+      !lint.linted.has(f) ||
+      rules.some((r) => !(lint.enabled.get(f) ?? new Set()).has(r)),
+  );
+  if (asked || exempted || unarmed) return null;
+  return {
+    outcome: "чисто",
+    addr: "",
+    what:
+      "линт: " +
+      rules.join(", ") +
+      " — нарушений нет; формы вне держателя — на чтении",
+  };
+};
+
+/** Строка печати о держателе «линт»: прогнан ли и сколько строк поставил.
+ * `made` — исходы, которые машина поставила строкам с предметом. */
+const barLintLine = (lint, made) => {
+  if (lint.state !== "прогнан")
+    return (
+      "  линт недоступен: " +
+      lint.why +
+      " — строки держателя «линт» отвечает сессия"
+    );
+  return (
+    "  линт: прогнан по файлам кода предмета — " +
+    lint.files +
+    "; строк держателя «линт» поставил сам — " +
+    made.length +
+    ", из них «нашлось» — " +
+    made.filter((one) => one.outcome === "нашлось").length
+  );
+};
+
 const barSkeletonOf = ({
   kind,
   marks,
@@ -11431,6 +11638,7 @@ const barSkeletonOf = ({
   witnesses = [],
   reads = [],
   salt = "",
+  lintRow = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
@@ -11463,16 +11671,27 @@ const barSkeletonOf = ({
   const outcomeRow = ({ c, subject }) => {
     const none = c.slogan ? "" : noneOf(c, subject);
     // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
-    // замеренная беспредметность берутся заново, остальное — прежнее.
+    // замеренная беспредметность берутся заново, нарушение, которое видит
+    // линт, — тоже, поверх перенесённого «чисто»; остальное — прежнее, а
+    // строку без прежнего исхода заполняет линт, если может.
     const was = said0.get(barKey(c.id, subject));
-    const keep = !c.slogan && none === "" && was !== undefined;
+    const machine =
+      c.slogan || none !== "" || lintRow === null ? null : lintRow(c, subject);
+    const keep =
+      !c.slogan &&
+      none === "" &&
+      was !== undefined &&
+      !(machine?.outcome === "нашлось" && was.outcome !== "нашлось");
+    const made = !keep && machine !== null;
     const outcome = c.slogan
       ? "лозунг"
       : none !== ""
         ? "нет предмета"
         : keep
           ? was.outcome
-          : "";
+          : made
+            ? machine.outcome
+            : "";
     return (
       "| " +
       c.id +
@@ -11487,9 +11706,9 @@ const barSkeletonOf = ({
       " | " +
       outcome +
       " | " +
-      (keep ? was.addr : "") +
+      (keep ? was.addr : made ? machine.addr : "") +
       " | " +
-      (keep ? was.what : none) +
+      (keep ? was.what : made ? machine.what : none) +
       " | " +
       (keep ? was.fate : "") +
       " |"
@@ -11794,6 +12013,7 @@ const barHolesOf = ({
   witnesses = [],
   reads = [],
   salt = "",
+  lintRow = null,
 }) => {
   const holes = [];
   const said = new Map();
@@ -11886,6 +12106,34 @@ const barHolesOf = ({
       );
       continue;
     }
+    // Исход, который спорит с линтом: нарушение, которое линт видит, не
+    // закрывают ни «чистым», ни «починено». Обратное законно: сессия вправе
+    // найти форму, которой правило не видит.
+    const machine = lintRow === null ? null : lintRow(c, subject);
+    if (machine?.outcome === "нашлось" && one.outcome !== "нашлось")
+      holes.push(
+        who +
+          ": линт видит нарушение (" +
+          machine.what +
+          ", " +
+          barQuoted(machine.addr) +
+          "), а исход «" +
+          one.outcome +
+          "»",
+      );
+    if (
+      machine?.outcome === "нашлось" &&
+      one.outcome === "нашлось" &&
+      one.fate === "починено"
+    )
+      holes.push(
+        who +
+          ": «починено», а линт нарушение видит (" +
+          machine.what +
+          ", " +
+          barQuoted(machine.addr) +
+          ")",
+      );
     const known = debtNaming(c, subject);
     if (
       known.length > 0 &&
@@ -12213,6 +12461,7 @@ const barProcess = ({
   baseFiles = null,
   witnesses = [],
   reads = [],
+  lintRow = null,
 }) => {
   const was = barHeader(at);
   const parsedWas = was === null ? null : barRowsOf(was.body);
@@ -12376,6 +12625,7 @@ const barProcess = ({
           carry !== null && was?.salt != null
             ? was.salt
             : randomBytes(4).toString("hex"),
+        lintRow,
       }),
     );
     return {
@@ -12407,6 +12657,7 @@ const barProcess = ({
     witnesses,
     reads,
     salt: was.salt ?? "",
+    lintRow,
   });
   const found = expected
     .map(({ c, subject }) => ({
@@ -12981,6 +13232,19 @@ if (mode === "bar") {
     subject: work,
     neighbours: area.filter((f) => !work.includes(f)),
   });
+  // Держатель «линт»: линт проекта по файлам кода работы. Строки о соседях
+  // и строки по единицам переноса машина не заполняет: предмет правил
+  // словаря — файлы работы, а критериев ядра в словаре нет.
+  const lint = barLintOf(repoRoot, work);
+  const lintFiles = work.filter((f) => BAR_LINTABLE.test(f));
+  const lintRow = (c, s) =>
+    s !== ""
+      ? null
+      : barLintRowOf({ lint, c, files: lintFiles, asked: barAskedOf(c, model) });
+  const lintMade = expected
+    .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
+    .map(({ c, subject: one }) => lintRow(c, one))
+    .filter((one) => one !== null);
   // Правленое для «починено» — всё, что тронула работа, а не один предмет:
   // находку, которую чинит правка конвейера, конфига или записи базы, иначе
   // записать починенной нельзя, и остаются «вопрос» с «отложено» — неправда о
@@ -13010,10 +13274,12 @@ if (mode === "bar") {
     baseFiles: area.map(rel),
     witnesses,
     reads,
+    lintRow,
   });
 
   if (r.state === "напечатан") {
     console.log("=== Свод по планке: протокол напечатан ===");
+    console.log(barLintLine(lint, lintMade));
     if (r.carried > 0)
       console.log(
         "  исходы перенесены: " +
@@ -13099,6 +13365,7 @@ if (mode === "bar") {
       ", файлов: " +
       marks.length,
   );
+  console.log(barLintLine(lint, lintMade));
   if (r.state === "правлен") {
     console.log(
       "  ПЕЧАТЬ НЕ ПОСТАВЛЕНА: протокол уже закрыт и правлен после этого." +

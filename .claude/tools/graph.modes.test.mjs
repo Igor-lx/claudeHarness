@@ -5071,6 +5071,73 @@ describe("чем держится каждый критерий планки", (
 });
 
 /**
+ * Строки критериев, которые держит линт, свод заполняет сам: нарушение —
+ * «нашлось» с адресом и правилом, молчание всех правил критерия — «чисто» с
+ * опорой на линт. Исход сессии, спорящий с линтом, печати не даёт.
+ *
+ * Линт коробка берёт из пакетов посадки, где идут тесты обвязки, — через путь
+ * поиска пакетов, а не ссылкой на их папку: удаление коробки дороги в пакеты
+ * хозяина не имеет. Конфиг коробки — два правила ядра, без плагинов.
+ */
+describe("свод: строки держателя «линт» ставит машина", () => {
+  it("нарушение — «нашлось» без сессии, спор с линтом — дыра, починили — «чисто»", () => {
+    const box = seatEmpty("lint-row-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const withLint = { ...process.env, NODE_PATH: path.join(process.cwd(), "node_modules") };
+      const bar = (env) =>
+        spawnSync(process.execPath, [graph, "bar", "src/app/zzLint.js"], {
+          cwd: box,
+          encoding: "utf8",
+          env,
+        }).stdout;
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const rowOf = (id) =>
+        new RegExp("^\\| " + id + " \\| [^|]+ \\| [^|]+ \\| ([^|]*) \\| ([^|]*) \\| ([^|]*) \\|", "m").exec(
+          fs.readFileSync(protoAt, "utf8"),
+        );
+      fs.writeFileSync(
+        path.join(box, "eslint.config.mjs"),
+        'export default [{ files: ["**/*.js"], rules: { "no-empty": "error", "use-isnan": "error" } }];\n',
+      );
+      const code = path.join(box, "src", "app", "zzLint.js");
+      fs.writeFileSync(
+        code,
+        "export function zz(x) {\n  try {\n    JSON.parse(x);\n  } catch {}\n  return x === NaN ? 0 : 1;\n}\n",
+      );
+      // Нарушение — исход ставит машина, с адресом и правилом.
+      expect(bar(withLint)).toMatch(/линт: прогнан по файлам кода предмета — 1; строк держателя «линт» поставил сам — 2, из них «нашлось» — 2/);
+      const found = rowOf("E1");
+      expect(found?.[1].trim()).toBe("нашлось");
+      expect(found?.[2].trim()).toBe("app/zzLint.js:4");
+      expect(found?.[3]).toContain("линт: no-empty");
+      expect(rowOf("E2")?.[2].trim()).toBe("app/zzLint.js:5");
+      // Сессия закрывает нарушение «чистым» — дыра.
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace(found[0], found[0].replace("| нашлось |", "| чисто |")),
+      );
+      expect(bar(withLint)).toContain("E1: линт видит нарушение (линт: no-empty");
+      // Починили — свод заново. Правила критерия молчат и все включены
+      // ошибкой — «чисто» от машины; у критерия, чьих правил конфиг включает
+      // не все, строка остаётся сессии.
+      fs.writeFileSync(code, "export function zz(x) {\n  return Number.isNaN(x) ? 0 : 1;\n}\n");
+      fs.rmSync(protoAt);
+      bar(withLint);
+      expect(rowOf("E2")?.[1].trim()).toBe("чисто");
+      expect(rowOf("E2")?.[3]).toContain("линт: use-isnan — нарушений нет");
+      expect(rowOf("E1")?.[1].trim()).toBe("");
+      // Линта у проекта нет — строки остаются сессии, и печать это называет.
+      fs.rmSync(protoAt);
+      expect(bar({ ...process.env, NODE_PATH: "" })).toContain("линт недоступен: пакета `eslint` у проекта нет");
+      expect(rowOf("E2")?.[1].trim()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+});
+
+/**
  * Гарантия поведения — то, что продукт обещает пользователю, с тестом,
  * который это держит. Тест закрепляет то, что написал его автор; обещанное
  * не было записано нигде, и снятый тест обещания не ронял ничего.
