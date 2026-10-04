@@ -863,15 +863,23 @@ const ROOT = (() => {
  * `{конфиг типов}` — первый конфиг, по которому звено типов реально
  * проверяет код: в монорепозитории и в раскладке со ссылками это не конфиг
  * корня.
+ * `{решения}`, `{настройки}`, `{документы настроек}` — папки из полей `adr` и
+ * `configDocs`: рецепт сверки, чей предмет задан полем, кладёт поломку туда,
+ * куда смотрит сверка этого проекта. При пустом поле рецепт не исполняется:
+ * режим относит его к беспредметным. Умолчание — форма поля, названная в
+ * семени настройки.
  * `fresh` — ответ свежей посадки, по которой рецепт сверяется статически. */
 const recipeVars = (fresh) => {
-  if (fresh)
-    return {
-      "{узлы}": "src/components",
-      "{исходники}": "src",
-      "{файл кода}": "app/main.tsx",
-      "{конфиг типов}": "tsconfig.json",
-    };
+  const seat = {
+    "{узлы}": "src/components",
+    "{исходники}": "src",
+    "{файл кода}": "app/main.tsx",
+    "{конфиг типов}": "tsconfig.json",
+    "{решения}": "docs/adr",
+    "{настройки}": "src/shared/config",
+    "{документы настроек}": "docs/config",
+  };
+  if (fresh) return seat;
   const repo = norm(path.join(BASE, ".."));
   const layer = (CONFIG.componentsAt ?? ["components"])[0];
   const fromRepo = (at) => path.relative(repo, at).split(path.sep).join("/");
@@ -886,14 +894,25 @@ const recipeVars = (fresh) => {
         mapForm.filter((o) => o === one || o.endsWith("/" + one)).length === 1,
     )
     .sort();
+  const fieldDir = (field, key, name) =>
+    CONFIG[field]?.[key] == null
+      ? seat[name]
+      : fromRepo(path.join(BASE, CONFIG[field][key]));
   return {
     "{узлы}": fromRepo(path.join(ROOT, layer)),
     "{исходники}": fromRepo(SRC_ROOTS[0]),
-    "{файл кода}": single[0] ?? "app/main.tsx",
+    "{файл кода}": single[0] ?? seat["{файл кода}"],
     "{конфиг типов}": (() => {
       const first = typeCheckOptions()[0];
-      return first === undefined ? "tsconfig.json" : fromRepo(first[0]);
+      return first === undefined ? seat["{конфиг типов}"] : fromRepo(first[0]);
     })(),
+    "{решения}": fieldDir("adr", "dir", "{решения}"),
+    "{настройки}": fieldDir("configDocs", "dir", "{настройки}"),
+    "{документы настроек}": fieldDir(
+      "configDocs",
+      "docs",
+      "{документы настроек}",
+    ),
   };
 };
 /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые

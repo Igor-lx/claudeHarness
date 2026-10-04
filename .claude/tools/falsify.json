@@ -693,6 +693,77 @@
       }
     },
     {
+      "section": "Решения адресуемы",
+      "create": {
+        "path": "{решения}/9999-zz-proba.md",
+        "text": "# ADR-9999: проба\n\nРешение, на которое не ссылается никто."
+      }
+    },
+    {
+      "section": "Решения адресуемы",
+      "create": {
+        "path": "{исходники}/zzAdrRef.ts",
+        "text": "// Settled by ADR-9998.\nexport const zzAdrRef = 1;"
+      }
+    },
+    {
+      "section": "Константы настроек описаны",
+      "edits": [
+        {
+          "create": {
+            "path": "{настройки}/zzProba.ts",
+            "text": "export const ZZ_PROBA_LIMIT = 1;\nexport const ZZ_PROBA_DELAY = 2;"
+          }
+        },
+        {
+          "create": {
+            "path": "{документы настроек}/zzProba.md",
+            "text": "# zzProba\n\n| Константа | Что значит |\n| --- | --- |\n| `ZZ_PROBA_LIMIT` | проба |"
+          }
+        }
+      ]
+    },
+    {
+      "section": "Константы настроек описаны",
+      "edits": [
+        {
+          "create": {
+            "path": "{настройки}/zzProba.ts",
+            "text": "export const ZZ_PROBA_LIMIT = 1;"
+          }
+        },
+        {
+          "create": {
+            "path": "{документы настроек}/zzProba.md",
+            "text": "# zzProba\n\n| Константа | Что значит |\n| --- | --- |\n| `ZZ_PROBA_LIMIT` | проба |\n| `ZZ_PROBA_GONE` | снятая настройка |"
+          }
+        }
+      ]
+    },
+    {
+      "section": "Константы настроек описаны",
+      "edits": [
+        {
+          "create": {
+            "path": "{настройки}/zzProba.ts",
+            "text": "export const ZZ_PROBA_LIMIT = 1;"
+          }
+        },
+        {
+          "create": {
+            "path": "{документы настроек}/zzProba.md",
+            "text": "# zzProba\n\n| Константа | Что значит |\n| --- | --- |\n| `ZZ_PROBA_LIMIT` | проба |"
+          }
+        },
+        {
+          "create": {
+            "path": "{документы настроек}/zzOrphan.md",
+            "text": "# zzOrphan\n\n| Константа | Что значит |\n| --- | --- |\n| `ZZ_PROBA_LIMIT` | таблица этого документа снята |"
+          }
+        }
+      ]
+    },
+    {
       "section": "Выключения правил линта",
       "file": "eslint.config.mjs",
       "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };",
