@@ -4090,6 +4090,11 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  run();\n});", "1:тест/без утверждения"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  expect(run()).toBe(1);\n});", ""],
   ["signalsSummary", "src/tests/a.test.ts\nvi.mock(\"./api\");", "1:тест/подмена"],
+  // Пример на каждый вопрос модели: у этих пар его не было ни в одном тесте.
+  ["signalsSummary", "src/a.tsx\nexport const Save = ({ onSave, label }: { onSave: () => void; label: string }) => <button onMouseDown={onSave}>{label}</button>;", "1:доступность/указатель"],
+  ["signalsSummary", "src/a.tsx\nexport const Save = ({ label }: { label: string }) => <button className=\"save loading\">{label}</button>;", "1:доступность/состояние"],
+  ["signalsSummary", "src/a.tsx\nexport const Search = () => <input autoFocus />;", "1:доступность/фокус"],
+  ["signalsSummary", "src/a.ts\nexport const run = (source: string): unknown => eval(source);", "1:вставка/сторонний"],
   ["signalsSummary", "src/tests/a.test.ts\n// the fixture mirrors the reply of the server\nit(\"runs\", () => {\n  expect(run()).toBe(1);\n});", "1:комментарий"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"keys\", () => {\n  expect(key(a)).not.toBe(key(b));\n});", "2:тест/различие"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"view\", () => {\n  expect(view()).toMatchSnapshot();\n});", "2:тест/снимок"],

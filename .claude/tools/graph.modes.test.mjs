@@ -4634,6 +4634,36 @@ describe("признаки по всей планке в модели свода
     }
   });
 
+  it("парная копия и повторённое условие — строками модели", () => {
+    const box = seatEmpty("twin-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      const rule = [
+        "export const zzAllowed = (account: { isAdmin: boolean; isActive: boolean }): boolean => {",
+        "  if (account.isAdmin && account.isActive) return true;",
+        "  return false;",
+        "};",
+        "",
+      ].join("\n");
+      put("src/shared/zzLeft/zzRule.ts", rule);
+      put("src/shared/zzRight/zzRule.ts", rule);
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const was = fs.readFileSync(cfg, "utf8");
+      expect(was.split("  forks: [],").length).toBe(2);
+      fs.writeFileSync(
+        cfg,
+        was.replace("  forks: [],", '  forks: [{ from: "shared/zzLeft", to: "shared/zzRight" }],'),
+      );
+      tool("bar", "shared/zzLeft/zzRule.ts");
+      const rows = modelOf(box);
+      expect(has(rows, "близнец", "", "shared/zzLeft/zzRule.ts")).toBe(true);
+      expect(has(rows, "повтор", "условие", "shared/zzLeft/zzRule.ts:2")).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   it("мутационный замер файла: не мерен, устарел, оставил выживших", () => {
     const box = seatEmpty("mutrow-");
     try {
