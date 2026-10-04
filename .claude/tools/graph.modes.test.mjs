@@ -4830,3 +4830,164 @@ describe("чем держится каждый критерий планки", (
     }
   });
 });
+
+/**
+ * Гарантия поведения — то, что продукт обещает пользователю, с тестом,
+ * который это держит. Тест закрепляет то, что написал его автор; обещанное
+ * не было записано нигде, и снятый тест обещания не ронял ничего.
+ */
+describe("гарантия поведения держится тестом", () => {
+  const putIn = (box) => (rel, text) => {
+    const at = path.join(box, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, text);
+  };
+  const HEAD = "| Гарантия | Род | Что наблюдают | Узлы | Тест |\n| --- | --- | --- | --- | --- |\n";
+  const promise = (box, rows) => {
+    const at = path.join(box, ".context", "05-flows.md");
+    fs.writeFileSync(
+      at,
+      fs.readFileSync(at, "utf8").replace(HEAD, HEAD + rows.map((r) => r + "\n").join("")),
+    );
+  };
+  const badge = (put) => {
+    put(
+      "src/components/ZzBadge/ZzBadge.tsx",
+      'export function ZzBadge({ label }: { label: string }) {\n  return <span>{label}</span>;\n}\n',
+    );
+    put(
+      "src/components/ZzBadge/tests/ZzBadge.test.tsx",
+      'import { it } from "vitest";\nimport { ZzBadge } from "../ZzBadge";\n\nit("zz badge shows its label", () => {\n  ZzBadge({ label: "x" });\n});\n',
+    );
+  };
+  const ROW =
+    "| REQ-1 | должно | на значке видна подпись | `components/ZzBadge/ZzBadge.tsx` | `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label» |";
+
+  it("тест, снятый с гарантии, висящий номер и витрина без гарантии краснеют; верная строка — нет", () => {
+    const box = seatEmpty("garant-");
+    try {
+      const put = putIn(box);
+      badge(put);
+      promise(box, [ROW]);
+      expect(verifyIn(box).get("Гарантия держится тестом")).toBeUndefined();
+
+      // Тест переименован — гарантию не держит ничто.
+      put(
+        "src/components/ZzBadge/tests/ZzBadge.test.tsx",
+        'import { it } from "vitest";\nimport { ZzBadge } from "../ZzBadge";\n\nit("zz badge renders", () => {\n  ZzBadge({ label: "x" });\n});\n',
+      );
+      expect((verifyIn(box).get("Гарантия держится тестом") ?? []).join("\n")).toContain(
+        "REQ-1: в `components/ZzBadge/tests/ZzBadge.test.tsx` нет теста «zz badge shows its label»",
+      );
+      badge(put);
+
+      // Витрина: строка без номера — находка; номер, которого нет в таблице, — тоже.
+      const features = path.join(box, "docs", "FEATURES.md");
+      const was = fs.readFileSync(features, "utf8");
+      fs.writeFileSync(
+        features,
+        was + "\n## Behaviour\n\n- Shows a label on a badge (REQ-1)\n- Glows on hover\n- Blinks twice (REQ-9)\n",
+      );
+      const red = (verifyIn(box).get("Гарантия держится тестом") ?? []).join("\n");
+      expect(red).toContain("строка витрины не называет гарантию REQ-n");
+      expect(red).toContain("REQ-9: в таблице такой нет");
+      expect(red.match(/строка витрины не называет гарантию/g)).toHaveLength(1);
+
+      // Долг гасит строки витрины без номера, а висящий номер — нет: это
+      // запись о том, чего нет, а не неописанное.
+      const config = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        config,
+        fs.readFileSync(config, "utf8").replace("    guarantees: null,", "    guarantees: 1,"),
+      );
+      const owed = (verifyIn(box).get("Гарантия держится тестом") ?? []).join("\n");
+      expect(owed).not.toContain("строка витрины не называет гарантию");
+      expect(owed).toContain("REQ-9: в таблице такой нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("гарантия области и новая возможность — строками модели и вопросами J11 и J12", () => {
+    const box = seatEmpty("garant-bar-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = putIn(box);
+      badge(put);
+      promise(box, [ROW]);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+
+      // Правка узла гарантии и новый компонент рядом.
+      put(
+        "src/components/ZzBadge/ZzBadge.tsx",
+        'export function ZzBadge({ label }: { label: string }) {\n  return <b>{label}</b>;\n}\n',
+      );
+      put(
+        "src/components/ZzChip/ZzChip.tsx",
+        'export function ZzChip({ text }: { text: string }) {\n  return <i>{text}</i>;\n}\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const first = fs.readFileSync(protoAt, "utf8");
+      expect(first).toMatch(
+        /\| гарантия \| `05-flows\.md:\d+` \| REQ-1 \(должно\): на значке видна подпись — узлы в работе: components\/ZzBadge\/ZzBadge\.tsx; тест: components\/ZzBadge\/tests\/ZzBadge\.test\.tsx «zz badge shows its label» \|  \| затронута \|/,
+      );
+      expect(first).toContain(
+        "| гарантия | `components/ZzChip/ZzChip.tsx` | новый файл в слое компонентов — гарантии, называющие узел: нет | новое | новая возможность |",
+      );
+      // Ни «чисто» мимо строк, ни «нет предмета» при них.
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { J11: "чисто |  | тест прогнан | ", J12: "нет предмета |  | ничего нового | " },
+      });
+      const said = tool("bar");
+      expect(said).toMatch(/J11: чисто, а гарантия поведения называет узел этой работы[^:]*: П\d+/);
+      expect(said).toMatch(/J12: нет предмета, а в модели он есть: П\d+/);
+      fs.rmSync(protoAt);
+      tool("bar");
+      const ids = [...fs.readFileSync(protoAt, "utf8").matchAll(/\| (П\d+) \| гарантия \|/g)].map((m) => m[1]);
+      expect(ids).toHaveLength(2);
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          J11: "чисто |  | " + ids[0] + ": тест значка проверяет подпись, и подпись та же | ",
+          J12: "чисто |  | " + ids[1] + ": значок-заготовка, наружу не виден | ",
+        },
+      });
+      const sealed = tool("bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain("гарантии против последнего коммита: без изменений");
+
+      // Сдвиг таблицы печатается под печатью дословно — для отчёта.
+      promise(box, [
+        "| REQ-2 | никогда | у фишки нет пустого текста | `components/ZzChip/ZzChip.tsx` | `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label» |",
+      ]);
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain(
+        "    новая: REQ-2 (никогда) у фишки нет пустого текста; тест `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label»",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

@@ -432,6 +432,7 @@ const SHAPED = {
   qualityScope: ["policy", "table", "heading"],
   skills: ["dir", "table", "heading"],
   promises: ["file", "heading"],
+  guarantees: ["file", "heading"],
 };
 
 /** Поля, которые объектом БЫВАЮТ, но вид их держит не этот список.
@@ -463,6 +464,7 @@ const DEBT_KINDS = [
   "types",
   "lint",
   "markers",
+  "guarantees",
 ];
 const DEBT = CONFIG.debt ?? {};
 const debtOf = (kind) => DEBT[kind] ?? 0;
@@ -4137,6 +4139,7 @@ const QUALITY_MAP_HEADING =
 const CHECK_SECTIONS = [
   "Покрытие карты",
   "Покрытие тестов",
+  "Гарантия держится тестом",
   "Правила направления",
   "Звёздные бочки",
   "Состав бочки в записи карты",
@@ -4323,6 +4326,8 @@ const RECIPE_NEEDS = {
   // рецепт ломает ОБЪЯВЛЕНИЕ, а не проектное содержимое таблицы.
   "Связи мимо графа импортов": "domTables",
   "Находки закрыты": "findings",
+  // Таблицы гарантий нет — ломать нечего: рецепт дописывает строку в неё.
+  "Гарантия держится тестом": "guarantees",
   // Предмет этих четырёх — сам переход, и у проекта без него ломать нечего:
   // все четыре печатают «перехода нет». Прежде их рецепты сами заводили план,
   // опираясь на строку `transition: null`, — и у живого проекта сразу после
@@ -8185,6 +8190,7 @@ const QUESTION_SORTS = new Set([
   "постоянный",
   "зависимость",
   "приглушение",
+  "гарантия",
 ]);
 
 /** Проект объявил порядок слоёв каскада: лист вне слоя тогда выигрывает
@@ -8483,6 +8489,7 @@ const SYMPTOM_SORTS = [
         "постоянный",
         "зависимость",
         "приглушение",
+        "гарантия",
       ].includes(sort),
   ),
 ];
@@ -9401,6 +9408,92 @@ const storeWriters = () => {
   return STORE_WRITERS;
 };
 
+/** Гарантии поведения из таблицы базы — строка на гарантию: номер, род,
+ * что наблюдают, узлы и тест. Разбор один на сверку, модель свода и печать:
+ * разойдясь, они спрашивали бы о разном. `text` — вид таблицы, например из
+ * последнего коммита. */
+const guaranteesIn = (text) => {
+  const out = { rows: [], problem: null };
+  if (CONFIG.guarantees == null) return out;
+  const lines = text.split(LF);
+  const at = lines.findIndex(
+    (l) => l.trim() === CONFIG.guarantees.heading.trim(),
+  );
+  if (at < 0) {
+    out.problem = "шапка таблицы не найдена: " + CONFIG.guarantees.heading;
+    return out;
+  }
+  const { rows, problem } = tableAfter(lines, at);
+  if (problem !== null) {
+    out.problem = problem;
+    return out;
+  }
+  rows.forEach((row, k) => {
+    const cells = row
+      .split(/(?<!\\)\|/)
+      .slice(1, -1)
+      .map((c) => c.trim());
+    const test = cells[4] ?? "";
+    out.rows.push({
+      id: cells[0] ?? "",
+      kind: cells[1] ?? "",
+      what: cells[2] ?? "",
+      nodes: [...(cells[3] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+      testPath: /`([^`]+)`/.exec(test)?.[1] ?? null,
+      testName: /«([^»]+)»/.exec(test)?.[1] ?? null,
+      line: at + 3 + k,
+      raw: row.trim(),
+    });
+  });
+  return out;
+};
+let GUARANTEES = null;
+const guarantees = () => {
+  if (GUARANTEES !== null) return GUARANTEES;
+  const at =
+    CONFIG.guarantees == null ? null : path.join(BASE, CONFIG.guarantees.file);
+  GUARANTEES =
+    at === null
+      ? { rows: [], problem: null, at: null }
+      : existsSync(at)
+        ? { ...guaranteesIn(readFileSync(at, "utf8")), at }
+        : { rows: [], problem: "файла нет: " + CONFIG.guarantees.file, at };
+  return GUARANTEES;
+};
+/** Файл, названный гарантией: от корня исходников либо от корня репозитория. */
+const guaranteeAbs = (p) => {
+  const hit = barAbsOf(p);
+  if (hit !== null) return hit;
+  for (const one of [path.join(REPO_AT, p), path.join(ROOT, p)])
+    if (existsSync(one) && statSync(one).isFile()) return norm(one);
+  return null;
+};
+/** Гарантии, которые называют хоть один файл из списка. */
+const guaranteesOver = (list) => {
+  const inList = new Set(list.map(norm));
+  return guarantees().rows.filter((g) =>
+    g.nodes.some((n) => {
+      const f = guaranteeAbs(n);
+      return f !== null && inList.has(norm(f));
+    }),
+  );
+};
+/** Гарантии против последнего коммита: новые, изменённые и снятые. */
+const guaranteeShifts = () => {
+  const { rows, at } = guarantees();
+  if (at === null) return [];
+  const was = guaranteesIn(headTextOf(at) ?? "").rows;
+  const out = [];
+  for (const g of rows) {
+    const before = was.find((one) => one.id === g.id);
+    if (before === undefined) out.push({ how: "новая", g });
+    else if (before.raw !== g.raw) out.push({ how: "изменена", g });
+  }
+  for (const g of was)
+    if (!rows.some((one) => one.id === g.id)) out.push({ how: "снята", g });
+  return out;
+};
+
 /** Сколько единиц переноса среди файлов: второй писатель — вторая ЕДИНИЦА.
  * Два файла одной папки компонента — один владелец: папку переносят целиком. */
 const unitsAmong = (list) => new Set(list.map(unitOf)).size;
@@ -10201,6 +10294,99 @@ const barModelOf = (
     }
   }
 
+  // Гарантии поведения области. Тест закрепляет то, что написал автор;
+  // что продукт обещает, называет таблица гарантий. Строка встаёт у каждой
+  // гарантии, чей узел в предмете либо в его области: работа о ней отвечает,
+  // держит ли её тест обещанное. Новая возможность — новый компонент, новое
+  // имя через вход пакета либо новая строка витрины — получает строку на
+  // задаче изменения: какая гарантия её держит.
+  if (want("гарантия") && CONFIG.guarantees != null) {
+    const { at } = guarantees();
+    const shifts = new Map(
+      change ? guaranteeShifts().map((one) => [one.g.id, one.how]) : [],
+    );
+    const inWork = [...new Set([...focus, ...area])];
+    const named = (g) =>
+      g.nodes
+        .filter((n) => {
+          const f = guaranteeAbs(n);
+          return f !== null && inWork.some((one) => norm(one) === norm(f));
+        })
+        .join(", ");
+    for (const g of guaranteesOver(inWork))
+      add(
+        "гарантия",
+        rel0(at) + ":" + g.line,
+        g.id +
+          " (" +
+          g.kind +
+          "): " +
+          g.what +
+          " — узлы в работе: " +
+          named(g) +
+          "; тест: " +
+          (g.testPath ?? "не назван") +
+          (g.testName === null ? "" : " «" + g.testName + "»"),
+        "затронута",
+        shifts.get(g.id) === "новая"
+          ? "новое"
+          : shifts.get(g.id) === "изменена"
+            ? "изменено"
+            : "",
+      );
+    if (change) {
+      const holders = (f) =>
+        guaranteesOver([f])
+          .map((g) => g.id)
+          .join(", ") || "нет";
+      const layers = CONFIG.componentsAt ?? ["components"];
+      for (const f of focus) {
+        if (!files.includes(f) || isTest(f)) continue;
+        const h = headCode(f);
+        const reasons = [];
+        if (h === null && layers.some((l) => rel(f).startsWith(l + "/")))
+          reasons.push("новый файл в слое компонентов");
+        const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h);
+        const outward =
+          before === null
+            ? []
+            : publicNamesOf(f).names.filter((n) => !before.has(n));
+        if (outward.length)
+          reasons.push("новые имена через вход пакета: " + listCell(outward));
+        if (reasons.length)
+          add(
+            "гарантия",
+            rel(f),
+            reasons.join("; ") + " — гарантии, называющие узел: " + holders(f),
+            "новая возможность",
+            "новое",
+          );
+      }
+      for (const f of docFiles.filter((one) => /(^|\/)FEATURES\.md$/.test(one))) {
+        const was = new Set(
+          (headTextOf(f) ?? "").split(LF).map((line) => line.trim()),
+        );
+        unfenced(readFileSync(f, "utf8"))
+          .split(LF)
+          .forEach((line, i) => {
+            if (!/^\s*([-*+]|[0-9]+[.)])\s+\S/.test(line)) return;
+            if (was.has(line.trim())) return;
+            const cited = line.match(/\bREQ-[0-9]+\b/g) ?? [];
+            add(
+              "гарантия",
+              rel(f) + ":" + (i + 1),
+              "новая строка витрины: " +
+                line.trim().slice(0, 120) +
+                " — гарантия: " +
+                (cited.length ? cited.join(", ") : "не названа"),
+              "новая возможность",
+              "новое",
+            );
+          });
+      }
+    }
+  }
+
   // Каталог проекта — когда правка заводит новое. Второй источник истины и
   // повторённая работа появляются обычно БЕЗ импорта оригинала: новый узел
   // пишут, не зная о старом, и в области по графу старого нет. Поэтому новое
@@ -10505,6 +10691,7 @@ const barFlagsOf = (list, manifestTouched) => {
     list: has(/\.map\(|\.flatMap\(/),
     manifest: manifestTouched,
     forks: (CONFIG.forks ?? []).length > 0,
+    promise: guaranteesOver(list).length > 0,
   })
     .map(([k, v]) => k + "=" + (v ? "1" : "0"))
     .join(",");
@@ -12264,6 +12451,29 @@ if (mode === "bar") {
     "  «чисто»: " + r.reading.clean + "; из них у критериев с формами вне держателя: " +
       r.reading.beyond + " — по этим формам ответ стоит на чтении, а не на модели",
   );
+  // Что продукт обещает, решает разработчик, а не печать: полноту таблицы
+  // гарантий относительно замысла машина не видит. Поэтому сдвиг таблицы
+  // печатается дословно — для отчёта, где его и читают.
+  if (CONFIG.guarantees != null) {
+    const shifts = guaranteeShifts();
+    if (shifts.length) {
+      console.log("  гарантии против последнего коммита — в отчёт дословно:");
+      for (const { how, g } of shifts)
+        console.log(
+          "    " +
+            how +
+            ": " +
+            g.id +
+            " (" +
+            g.kind +
+            ") " +
+            g.what +
+            (g.testPath === null ? "" : "; тест `" + g.testPath + "`") +
+            (g.testName === null ? "" : " «" + g.testName + "»"),
+        );
+    } else if (kind === "на изменение")
+      console.log("  гарантии против последнего коммита: без изменений");
+  }
   console.log("");
   console.log("  Печать говорит: по каждому критерию дан ответ, и дан на этом");
   console.log("  виде предмета. О ВЕРНОСТИ ответа она не говорит ничего —");
@@ -13890,6 +14100,123 @@ if (mode === "verify") {
   debtNote("tests", unnamed.length);
   for (const f of debtList("tests", unnamed)) console.log("    " + rel(f));
   for (const t of goneTests) console.log("    " + t);
+
+  // 6-бис. гарантия поведения держится тестом.
+  //
+  // Тест закрепляет то, что написал его автор, а что продукт ОБЕЩАЕТ, не
+  // записано нигде: прогон с кодом ноль говорит «не сломано то, что
+  // проверяют», и молчит о том, проверяют ли обещанное. Таблица гарантий
+  // называет обещание, его узлы и тест, который его держит, — и тогда
+  // правка узла знает, какое обещание она трогает, а снятый тест
+  // обнаруживается сразу. Витрина называет гарантию каждой строкой:
+  // возможность, которую видит читатель, без теста держится одним
+  // вниманием.
+  const guaranteeDrift = [];
+  const showcaseBare = [];
+  let guaranteeRows = 0;
+  if (CONFIG.guarantees != null) {
+    const { rows, problem, at } = guarantees();
+    guaranteeRows = rows.length;
+    if (problem !== null)
+      guaranteeDrift.push(rel0(at) + " — таблица гарантий: " + problem);
+    const seenIds = new Map();
+    for (const g of rows) {
+      const where = rel0(at) + ":" + g.line + " — " + (g.id || "без номера");
+      if (!/^REQ-[0-9]+$/.test(g.id))
+        guaranteeDrift.push(where + ": номер не в форме REQ-n");
+      else if (seenIds.has(g.id))
+        guaranteeDrift.push(
+          where + ": номер занят строкой " + seenIds.get(g.id),
+        );
+      else seenIds.set(g.id, g.line);
+      if (g.kind !== "должно" && g.kind !== "никогда")
+        guaranteeDrift.push(
+          where + ": род «" + g.kind + "», а бывает «должно» либо «никогда»",
+        );
+      if (g.what === "")
+        guaranteeDrift.push(where + ": не сказано, что наблюдают");
+      if (g.nodes.length === 0)
+        guaranteeDrift.push(where + ": не назван ни один узел");
+      for (const n of g.nodes)
+        if (guaranteeAbs(n) === null)
+          guaranteeDrift.push(where + ": узла `" + n + "` нет на диске");
+      if (g.testPath === null || g.testName === null) {
+        guaranteeDrift.push(
+          where +
+            ": тест не назван — нужен путь в обратных кавычках и имя в «ёлочках»",
+        );
+        continue;
+      }
+      const test = guaranteeAbs(g.testPath);
+      if (test === null)
+        guaranteeDrift.push(
+          where + ": тестового файла `" + g.testPath + "` нет на диске",
+        );
+      else if (!isTest(test))
+        guaranteeDrift.push(where + ": `" + g.testPath + "` — не тест");
+      else if (!readFileSync(test, "utf8").includes(g.testName))
+        guaranteeDrift.push(
+          where +
+            ": в `" +
+            g.testPath +
+            "` нет теста «" +
+            g.testName +
+            "» — снят, переименован или не написан",
+        );
+    }
+    // Номер, названный там, где таблицы нет: в тесте, в документе, в базе.
+    // Снятая гарантия оставляет за собой ссылки, и они продолжают обещать.
+    // Протокол свода не обещает ничего: его печатает режим по таблице.
+    const skip = new Set(
+      [at, CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol)]
+        .filter((one) => one !== null)
+        .map(norm),
+    );
+    const quoting = [
+      ...files.filter(isTest),
+      ...docFiles,
+      ...readdirSync(BASE)
+        .filter((e) => e.endsWith(".md"))
+        .map((e) => norm(path.join(BASE, e))),
+    ].filter((f) => !skip.has(norm(f)));
+    for (const f of [...new Set(quoting)]) {
+      const lines = readFileSync(f, "utf8").split(NEWLINE);
+      lines.forEach((line, i) => {
+        for (const m of line.matchAll(/\bREQ-[0-9]+\b/g))
+          if (!seenIds.has(m[0]))
+            guaranteeDrift.push(
+              rel(f) + ":" + (i + 1) + " — " + m[0] + ": в таблице такой нет",
+            );
+      });
+    }
+    // Строка витрины — пункт списка в документе с именем витрины.
+    for (const f of docFiles.filter((one) => /(^|\/)FEATURES\.md$/.test(one))) {
+      const lines = unfenced(readFileSync(f, "utf8")).split(NEWLINE);
+      lines.forEach((line, i) => {
+        if (/^\s*([-*+]|[0-9]+[.)])\s+\S/.test(line) && !/\bREQ-[0-9]+\b/.test(line))
+          showcaseBare.push(rel(f) + ":" + (i + 1));
+      });
+    }
+  }
+  checkHead("Гарантия держится тестом", {
+    n: guaranteeRows,
+    unit: "гарантий поведения",
+  });
+  if (CONFIG.guarantees == null)
+    console.log("  таблица гарантий не объявлена: сверять нечего");
+  else {
+    console.log(`  расхождений: ${guaranteeDrift.length}`);
+    for (const d of guaranteeDrift) console.log("    " + d);
+    console.log(
+      `  строк витрины без гарантии: ${showcaseBare.length}` +
+        debtTail("guarantees"),
+    );
+    debtNote("guarantees", showcaseBare.length);
+    for (const one of debtList("guarantees", showcaseBare))
+      console.log(
+        "    " + one + " — строка витрины не называет гарантию REQ-n",
+      );
+  }
 
   // 7. правила направления импортов держатся
   // Слой описан путём, запрет — либо путём (сверяется по графу), либо именем
@@ -23574,6 +23901,9 @@ if (mode === "verify") {
     "types",
     "lint",
     "markers",
+    // Строку таблицы переход пишет сразу; остаётся витрина без теста, а
+    // тест — код.
+    "guarantees",
   ]);
   const debtUnplanned =
     (debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
@@ -23622,6 +23952,7 @@ if (mode === "verify") {
     ],
     tongue: ["Язык внутри корня исходников"],
     markers: ["Найденное — исправлено, а не отложено"],
+    guarantees: ["Гарантия держится тестом"],
     // Долг ошибок типов и находок линтера держит не сверка, а звено: его
     // зовут и каноническим именем, и тем, под которым звено живёт в
     // манифесте проекта.
