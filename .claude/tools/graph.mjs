@@ -12218,6 +12218,23 @@ const barProcess = ({
     onBase: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "база").length,
     onSession: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "сессия").length,
     catalog: clean.filter(({ c }) => BAR_CATALOG_CRITERIA.includes(c.id)).length,
+    // «Чисто» на вопросе модели — со строкой, о которой критерий спрашивает,
+    // либо при признаке, который не встал: тогда ответ стоит на том, что
+    // распознаватель ничего не нашёл, и на формах вне держателя.
+    rose: clean.filter(
+      ({ c }) =>
+        barGripOf(c.id + "|" + (c.slogan ? "лозунг" : "")) === "вопрос модели" &&
+        BAR_SIGNALS.some(
+          (one) =>
+            one.ids.includes(c.id) &&
+            parsedWas.model.some(
+              (m) =>
+                m.sort === one.sort &&
+                (one.mark === undefined || [one.mark].flat().includes(m.mark)) &&
+                (one.scope !== "fresh" || m.delta !== ""),
+            ),
+        ),
+    ).length,
     // На чём стоит каждое «чисто»: самая сильная опора его критерия.
     grip: Object.fromEntries(
       BAR_GRIPS.map(([g]) => [
@@ -12881,7 +12898,19 @@ if (mode === "bar") {
   );
   console.log(
     "  «чисто» по самой сильной опоре критерия: " +
-      BAR_GRIPS.map(([g, words]) => words + " — " + r.reading.grip[g]).join("; "),
+      BAR_GRIPS.map(
+        ([g, words]) =>
+          words +
+          " — " +
+          r.reading.grip[g] +
+          (g === "вопрос модели"
+            ? " (строка встала у " +
+              r.reading.rose +
+              ", признак не встал у " +
+              (r.reading.grip[g] - r.reading.rose) +
+              ")"
+            : ""),
+      ).join("; "),
   );
   if (r.reading.catalog > 0)
     console.log(
