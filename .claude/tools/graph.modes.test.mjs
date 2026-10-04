@@ -4842,7 +4842,8 @@ describe("гарантия поведения держится тестом", ()
     fs.mkdirSync(path.dirname(at), { recursive: true });
     fs.writeFileSync(at, text);
   };
-  const HEAD = "| Гарантия | Род | Что наблюдают | Узлы | Тест |\n| --- | --- | --- | --- | --- |\n";
+  const HEAD =
+    "| Гарантия | Род | Что наблюдают | Источник | Узлы | Тест |\n| --- | --- | --- | --- | --- | --- |\n";
   const promise = (box, rows) => {
     const at = path.join(box, ".context", "05-flows.md");
     fs.writeFileSync(
@@ -4861,7 +4862,9 @@ describe("гарантия поведения держится тестом", ()
     );
   };
   const ROW =
-    "| REQ-1 | должно | на значке видна подпись | `components/ZzBadge/ZzBadge.tsx` | `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label» |";
+    "| REQ-1 | должно | на значке видна подпись | разработчик, 2026-10-04 | `components/ZzBadge/ZzBadge.tsx` | `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label» |";
+  // Та же строка с другим источником: остальные графы верны, и красное — о нём.
+  const sourced = (source) => ROW.replace("разработчик, 2026-10-04", source);
 
   it("тест, снятый с гарантии, висящий номер и витрина без гарантии краснеют; верная строка — нет", () => {
     const box = seatEmpty("garant-");
@@ -4870,6 +4873,47 @@ describe("гарантия поведения держится тестом", ()
       badge(put);
       promise(box, [ROW]);
       expect(verifyIn(box).get("Гарантия держится тестом")).toBeUndefined();
+
+      // Источник: не назван, путь, которого нет, решение, которого нет, и
+      // не дата — краснеют; документ, который есть, и задача трекера — нет.
+      const flows = path.join(box, ".context", "05-flows.md");
+      const table = fs.readFileSync(flows, "utf8");
+      const sourceSays = (source) => {
+        fs.writeFileSync(flows, table.replace(ROW, sourced(source)));
+        return (verifyIn(box).get("Гарантия держится тестом") ?? []).join("\n");
+      };
+      expect(sourceSays("")).toContain("REQ-1: источник не назван");
+      expect(sourceSays("так задумано")).toContain("REQ-1: источник не назван");
+      expect(sourceSays("`docs/zz-spec.md`")).toContain(
+        "REQ-1: источника `docs/zz-spec.md` нет на диске",
+      );
+      expect(sourceSays("ADR-7")).toContain("REQ-1: решения ADR-7 нет");
+      expect(sourceSays("разработчик, 2026-02-30")).toContain(
+        "REQ-1: «2026-02-30» — не дата",
+      );
+      // Месяц, которого нет, — не дата, а не обвал сверки.
+      expect(sourceSays("разработчик, 2026-13-45")).toContain(
+        "REQ-1: «2026-13-45» — не дата",
+      );
+      put("docs/zz-spec.md", "# Spec\n\nThe badge shows its label.\n");
+      expect(sourceSays("`docs/zz-spec.md`")).toBe("");
+      expect(sourceSays("#12, `docs/zz-spec.md`")).toBe("");
+      fs.writeFileSync(flows, table);
+
+      // Шапка, объявленная без графы источника, не читается вовсе.
+      const configAt = path.join(box, ".context", "graph.config.mjs");
+      const configWas = fs.readFileSync(configAt, "utf8");
+      fs.writeFileSync(
+        configAt,
+        configWas.replace(
+          "| Гарантия | Род | Что наблюдают | Источник | Узлы | Тест |",
+          "| Гарантия | Род | Что наблюдают | Узлы | Тест |",
+        ),
+      );
+      expect((verifyIn(box).get("Гарантия держится тестом") ?? []).join("\n")).toContain(
+        "таблица гарантий: в объявленной шапке нет граф «Источник»",
+      );
+      fs.writeFileSync(configAt, configWas);
 
       // Тест переименован — гарантию не держит ничто.
       put(
@@ -4948,7 +4992,7 @@ describe("гарантия поведения держится тестом", ()
       tool("bar");
       const first = fs.readFileSync(protoAt, "utf8");
       expect(first).toMatch(
-        /\| гарантия \| `05-flows\.md:\d+` \| REQ-1 \(должно\): на значке видна подпись — узлы в работе: components\/ZzBadge\/ZzBadge\.tsx; тест: components\/ZzBadge\/tests\/ZzBadge\.test\.tsx «zz badge shows its label» \|  \| затронута \|/,
+        /\| гарантия \| `05-flows\.md:\d+` \| REQ-1 \(должно\): на значке видна подпись — источник: разработчик, 2026-10-04; узлы в работе: components\/ZzBadge\/ZzBadge\.tsx; тест: components\/ZzBadge\/tests\/ZzBadge\.test\.tsx «zz badge shows its label» \|  \| затронута \|/,
       );
       expect(first).toContain(
         "| гарантия | `components/ZzChip/ZzChip.tsx` | новый файл в слое компонентов — гарантии, называющие узел: нет | новое | новая возможность |",
@@ -4978,13 +5022,13 @@ describe("гарантия поведения держится тестом", ()
 
       // Сдвиг таблицы печатается под печатью дословно — для отчёта.
       promise(box, [
-        "| REQ-2 | никогда | у фишки нет пустого текста | `components/ZzChip/ZzChip.tsx` | `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label» |",
+        "| REQ-2 | никогда | у фишки нет пустого текста | #41 | `components/ZzChip/ZzChip.tsx` | `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label» |",
       ]);
       fs.rmSync(protoAt);
       tool("bar");
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(tool("bar")).toContain(
-        "    новая: REQ-2 (никогда) у фишки нет пустого текста; тест `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label»",
+        "    новая: REQ-2 (никогда) у фишки нет пустого текста; источник: #41; тест `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label»",
       );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });

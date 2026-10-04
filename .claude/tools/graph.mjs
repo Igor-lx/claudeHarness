@@ -9484,17 +9484,75 @@ const storeEndOf = (key) => {
   return all.length ? { how: "очисткой хранилища", by: all } : { how: "", by: [] };
 };
 
+/** Графы таблицы гарантий — по имени в шапке, а не по месту: шапку
+ * объявляет настройка дословно, и порядок граф — её дело. Графа, которой в
+ * объявленной шапке нет, делает таблицу нечитаемой целиком: строка без неё
+ * не говорит ни откуда обещание, ни чем оно держится. */
+const GUARANTEE_COLUMNS = {
+  id: "Гарантия",
+  kind: "Род",
+  what: "Что наблюдают",
+  source: "Источник",
+  nodes: "Узлы",
+  test: "Тест",
+};
+/** Источник гарантии — откуда обещание взято. Формы закрыты: путь в
+ * обратных кавычках (документ, спецификация), номер решения `ADR-n`, задача
+ * трекера `#n` либо адрес `https://…` и слово разработчика с датой —
+ * «разработчик, ГГГГ-ММ-ДД». Номер и адрес в обратных кавычках путём не
+ * считаются: это та же форма, взятая в кавычки. */
+const guaranteeSourcesOf = (cell) => {
+  const out = { paths: [], decisions: [], issues: [], links: [], words: [] };
+  const take = (piece) => {
+    for (const m of piece.matchAll(/\bADR[-\s](\d+)/g))
+      out.decisions.push(Number(m[1]));
+    for (const m of piece.matchAll(/(?:^|[\s,;(])#(\d+)\b/g))
+      out.issues.push(m[1]);
+    for (const m of piece.matchAll(/https?:\/\/[^\s`|]+/g)) out.links.push(m[0]);
+    for (const m of piece.matchAll(
+      /(?:разработчик|developer),\s*(\d{4}-\d{2}-\d{2})/gi,
+    ))
+      out.words.push(m[1]);
+  };
+  take(cell.replace(/`[^`]*`/g, " "));
+  for (const m of cell.matchAll(/`([^`]+)`/g)) {
+    const one = m[1].trim();
+    if (/^(ADR[-\s]\d+|#\d+|https?:\/\/\S+)$/.test(one)) take(" " + one);
+    else out.paths.push(one);
+  }
+  return out;
+};
 /** Гарантии поведения из таблицы базы — строка на гарантию: номер, род,
- * что наблюдают, узлы и тест. Разбор один на сверку, модель свода и печать:
- * разойдясь, они спрашивали бы о разном. `text` — вид таблицы, например из
- * последнего коммита. */
+ * что наблюдают, источник, узлы и тест. Разбор один на сверку, модель свода
+ * и печать: разойдясь, они спрашивали бы о разном. `text` — вид таблицы,
+ * например из последнего коммита. */
 const guaranteesIn = (text) => {
   const out = { rows: [], problem: null };
   if (CONFIG.guarantees == null) return out;
-  const lines = text.split(LF);
-  const at = lines.findIndex(
-    (l) => l.trim() === CONFIG.guarantees.heading.trim(),
+  const heading = CONFIG.guarantees.heading.trim();
+  const titles = heading
+    .split("|")
+    .slice(1, -1)
+    .map((c) => c.trim());
+  const col = Object.fromEntries(
+    Object.entries(GUARANTEE_COLUMNS).map(([key, title]) => [
+      key,
+      titles.indexOf(title),
+    ]),
   );
+  const missing = Object.entries(col)
+    .filter(([, i]) => i < 0)
+    .map(([key]) => "«" + GUARANTEE_COLUMNS[key] + "»");
+  if (missing.length) {
+    out.problem =
+      "в объявленной шапке нет граф " +
+      missing.join(", ") +
+      " — шапка: " +
+      CONFIG.guarantees.heading;
+    return out;
+  }
+  const lines = text.split(LF);
+  const at = lines.findIndex((l) => l.trim() === heading);
   if (at < 0) {
     out.problem = "шапка таблицы не найдена: " + CONFIG.guarantees.heading;
     return out;
@@ -9509,12 +9567,15 @@ const guaranteesIn = (text) => {
       .split(/(?<!\\)\|/)
       .slice(1, -1)
       .map((c) => c.trim());
-    const test = cells[4] ?? "";
+    const cell = (key) => cells[col[key]] ?? "";
+    const test = cell("test");
     out.rows.push({
-      id: cells[0] ?? "",
-      kind: cells[1] ?? "",
-      what: cells[2] ?? "",
-      nodes: [...(cells[3] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+      id: cell("id"),
+      kind: cell("kind"),
+      what: cell("what"),
+      source: cell("source"),
+      sources: guaranteeSourcesOf(cell("source")),
+      nodes: [...cell("nodes").matchAll(/`([^`]+)`/g)].map((m) => m[1]),
       testPath: /`([^`]+)`/.exec(test)?.[1] ?? null,
       testName: /«([^»]+)»/.exec(test)?.[1] ?? null,
       line: at + 3 + k,
@@ -10469,7 +10530,9 @@ const barModelOf = (
           g.kind +
           "): " +
           g.what +
-          " — узлы в работе: " +
+          " — источник: " +
+          (g.source === "" ? "не назван" : g.source) +
+          "; узлы в работе: " +
           named(g) +
           "; тест: " +
           (g.testPath ?? "не назван") +
@@ -12720,6 +12783,8 @@ if (mode === "bar") {
             g.kind +
             ") " +
             g.what +
+            "; источник: " +
+            (g.source === "" ? "не назван" : g.source) +
             (g.testPath === null ? "" : "; тест `" + g.testPath + "`") +
             (g.testName === null ? "" : " «" + g.testName + "»"),
         );
@@ -14387,6 +14452,40 @@ if (mode === "verify") {
         );
       if (g.what === "")
         guaranteeDrift.push(where + ": не сказано, что наблюдают");
+      // Источник — откуда обещание взято. Без него таблица держит то, что
+      // записал её автор, и это тот же круг, что у теста: обещание, которое
+      // придумали, а не получили, сверяется само с собой.
+      const src = g.sources;
+      if (
+        src.paths.length +
+          src.decisions.length +
+          src.issues.length +
+          src.links.length +
+          src.words.length ===
+        0
+      )
+        guaranteeDrift.push(
+          where +
+            ": источник не назван — путь в обратных кавычках, ADR-n, #n или адрес, либо «разработчик, ГГГГ-ММ-ДД»",
+        );
+      for (const p of src.paths)
+        if (guaranteeAbs(p) === null)
+          guaranteeDrift.push(where + ": источника `" + p + "` нет на диске");
+      for (const n of src.decisions)
+        if (!adrByNumber.has(n))
+          guaranteeDrift.push(
+            where +
+              ": решения ADR-" +
+              n +
+              (CONFIG.adr == null
+                ? " нет — папка решений не объявлена"
+                : " нет в папке решений"),
+          );
+      for (const d of src.words) {
+        const t = Date.parse(d + "T00:00:00Z");
+        if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== d)
+          guaranteeDrift.push(where + ": «" + d + "» — не дата");
+      }
       if (g.nodes.length === 0)
         guaranteeDrift.push(where + ": не назван ни один узел");
       for (const n of g.nodes)
