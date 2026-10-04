@@ -478,6 +478,31 @@ const citedIds = (text, alone = false) => {
   return out;
 };
 
+/** На чём стоит «чисто»: вход — `основание|П1=база,П2=код,…`, выход —
+ * `база`, если каждая названная им строка модели взята из записи базы,
+ * `сессия`, если каждая дописана сессией, иначе пусто. Строка базы верна,
+ * пока верна запись, — и печать называет, сколько «чисто» стоит только на
+ * таких. */
+export const barRestsOn = (row) => {
+  const cut = row.lastIndexOf("|");
+  const origin = new Map(
+    row
+      .slice(cut + 1)
+      .split(",")
+      .filter(Boolean)
+      .map((one) => {
+        const [mid, from] = one.split("=");
+        return [Number(mid.slice(1)), from];
+      }),
+  );
+  const cited = [...citedIds(row.slice(0, cut))].filter((n) => origin.has(n));
+  if (cited.length === 0) return "";
+  const kinds = new Set(cited.map((n) => origin.get(n)));
+  return kinds.size === 1 && (kinds.has("база") || kinds.has("сессия"))
+    ? [...kinds][0]
+    : "";
+};
+
 /** Чем записан известный дефект, если факт модели им является: пункт долга
  * перехода либо открытая строка реестра находок. Пишется в пометке строки
  * модели после точки: «против правила · долг перехода». */
@@ -3086,6 +3111,11 @@ export const PREDICATE_CASES = [
   ["barCoreCriterion", "H7", false],
   ["barCoreCriterion", "O1-бис", false],
   // --- barNoSubject: беспредметен ли критерий на этой правке ---
+  // --- barRestsOn: «чисто» только на записях базы либо на строках сессии ---
+  ["barRestsOn", "П2: карта говорит, что узел про одно|П1=код,П2=база", "база"],
+  ["barRestsOn", "П1, П2: граф и карта сходятся|П1=код,П2=база", ""],
+  ["barRestsOn", "П3: дописал сам|П1=код,П3=сессия", "сессия"],
+  ["barRestsOn", "проверено чтением|П1=база", ""],
   ["barNoSubject", "D1|code=0,style=1", "файла кода в предмете правки нет"],
   ["barNoSubject", "J11|code=1,promise=0", "ни одна гарантия поведения не называет узел этой области"],
   ["barNoSubject", "J11|code=1,promise=1", ""],

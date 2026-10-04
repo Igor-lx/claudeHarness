@@ -25,6 +25,7 @@ import {
   barNoSubject,
   barCoreCriterion,
   barModelFault,
+  barRestsOn,
   barLevelFault,
   barDeltaFault,
   barWitnessFault,
@@ -1544,8 +1545,8 @@ const barRowsOf = (body) => {
     if (/^П[0-9]+$/.test(cells[0])) {
       // Строка модели прежней формы исходом не считается: иначе её номер
       // читался бы критерием, которого в политике нет.
-      if (cells.length !== 7) continue;
-      const [id, sort, where, what, delta, mark, release] = cells;
+      if (cells.length !== 8) continue;
+      const [id, sort, where, what, delta, mark, release, origin] = cells;
       model.push({
         id,
         sort,
@@ -1554,6 +1555,7 @@ const barRowsOf = (body) => {
         delta,
         mark,
         release,
+        origin,
       });
       continue;
     }
@@ -9721,7 +9723,15 @@ const barModelOf = (
   const want = (sort) =>
     (only === null || only.has(sort)) &&
     (askedSorts === null || !QUESTION_SORTS.has(sort) || askedSorts.has(sort));
-  const add = (sort, where, what, mark = "", delta = "", release = "") => {
+  const add = (
+    sort,
+    where,
+    what,
+    mark = "",
+    delta = "",
+    release = "",
+    origin = BAR_ORIGIN[sort] ?? "код",
+  ) => {
     if (!want(sort)) return;
     if (
       askedKeys !== null &&
@@ -9738,6 +9748,7 @@ const barModelOf = (
       delta,
       mark,
       release,
+      origin,
     });
   };
   for (const one of lead) add(one.sort, one.where, one.what);
@@ -10090,6 +10101,9 @@ const barModelOf = (
           where,
           "«" + r.what + "»: пишут " + writing.map(rel).join(", "),
           owedMark("да", writing),
+          "",
+          "",
+          "база",
         );
     }
     for (const [key, byFile] of want("писатель") ? writers : []) {
@@ -10489,6 +10503,8 @@ const barModelOf = (
             reasons.join("; ") + " — гарантии, называющие узел: " + holders(f),
             "новая возможность",
             "новое",
+            "",
+            "код",
           );
       }
       for (const f of docFiles.filter((one) => /(^|\/)FEATURES\.md$/.test(one))) {
@@ -10634,7 +10650,18 @@ const barModelCode = (model) =>
  * первой же правке формы, и разошёлся бы молча: переход делают редко. */
 const BAR_HEAD = "| критерий | предмет | о чём | исход | адрес | что | судьба |";
 const BAR_BASE_HEAD = "| файл | база | документация | чем это объяснено |";
-const BAR_MODEL_HEAD = "| модель | вид | где | что | сдвиг | пометка | снятие |";
+const BAR_MODEL_HEAD =
+  "| модель | вид | где | что | сдвиг | пометка | снятие | откуда |";
+/** Откуда строка модели: из кода — граф, признаки текста, распознаватели, —
+ * либо из записи базы — карта, запись о состоянии, таблица гарантий. Строка
+ * базы верна, пока верна запись: сверки держат форму записи, а не её правду.
+ * Строку, которой модель не печатала, дописала сессия. */
+const BAR_ORIGIN = {
+  ответственность: "база",
+  источник: "база",
+  каталог: "база",
+  гарантия: "база",
+};
 const BAR_LEVEL_HEAD = "| уровень | предмет | что на уровне | держится | опора |";
 // Открытая находка — та, что не починена: предложена, отложена, задана
 // вопросом, записана долгом перехода.
@@ -10914,6 +10941,59 @@ const barWitnessSection = (witnesses, carried) => {
 
 /** Скелет протокола. Исходы, снятия, итог и база переносятся из `carried`:
  * правка предмета гасит печать, но не работу. */
+/** Критерии о целом, чьё «чисто» сверяют с каталогом проекта: источники
+ * истины и копии — с записями о состоянии, писатель — с ключами хранилища,
+ * связь — с таблицами связей. */
+const BAR_CATALOG_CRITERIA = ["A6", "C7", "C16", "C6-бис", "A13"];
+/** Каталоги и их полнота: записи о состоянии против файлов, где код держит
+ * состояние, ключи хранилища против записей о них, строки таблиц связей.
+ * «Чисто» по каталогу, в котором код показывает незаписанное, стоит на
+ * чтении, а не на каталоге, — протокол и печать это называют. */
+let BAR_CATALOGS = null;
+const barCatalogs = () => {
+  if (BAR_CATALOGS !== null) return BAR_CATALOGS;
+  const stateFiles = files.filter(
+    (f) => !isTest(f) && BRIEF_SUBJECTS.state.test(readFileSync(f, "utf8")),
+  );
+  const keys = [...storeWriters().keys()];
+  const recorded = keys.filter((key) => {
+    const literal = key.slice(key.indexOf("«") + 1, -1);
+    const kind = WRITER_KINDS.find((one) => key.startsWith(one.kind + " «"));
+    return stateRecords().some(
+      (r) => r.what.includes("`" + literal + "`") && kind.named.test(r.what),
+    );
+  });
+  BAR_CATALOGS = {
+    records: stateRecords().length,
+    stateFiles: stateFiles.length,
+    unrecorded: stateFiles.filter((f) =>
+      owedFor(f).some((o) => o.subject === "state"),
+    ).length,
+    keys: keys.length,
+    recordedKeys: recorded.length,
+    links: CONFIG.domTables == null ? null : linkEnds().length,
+  };
+  return BAR_CATALOGS;
+};
+const barCatalogLine = () => {
+  const c = barCatalogs();
+  return (
+    "записей о состоянии " +
+    barQuoted(String(c.records)) +
+    ", файлов с состоянием " +
+    barQuoted(String(c.stateFiles)) +
+    ", из них без записи " +
+    barQuoted(String(c.unrecorded)) +
+    "; ключей хранилища " +
+    barQuoted(String(c.keys)) +
+    ", с записью " +
+    barQuoted(String(c.recordedKeys)) +
+    (c.links === null
+      ? "; таблица связей не объявлена"
+      : "; строк таблиц связей " + barQuoted(String(c.links)))
+  );
+};
+
 const barSkeletonOf = ({
   kind,
   marks,
@@ -10949,6 +11029,8 @@ const barSkeletonOf = ({
     m.mark +
     " | " +
     (release0.get(barModelKey(m)) ?? m.release) +
+    " | " +
+    (m.origin ?? "код") +
     " |";
   // Лозунгу исход проставлен заранее: ставить его нечем, и пустая клетка
   // тут означала бы работу, которой не существует. Беспредметное на ЭТОМ
@@ -11094,11 +11176,22 @@ const barSkeletonOf = ({
             "### " + barLevelTitle(level),
             "",
             BAR_MODEL_HEAD,
-            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ...mine.map(modelRow),
             "",
           ];
     }),
+    ...(expected.some(({ c }) => BAR_CATALOG_CRITERIA.includes(c.id))
+      ? [
+          "Каталоги, с которыми сверяют «чисто» о целом (" +
+            BAR_CATALOG_CRITERIA.map((id) => "`" + id + "`").join(", ") +
+            "):",
+          barCatalogLine() +
+            ". Незаписанное в каталоге — его неполнота: «чисто» по нему",
+          "стоит на чтении кода, а не на каталоге, и основание так и говорит.",
+          "",
+        ]
+      : []),
     ...barWitnessSection(witnesses, witness0),
     "## Исходы",
     "",
@@ -11925,9 +12018,21 @@ const barProcess = ({
   const clean = expected.filter(
     ({ c, subject }) => said.get(barKey(c.id, subject))?.outcome === "чисто",
   );
+  // Откуда строки, на которые «чисто» опирается: строка, которой модель не
+  // печатала, — дописанная сессией. «Чисто», чьи строки все из записей
+  // базы, верно ровно настолько, насколько верна база.
+  const madeOrigin = new Map(model.map((m) => [barModelKey(m), m.origin ?? "код"]));
+  const origins = parsedWas.model
+    .map((m) => m.id + "=" + (madeOrigin.get(barModelKey(m)) ?? "сессия"))
+    .join(",");
+  const restsOn = (one) =>
+    barRestsOn((one?.what ?? "").split("\\|").join("/") + "|" + origins);
   const reading = {
     clean: clean.length,
     beyond: clean.filter(({ c }) => BAR_FORMS_SPLIT[c.id]?.forms !== undefined).length,
+    onBase: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "база").length,
+    onSession: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "сессия").length,
+    catalog: clean.filter(({ c }) => BAR_CATALOG_CRITERIA.includes(c.id)).length,
   };
   // Печать уже стоит и сходится с телом — протокол закрыт на этом виде
   // предмета, и повторный зов об этом и говорит. Прежде он отвечал «правлен
@@ -12580,7 +12685,20 @@ if (mode === "bar") {
     "  «чисто»: " + r.reading.clean + "; из них у критериев с формами вне держателя: " +
       r.reading.beyond + " — по этим формам ответ стоит на чтении, а не на модели",
   );
-
+  if (r.reading.catalog > 0)
+    console.log(
+      "  «чисто» о целом по каталогам: " +
+        r.reading.catalog +
+        "; каталоги — " +
+        barCatalogLine().split("`").join(""),
+    );
+  console.log(
+    "  «чисто» с опорой только на записи базы: " +
+      r.reading.onBase +
+      " — верно, пока верна запись: сверки держат её форму, а не правду;" +
+      " только на строках, дописанных сессией: " +
+      r.reading.onSession,
+  );
   // Что продукт обещает, решает разработчик, а не печать: полноту таблицы
   // гарантий относительно замысла машина не видит. Поэтому сдвиг таблицы
   // печатается дословно — для отчёта, где его и читают.

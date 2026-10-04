@@ -1250,7 +1250,7 @@ describe("база о своём: документы узла, сторона т
 /** Критерии вне ядра, о которых спрашивает признак, видимый текстом. */
 /** Строки модели протокола: вид, сдвиг, пометка. */
 const modelRowsIn = (text) =>
-  [...text.matchAll(/^\| П\d+ \| ([^|]+) \|[^|\n]*\|[^\n]*?\| ([^|\n]*) \| ([^|\n]*) \| [^|\n]* \|$/gm)].map(
+  [...text.matchAll(/^\| П\d+ \| ([^|]+) \|[^|\n]*\|[^\n]*?\| ([^|\n]*) \| ([^|\n]*) \| [^|\n]* \| [^|\n]* \|$/gm)].map(
     (m) => ({ sort: m[1].trim(), delta: m[2].trim(), mark: m[3].trim() }),
   );
 /** Критерий, о котором модель спрашивает: строка его вида в модели есть, и
@@ -1345,8 +1345,8 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
         // свидетель: единица — семь граф, объявление — восемь
         const witness = fillWitness(c);
         if (witness !== null) return witness;
-        // строка модели: семь граф
-        if (c.length === 9 && /^ П\d+ $/.test(c[1])) {
+        // строка модели: восемь граф
+        if (c.length === 10 && /^ П\d+ $/.test(c[1])) {
           if (c[2].trim() === "ресурс" && c[7].trim() === "")
             c[7] = c[4].includes("setInterval") || c[3].includes(":4")
               ? " строка 6 "
@@ -1456,7 +1456,7 @@ describe("свод по планке от модели предмета", () => 
         protoAt,
         fs
           .readFileSync(protoAt, "utf8")
-          .replace(/\| нет \|$/gm, "| не нужно: проба |"),
+          .replace(/\| нет \| (код|база|сессия) \|$/gm, "| не нужно: проба | $1 |"),
       );
       const sealed = tool("bar", "app/zzClock.ts");
       expect(sealed).toContain("печать поставлена");
@@ -4529,7 +4529,7 @@ describe("признаки по всей планке в модели свода
       ...fs
         .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
         .matchAll(
-          /^\| П\d+ \| ([^|]+) \| `([^`]*)` \|[^\n]*?\| ([^|\n]*) \| ([^|\n]*) \| [^|\n]* \|$/gm,
+          /^\| П\d+ \| ([^|]+) \| `([^`]*)` \|[^\n]*?\| ([^|\n]*) \| ([^|\n]*) \| [^|\n]* \| [^|\n]* \|$/gm,
         ),
     ].map((m) => ({
       sort: m[1].trim(),
@@ -5172,7 +5172,7 @@ describe("рост стоимости с объёмом данных", () => {
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar");
       expect(fs.readFileSync(protoAt, "utf8")).toContain(
-        "| рост | `app/zzList.tsx:4` | ZzRow из components/ZzRow/ZzRow.tsx — подписка на каждый элемент списка: слушатель события |  | на элемент |  |",
+        "| рост | `app/zzList.tsx:4` | ZzRow из components/ZzRow/ZzRow.tsx — подписка на каждый элемент списка: слушатель события |  | на элемент |  | код |",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -5181,6 +5181,61 @@ describe("рост стоимости с объёмом данных", () => {
       expect(tool("bar")).toMatch(
         /G9: чисто, а работа растёт с объёмом данных, и в основании не назван её рост[^:]*: П\d+/,
       );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+/**
+ * Строка модели называет, откуда она: из кода, из записи базы либо дописана
+ * сессией. Печать называет, сколько «чисто» стоит только на записях базы, и
+ * каталоги, с которыми сверено «чисто» о целом, вместе с их незаписанным.
+ */
+describe("происхождение строк модели и каталоги под печатью", () => {
+  it("строка модели называет, откуда она, а печать — сколько «чисто» стоит на одной базе и каков каталог", () => {
+    const box = seatEmpty("origin-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzTick.tsx"),
+        'import { useState } from "react";\n\nexport function ZzTick() {\n  const [n, setN] = useState(0);\n  return <button onClick={() => setN(n + 1)}>{n}</button>;\n}\n',
+      );
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const MAP_HEAD = "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(MAP_HEAD, MAP_HEAD + "\n| `app/zzTick.tsx` | счётчик нажатий | `n` | нет |"),
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzTick.tsx");
+      const printed = fs.readFileSync(protoAt, "utf8");
+      const resp = /^\| (П\d+) \| ответственность \|[^\n]*\| база \|$/m.exec(printed);
+      expect(resp).not.toBeNull();
+      expect(printed).toMatch(/^\| П\d+ \| состояние \|[^\n]*\| код \|$/m);
+      expect(printed).toContain(
+        "записей о состоянии `0`, файлов с состоянием `1`, из них без записи `1`",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { G8: "чисто |  | " + resp[1] + ": по карте узел ничего не оптимизирует | " },
+      });
+      const sealed = tool("bar", "app/zzTick.tsx");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toMatch(/«чисто» с опорой только на записи базы: 1 —/);
+      expect(sealed).toMatch(/«чисто» о целом по каталогам: [1-9]\d*; каталоги — записей о состоянии 0, файлов с состоянием 1, из них без записи 1/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
