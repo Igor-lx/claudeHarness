@@ -4224,6 +4224,7 @@ const CHECK_SECTIONS = [
   "Архитектурный факт назван записью",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
+  "Запись о состоянии не спорит с кодом",
   "Запись карты не спорит с кодом",
   "Каркас обвязки не лежит в живом проекте",
   "Раздел планки объявлен по своему замеру",
@@ -7707,11 +7708,23 @@ const RESOURCE_KINDS = [
 
 /** Запись во внешнее хранилище: ключ — первый довод вызова. Второй файл,
  * пишущий тот же ключ, — второй писатель одного источника истины, и в
- * строках каждого из двух файлов этого не видно. */
+ * строках каждого из двух файлов этого не видно. Снятие — `drop` по ключу
+ * и `wipe` всего хранилища: запись без снятия живёт, пока жив браузер, и
+ * переживает выход пользователя. */
 const WRITER_KINDS = [
   {
     kind: "хранилище",
     take: /\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|removeItem)\s*\(\s*([^,)]+)/g,
+    drop: /\b(?:localStorage|sessionStorage)\s*\.\s*removeItem\s*\(\s*([^,)]+)/g,
+    wipe: /\b(?:localStorage|sessionStorage)\s*\.\s*clear\s*\(/,
+    named: /localStorage|sessionStorage|хранилищ|storage/i,
+  },
+  {
+    kind: "внешнее хранилище",
+    take: /\blocalforage\s*\.\s*(?:setItem|removeItem)\s*\(\s*([^,)]+)/g,
+    drop: /\blocalforage\s*\.\s*removeItem\s*\(\s*([^,)]+)/g,
+    wipe: /\blocalforage\s*\.\s*clear\s*\(/,
+    named: /localforage|хранилищ|storage/i,
   },
 ];
 
@@ -8191,6 +8204,7 @@ const QUESTION_SORTS = new Set([
   "зависимость",
   "приглушение",
   "гарантия",
+  "хранение",
 ]);
 
 /** Проект объявил порядок слоёв каскада: лист вне слоя тогда выигрывает
@@ -8490,6 +8504,7 @@ const SYMPTOM_SORTS = [
         "зависимость",
         "приглушение",
         "гарантия",
+        "хранение",
       ].includes(sort),
   ),
 ];
@@ -9361,6 +9376,7 @@ const stateRecords = () => {
       owner: cell("владел"),
       writers: cell("кто пиш"),
       readers: cell("кто чит"),
+      life: cell("время"),
       line,
       at: entry.to,
     });
@@ -9368,11 +9384,13 @@ const stateRecords = () => {
   return STATE_ROWS;
 };
 
-/** Писатели внешних хранилищ по ключу: ключ → файл → строка записи. */
-let STORE_WRITERS = null;
-const storeWriters = () => {
-  if (STORE_WRITERS !== null) return STORE_WRITERS;
-  STORE_WRITERS = new Map();
+/** Писатели внешних хранилищ по ключу и снятие записей — одним проходом:
+ * `writers` и `drops` — ключ → файл → строка, `wipes` — род хранилища →
+ * файл → строка очистки целиком. */
+let STORE_FACTS = null;
+const storeFacts = () => {
+  if (STORE_FACTS !== null) return STORE_FACTS;
+  STORE_FACTS = { writers: new Map(), drops: new Map(), wipes: new Map() };
   // Ключ — строкой, как его увидит хранилище: литерал как есть, имя —
   // значением своей константы, в том же файле либо экспортом соседа. Иначе
   // один ключ, названный в одном узле строкой, а в другом константой,
@@ -9389,6 +9407,10 @@ const storeWriters = () => {
     ).exec(text);
     return here !== null ? here[1] : (codeLiteralOf(t) ?? t);
   };
+  const note = (map, key, f, line) => {
+    if (!map.has(key)) map.set(key, new Map());
+    if (!map.get(key).has(f)) map.get(key).set(f, line);
+  };
   for (const f of files) {
     if (isTest(f)) continue;
     const text = codeOf(readFileSync(f, "utf8"));
@@ -9396,16 +9418,27 @@ const storeWriters = () => {
       .split(LF)
       .forEach((line, i) => {
         if (/^\s*(\/\/|\*)/.test(line)) return;
-        for (const kind of WRITER_KINDS)
-          for (const m of line.matchAll(kind.take)) {
-            const key = kind.kind + " «" + keyOf(m[1], text) + "»";
-            if (!STORE_WRITERS.has(key)) STORE_WRITERS.set(key, new Map());
-            if (!STORE_WRITERS.get(key).has(f))
-              STORE_WRITERS.get(key).set(f, i + 1);
-          }
+        for (const kind of WRITER_KINDS) {
+          for (const m of line.matchAll(kind.take))
+            note(STORE_FACTS.writers, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
+          for (const m of line.matchAll(kind.drop))
+            note(STORE_FACTS.drops, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
+          if (kind.wipe.test(line)) note(STORE_FACTS.wipes, kind.kind, f, i + 1);
+        }
       });
   }
-  return STORE_WRITERS;
+  return STORE_FACTS;
+};
+/** Писатели внешних хранилищ по ключу: ключ → файл → строка записи. */
+const storeWriters = () => storeFacts().writers;
+/** Что снимает запись ключа: файлы снятия по ключу либо очистки целиком. */
+const storeEndOf = (key) => {
+  const { drops, wipes } = storeFacts();
+  const byKey = [...(drops.get(key)?.keys() ?? [])];
+  if (byKey.length) return { how: "по ключу", by: byKey };
+  const kind = key.slice(0, key.indexOf(" «"));
+  const all = [...(wipes.get(kind)?.keys() ?? [])];
+  return all.length ? { how: "очисткой хранилища", by: all } : { how: "", by: [] };
 };
 
 /** Гарантии поведения из таблицы базы — строка на гарантию: номер, род,
@@ -10290,6 +10323,38 @@ const barModelOf = (
             ? "; и ещё " + barQuoted(String(beyond.length - RADIUS_SHOWN))
             : ""),
         bare.length > 0 ? "без теста" : "",
+      );
+    }
+  }
+
+  // Конец жизни сохранённого. Запись в хранилище переживает перезагрузку и
+  // выход пользователя; строка называет каждый ключ, который пишет узел
+  // области, его писателей и то, что его снимает. Ключ, который не снимает
+  // никто, несёт пометку `без снятия`: его конец — вопрос к основанию.
+  if (want("хранение")) {
+    const inWork = new Set([...focus, ...area].map(norm));
+    for (const [key, byFile] of storeWriters()) {
+      const mine = [...byFile].filter(([g]) => inWork.has(norm(g)));
+      if (mine.length === 0) continue;
+      const end = storeEndOf(key);
+      const made = mine.some(([g, line]) => {
+        if (!inFocus.has(g)) return false;
+        const was = headLines(g);
+        const now = readFileSync(g, "utf8").split(LF)[line - 1] ?? "";
+        return was !== null && !was.has(now.trim());
+      });
+      add(
+        "хранение",
+        rel(mine[0][0]) + ":" + mine[0][1],
+        key +
+          ": пишут " +
+          [...byFile.keys()].map(rel).sort().join(", ") +
+          "; снимает " +
+          (end.by.length
+            ? end.how + " — " + end.by.map(rel).sort().join(", ")
+            : "никто"),
+        end.by.length ? "" : "без снятия",
+        made ? "новое" : "",
       );
     }
   }
@@ -22193,6 +22258,44 @@ if (mode === "verify") {
     console.log(
       "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
     );
+
+  // Запись о ключе хранилища — не только то, что она есть, но и то, что она
+  // говорит. Соседняя сверка требует назвать файл с предметом хоть где-то в
+  // файле состояния; запись о ключе при этом могла назвать одного писателя
+  // из двух, и второй жил, как будто его нет: по записи правят ключ, не зная,
+  // кто ещё его пишет. Сверяется запись, которая называет ключ: каждый файл,
+  // где код пишет или снимает этот ключ, назван в её графах владельца либо
+  // писателей, и графа времени жизни заполнена — конец записи хранилища
+  // никто, кроме неё, не называет. Запись ключа называет и хранилище:
+  // однофамилец — состояние экрана с тем же именем — ключ не описывает.
+  const stateLies = [];
+  let stateKeys = 0;
+  for (const [key, byFile] of storeWriters()) {
+    const literal = key.slice(key.indexOf("«") + 1, -1);
+    const kind = WRITER_KINDS.find((one) => key.startsWith(one.kind + " «"));
+    const own = stateRecords().filter(
+      (r) => r.what.includes("`" + literal + "`") && kind.named.test(r.what),
+    );
+    if (own.length === 0) continue;
+    stateKeys += 1;
+    const at = own[0].at + " — ключ `" + literal + "`";
+    for (const f of [...byFile.keys()].sort(barByRel))
+      if (!own.some((r) => namesFileIn(r.owner + " " + r.writers, f)))
+        stateLies.push(
+          at +
+            ": код пишет его в `" +
+            rel(f) +
+            "`, а запись этот файл не называет ни владельцем, ни писателем",
+        );
+    if (!own.some((r) => r.life !== ""))
+      stateLies.push(at + ": графа «Время жизни» пуста — конец записи не назван");
+  }
+  checkHead("Запись о состоянии не спорит с кодом", {
+    n: stateKeys,
+    unit: "ключей хранилища с записью",
+  });
+  console.log("  расхождений: " + stateLies.length);
+  for (const one of stateLies) console.log("    " + one);
   checkHead("Запись карты не спорит с кодом", {
     n: mapClaims,
     unit: "отрицаний в графах состояния и эффектов",

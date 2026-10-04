@@ -4991,3 +4991,119 @@ describe("гарантия поведения держится тестом", ()
     }
   }, 300000);
 });
+
+/**
+ * Запись о ключе хранилища — не только то, что она есть, но и то, что она
+ * говорит: каждый файл, где код пишет или снимает ключ, назван в ней, и конец
+ * записи назван графой времени жизни. Ключ, который пишет узел области,
+ * встаёт строкой модели с тем, что его снимает, — вопрос о конце жизни (`K6`).
+ */
+describe("конец жизни сохранённого и запись о состоянии", () => {
+  const putIn = (box) => (rel, text) => {
+    const at = path.join(box, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, text);
+  };
+  const STATE_HEAD =
+    "# Состояние\n\n| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n";
+  const store = (put) =>
+    put(
+      "src/shared/zzStore/zzStore.ts",
+      'export const zzSave = (n: number): void => {\n  localStorage.setItem("zz-count", String(n));\n};\n',
+    );
+
+  it("писатель ключа, которого запись не называет, и пустое время жизни краснеют", () => {
+    const box = seatEmpty("state-rec-");
+    try {
+      const put = putIn(box);
+      store(put);
+      put(
+        "src/app/zzClear.ts",
+        'export const zzClear = (): void => {\n  localStorage.removeItem("zz-count");\n};\n',
+      );
+      const state = (rows) => put(".context/04-state.md", STATE_HEAD + rows.join("\n") + "\n");
+      // Однофамилец — состояние экрана с тем же именем — запись ключа не
+      // подменяет: файл, названный им, писателем ключа не засчитан.
+      state([
+        "| `zz-count` на экране | `src/app/zzClear.ts` | обработчик | подпись | пока смонтирован |",
+        "| ключ `zz-count` в `localStorage` | `src/shared/zzStore/zzStore.ts` | `zzSave` | никто | до вызова очистки |",
+      ]);
+      expect((verifyIn(box).get("Запись о состоянии не спорит с кодом") ?? []).join("\n")).toContain(
+        "ключ `zz-count`: код пишет его в `app/zzClear.ts`, а запись этот файл не называет ни владельцем, ни писателем",
+      );
+      state([
+        "| ключ `zz-count` в `localStorage` | `src/shared/zzStore/zzStore.ts` | `zzSave`; `zzClear` в `src/app/zzClear.ts` | никто | до вызова очистки |",
+      ]);
+      expect(verifyIn(box).get("Запись о состоянии не спорит с кодом")).toBeUndefined();
+      state([
+        "| ключ `zz-count` в `localStorage` | `src/shared/zzStore/zzStore.ts` | `zzSave`; `zzClear` в `src/app/zzClear.ts` | никто |  |",
+      ]);
+      const red = (verifyIn(box).get("Запись о состоянии не спорит с кодом") ?? []).join("\n");
+      expect(red).not.toContain("не называет");
+      expect(red).toContain("графа «Время жизни» пуста — конец записи не назван");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("ключ, который пишет узел области, — строкой хранения и вопросом K6", () => {
+    const box = seatEmpty("store-bar-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = putIn(box);
+      const facts = path.join(box, ".context", "01-facts.md");
+      fs.writeFileSync(
+        facts,
+        fs.readFileSync(facts, "utf8").replace("| K. Внешние данные | нет |", "| K. Внешние данные | да |"),
+      );
+      put("src/shared/zzStore/zzStore.ts", "export const zzSave = (n: number): void => {\n  void n;\n};\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+
+      // Правка заводит ключ, который не снимает никто.
+      store(put);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(
+        "| хранение | `shared/zzStore/zzStore.ts:2` | хранилище «zz-count»: пишут shared/zzStore/zzStore.ts; снимает никто | новое | без снятия |",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { K6: "чисто |  | ключ живёт вечно | " },
+      });
+      expect(tool("bar")).toMatch(
+        /K6: чисто, а в области пишут ключ хранилища, и в основании не сказано, где кончается жизнь записи[^:]*: П\d+/,
+      );
+
+      // Снятие по ключу появилось — пометки нет, а строка называет снимающего.
+      put(
+        "src/shared/zzStore/zzDrop.ts",
+        'export const zzDrop = (): void => {\n  localStorage.removeItem("zz-count");\n};\n',
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /\| хранение \| `shared\/zzStore\/zz(?:Store|Drop)\.ts:2` \| хранилище «zz-count»: пишут shared\/zzStore\/zzDrop\.ts, shared\/zzStore\/zzStore\.ts; снимает по ключу — shared\/zzStore\/zzDrop\.ts \| новое \|  \|/,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

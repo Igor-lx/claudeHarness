@@ -803,6 +803,29 @@
       "replace": "`src/app/App.tsx:4`"
     },
     {
+      "section": "Запись о состоянии не спорит с кодом",
+      "edits": [
+        {
+          "create": {
+            "path": "{исходники}/zzStore.ts",
+            "text": "export const zzSave = (n: number): void => {\n  localStorage.setItem(\"zz-probe\", String(n));\n};\n"
+          }
+        },
+        {
+          "create": {
+            "path": "{исходники}/zzWipe.ts",
+            "text": "export const zzWipe = (): void => {\n  localStorage.removeItem(\"zz-probe\");\n};\n"
+          }
+        },
+        {
+          "create": {
+            "path": ".context/04-state.md",
+            "text": "# Состояние\n\n| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n| ключ `zz-probe` в `localStorage` | `{исходники}/zzStore.ts` | `zzSave` в `{исходники}/zzStore.ts` | никто | до вызова `zzWipe` |\n"
+          }
+        }
+      ]
+    },
+    {
       "section": "Предмет из кода назван в своём файле базы",
       "edits": [
         {
