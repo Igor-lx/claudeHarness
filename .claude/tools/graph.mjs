@@ -20851,6 +20851,24 @@ if (mode === "verify") {
             !text.split(NEWLINE).some((l) => l.trim() === step.after)
           )
             say("якоря дописывания нет в семени — «" + step.after + "»");
+          // Строка, которую рецепт берёт из семени: переименованная в семени,
+          // она не находится, и рецепт молча перестаёт ломать свою сверку.
+          // Замерено переименованием раздела планки в семени фактов.
+          if (step.appendFrom !== undefined) {
+            const fromAt = path.join(REPO, step.appendFrom.seed);
+            if (!existsSync(fromAt))
+              say("семени, из которого рецепт берёт строку, нет — " + step.appendFrom.seed);
+            else if (
+              !readFileSync(fromAt, "utf8")
+                .split(NEWLINE)
+                .some((l) => l.startsWith(step.appendFrom.startsWith))
+            )
+              say(
+                "строки, которую рецепт берёт из семени, нет — «" +
+                  step.appendFrom.startsWith +
+                  "»",
+              );
+          }
         }
       }
     }

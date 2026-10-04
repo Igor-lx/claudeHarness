@@ -146,6 +146,12 @@
       "replace": "\"find\": \"| M. Модель рендера фреймворка | ДА |\""
     },
     {
+      "section": "Рецепт находит место в свежей посадке",
+      "file": ".claude/tools/falsify.json",
+      "find": "\"startsWith\": \"| S. Наблюдаемость и эксплуатация |\"",
+      "replace": "\"startsWith\": \"| S. ZZ-проба |\""
+    },
+    {
       "section": "Сверки, выключенные при живом предмете",
       "file": ".context/graph.config.mjs",
       "find": "  docsIndex: {\n    dir: \"../docs\",\n    table: \"01-facts.md\",\n    heading: \"| Нужно понять | Файл |\",\n  },",
