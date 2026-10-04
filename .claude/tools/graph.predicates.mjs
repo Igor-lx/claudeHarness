@@ -261,6 +261,7 @@ export const barNoSubject = (row) => {
     "J8",
     "J9",
     "J10",
+    "J13",
   ]);
   if (ABOUT_TESTS.has(id) && no("test"))
     return "тестов у предмета правки нет ни одного";
@@ -624,6 +625,7 @@ export const BAR_SIGNALS = [
   // обещанное; новая возможность, видная снаружи, — какая гарантия её держит.
   { ids: ["J11"], sort: "гарантия", mark: "затронута", words: "гарантия поведения называет узел этой работы, и в основании не сказано, держит ли её тест обещанное после работы" },
   { ids: ["J12"], sort: "гарантия", mark: "новая возможность", words: "правка завела возможность, видную снаружи, и в основании не названа гарантия поведения, которая её держит" },
+  { ids: ["J11", "J13"], sort: "гарантия", mark: "тест правлен", words: "работа изменила утверждения теста гарантии, и в основании не сказано, держит ли он прежнее обещание или строка гарантии изменена той же правкой" },
   // Признаки, видимые текстом: строка, где нарушение вероятно. Называют её
   // номером и говорят, почему нарушения нет, — либо это находка.
   { ids: ["H7"], sort: "число", words: "в предмете есть числа без имени, и в основании не сказано, почему они не магические" },
@@ -720,6 +722,10 @@ export const BAR_SIGNALS = [
   { ids: ["J7"], sort: "тест", mark: "подмена", words: "тест подменяет часть системы, и в основании не сказано, что подмена не прячет" },
   { ids: ["J5"], sort: "тест", mark: "различие", words: "тест проверяет «изменилось», и в основании не сказано, различает ли значение" },
   { ids: ["J6"], sort: "тест", mark: "снимок", words: "тест сверяет снимок, и в основании не сказано, наблюдаемое ли это поведение" },
+  // Оракул теста: ожидаемое из самого кода сдвигается вместе с ним, а
+  // утверждение, правленое той же работой, могло быть подогнано под код.
+  { ids: ["J13"], sort: "тест", mark: "ожидание из кода", words: "ожидаемое в тесте взято из проверяемого кода, и в основании не сказано, откуда оно известно независимо от него" },
+  { ids: ["J13"], sort: "тест", mark: "ожидание правлено", words: "работа сняла либо изменила утверждения теста, и в основании не сказано, изменилось ли обещание или тест подогнан под код" },
   { ids: ["O2"], sort: "стиль", mark: "важнее всех", words: "в листе принудительное переопределение, и в основании не сказано почему" },
   { ids: ["O4"], sort: "стиль", mark: "перелом", words: "точка перелома задана числом, и в основании не сказано, что она меняет" },
   { ids: ["O4-тер"], sort: "стиль", mark: "вьюпорт", words: "размер берётся от окна, и в основании не сказано, владеет ли окно этим размером" },
@@ -1296,6 +1302,11 @@ export const BAR_FORMS = {
     "гарантия, чьи узлы за областью работы, — строка встаёт у гарантии, чей узел в предмете либо в его области; дальше спрашивает радиус (`J9-тер`)",
     "тест гарантии есть и назван, но проверяет не обещанное — сверка находит тест по имени, а что он проверяет, решает чтение",
     "обещание, которого нет в таблице гарантий, — модель знает записанные гарантии, а полноту списка относительно замысла проверяет разработчик по отчёту",
+  ],
+  J13: [
+    "ожидаемое, вычисленное заранее в переменную теста либо собранное шаблонной строкой из имён кода, — признак видит имя проекта только в самом доводе утверждения",
+    "ожидаемое из подмены, которую тест настроил сам, и из файла фикстуры — их имена взяты не из кода проекта",
+    "ожидание, изменённое без правки строки утверждения: константа теста, фикстура, довод в соседней строке — сдвиг утверждения ищут по строкам с `expect` и `assert`",
   ],
   J12: [
     "возможность без нового имени через вход пакета, без нового файла в слое компонентов и без новой строки витрины: маршрут, обработчик, настройка, новая ветка в старом файле — строку дают только эти три признака",
@@ -3026,7 +3037,16 @@ const styleSignalsOf = (text, project) => {
 
 /** Признаки тестового файла: тест без утверждения, подмена, проверка
  * «изменилось» и сверка снимка. */
-const testSignalsOf = (text) => {
+/** Утверждения, чей довод — ожидаемое значение. `toThrow` и
+ * `toBeInstanceOf` сюда не входят: класс ошибки и класс значения берут из
+ * проверяемого кода законно — это его имя, а не его ответ. */
+const EXPECTED_MATCHERS =
+  /\.\s*(?:toBe|toEqual|toStrictEqual|toBeCloseTo|toMatchObject|toContain|toContainEqual|toHaveLength|toHaveProperty|toMatch|toHaveBeenCalledWith|toHaveBeenLastCalledWith|toHaveBeenNthCalledWith|toHaveReturnedWith|toBeGreaterThan|toBeGreaterThanOrEqual|toBeLessThan|toBeLessThanOrEqual)\s*\(/g;
+/** Утверждения узла `assert`, где ожидаемое — второй довод. */
+const EXPECTED_ASSERTS =
+  /\bassert\s*\.\s*(?:equal|strictEqual|deepEqual|deepStrictEqual|notEqual|notStrictEqual)\s*\(/g;
+
+const testSignalsOf = (text, own) => {
   const bare = bareCodeOf(text);
   const { hits, at } = signalSink(text);
   for (const m of bare.matchAll(/\b(?:it|test)(?:\s*\.\s*(?:only|concurrent|skip))?\s*\(/g)) {
@@ -3047,6 +3067,32 @@ const testSignalsOf = (text) => {
     at("тест", m.index, m[0].replace(/^\.\s*/, "").replace(/\s*\($/, ""), "различие");
   for (const m of bare.matchAll(/\.\s*toMatch(?:Inline)?Snapshot\s*\(/g))
     at("тест", m.index, "snapshot", "снимок");
+  // Ожидаемое, взятое из проверяемого кода — его функцией либо константой,
+  // — сдвигается вместе с кодом: тест сверяет код с ним самим. Имена
+  // проекта — то, что тест берёт импортом из файлов проекта, не из тестов.
+  if (own !== undefined && own.size > 0) {
+    const ownIn = (arg) => [
+      ...new Set(
+        [...arg.matchAll(/(?<![\w$.])[A-Za-z_$][\w$]*/g)]
+          .map((x) => x[0])
+          .filter((name) => own.has(name)),
+      ),
+    ];
+    for (const re of [EXPECTED_MATCHERS, EXPECTED_ASSERTS]) {
+      re.lastIndex = 0;
+      for (const m of bare.matchAll(re)) {
+        const p = m.index + m[0].length - 1;
+        const q = closeOf(bare, p);
+        if (q < 0) continue;
+        const parts = topLevelParts(bare.slice(p + 1, q), p + 1);
+        const expected =
+          re === EXPECTED_ASSERTS ? parts[1]?.text ?? "" : parts[0]?.text ?? "";
+        const names = ownIn(expected);
+        if (names.length > 0)
+          at("тест", m.index, names.join(", "), "ожидание из кода");
+      }
+    }
+  }
   return hits;
 };
 
@@ -3056,7 +3102,7 @@ const testSignalsOf = (text) => {
  * проекта; `layered` — проект объявил порядок слоёв каскада. */
 export const signalsOf = (file, text, { kind, own, layered }) =>
   kind === "тест"
-    ? testSignalsOf(text)
+    ? testSignalsOf(text, own)
     : kind === "стиль"
       ? styleSignalsOf(text, { layered })
       : codeSignalsOf(file, text, own);
@@ -3923,6 +3969,9 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/tests/a.test.ts\nvi.mock(\"./api\");", "1:тест/подмена"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"keys\", () => {\n  expect(key(a)).not.toBe(key(b));\n});", "2:тест/различие"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"view\", () => {\n  expect(view()).toMatchSnapshot();\n});", "2:тест/снимок"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMIT } from \"../add\";\nexpect(add(1, 2)).toBe(LIMIT);", "2:тест/ожидание из кода"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add } from \"../add\";\nassert.equal(add(1, 2), add(2, 1));", "2:тест/ожидание из кода"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add, Overflow } from \"../add\";\nexpect(add(1, 2)).toBe(3);\nexpect(() => add(1e9, 1e9)).toThrow(Overflow);", ""],
 ];
 
 /**

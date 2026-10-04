@@ -4952,6 +4952,110 @@ describe("гарантия поведения держится тестом", ()
     }
   }, 240000);
 
+  it("оракул теста: ожидание из кода, правленое ожидание и правленый тест гарантии — вопросами J13", () => {
+    const box = seatEmpty("oracle-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = putIn(box);
+      const badgeAt = "src/components/ZzBadge/ZzBadge.tsx";
+      const testAt = "src/components/ZzBadge/tests/ZzBadge.test.tsx";
+      put(
+        badgeAt,
+        'export const ZZ_LABEL = "x";\nexport function ZzBadge({ label }: { label: string }) {\n  return <span>{label}</span>;\n}\n',
+      );
+      const testText = [
+        'import { expect, it } from "vitest";',
+        'import { ZzBadge, ZZ_LABEL } from "../ZzBadge";',
+        "",
+        'it("zz badge shows its label", () => {',
+        // Черта в утверждении: образец строки модели её не несёт.
+        '  expect(ZzBadge({ label: "x" }).props.children || "").toBe("x");',
+        "});",
+        "",
+        'it("zz badge default", () => {',
+        "  expect(ZzBadge({ label: ZZ_LABEL }).props.children).toBe(ZZ_LABEL);",
+        "});",
+        "",
+      ].join("\n");
+      put(testAt, testText);
+      promise(box, [ROW]);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const rowsOf = () =>
+        [
+          ...fs
+            .readFileSync(protoAt, "utf8")
+            .matchAll(
+              /^\| (П\d+) \| ([^|]+?) \| `([^`]*)` \| ([^|]*?) \| ([^|]*?) \| ([^|]*?) \| [^|]*? \| [^|]*? \|$/gm,
+            ),
+        ].map((m) => ({ id: m[1], sort: m[2], where: m[3], what: m[4], delta: m[5], mark: m[6] }));
+
+      // Чтение: ожидаемое из константы проверяемого модуля — строка модели,
+      // и «чисто» по J13, не назвавшее её, — вопрос без ответа.
+      tool("bar", "components/ZzBadge");
+      const fromCode = rowsOf().find((r) => r.sort === "тест" && r.mark === "ожидание из кода");
+      expect(fromCode?.where).toBe("components/ZzBadge/tests/ZzBadge.test.tsx:9");
+      expect(fromCode?.what).toContain("ZZ_LABEL");
+      // Литерал на строке 5 признака не даёт.
+      expect(fromCode?.what).not.toContain("строка 5");
+      fillBar(protoAt, { release: "не нужно: проба", pick: { J13: "чисто |  | тесты в порядке | " } });
+      expect(tool("bar", "components/ZzBadge")).toMatch(
+        /J13: чисто, а ожидаемое в тесте взято из проверяемого кода, и в основании не сказано, откуда оно известно независимо от него: П\d+/,
+      );
+      fs.rmSync(protoAt);
+
+      // Правка: код и ожидание его гарантированного теста сдвинуты вместе.
+      put(
+        badgeAt,
+        'export const ZZ_LABEL = "x";\nexport function ZzBadge({ label }: { label: string }) {\n  return <span>{label.toUpperCase()}</span>;\n}\n',
+      );
+      put(testAt, testText.replace('.toBe("x");', '.toBe("X");'));
+      tool("bar");
+      const rows = rowsOf();
+      const edited = rows.find((r) => r.sort === "тест" && r.mark === "ожидание правлено");
+      expect(edited?.where).toBe("components/ZzBadge/tests/ZzBadge.test.tsx:4");
+      expect(edited?.delta).toBe("изменено");
+      expect(edited?.what).toContain("строка 5 последнего коммита, тест «zz badge shows its label»");
+      const guarded = rows.find((r) => r.sort === "гарантия" && r.mark === "тест правлен");
+      expect(guarded?.what).toContain(
+        "REQ-1 (должно): утверждения теста components/ZzBadge/tests/ZzBadge.test.tsx «zz badge shows its label» изменены этой работой, а строка гарантии — нет",
+      );
+      fillBar(protoAt, { release: "не нужно: проба", pick: { J13: "чисто |  | тесты в порядке | " } });
+      expect(tool("bar")).toMatch(
+        /J13: чисто, а работа изменила утверждения теста гарантии, и в основании не сказано, держит ли он прежнее обещание или строка гарантии изменена той же правкой: П\d+/,
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const sealed = tool("bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain(
+        "    тест правлен: REQ-1 (должно) на значке видна подпись; источник: разработчик, 2026-10-04; тест `components/ZzBadge/tests/ZzBadge.test.tsx` «zz badge shows its label»",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("гарантия области и новая возможность — строками модели и вопросами J11 и J12", () => {
     const box = seatEmpty("garant-bar-");
     try {

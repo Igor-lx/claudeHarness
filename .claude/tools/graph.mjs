@@ -8223,6 +8223,7 @@ const SIGNAL_TITLES = {
   "тест|подмена": "подмена в тесте",
   "тест|различие": "тест проверяет «изменилось»",
   "тест|снимок": "сверка снимка",
+  "тест|ожидание из кода": "ожидаемое взято из проверяемого кода",
   целое: "вход берут целиком ради одного поля",
   дубль: "у числа в файле уже есть имя",
   всегда: "условие истинно либо ложно всегда",
@@ -9615,7 +9616,81 @@ const guaranteesOver = (list) => {
     }),
   );
 };
-/** Гарантии против последнего коммита: новые, изменённые и снятые. */
+/** Строки утверждений: в них стоит ожидаемое. */
+const ASSERTION_LINE = /\bexpect\w*\s*\(|\bassert\w*\s*[.(]|\.\s*should\b/;
+/** Тело теста с этим именем: от вызова `it`/`test` до его закрывающей
+ * скобки; нет такого — `null`. */
+const testBlockOf = (text, name) => {
+  for (const m of text.matchAll(
+    /\b(?:it|test)(?:\s*\.\s*(?:only|concurrent|skip))?\s*\(\s*(["'`])/g,
+  )) {
+    const from = m.index + m[0].length;
+    if (!text.startsWith(name + m[1], from)) continue;
+    const open = text.indexOf("(", m.index);
+    const close = closeOf(text, open);
+    return close < 0 ? text.slice(open) : text.slice(open, close + 1);
+  }
+  return null;
+};
+/** Утверждения теста гарантии изменены против последнего коммита: тест тот
+ * же, строка гарантии та же, а ожидаемое другое. Тест, которого в последнем
+ * коммите не было, правленым не считается — он новый. */
+const guaranteeTestEdited = (g) => {
+  if (g.testPath === null || g.testName === null) return false;
+  const f = guaranteeAbs(g.testPath);
+  if (f === null) return false;
+  const before = testBlockOf(headTextOf(f) ?? "", g.testName);
+  const now = testBlockOf(readFileSync(f, "utf8"), g.testName);
+  if (before === null || now === null) return false;
+  const asserts = (block) =>
+    block
+      .split(LF)
+      .map((l) => l.trim())
+      .filter((l) => ASSERTION_LINE.test(l))
+      .join(LF);
+  return asserts(before) !== asserts(now);
+};
+/** Утверждения тестового файла из последнего коммита, которых в файле
+ * больше нет: строка, имя теста, где она стояла, и строка этого теста в
+ * нынешнем файле. Новый файл — пусто: снимать в нём нечего. */
+const assertionsGoneOf = (t) => {
+  const was = headTextOf(t);
+  if (was === null) return [];
+  const text = readFileSync(t, "utf8");
+  const lines = text.split(LF);
+  const now = new Set(lines.map((l) => l.trim()));
+  const titleAt = (title) => {
+    if (title === "") return 1;
+    const k = lines.findIndex((l) => l.includes(title));
+    return k < 0 ? 1 : k + 1;
+  };
+  const out = [];
+  let title = "";
+  was.split(LF).forEach((line, i) => {
+    const named = /\b(?:it|test)(?:\s*\.\s*\w+)?\s*\(\s*(["'`])(.*?)\1/.exec(line);
+    if (named !== null) title = named[2];
+    const one = line.trim();
+    // Образец идёт в клетку таблицы протокола: черта разломала бы строку.
+    if (ASSERTION_LINE.test(one) && !now.has(one))
+      out.push({
+        line: i + 1,
+        title,
+        sample: one.replace(/[\s;|:]+/g, " ").trim().slice(0, 40),
+        at: titleAt(title),
+      });
+  });
+  return out;
+};
+/** Имена, которые тест берёт импортом из кода проекта: не из тестов и не из
+ * листов стилей. Ожидаемое из них сдвигается вместе с проверяемым кодом. */
+const testOwnOf = (t, text) =>
+  new Set(
+    [...importBindingsOf(t, text)]
+      .filter(([, target]) => !isTest(target) && !styleFiles.includes(target))
+      .map(([name]) => name),
+  );
+/** Гарантии против последнего коммита: новые, изменённые, с правленым
+ * тестом и снятые. */
 const guaranteeShifts = () => {
   const { rows, at } = guarantees();
   if (at === null) return [];
@@ -9625,6 +9700,7 @@ const guaranteeShifts = () => {
     const before = was.find((one) => one.id === g.id);
     if (before === undefined) out.push({ how: "новая", g });
     else if (before.raw !== g.raw) out.push({ how: "изменена", g });
+    else if (guaranteeTestEdited(g)) out.push({ how: "тест правлен", g });
   }
   for (const g of was)
     if (!rows.some((one) => one.id === g.id)) out.push({ how: "снята", g });
@@ -10240,8 +10316,30 @@ const barModelOf = (
         for (const t of [...direct, ...byName]) related.add(t);
       }
     }
-    for (const t of [...related].sort(barByRel))
-      addSignals(t, signalsOf(t, readFileSync(t, "utf8"), { kind: "тест" }));
+    for (const t of [...related].sort(barByRel)) {
+      const text = readFileSync(t, "utf8");
+      addSignals(t, signalsOf(t, text, { kind: "тест", own: testOwnOf(t, text) }));
+      // Утверждения, снятые либо изменённые этой работой: тест, правленый
+      // вместе с кодом, мог быть подогнан под новый ответ.
+      const gone = change ? assertionsGoneOf(t) : [];
+      if (gone.length)
+        add(
+          "тест",
+          rel(t) + ":" + gone[0].at,
+          "утверждения сняты либо изменены против последнего коммита: " +
+            listCell(
+              gone.map(
+                (g) =>
+                  "строка " + g.line + " последнего коммита" +
+                  (g.title === "" ? "" : ", тест «" + g.title + "»") +
+                  " " + barQuoted(g.sample),
+              ),
+              6,
+            ),
+          "ожидание правлено",
+          "изменено",
+        );
+    }
   }
   // Движение без приглушённого варианта — вопрос о проекте целиком: признак
   // ищется по всем листам и всему коду, а не по предмету.
@@ -10521,6 +10619,22 @@ const barModelOf = (
           return f !== null && inWork.some((one) => norm(one) === norm(f));
         })
         .join(", ");
+    for (const g of guarantees().rows) {
+      if (shifts.get(g.id) !== "тест правлен") continue;
+      add(
+        "гарантия",
+        rel0(at) + ":" + g.line,
+        g.id +
+          " (" +
+          g.kind +
+          "): утверждения теста " +
+          (g.testPath ?? "") +
+          (g.testName === null ? "" : " «" + g.testName + "»") +
+          " изменены этой работой, а строка гарантии — нет",
+        "тест правлен",
+        "изменено",
+      );
+    }
     for (const g of guaranteesOver(inWork))
       add(
         "гарантия",
