@@ -4578,6 +4578,7 @@ describe("признаки по всей планке в модели свода
         [
           'import { it, vi } from "vitest";',
           'import { ZzPanel } from "../ZzPanel";',
+          "// the panel is mocked so the list stays empty",
           'vi.mock("../ZzPanel");',
           'it("renders", () => {',
           "  ZzPanel({ items: [] });",
@@ -4601,6 +4602,10 @@ describe("признаки по всей планке в модели свода
         ["тесты", ""],
       ])
         expect(has(rows, sort, mark), sort + "/" + mark).toBe(true);
+      // Тест — тоже код: его комментарий встаёт строкой, как комментарий модуля.
+      expect(
+        has(rows, "комментарий", "", "components/ZzPanel/tests/ZzPanel.test.tsx:3"),
+      ).toBe(true);
       // Раздел стилей объявлен неприменимым: о листе не спросит ни один
       // живой критерий, и строки о нём в модели нет.
       expect(rows.some((r) => r.sort === "стиль")).toBe(false);

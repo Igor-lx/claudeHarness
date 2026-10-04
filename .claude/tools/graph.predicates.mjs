@@ -1239,7 +1239,7 @@ export const BAR_FORMS = {
   H1: [
     "строка без объяснения, кроме условия на длину, — признак видит только сравнение длины с нулём, истинное либо ложное всегда",
   ],
-  H3: "закрыто: строкой модели встаёт каждый ряд комментария кода и листа стилей, и о каждом спрашивает критерий; ответ на четыре вопроса даёт чтение",
+  H3: "закрыто: строкой модели встаёт каждый ряд комментария кода — модуля и теста — и листа стилей, и о каждом спрашивает критерий; ответ на четыре вопроса даёт чтение",
   H4: [
     "мёртвая ветка: условие, ложное всегда по данным, — признаки видят объявление без обращений, строку после возврата, экспорт, которого не берут, и закомментированный код",
     "неиспользуемое внутри функции — признак «мёртвое» видит объявления верхнего уровня",
@@ -2392,6 +2392,21 @@ const COMMAND_QUERY_NAMES =
  *
  * `own` — местные имена, взятые импортом из файлов проекта: создание такого
  * соисполнителя внутри узла — вопрос о его передаче входом. */
+/** Комментарии кода — строкой на каждый ряд: предупреждающий, ставящий
+ * условие вызывающему, объявляющий ограничение. Модуль и тест разбирает один
+ * разбор: правило о комментарии — правило о коде, а тест — тоже код. */
+const commentSignals = (text, line) => {
+  const lines = text.split(NEWLINE);
+  for (const run of (commentRunsOf(text) || "").split(SEP1).filter(Boolean)) {
+    const [, from, , rows] = run.split(SEP2).map((x, k) => (k === 0 ? x : Number(x)));
+    const said = lines.slice(from - 1, from - 1 + rows).join(" ");
+    const sample = said.replace(/^\s*(?:\/\/+|\/\*+|\*)\s*/, "");
+    line("комментарий", from, sample, WARNING_WORDS.test(said) ? "предупреждение" : "");
+    if (OBLIGATION_WORDS.test(said)) line("требование", from, sample);
+    if (CONSTRAINT_MARK.test(said)) line("ограничение", from, sample);
+  }
+};
+
 const codeSignalsOf = (file, text, own) => {
   const bare = bareCodeOf(text);
   const plain = commentlessOf(text);
@@ -2400,7 +2415,6 @@ const codeSignalsOf = (file, text, own) => {
   const each = (re, src, fn) => {
     for (const m of src.matchAll(re)) fn(m);
   };
-  const lines = text.split(NEWLINE);
   const bareLines = bare.split(NEWLINE);
 
   // --- снаружи: сеть, хранилище, адрес, окружение, разбор, сообщения ------
@@ -2598,14 +2612,7 @@ const codeSignalsOf = (file, text, own) => {
   }
 
   // --- комментарии: каждый, предупреждающие, требующие, ограничения --------
-  for (const run of (commentRunsOf(text) || "").split(SEP1).filter(Boolean)) {
-    const [, from, , rows] = run.split(SEP2).map((x, k) => (k === 0 ? x : Number(x)));
-    const said = lines.slice(from - 1, from - 1 + rows).join(" ");
-    const sample = said.replace(/^\s*(?:\/\/+|\/\*+|\*)\s*/, "");
-    line("комментарий", from, sample, WARNING_WORDS.test(said) ? "предупреждение" : "");
-    if (OBLIGATION_WORDS.test(said)) line("требование", from, sample);
-    if (CONSTRAINT_MARK.test(said)) line("ограничение", from, sample);
-  }
+  commentSignals(text, line);
 
   // --- имена: булево без утверждения, сокращения ---------------------------
   const named = new Set();
@@ -3078,7 +3085,7 @@ const EXPECTED_ASSERTS =
 
 const testSignalsOf = (text, own) => {
   const bare = bareCodeOf(text);
-  const { hits, at } = signalSink(text);
+  const { hits, at, line } = signalSink(text);
   for (const m of bare.matchAll(/\b(?:it|test)(?:\s*\.\s*(?:only|concurrent|skip))?\s*\(/g)) {
     const p = m.index + m[0].length - 1;
     const q = closeOf(bare, p);
@@ -3123,6 +3130,7 @@ const testSignalsOf = (text, own) => {
       }
     }
   }
+  commentSignals(text, line);
   return hits;
 };
 
@@ -4011,6 +4019,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  run();\n});", "1:тест/без утверждения"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  expect(run()).toBe(1);\n});", ""],
   ["signalsSummary", "src/tests/a.test.ts\nvi.mock(\"./api\");", "1:тест/подмена"],
+  ["signalsSummary", "src/tests/a.test.ts\n// the fixture mirrors the reply of the server\nit(\"runs\", () => {\n  expect(run()).toBe(1);\n});", "1:комментарий"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"keys\", () => {\n  expect(key(a)).not.toBe(key(b));\n});", "2:тест/различие"],
   ["signalsSummary", "src/tests/a.test.ts\nit(\"view\", () => {\n  expect(view()).toMatchSnapshot();\n});", "2:тест/снимок"],
   ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMIT } from \"../add\";\nexpect(add(1, 2)).toBe(LIMIT);", "2:тест/ожидание из кода"],
