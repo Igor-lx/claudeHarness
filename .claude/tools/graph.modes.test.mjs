@@ -331,6 +331,42 @@ describe("ворота и приведение формата", () => {
   }, 180000);
 });
 
+/**
+ * Страж обхода ворот отвечает хуку среды на каждый вызов Bash. Держит три
+ * вещи: обход останавливается кодом `2` с причиной для модели, обычная
+ * команда проходит, и ответ не зависит от базы проекта — страж разбирается до
+ * её чтения, иначе каждый вызов платил бы за обход дерева.
+ */
+describe("страж обхода ворот", () => {
+  const ask = (cwd, command) =>
+    spawnSync(process.execPath, [path.join(cwd, ".claude", "tools", "graph.mjs"), "guard", "--hook"], {
+      cwd,
+      encoding: "utf8",
+      input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
+    });
+
+  it("останавливает коммит мимо ворот и пропускает обычный", () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    const stopped = ask(home, "git add -A && git commit --no-verify -m x");
+    expect(stopped.status).toBe(2);
+    expect(stopped.stderr).toContain("commit --no-verify");
+    expect(ask(home, 'git commit -m "x"').status).toBe(0);
+  });
+
+  it("отвечает в папке без базы проекта", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "strazh-"));
+    try {
+      fs.cpSync(TOOL_DIR, path.join(box, ".claude", "tools"), {
+        recursive: true,
+      });
+      expect(ask(box, "git -c core.hooksPath=/dev/null commit -m x").status).toBe(2);
+      expect(ask(box, "ls -la").status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");

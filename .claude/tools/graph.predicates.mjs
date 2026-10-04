@@ -4113,6 +4113,26 @@ export const PREDICATE_CASES = [
   ["sandboxEscape", { file: "docs/a.md", rename: "../b.md" }, "../b.md"],
   ["sandboxEscape", { edits: [{ file: "docs/a.md", rename: "../b.md" }] }, ""],
   ["sandboxEscape", { edits: [{ file: "a.md", rename: "../b.md" }] }, "../b.md"],
+  // --- gitHookBypass: обход ворот git в команде оболочки ---
+  ["gitHookBypass", "git commit -m \"fix\"", ""],
+  ["gitHookBypass", "git commit --no-verify -m fix", "commit --no-verify"],
+  ["gitHookBypass", "git commit -nm fix", "commit -n"],
+  ["gitHookBypass", "git commit -am fix", ""],
+  // после ключа с доводом связка кончается: «n» здесь — текст сообщения
+  ["gitHookBypass", "git commit -mn", ""],
+  ["gitHookBypass", "git commit -m \"про --no-verify\"", ""],
+  ["gitHookBypass", "echo git commit --no-verify", ""],
+  ["gitHookBypass", "cd a && git commit -n -m x", "commit -n"],
+  ["gitHookBypass", "HUSKY=0 git -C d commit --no-verify", "commit --no-verify"],
+  ["gitHookBypass", "git -c core.hooksPath=/dev/null commit -m x", "-c core.hooksPath"],
+  ["gitHookBypass", "git -c core.hooksPath=.claude/hooks/git commit -m x", ""],
+  ["gitHookBypass", "git config core.hooksPath .claude/hooks/git", ""],
+  ["gitHookBypass", "git config core.hooksPath /tmp/x", "config core.hooksPath"],
+  ["gitHookBypass", "git config --unset core.hooksPath", "config core.hooksPath"],
+  ["gitHookBypass", "git config --get core.hooksPath", ""],
+  ["gitHookBypass", "git commit -F - <<'EOF'" + NEWLINE + "--no-verify" + NEWLINE + "EOF", ""],
+  ["gitHookBypass", "git commit -m \"$(cat <<'EOF'" + NEWLINE + "-n" + NEWLINE + "EOF" + NEWLINE + ")\"", ""],
+  ["gitHookBypass", "bash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
 ];
 
 /**
@@ -4299,6 +4319,197 @@ export const sandboxEscape = (recipe) => {
     if (step.rename === undefined) continue;
     const from = recipe.edits === undefined ? "" : (step.file ?? "") + "/..";
     if (climbs(from + "/" + step.rename)) return step.rename;
+  }
+  return "";
+};
+
+/** Обход ворот git в команде оболочки — причина, иначе пустая строка.
+ *
+ * Ворота перед коммитом стоят хуком git, и снимает их сама команда:
+ * `commit --no-verify` либо коротко `-n`, подмена `core.hooksPath` ключом
+ * `-c`, запись в эту настройку или её снятие. Разбирается оболочка, а не
+ * подстрока: флаг в тексте сообщения, в доводе `echo` и в теле встроенного
+ * документа командой не является, и запрет на нём учил бы обходить страж.
+ * Команда внутри `sh -c`, `bash -c` и `eval` разбирается тем же порядком.
+ * Запись в настройку пути хуков обвязки законна: её делает посадка.
+ *
+ * Подстановку флага и псевдоним разбор не ловит: страж стоит против обхода по
+ * привычке, а прошедший мимо обход краснит ревизия сводов по истории. */
+export const gitHookBypass = (command) => {
+  const OWN_HOOKS = ".claude/hooks/git";
+  const own = (value) =>
+    value.replace(/^\.\//, "").replace(/\/+$/, "") === OWN_HOOKS;
+  // Тела встроенных документов — данные, а не команды.
+  const kept = [];
+  let until = null;
+  for (const line of String(command).split(NEWLINE)) {
+    if (until !== null) {
+      if (line.trim() === until) until = null;
+      continue;
+    }
+    kept.push(line);
+    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
+    if (doc !== null) until = doc[2];
+  }
+  const body = kept.join(NEWLINE);
+  const commands = [];
+  let words = [];
+  let word = "";
+  let open = false;
+  let quote = null;
+  const endWord = () => {
+    if (open) words.push(word);
+    word = "";
+    open = false;
+  };
+  const endCommand = () => {
+    endWord();
+    if (words.length) commands.push(words);
+    words = [];
+  };
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      else word += ch;
+    } else if (quote === '"') {
+      if (ch === "\\" && i + 1 < body.length) {
+        word += body[i + 1];
+        i += 1;
+      } else if (ch === '"') quote = null;
+      else word += ch;
+    } else if (ch === "\\" && i + 1 < body.length) {
+      word += body[i + 1];
+      open = true;
+      i += 1;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      open = true;
+    } else if (ch === " " || ch === "\t") endWord();
+    else if (";&|()".includes(ch) || ch === NEWLINE) endCommand();
+    else {
+      word += ch;
+      open = true;
+    }
+  }
+  endCommand();
+  const commitBypass = (args) => {
+    const TAKES = "mFCct";
+    const LONG_TAKES = new Set([
+      "--message",
+      "--file",
+      "--author",
+      "--date",
+      "--reuse-message",
+      "--reedit-message",
+      "--fixup",
+      "--squash",
+      "--template",
+      "--cleanup",
+      "--trailer",
+      "--pathspec-from-file",
+    ]);
+    for (let a = 0; a < args.length; a += 1) {
+      const w = args[a];
+      if (w === "--") break;
+      if (w === "--no-verify") return "commit --no-verify";
+      if (w.startsWith("--")) {
+        if (LONG_TAKES.has(w)) a += 1;
+        continue;
+      }
+      if (!w.startsWith("-") || w === "-") continue;
+      for (let c = 1; c < w.length; c += 1) {
+        if (w[c] === "n") return "commit -n";
+        if (TAKES.includes(w[c])) {
+          if (c === w.length - 1) a += 1;
+          break;
+        }
+        if (w[c] === "S" || w[c] === "u") break;
+      }
+    }
+    return "";
+  };
+  const configBypass = (args) => {
+    const VALUED = new Set([
+      "-f",
+      "--file",
+      "--blob",
+      "--type",
+      "--default",
+      "--comment",
+      "--value",
+    ]);
+    const READS = new Set([
+      "--get",
+      "--get-all",
+      "--get-regexp",
+      "--get-urlmatch",
+      "--list",
+      "-l",
+    ]);
+    const UNSETS = new Set(["--unset", "--unset-all"]);
+    const positional = [];
+    let read = false;
+    let unset = false;
+    for (let a = 0; a < args.length; a += 1) {
+      const w = args[a];
+      if (VALUED.has(w)) a += 1;
+      else if (READS.has(w)) read = true;
+      else if (UNSETS.has(w)) unset = true;
+      else if (!w.startsWith("-")) positional.push(w);
+    }
+    let [key, ...rest] = positional;
+    if (key === "get" || key === "list") return "";
+    if (key === "unset") unset = true;
+    if (key === "set" || key === "unset") [key, ...rest] = rest;
+    if (key === undefined || key.toLowerCase() !== "core.hookspath") return "";
+    if (read) return "";
+    if (unset) return "config core.hooksPath";
+    return rest.length > 0 && !own(rest[rest.length - 1])
+      ? "config core.hooksPath"
+      : "";
+  };
+  const VALUED_GLOBAL = new Set([
+    "-C",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--super-prefix",
+    "--attr-source",
+  ]);
+  const OVERRIDE = /^core\.hookspath=(.*)$/i;
+  const check = (ws) => {
+    let k = 0;
+    while (k < ws.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[k])) k += 1;
+    const head = ws[k];
+    if (head === undefined) return "";
+    // Команда внутри оболочки и `eval` — та же команда.
+    if (head === "eval") return gitHookBypass(ws.slice(k + 1).join(" "));
+    if (/^(?:.*\/)?(?:ba|z|da)?sh$/.test(head)) {
+      const at = ws.indexOf("-c", k + 1);
+      return at < 0 || ws[at + 1] === undefined
+        ? ""
+        : gitHookBypass(ws[at + 1]);
+    }
+    if (!/^(?:.*\/)?git$/.test(head)) return "";
+    let j = k + 1;
+    while (j < ws.length && ws[j].startsWith("-")) {
+      const opt = ws[j];
+      if (opt === "-c") {
+        const hit = OVERRIDE.exec(ws[j + 1] ?? "");
+        if (hit !== null && !own(hit[1])) return "-c core.hooksPath";
+        j += 2;
+        continue;
+      }
+      j += VALUED_GLOBAL.has(opt) ? 2 : 1;
+    }
+    if (ws[j] === "commit") return commitBypass(ws.slice(j + 1));
+    if (ws[j] === "config") return configBypass(ws.slice(j + 1));
+    return "";
+  };
+  for (const ws of commands) {
+    const why = check(ws);
+    if (why !== "") return why;
   }
   return "";
 };

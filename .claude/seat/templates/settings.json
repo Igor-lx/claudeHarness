@@ -147,6 +147,15 @@
             "command": "node .claude/tools/graph.mjs transition --hook"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/tools/graph.mjs guard --hook"
+          }
+        ]
       }
     ]
   }

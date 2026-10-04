@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  gitHookBypass,
   sandboxEscape,
   barRowFault,
   barNoSubject,
@@ -279,6 +280,42 @@ const sayLooked = (unit, n) => {
 };
 
 const mode = process.argv[2];
+
+// Страж обхода ворот. Хук среды зовёт его на КАЖДЫЙ вызов Bash, поэтому он
+// отвечает до настройки проекта и обхода дерева: те стоят долей секунды и
+// растут с проектом. С ключом `--hook` читает событие среды и останавливает
+// вызов кодом `2` — текст из stderr среда отдаёт модели; без ключа судит
+// команду из довода. Коммит мимо ворот остаётся разработчику: он делает его
+// сам, если так решил.
+if (mode === "guard") {
+  const hook = process.argv.includes("--hook");
+  let command = "";
+  if (hook && !process.stdin.isTTY)
+    try {
+      const said = JSON.parse(readFileSync(0, "utf8"));
+      if (said?.tool_name === "Bash")
+        command = String(said?.tool_input?.command ?? "");
+    } catch {
+      // Вход не разбирается — значит это не команда, и судить нечего.
+    }
+  else command = process.argv.slice(3).join(" ");
+  const why = gitHookBypass(command);
+  if (hook) {
+    if (why === "") process.exit(0);
+    process.stderr.write(
+      "Обвязка: команда снимает ворота перед коммитом (" +
+        why +
+        ").\n" +
+        "Коммит с кодом идёт через ворота: свод по планке `node .claude/tools/graph.mjs bar`, печать, затем обычный `git commit`.\n" +
+        "Коммит мимо ворот делает разработчик сам, если так решил.\n",
+    );
+    process.exit(2);
+  }
+  console.log("=== Страж обхода ворот ===");
+  sayLooked("команд", command === "" ? 0 : 1);
+  console.log(why === "" ? "  обхода ворот нет" : "    обход ворот: " + why);
+  process.exit(why === "" ? 0 : 1);
+}
 
 if (mode === "env") {
   const here = path.dirname(fileURLToPath(import.meta.url));
