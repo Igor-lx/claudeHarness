@@ -218,6 +218,23 @@ export default tseslint.config(
       "@eslint-react/use-memo": "off",
       "@eslint-react/error-boundaries": "off",
       "@eslint-react/unsupported-syntax": "off",
+      // Копии в наборе sonar: то же нарушение держит правило ядра,
+      // `typescript-eslint`, `react-hooks` либо `@eslint-react`. Каждая пара
+      // проверена посадкой: одно нарушение — две строки.
+      "sonarjs/no-unused-vars": "off",
+      "sonarjs/unused-import": "off",
+      "sonarjs/no-dead-store": "off",
+      "sonarjs/deprecation": "off",
+      "sonarjs/no-array-delete": "off",
+      "sonarjs/no-control-regex": "off",
+      "sonarjs/no-empty-character-class": "off",
+      "sonarjs/no-invalid-regexp": "off",
+      "sonarjs/no-misleading-character-class": "off",
+      "sonarjs/no-regex-spaces": "off",
+      "sonarjs/no-fallthrough": "off",
+      "sonarjs/no-useless-catch": "off",
+      "sonarjs/no-hook-setter-in-body": "off",
+      "sonarjs/jsx-no-leaked-render": "off",
     },
   },
 
