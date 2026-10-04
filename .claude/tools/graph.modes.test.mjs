@@ -4797,6 +4797,67 @@ describe("признаки по всей планке в модели свода
 });
 
 describe("чем держится каждый критерий планки", () => {
+  it("каждый вопрос модели встаёт: журнал строк свода и замер --fired", () => {
+    const box = seatEmpty("fired-");
+    try {
+      const run = (args, env = {}) => {
+        try {
+          return {
+            code: 0,
+            out: execFileSync(
+              process.execPath,
+              [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+              {
+                cwd: box,
+                encoding: "utf8",
+                stdio: ["ignore", "pipe", "pipe"],
+                env: { ...process.env, ...env },
+              },
+            ),
+          };
+        } catch (e) {
+          return { code: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      const logAt = path.join(box, "rows.log");
+      // Журнала нет — замерять нечего, и это красное, а не ноль.
+      const none = run(["bar-hold", "--fired", logAt]);
+      expect(none.code).toBe(1);
+      expect(none.out).toContain("Журнала строк нет");
+
+      // Свод пишет в журнал каждую вставшую строку.
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzNote.ts"),
+        "// the note keeps the reply of the server for the next screen\nexport const zzNote = (text: string): string => text.trim();\n",
+      );
+      run(["bar", "app/zzNote.ts"], { BAR_ROWS_LOG: logAt });
+      expect(fs.readFileSync(logAt, "utf8").split("\n")).toContain("комментарий|");
+
+      // Полный журнал — каждая пара встала.
+      const all = [...BAR_SIGNALS, ...BAR_CUTS].flatMap((one) =>
+        (one.mark === undefined ? [""] : [one.mark].flat()).map((m) => one.sort + "|" + m),
+      );
+      fs.writeFileSync(logAt, all.join("\n") + "\n");
+      const full = run(["bar-hold", "--fired", logAt]);
+      expect(full.code).toBe(0);
+      expect(full.out).toContain("не встали ни разу: 0");
+
+      // Без строк близнеца — его вопрос не встал; пометку «нет» у ресурса
+      // ставит ответ сессии, и её засчитывает вставшая строка ресурса.
+      fs.writeFileSync(
+        logAt,
+        all.filter((one) => !one.startsWith("близнец|") && one !== "ресурс|нет").join("\n") +
+          "\nресурс|\n",
+      );
+      const holed = run(["bar-hold", "--fired", logAt]);
+      expect(holed.code).toBe(1);
+      expect(holed.out).toContain("    A5-бис: близнец|");
+      expect(holed.out).not.toContain("ресурс|нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   it("матрица сходится и краснеет на каждой из восьми поломок", () => {
     const box = seatEmpty("hold-");
     try {

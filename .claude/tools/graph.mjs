@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -51,6 +52,7 @@ import {
   BAR_GRIPS,
   BAR_TIERS,
   testFileBlindOf,
+  PREDICATE_CASES,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -9885,6 +9887,10 @@ const barModelOf = (
       !askedKeys.has(sort + "|" + mark)
     )
       return;
+    // Журнал вставших строк — для замера «каждый вопрос модели встаёт»:
+    // прогон тестов обвязки с этой переменной пишет сюда вид и пометку.
+    if (process.env.BAR_ROWS_LOG)
+      appendFileSync(process.env.BAR_ROWS_LOG, sort + "|" + mark + LF);
     out.push({
       level: MODEL_LEVEL[sort],
       sort,
@@ -13194,6 +13200,53 @@ if (mode === "bar-hold") {
   console.log(
     "  у каждого критерия есть решение, чем он держится, а у машинного — и каких форм держатель не видит",
   );
+  // Встаёт ли каждый вопрос модели: журнал строк, вставших за прогон тестов
+  // обвязки (`BAR_ROWS_LOG`), плюс чистые примеры самопроверки признаков.
+  // Вопрос, не вставший ни разу, не фальсифицирован: матрица относит его к
+  // вопросам модели, а «чисто» по нему стоит ни на чём.
+  if (process.argv[3] === "--fired") {
+    const logAt = process.argv[4] ?? "";
+    if (logAt === "" || !existsSync(logAt)) {
+      console.log("=== Журнала строк нет: " + (logAt || "путь не назван") + " ===");
+      console.log(
+        "  прогнать тесты обвязки с BAR_ROWS_LOG=<файл> и назвать этот файл",
+      );
+      process.exit(1);
+    }
+    const fired = new Set(
+      readFileSync(logAt, "utf8").split(LF).filter((one) => one !== ""),
+    );
+    for (const [fn, , out] of PREDICATE_CASES)
+      if (fn === "signalsSummary" && out !== "")
+        for (const one of out.split(";")) {
+          const [sort, mark = ""] = one.slice(one.indexOf(":") + 1).split("/");
+          fired.add(sort + "|" + mark);
+        }
+    // Пометку, которую ставит ответ сессии, журнал строк не видит: строка
+    // встаёт без неё, а пометка приходит из графы протокола.
+    const SESSION_MARKED = {
+      "ресурс|нет": "ресурс",
+    };
+    const silent = [];
+    let pairs = 0;
+    for (const one of [...BAR_SIGNALS, ...BAR_CUTS])
+      for (const mark of one.mark === undefined ? [null] : [one.mark].flat()) {
+        pairs += 1;
+        const key = one.sort + "|" + (mark ?? "");
+        const rose =
+          mark === null
+            ? [...fired].some((f) => f.startsWith(one.sort + "|"))
+            : fired.has(key) ||
+              (SESSION_MARKED[key] !== undefined &&
+                [...fired].some((f) => f.startsWith(SESSION_MARKED[key] + "|")));
+        if (!rose) silent.push(one.ids.join(", ") + ": " + key);
+      }
+    console.log("=== Встаёт ли каждый вопрос модели ===");
+    console.log("  осмотрено пар «вид|пометка»: " + pairs);
+    console.log("  не встали ни разу: " + silent.length);
+    for (const one of silent) console.log("    " + one);
+    process.exit(silent.length > 0 ? 1 : 0);
+  }
   process.exit(0);
 }
 
