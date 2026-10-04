@@ -47,6 +47,8 @@ import {
   BAR_FORMS_SPLIT,
   barFormsOf,
   barHoldOf,
+  barGripOf,
+  BAR_GRIPS,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -12214,6 +12216,15 @@ const barProcess = ({
     onBase: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "база").length,
     onSession: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "сессия").length,
     catalog: clean.filter(({ c }) => BAR_CATALOG_CRITERIA.includes(c.id)).length,
+    // На чём стоит каждое «чисто»: самая сильная опора его критерия.
+    grip: Object.fromEntries(
+      BAR_GRIPS.map(([g]) => [
+        g,
+        clean.filter(
+          ({ c }) => barGripOf(c.id + "|" + (c.slogan ? "лозунг" : "")) === g,
+        ).length,
+      ]),
+    ),
   };
   // Печать уже стоит и сходится с телом — протокол закрыт на этом виде
   // предмета, и повторный зов об этом и говорит. Прежде он отвечал «правлен
@@ -12865,6 +12876,10 @@ if (mode === "bar") {
   console.log(
     "  «чисто»: " + r.reading.clean + "; из них у критериев с формами вне держателя: " +
       r.reading.beyond + " — по этим формам ответ стоит на чтении, а не на модели",
+  );
+  console.log(
+    "  «чисто» по самой сильной опоре критерия: " +
+      BAR_GRIPS.map(([g, words]) => words + " — " + r.reading.grip[g]).join("; "),
   );
   if (r.reading.catalog > 0)
     console.log(

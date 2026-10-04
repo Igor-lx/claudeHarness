@@ -5383,6 +5383,16 @@ describe("происхождение строк модели и каталоги
       const sealed = tool("bar", "app/zzTick.tsx");
       expect(sealed).toContain("печать поставлена");
       expect(sealed).toMatch(/«чисто» с опорой только на записи базы: 1 —/);
+      // Каждое «чисто» стоит на самой сильной опоре своего критерия, и
+      // опоры делят все «чисто» без остатка.
+      const total = Number(/«чисто»: (\d+);/.exec(sealed)?.[1]);
+      const grip =
+        /«чисто» по самой сильной опоре критерия: сверкой, срезом или фактом — (\d+); вопросом модели — (\d+); свидетелем — (\d+); основанием ядра — (\d+); одним вниманием — (\d+)/.exec(
+          sealed,
+        );
+      expect(grip).not.toBeNull();
+      expect(total).toBeGreaterThan(0);
+      expect(grip.slice(1).map(Number).reduce((a, b) => a + b, 0)).toBe(total);
       expect(sealed).toMatch(/«чисто» о целом по каталогам: [1-9]\d*; каталоги — записей о состоянии 0, файлов с состоянием 1, из них без записи 1/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
