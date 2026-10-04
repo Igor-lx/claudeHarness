@@ -98,6 +98,47 @@ describe("словарь области", () => {
   });
 });
 
+/**
+ * Держатель «линт» — словарь «критерий → правила» — обещает, что цепочка
+ * краснеет на нарушении. Это правда, только пока семя конфига линта включает
+ * каждое названное правило ошибкой: предупреждение цепочку не роняет, а
+ * правило с опечаткой в имени не включено вовсе. Тест читает семя тем же
+ * линтом, которым его гоняет проект, и потому идёт только там, где линт
+ * поставлен, — в посадке.
+ */
+describe("держатель «линт» и семя конфига линта", () => {
+  const seed = new URL("../seat/templates/eslint.config.mjs", import.meta.url).pathname;
+  const severity = (value) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return { off: 0, warn: 1, error: 2 }[raw] ?? raw;
+  };
+  const rulesOf = async (file) => {
+    const { ESLint } = await import("eslint");
+    const lint = new ESLint({ cwd: process.cwd(), overrideConfigFile: seed });
+    const config = await lint.calculateConfigForFile(file);
+    return Object.fromEntries(
+      Object.entries(config.rules ?? {}).map(([rule, value]) => [rule, severity(value)]),
+    );
+  };
+  const named = [...new Set(Object.values(vocabulary.BAR_LINT).flat())].sort();
+
+  it("каждое правило держателя включено ошибкой в исходниках", async () => {
+    const rules = await rulesOf("src/zz/probe.tsx");
+    const weak = named.filter((rule) => rules[rule] !== 2);
+    expect(weak, "правила держателя, которые семя не включает ошибкой").toEqual([]);
+  });
+
+  it("в тестовых файлах выключены ровно объявленные правила держателя", async () => {
+    const rules = await rulesOf("src/zz/tests/probe.test.tsx");
+    const off = named.filter((rule) => rules[rule] === 0);
+    expect(off).toEqual([...vocabulary.BAR_LINT_OFF_IN_TESTS].sort());
+    const weak = named.filter(
+      (rule) => !vocabulary.BAR_LINT_OFF_IN_TESTS.has(rule) && rules[rule] !== 2,
+    );
+    expect(weak, "правила держателя, ослабленные в тестах без объявления").toEqual([]);
+  });
+});
+
 describe("inComment", () => {
   // Своя группа: предикат берёт не путь, а строку и позицию, и таблицей путей
   // его не выразить.

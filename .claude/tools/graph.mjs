@@ -45,6 +45,7 @@ import {
   BAR_CUTS,
   BAR_PRESENT,
   BAR_CHECKS,
+  BAR_LINT,
   BAR_ATTENTION,
   BAR_FORMS,
   BAR_FORMS_SPLIT,
@@ -13291,7 +13292,7 @@ if (mode === "bar-hold") {
     process.exit(1);
   }
   const kinds = new Map(
-    ["ядро", "свидетель", "вопрос модели", "срез", "факт", "сверка", "вниманием", "лозунг"].map(
+    ["ядро", "свидетель", "вопрос модели", "срез", "факт", "сверка", "линт", "вниманием", "лозунг"].map(
       (k) => [k, 0],
     ),
   );
@@ -13344,6 +13345,12 @@ if (mode === "bar-hold") {
     if (said === "закрыто" && testFileBlindOf(c.id) !== "")
       formFaults.push(
         c.id + ": набор закрыт, а строки критерия о тестовом файле не встают",
+      );
+    // Линт не печатает строку под точечным исключением: у критерия, которого
+    // он держит, закрытого набора не бывает.
+    if (said === "закрыто" && BAR_LINT[c.id] !== undefined)
+      formFaults.push(
+        c.id + ": набор закрыт, а держатель «линт» не видит строку под точечным исключением",
       );
     if (said === "закрыто") closed += 1;
     if (forms !== undefined) {
@@ -13402,6 +13409,7 @@ if (mode === "bar-hold") {
     ...Object.keys(WITNESS_COLUMNS),
     ...Object.values(BAR_FACT_CRITERIA).flat(),
     ...Object.keys(BAR_CHECKS),
+    ...Object.keys(BAR_LINT),
     ...Object.keys(BAR_ATTENTION),
     ...Object.keys(BAR_FORMS),
   ]);
