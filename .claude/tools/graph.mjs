@@ -49,6 +49,7 @@ import {
   barHoldOf,
   barGripOf,
   BAR_GRIPS,
+  BAR_TIERS,
   barSplitOf,
   barOwedOf,
   BAR_OWED,
@@ -13046,9 +13047,10 @@ if (mode === "bar-hold") {
   let beyond = 0;
   let beyondCriteria = 0;
   let planted = 0;
+  const tiers = new Map(BAR_TIERS.map(([tier]) => [tier, 0]));
   console.log("=== Чем держится каждый критерий планки ===");
-  console.log("| критерий | уровень | чем держится | вне держателя | посадок |");
-  console.log("| --- | --- | --- | --- | --- |");
+  console.log("| критерий | уровень | чем держится | опора | вне держателя | посадок |");
+  console.log("| --- | --- | --- | --- | --- | --- |");
   for (const c of all) {
     const held = barHoldOf(c.id + "|" + (c.slogan ? "лозунг" : ""));
     if (held === "") holes.push(c.id);
@@ -13057,13 +13059,16 @@ if (mode === "bar-hold") {
       if (kinds.has(k)) kinds.set(k, kinds.get(k) + 1);
     }
     const isMachine = machineOf(held);
+    const grip = barGripOf(c.id + "|" + (c.slogan ? "лозунг" : ""));
+    const tier = BAR_TIERS.find(([, grips]) => grips.includes(grip))?.[0];
+    if (tier !== undefined) tiers.set(tier, tiers.get(tier) + 1);
     const said = barFormsOf(c.id);
     const forms = BAR_FORMS_SPLIT[c.id]?.forms;
     if (isMachine) machine += 1;
     if (isMachine && said === "")
       formFaults.push(c.id + ": нет решения, каких форм нарушения держатель не видит");
     if (!isMachine && said !== "" && held !== "")
-      formFaults.push(c.id + ": формы вне держателя записаны у критерия без машинного держателя — запись лишняя");
+      formFaults.push(c.id + ": формы вне держателя записаны у критерия, которого держит одно внимание, — запись лишняя");
     if (said.startsWith("не по форме"))
       formFaults.push(c.id + ": решение о формах записано " + said);
     if (said === "закрыто") closed += 1;
@@ -13084,6 +13089,7 @@ if (mode === "bar-hold") {
     console.log(
       "| " + c.id + " | " + (c.level ?? "—") + " | " +
         (held === "" ? "НЕТ РЕШЕНИЯ" : held.split("|").join("\\|")) + " | " +
+        (grip === "" ? "—" : grip) + " | " +
         formsCell.split("|").join("\\|") + " | " +
         (plants === 0 ? "—" : plants + (caught.has(c.id) ? ", поймано" : "")) + " |",
     );
@@ -13091,14 +13097,21 @@ if (mode === "bar-hold") {
   console.log(
     "  итого: " + [...kinds].map(([k, n]) => k + " " + n).join("; "),
   );
+  // Кто решает, что нарушения нет: «держатель в протоколе» — не то же, что
+  // «машина проверяет». Ступень — по самой сильной опоре критерия.
+  console.log(
+    "  по самой сильной опоре: " +
+      [...tiers].map(([tier, n]) => tier + " — " + n).join("; ") +
+      "; лозунгов — " + kinds.get("лозунг"),
+  );
   console.log(
     "  формы вне держателя: " + beyond + " у " + beyondCriteria +
       " критериев; закрытых наборов: " + closed + " из " + machine +
-      " с машинным держателем",
+      " с держателем в протоколе",
   );
   console.log(
     "  с посадками проб: " + planted + " из " + machine +
-      " с машинным держателем" +
+      " с держателем в протоколе" +
       (ledgerAt === null
         ? ""
         : "; поймано хотя бы раз по журналу проб: " + caught.size),
