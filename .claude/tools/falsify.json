@@ -1078,7 +1078,7 @@
           "file": ".context/01-facts.md",
           "appendFrom": {
             "seed": ".claude/seat/templates/01-facts.md",
-            "startsWith": "| S. Наблюдаемость |"
+            "startsWith": "| S. Наблюдаемость и эксплуатация |"
           }
         }
       ]

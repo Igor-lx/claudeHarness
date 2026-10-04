@@ -446,6 +446,8 @@ export const MODEL_LEVEL = {
   сквозь: "узел",
   кэш: "узел",
   рост: "узел",
+  права: "единица",
+  секрет: "единица",
   порядок: "узел",
   идентификаторы: "узел",
   близнец: "приложение",
@@ -739,6 +741,13 @@ export const BAR_SIGNALS = [
   { ids: ["Q1"], sort: "вставка", mark: "разметка", words: "в предмете вставка разметки, и в основании не сказано, чем она обеззаражена" },
   { ids: ["Q2"], sort: "вставка", mark: "адрес", words: "предмет переходит по значению, и в основании не сказано, где адрес проверен" },
   { ids: ["Q4"], sort: "вставка", mark: "сторонний", words: "в предмете сторонний код, и в основании не сказано, чем он изолирован" },
+  // Права и секреты: право из данных клиента и секрет в поставке — самые
+  // вероятные места, где защита только кажется.
+  { ids: ["Q8"], sort: "права", mark: "из клиента", words: "право берётся из данных, которые клиент пишет сам, и в основании не сказано, где его проверяет сторона ресурса" },
+  { ids: ["Q8", "Q7"], sort: "права", words: "в предмете проверка права, и в основании не сказано, через какое одно место она идёт и где её повторяет сторона ресурса" },
+  { ids: ["Q9"], sort: "секрет", words: "в предмете секрет, который уезжает в поставку, и в основании не сказано, почему он не секрет либо как его оттуда убрать" },
+  // Исчерпание: запись наружу встречает полную квоту, отказ и переполнение.
+  { ids: ["S7"], sort: "запись", words: "предмет пишет наружу, и в основании не сказано, что при исчерпании: полная квота, отказ, переполнение" },
   { ids: ["S2", "S5", "Q3"], sort: "журнал", words: "предмет пишет в журнал, и в основании не сказано о форме записи, поставке и чувствительном" },
   { ids: ["S3", "S4", "S5"], sort: "измерение", words: "в предмете измерение, и в основании не сказано о его цене и выключении" },
   { ids: ["T1", "T4"], sort: "текст", mark: "в разметке", words: "текст для человека вшит в разметку, и в основании не сказано почему" },
@@ -851,6 +860,8 @@ export const BAR_ATTENTION = {
   "R4-бис": "тяжесть содержимого и кэш — свойства поставки и сервера, а не строки",
   R5: "бюджет размера — запись проекта числом; есть ли он — вопрос к базе",
   S1: "способ узнать об отказе в бою живёт вне предмета, у проекта он один",
+  S6: "старт и остановка — свойство процесса целиком: что он делает при запуске и при уходе, в строке узла не видно",
+  S8: "откат — свойство выкладки и формы данных: читает ли старая версия записанное новой, в коде одной версии не видно",
   "S2-бис": "признак связи событий заводится там, где цепочка начинается, и в строке не виден",
 };
 
@@ -1421,6 +1432,22 @@ export const BAR_FORMS = {
   R6: [
     "шаг сборки, который зависит от того, что уже стоит у сборщика: глобальный пакет, кэш — сверки спрашивают объявленный диапазон среды и её версию",
     "версии зависимостей диапазоном — их спрашивает `R1-бис`",
+  ],
+  Q7: [
+    "права, объявленные маршрутами, охранниками роутера либо правилами хранилища, — признак видит проверку в строке кода, а не в конфигурации",
+    "одно место прав, обойдённое прямой проверкой рядом, — признак видит проверки, а какие из них идут через общее место, решает чтение",
+  ],
+  Q8: [
+    "проверка на стороне ресурса в другом репозитории либо в правилах хранилища — признак видит клиентский код, а сервер ему не виден",
+    "право из ответа сервера, которое клиент кэширует и переиспользует, — признак видит чтение роли из хранилища и адреса страницы",
+  ],
+  Q9: [
+    "секрет в файле настроек, в JSON и в переменной без признака секрета в имени — признак видит имя переменной и формы ключей строкой",
+    "секрет, который сборщик вшивает своим механизмом (`define`, плагин окружения), — признак видит префиксы `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`, `PUBLIC_`",
+  ],
+  S7: [
+    "исчерпание без записи наружу: память, очередь в памяти, число соединений — признак видит запись в сеть и хранилище",
+    "обработчик есть, но отвечает на исчерпание тем же исключением, — признак видит запись, а что с ней при отказе, решает чтение",
   ],
   S2: [UNSEEN.log],
   S3: [UNSEEN.measure],
@@ -2252,6 +2279,20 @@ const WRITE_KINDS = [
   ],
 ];
 const WRITE_METHOD = /\bmethod\s*:\s*["'`](?:POST|PUT|PATCH|DELETE)["'`]/gi;
+/** Проверка права: роль, владение, разрешение. */
+const RIGHTS_CHECK =
+  /\b(?:isAdmin|isOwner|isModerator|isStaff|isSuperuser|hasRole|hasPermission|checkPermission|userRole)\b|\brole\s*[!=]==?\s*["'`]|\broles\s*\.\s*includes\s*\(|\bpermissions?\s*\.\s*(?:includes|has)\s*\(/g;
+/** Право из данных, которые клиент пишет сам. */
+const RIGHTS_FROM_CLIENT =
+  /\b(?:localStorage|sessionStorage)\s*\.\s*getItem\s*\(\s*["'`]\w*(?:role|admin|permission|access)\w*["'`]|\bsearchParams\s*\.\s*get\s*\(\s*["'`]\w*(?:role|admin)\w*["'`]/gi;
+/** Переменная окружения, которую сборщик вшивает в поставку, с именем
+ * секрета. */
+const SECRET_SHIPPED =
+  /\bimport\s*\.\s*meta\s*\.\s*env\s*\.\s*VITE_\w*(?:SECRET|PRIVATE|PASSWORD|TOKEN|API_KEY)\w*|\bprocess\s*\.\s*env\s*\.\s*(?:NEXT_PUBLIC|REACT_APP|EXPO_PUBLIC|PUBLIC|VITE)_\w*(?:SECRET|PRIVATE|PASSWORD|TOKEN|API_KEY)\w*/g;
+/** Ключ строкой: платёжный, токен хостинга кода, мессенджера, облака,
+ * закрытый ключ. */
+const SECRET_LITERAL =
+  /["'`](?:sk_live_|sk_test_|rk_live_|ghp_|gho_|github_pat_|xox[bap]-|AKIA[0-9A-Z]{16})[^"'`]*["'`]|-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
 const CLOCK =
   /\bDate\s*\.\s*now\s*\(|\bnew\s+Date\s*\(\s*\)|\bperformance\s*\.\s*now\s*\(|\bMath\s*\.\s*random\s*\(|\bcrypto\s*\.\s*(?:randomUUID|getRandomValues)\s*\(/g;
 /** Имя булева — утверждение; заглавные — константа, имя ей дано. */
@@ -2337,6 +2378,17 @@ const codeSignalsOf = (file, text, own) => {
   for (const [mark, re] of WRITE_KINDS)
     each(re, bare, (m) => at("запись", m.index, m[0], mark));
   each(WRITE_METHOD, plain, (m) => at("запись", m.index, m[0], "сеть"));
+
+  // --- права и секреты ------------------------------------------------------
+  // Проверка права в коде: решение «можно ли» стоит здесь. Право, взятое из
+  // того, что клиент пишет сам, — хранилища, адреса, — подделывается одной
+  // строкой в консоли.
+  each(RIGHTS_CHECK, bare, (m) => at("права", m.index, m[0]));
+  each(RIGHTS_FROM_CLIENT, plain, (m) => at("права", m.index, m[0], "из клиента"));
+  // Секрет в поставке: переменная окружения с префиксом, который сборщик
+  // вшивает в код для браузера, и ключ строкой.
+  each(SECRET_SHIPPED, bare, (m) => at("секрет", m.index, m[0], "в поставку"));
+  each(SECRET_LITERAL, plain, (m) => at("секрет", m.index, m[0].slice(0, 12), "литерал"));
   each(CLOCK, bare, (m) => {
     at("время", m.index, m[0]);
     outsideKinds.add("время");
@@ -3751,6 +3803,12 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.city;", "1:целое;1:сквозь"],
   ["signalsSummary", "src/a.ts\nexport const w = (ref) => ref.current.style.width;", ""],
   ["signalsSummary", "src/a.ts\nconst seen = new Map();\nexport const remember = (k, v) => seen.set(k, v);", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nexport const allowed = (role: string): boolean => role === \"admin\";", "1:права"],
+  ["signalsSummary", "src/a.ts\nexport const allowed = (kind: string): boolean => kind === \"admin\";", ""],
+  ["signalsSummary", "src/a.ts\nexport const mode = (): string | null => localStorage.getItem(\"userRole\");", "1:внешнее/хранилище;1:права/из клиента"],
+  ["signalsSummary", "src/a.ts\nexport const theme = (): string | null => localStorage.getItem(\"theme\");", "1:внешнее/хранилище"],
+  ["signalsSummary", "src/a.ts\nexport const key = import.meta.env.VITE_STRIPE_SECRET;", "1:внешнее/окружение;1:секрет/в поставку"],
+  ["signalsSummary", "src/a.ts\nexport const url = import.meta.env.VITE_API_URL;", "1:внешнее/окружение"],
   ["signalsSummary", "src/a.ts\nconst items = [\"x\", \"y\"];\nexport const pairs = () => items.map((a) => items.map((b) => a + b));", "2:рост/та же коллекция"],
   ["signalsSummary", "src/a.ts\nconst items = [\"x\", \"y\"];\nconst other = [\"z\"];\nexport const pairs = () => items.map((a) => other.map((b) => a + b));", ""],
   ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x]);", "2:рост/без предела"],

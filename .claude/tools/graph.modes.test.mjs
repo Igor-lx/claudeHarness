@@ -5241,3 +5241,80 @@ describe("происхождение строк модели и каталоги
     }
   }, 300000);
 });
+
+/**
+ * Права и секреты — предмет раздела безопасности: проверка права в коде
+ * делает раздел живым, право из данных клиента и секрет в поставке встают
+ * строками модели, о которых спрашивают `Q8` и `Q9`; запись наружу —
+ * вопрос об исчерпании (`S7`).
+ */
+describe("права, секреты и исчерпание в своде", () => {
+  it("проверка права делает раздел Q живым по замеру", () => {
+    const box = seatEmpty("rights-scope-");
+    try {
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzGate.ts"),
+        'export const zzAllowed = (role: string): boolean => role === "admin";\n',
+      );
+      expect((verifyIn(box).get("Применимость разделов планки") ?? []).join("\n")).toContain(
+        "объявлен неприменимым, а предмет на диске есть: Q",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("право из данных клиента, секрет в поставке и запись наружу — вопросы Q8, Q9 и S7", () => {
+    const box = seatEmpty("rights-bar-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const facts = path.join(box, ".context", "01-facts.md");
+      fs.writeFileSync(
+        facts,
+        fs
+          .readFileSync(facts, "utf8")
+          .replace("| K. Внешние данные | нет |", "| K. Внешние данные | да |")
+          .replace("| Q. Безопасность | нет |", "| Q. Безопасность | да |")
+          .replace("| S. Наблюдаемость и эксплуатация | нет |", "| S. Наблюдаемость и эксплуатация | да |"),
+      );
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzGate.ts"),
+        [
+          "export const zzKey = import.meta.env.VITE_ZZ_SECRET;",
+          'export const zzRole = (): string | null => localStorage.getItem("userRole");',
+          'export const zzMark = (): void => localStorage.setItem("zz-seen", "1");',
+          "",
+        ].join("\n"),
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzGate.ts");
+      const printed = fs.readFileSync(protoAt, "utf8");
+      expect(printed).toMatch(/^\| П\d+ \| права \| `app\/zzGate\.ts:2` \|[^\n]*\| из клиента \|/m);
+      expect(printed).toMatch(/^\| П\d+ \| секрет \| `app\/zzGate\.ts:1` \|[^\n]*\| в поставку \|/m);
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          Q8: "чисто |  | права проверяет сервер | ",
+          Q9: "чисто |  | ключ публичный | ",
+          S7: "чисто |  | квоты хватит | ",
+        },
+      });
+      const said = tool("bar", "app/zzGate.ts");
+      expect(said).toMatch(/Q8: чисто, а право берётся из данных, которые клиент пишет сам[^:]*: П\d+/);
+      expect(said).toMatch(/Q9: чисто, а в предмете секрет, который уезжает в поставку[^:]*: П\d+/);
+      expect(said).toMatch(/S7: чисто, а предмет пишет наружу, и в основании не сказано, что при исчерпании: полная квота, отказ, переполнение: П\d+/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

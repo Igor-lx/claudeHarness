@@ -8149,6 +8149,10 @@ const SIGNAL_TITLES = {
   "внешнее|сообщение": "сообщения между окнами",
   "запись|сеть": "запись в сеть",
   "запись|хранилище": "запись в хранилище",
+  "права|из клиента": "право из данных, которые пишет клиент",
+  права: "проверка права",
+  "секрет|в поставку": "секрет в переменной, которую сборщик вшивает в поставку",
+  "секрет|литерал": "ключ строкой в коде",
   время: "время либо случай берутся на месте",
   разметка: "файл разметки обращается наружу либо ко времени",
   "обход|любое": "тип «любое»",
@@ -16811,10 +16815,15 @@ if (mode === "verify") {
         P: hasMarkup,
         // Адрес пространства имён — не внешний адрес: он не загружается и никуда
         // не ведёт. Исключение общее, а не про этот проект.
+        // Права и секреты — тот же раздел: удостоверение, роль, токен,
+        // переменная окружения с именем секрета.
         Q: () =>
           hasCode(
-            /dangerouslySetInnerHTML|\.innerHTML|\.outerHTML|insertAdjacentHTML|\beval\(|new Function\(|document\.write|https?:\/\/(?!www\.w3\.org)/,
-          ) || dep(/^(dompurify|sanitize-html|xss|marked|markdown-it|helmet)/i),
+            /dangerouslySetInnerHTML|\.innerHTML|\.outerHTML|insertAdjacentHTML|\beval\(|new Function\(|document\.write|https?:\/\/(?!www\.w3\.org)|\bAuthorization\b|\bBearer\s|\b(?:accessToken|refreshToken|idToken)\b|\b(?:isAdmin|hasRole|hasPermission|checkPermission)\b|\brole\s*[!=]==?\s*["'`]|\b(?:signIn|signOut|logIn|logOut|getSession)\s*\(|env\s*\.\s*\w*(?:SECRET|TOKEN|API_KEY|PASSWORD)/,
+          ) ||
+          dep(
+            /^(dompurify|sanitize-html|xss|marked|markdown-it|helmet|next-auth|@auth\/|firebase|@supabase\/|oidc-client|keycloak|passport|jsonwebtoken|jose|@clerk\/|auth0|@auth0\/|@okta\/|@azure\/msal)/i,
+          ),
         R: () =>
           script("build") ||
           dep(/^(vite|webpack|rollup|esbuild|parcel|@rsbuild|turbopack)/i),
