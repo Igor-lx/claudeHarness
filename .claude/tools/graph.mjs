@@ -5185,15 +5185,6 @@ if (mode === "falsify") {
     process.exitCode = 1;
   process.exit(process.exitCode ?? 0);
 }
-// --- handoff: собрать обвязку для передачи -----------------------------------
-//
-// Отвечает на вопрос «что именно копировать, чтобы папка была самодостаточной».
-// Раньше ответ держался памятью и звучал как «эта папка плюс те файлы, и не
-// забыть вот это» — форма, которая ломается через месяц.
-//
-// Отбор ИСКЛЮЧАЮЩИЙ, а не включающий: копируется всё, кроме объявленного
-// проектного. Включающий список отстал бы от первого же нового файла доктрины,
-// и снимок уехал бы неполным молча.
 // --- transition: напомнить о незакрытом переходе -------------------------------
 //
 // Режим дешёвый намеренно: его зовёт хук среды при правке файлов проекта, а
@@ -5269,6 +5260,15 @@ if (mode === "transition") {
   process.exit(0);
 }
 
+// --- handoff: собрать обвязку для передачи -----------------------------------
+//
+// Отвечает на вопрос «что именно копировать, чтобы папка была самодостаточной».
+// Раньше ответ держался памятью и звучал как «эта папка плюс те файлы, и не
+// забыть вот это» — форма, которая ломается через месяц.
+//
+// Отбор ИСКЛЮЧАЮЩИЙ, а не включающий: копируется всё, кроме объявленного
+// проектного. Включающий список отстал бы от первого же нового файла доктрины,
+// и снимок уехал бы неполным молча.
 if (mode === "handoff") {
   sayLooked("семян в карте посадки", seedsDeclared.length);
   // Имя по умолчанию — рядом с проектом и не `.claude`: редактор держит свои
@@ -5913,41 +5913,39 @@ if (mode === "open") {
   );
 }
 
-// --- verify: сверка базы с кодом ---------------------------------------------
-// Все проверки механические, и перечень их — не здесь: он живёт таблицей в
-// `01-facts.md` и её двойником на полке, и пересказ здесь ровно это и сделал —
-// разошёлся, оставшись на числе «восемь» при вдвое большем наборе. Ненулевой
-// код возврата означает, что база отстала от кода.
-// Правка в одной копии из пары — единственный настоящий риск форков, и он
-// виден только в диффе, а не в дереве: файлы законно расходятся там, где
+/** Записи вывода git с ключом `-z`: путь как на диске. Без ключа git берёт
+ * путь не в ASCII и с пробелом в кавычки с восьмеричными кодами, и разбор его
+ * не узнавал: файл выпадал из предмета конца хода, ворот и ревизии. */
+const zList = (out) => out.split("\0").filter(Boolean);
+
 /** Пути, тронутые текущей правкой: изменённые И новые, ещё не добавленные.
  * `git diff` вторых не видит, а новый тест — обычный способ закрыть правку. */
 const changedPaths = async (repoRoot) => {
+  let said;
   try {
-    const { execSync } = await import("node:child_process");
     // `-uall`: без него новая ПАПКА печатается одной строкой, и файлы
     // внутри неё в правку не попадают — ровно новый тест целиком.
-    return (
-      execSync("git status --porcelain -uall", {
-        cwd: repoRoot,
-        encoding: "utf8",
-        // stderr гасим: про недоступность git режим говорит сам.
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-        .split(String.fromCharCode(10))
-        .map((l) => l.slice(3).trim())
-        .filter(Boolean)
-        // Переименование печатается как "было -> стало": берут второе.
-        .map((l) => (l.includes(" -> ") ? l.slice(l.indexOf(" -> ") + 4) : l))
-        .map((l) => l.replace(/^"|"$/g, ""))
-    );
+    said = execFileSync("git", ["status", "--porcelain", "-z", "-uall"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      // stderr гасим: про недоступность git режим говорит сам.
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024,
+    });
   } catch {
     return null;
   }
+  const out = [];
+  const rows = said.split("\0");
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rows[i] === "") continue;
+    out.push(rows[i].slice(3));
+    // У переименования и копии за новым путём идёт прежний: берут новый.
+    if (/[RC]/.test(rows[i].slice(0, 2))) i += 1;
+  }
+  return out;
 };
 
-// одиночной библиотеке и фасаду нужно по-разному. Поэтому не сверка
-// содержимого, а вопрос в нужный момент: тронул одну копию — вот её близнец.
 // --- gate: ворота перед коммитом --------------------------------------------
 //
 // Свод по планке спрашивался только с НЕЗАКОММИЧЕННОГО: предмет его —
@@ -5975,10 +5973,9 @@ if (mode === "gate") {
     });
   let staged;
   try {
-    staged = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
-      .split(NEWLINE)
-      .map((l) => l.trim())
-      .filter(Boolean);
+    staged = zList(
+      git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"]),
+    );
   } catch {
     staged = null;
   }
@@ -6233,6 +6230,10 @@ if (mode === "stop") {
     );
   process.exit(want.length > 0 && fault !== "" && !paused ? 1 : 0);
 }
+// Правка в одной копии из пары — единственный настоящий риск форков, и он
+// виден только в диффе, а не в дереве: файлы законно расходятся там, где
+// одиночной библиотеке и фасаду нужно по-разному. Поэтому не сверка
+// содержимого, а вопрос в нужный момент: тронул одну копию — вот её близнец.
 if (mode === "twins") {
   sayLooked("объявленных пар форков", (CONFIG.forks ?? []).length);
   const NEWLINE = String.fromCharCode(10);
@@ -14600,6 +14601,11 @@ if (mode === "repoint") {
   process.exit(0);
 }
 
+// --- verify: сверка базы с кодом ---------------------------------------------
+// Все проверки механические, и перечень их — не здесь: он живёт таблицей в
+// `01-facts.md` и её двойником на полке, и пересказ здесь ровно это и сделал —
+// разошёлся, оставшись на числе «восемь» при вдвое большем наборе. Ненулевой
+// код возврата означает, что база отстала от кода.
 if (mode === "verify") {
   // Прогон запоминает свой вывод, потому что по нему же и судит: красное —
   // это НАПЕЧАТАННАЯ находка, а не имя переменной в перечне.
@@ -16662,7 +16668,9 @@ if (mode === "verify") {
     let diff = null;
     try {
       const { execSync } = await import("node:child_process");
-      diff = execSync("git diff -U0 HEAD -- .context", {
+      // `core.quotePath=false`: иначе имя не в ASCII приходит в заголовке
+      // кавычками с восьмеричными кодами и не сходится с путём протокола.
+      diff = execSync("git -c core.quotePath=false diff -U0 HEAD -- .context", {
         cwd: REPO,
         encoding: "utf8",
         // stderr гасим: про недоступность git мы говорим сами, а его
@@ -16673,10 +16681,10 @@ if (mode === "verify") {
       // базы проходил с якорями без цитат целиком. Его строки — тоже
       // добавленные, и они дописываются к диффу в той же форме.
       const fresh = execSync(
-        "git ls-files --others --exclude-standard -- .context",
+        "git ls-files --others --exclude-standard -z -- .context",
         { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
       );
-      for (const one of fresh.split(NEWLINE).filter(Boolean))
+      for (const one of zList(fresh))
         diff +=
           NEWLINE +
           "+++ b/" +
@@ -16705,7 +16713,8 @@ if (mode === "verify") {
       let file = "";
       for (const line of diff.split(NEWLINE)) {
         if (line.startsWith("+++ b/")) {
-          file = line.slice(6);
+          // Имя с пробелом git закрывает табуляцией.
+          file = line.slice(6).replace(/\t$/, "");
           continue;
         }
         if (file === barFile) continue;
@@ -21197,12 +21206,12 @@ if (mode === "verify") {
   let eolLooked = 0;
   let eolBlind = false;
   try {
-    const rows = execFileSync("git", ["ls-files", "--eol"], {
+    const rows = execFileSync("git", ["ls-files", "--eol", "-z"], {
       cwd: REPO_AT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 64 * 1024 * 1024,
-    }).split(NEWLINE);
+    }).split("\0");
     for (const row of rows) {
       const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\/(.*?)\t(.+)$/.exec(row);
       if (m === null) continue;
@@ -21990,32 +21999,22 @@ if (mode === "verify") {
     // Правка берётся у состояния репозитория тем же способом, что и в режиме
     // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
     // не про то, что тронуто сейчас.
-    let changedNow;
-    try {
-      changedNow = execFileSync("git", ["status", "--porcelain", "-uall"], {
-        cwd: path.join(BASE, ".."),
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-        .split(NEWLINE)
-        .map((l) => l.slice(3).trim())
-        .filter(Boolean)
-        .map((l) => (l.includes(" -> ") ? l.split(" -> ")[1] : l))
-        .map((f) => norm(path.join(BASE, "..", f)))
-        .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
-        // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
-        // вопроса о планке тоже. Признак общий со сводом намеренно.
-        .filter((f) => !untouchedSeed(f, path.join(BASE, ".."), seedOfPath()));
-    } catch {
+    let changedNow = await changedPaths(path.join(BASE, ".."));
+    if (changedNow === null)
       // Репозитория нет или git недоступен. Это НЕ «правленого нет»: сверке
       // нечего смотреть, и молчать об этом нельзя. Проект без репозитория
       // существует — на таком стенде сверка печатала «правленого без вопроса
       // нет» и проходила зелёной, то есть была зелена оттого, что ей нечего
       // проверять. Прогон при этом не роняется: жить без репозитория законно,
       // а красный навсегда перестают читать.
-      changedNow = null;
       ledgerBlind = true;
-    }
+    else
+      changedNow = changedNow
+        .map((f) => norm(path.join(BASE, "..", f)))
+        .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
+        // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
+        // вопроса о планке тоже. Признак общий со сводом намеренно.
+        .filter((f) => !untouchedSeed(f, path.join(BASE, ".."), seedOfPath()));
     // Приведение формата вопроса о планке не требует — ответ общий с воротами.
     if (changedNow !== null)
       changedNow = await withoutFormatOnly(changedNow, path.join(BASE, ".."));
@@ -22394,10 +22393,9 @@ if (mode === "verify") {
         for (const hash of log) {
           let touched;
           try {
-            touched = git(["show", "--name-only", "--format=", hash])
-              .split(NEWLINE)
-              .map((l) => l.trim())
-              .filter(Boolean);
+            touched = zList(
+              git(["show", "--name-only", "-z", "--format=", hash]),
+            );
           } catch {
             continue;
           }

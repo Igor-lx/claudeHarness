@@ -711,6 +711,99 @@ describe("обёртка хуков держит, когда инструмен�
   }, 180000);
 });
 
+/**
+ * Пути берутся у git с ключом `-z`. Без него git берёт имя не в ASCII и с
+ * пробелом в кавычки с восьмеричными кодами, и разбор его не узнавал: такой
+ * файл выпадал из предмета конца хода, ворот и ревизии, и правка в нём
+ * проходила без свода.
+ */
+describe("пути из git с кириллицей и пробелом", () => {
+  it("попадают в предмет конца хода, ворот и ревизии", () => {
+    const box = seatEmpty("puti-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=puti",
+            "-c",
+            "user.email=puti@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs
+          .readFileSync(cfgAt, "utf8")
+          .replace(
+            "  barSince: null,",
+            '  barSince: "' + git("rev-parse", "HEAD").trim() + '",',
+          ),
+      );
+      git("commit", "-qam", "основание сводов", "--no-verify");
+      const names = ["кириллица.ts", "с пробелом.ts"];
+      for (const name of names)
+        fs.writeFileSync(
+          path.join(box, "src", "app", name),
+          "export const zz = 1;\n",
+        );
+      const stop = run("stop", "--hook");
+      expect(stop.status).toBe(2);
+      for (const name of names) expect(stop.stderr).toContain("app/" + name);
+      git("add", "-A");
+      const gate = run("gate");
+      expect(gate.status).toBe(1);
+      for (const name of names) expect(gate.stdout).toContain("app/" + name);
+      // Ревизия: каждый файл — своим коммитом мимо ворот, оба без свода.
+      git("reset", "-q");
+      for (const name of names) {
+        git("add", path.join("src", "app", name));
+        git("commit", "-qm", "мимо свода: " + name, "--no-verify");
+      }
+      const rows = run("verify").stdout.split("\n");
+      const at = rows.indexOf("=== Коммит с кодом накрыт сводом ===");
+      expect(at).toBeGreaterThan(-1);
+      expect(rows.slice(at + 1, at + 3)).toContain("  без свода: 2");
+      // Сверка новых якорей берёт новый файл базы у git, а имя правленого —
+      // из заголовка диффа: оба обязаны прийти как на диске.
+      const note = ".context/заметка с пробелом.md";
+      fs.writeFileSync(
+        path.join(box, note),
+        "Якорь `src/app/App.tsx:1` без цитаты.\n",
+      );
+      expect(run("verify").stdout).toContain(
+        note + ": `src/app/App.tsx:1` — якорь без цитаты",
+      );
+      git("add", "-A");
+      git("commit", "-qm", "заметка", "--no-verify");
+      fs.appendFileSync(
+        path.join(box, note),
+        "Ещё `src/app/App.tsx:2` без цитаты.\n",
+      );
+      expect(run("verify").stdout).toContain(
+        note + ": `src/app/App.tsx:2` — якорь без цитаты",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
