@@ -6182,8 +6182,15 @@ if (mode === "stop") {
     process.exit(0);
   }
 
+  // Начало сессии говорит человеку строкой `systemMessage`, а агенту — той же
+  // строкой в контекст: прежде вывод уходил одному агенту, и о ходе, кончённом
+  // без свода, человек не узнавал.
   if (flag === "--session") {
     const said = [];
+    if (gitDir === null)
+      said.push(
+        "репозитория нет либо git недоступен — ворота конца хода и перед коммитом правку не проверяют",
+      );
     if (state.pause != null)
       said.push(
         "незаконченная работа — " +
@@ -6204,7 +6211,33 @@ if (mode === "stop") {
           state.trace.files.join(", ") +
           ")",
       );
-    if (said.length) console.log("Обвязка: " + said.join("; ") + ".");
+    // Правка без свода, о которой пауза и след молчат: прошлая сессия не дошла
+    // до конца хода либо правили вне сессии.
+    if (
+      want.length > 0 &&
+      fault !== "" &&
+      !paused &&
+      state.trace?.digest !== digest
+    )
+      said.push(
+        "правка кода без свода — " +
+          fault +
+          " (файлы: " +
+          named.join(", ") +
+          ")",
+      );
+    if (said.length) {
+      const text = "Обвязка: " + said.join("; ") + ".";
+      console.log(
+        JSON.stringify({
+          systemMessage: text,
+          hookSpecificOutput: {
+            hookEventName: "SessionStart",
+            additionalContext: text,
+          },
+        }),
+      );
+    }
     process.exit(0);
   }
 
@@ -6228,6 +6261,17 @@ if (mode === "stop") {
       state.trace = { digest, at: new Date().toISOString(), files: named, fault };
       state.blocks = null;
       save();
+      // Клапан пропускает ход — человек узнаёт об этом сразу, строкой.
+      console.log(
+        JSON.stringify({
+          systemMessage:
+            "Обвязка: ход кончается без свода по планке — третий отказ подряд: " +
+            fault +
+            ". Файлы: " +
+            named.join(", ") +
+            ". Начало следующей сессии назовёт этот след.",
+        }),
+      );
       process.exit(0);
     }
     state.blocks = { digest, count };

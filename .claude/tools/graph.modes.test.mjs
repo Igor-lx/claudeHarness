@@ -407,6 +407,14 @@ describe("ворота конца хода", () => {
       expect(hook().status).toBe(0);
       const at = path.join(box, "src", "app", "zzStop.ts");
       fs.writeFileSync(at, "export const zzStop = 1;\n");
+      // Начало сессии называет правку без свода человеку и агенту.
+      const opened = JSON.parse(tool("stop", "--session"));
+      expect(opened.systemMessage).toContain("правка кода без свода");
+      expect(opened.systemMessage).toContain("app/zzStop.ts");
+      expect(opened.hookSpecificOutput).toEqual({
+        hookEventName: "SessionStart",
+        additionalContext: opened.systemMessage,
+      });
       const stopped = hook();
       expect(stopped.status).toBe(2);
       expect(stopped.stderr).toContain("app/zzStop.ts");
@@ -416,17 +424,47 @@ describe("ворота конца хода", () => {
       fs.writeFileSync(at, "export const zzStop = 2;\n");
       expect(hook().status).toBe(2);
       expect(hook().status).toBe(2);
-      // Третий отказ подряд — клапан: ход кончается, след остаётся.
-      expect(hook().status).toBe(0);
+      // Третий отказ подряд — клапан: ход кончается, след остаётся, и
+      // человек узнаёт об этом строкой.
+      const valve = hook();
+      expect(valve.status).toBe(0);
+      expect(JSON.parse(valve.stdout).systemMessage).toContain(
+        "третий отказ подряд",
+      );
       const told = tool("stop", "--session");
       expect(told).toContain("ход кончен без свода");
       expect(told).not.toContain("незаконченная работа");
+      // След называет ту же правку — второй строкой о ней не говорят.
+      expect(told).not.toContain("правка кода без свода");
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar");
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(tool("bar")).toContain("печать поставлена");
       expect(hook().status).toBe(0);
       expect(tool("stop", "--session")).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("без git начало сессии говорит, что ворота правку не проверяют", () => {
+    const box = seatEmpty("stop-bez-git-");
+    try {
+      const said = JSON.parse(
+        execFileSync(
+          process.execPath,
+          [
+            path.join(box, ".claude", "tools", "graph.mjs"),
+            "stop",
+            "--session",
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      );
+      expect(said.systemMessage).toContain("репозитория нет");
+      expect(said.hookSpecificOutput.additionalContext).toBe(
+        said.systemMessage,
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
