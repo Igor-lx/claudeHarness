@@ -27,6 +27,7 @@ import {
   sandboxEscape,
   barRowFault,
   barNoSubject,
+  barSubjectFlags,
   barCoreCriterion,
   barModelFault,
   barRestsOn,
@@ -11296,24 +11297,17 @@ const barFlagsOf = (list, manifestTouched) => {
   const text = code
     .map((f) => (existsSync(f) ? codeOf(readFileSync(f, "utf8")) : ""))
     .join(LF);
-  const has = (re) => re.test(text);
+  // Время, асинхронное, список и вид в коде — признаки словаря: каждый —
+  // надмножество своего предмета. Вид задаётся и прямо в разметке; ссылка
+  // на класс модуля (`styles.x`) предметом не считается: её вид лежит в листе.
+  const seen = new Set(barSubjectFlags(text).split(","));
   return Object.entries({
     code: code.length > 0,
-    // Вид задаётся и прямо в разметке — строкой классов утилит или
-    // встроенным стилем. Такой вид — тоже предмет раздела стилей, хотя листа
-    // в правке нет; ссылка на класс модуля (`styles.x`) предметом не
-    // считается: её вид лежит в листе.
-    style:
-      styles.length > 0 ||
-      has(
-        /className=\s*["'`]|className=\{\s*(cn|clsx|classnames|twMerge)\(|\bstyle=\{\{/,
-      ),
+    style: styles.length > 0 || seen.has("style"),
     test: tests.size > 0,
-    time: has(
-      /useEffect|useLayoutEffect|setTimeout|setInterval|requestAnimationFrame|addEventListener|new [A-Za-z]*Observer|\.subscribe\(/,
-    ),
-    async: has(/\basync\b|\bawait\b|Promise|\.then\(|AbortController/),
-    list: has(/\.map\(|\.flatMap\(/),
+    time: seen.has("time"),
+    async: seen.has("async"),
+    list: seen.has("list"),
     manifest: manifestTouched,
     forks: (CONFIG.forks ?? []).length > 0,
     promise: guaranteesOver(list).length > 0,

@@ -299,6 +299,42 @@ export const barNoSubject = (row) => {
 
   return "";
 };
+/** Признаки предмета по тексту кода правки: время, асинхронное, список,
+ * вид. По ним машина ставит «нет предмета» сама, и каждый обязан быть
+ * НАДМНОЖЕСТВОМ своего предмета: признак, пропустивший форму, объявляет
+ * беспредметным то, чего машина не видела. Замерено на стенде: колбэк
+ * `img.onload`, пишущий состояние, не был ни «временем», ни «асинхронным», и
+ * машина сама закрыла словами «нет предмета» отмену, устаревание и снятие.
+ *
+ * Время — всё, что ставит обработчик на будущее: эффект, таймер, кадр,
+ * слушатель любой формы — `addEventListener`, `addListener`, `.on(`,
+ * свойство-обработчик `.onload =`, — наблюдатель, подписка, соединение,
+ * слежение. Асинхронное — всё, что отвечает позже: промис в любой форме,
+ * запрос, свойство-обработчик, очередь задач. Список — перечисление,
+ * которым рисуют: обход массива и цикл. Вид — стиль в разметке и в коде:
+ * строка классов, встроенный стиль, стиль шаблоном.
+ *
+ * На входе текст кода, на выходе найденные признаки через запятую —
+ * `time`, `async`, `list`, `style`; ни одного — пустая строка. */
+const SUBJECT_TIME =
+  /\buse(?:Layout|Insertion)?Effect\b|\buseSyncExternalStore\b|\bset(?:Timeout|Interval|Immediate)\s*\(|\brequest(?:AnimationFrame|IdleCallback)\s*\(|\bqueueMicrotask\s*\(|\baddEventListener\s*\(|\baddListener\s*\(|\.(?:on|once)\s*\(|\.on[a-z]+\s*=(?!=)|\bnew\s+[A-Za-z]*Observer\b|\.subscribe\s*\(|\bwatchPosition\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|BroadcastChannel|MessageChannel)\b/;
+const SUBJECT_ASYNC =
+  /\basync\b|\bawait\b|\bPromise\b|\.(?:then|catch|finally)\s*\(|\bAbortController\b|\bfetch\s*\(|\bXMLHttpRequest\b|\.on[a-z]+\s*=(?!=)|\bqueueMicrotask\s*\(|\brequestIdleCallback\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|FileReader)\b|\bpostMessage\s*\(/;
+const SUBJECT_LIST =
+  /\.(?:map|flatMap|reduce|forEach)\s*\(|\bArray\.from\s*\(|\bfor\s*\(|\bwhile\s*\(/;
+const SUBJECT_STYLE =
+  /className=\s*["'`]|className=\{\s*(?:cn|clsx|classnames|twMerge)\(|\bstyle=\{\{|\bstyled(?:\.[a-z]+|\()|\bcss`|\bkeyframes`|\bcreateGlobalStyle\b|\bsx=\{|\btw`/;
+export const barSubjectFlags = (text) =>
+  [
+    ["time", SUBJECT_TIME],
+    ["async", SUBJECT_ASYNC],
+    ["list", SUBJECT_LIST],
+    ["style", SUBJECT_STYLE],
+  ]
+    .filter(([, re]) => re.test(text))
+    .map(([k]) => k)
+    .join(",");
+
 /** Архитектурное ядро планки: критерии о ФОРМЕ вещи, а не о её деталях.
  *
  * Про них спрашивают основание даже на исходе «чисто». Остальные критерии
@@ -3469,6 +3505,21 @@ export const PREDICATE_CASES = [
   ["barRestsOn", "П1, П2: граф и карта сходятся|П1=код,П2=база", ""],
   ["barRestsOn", "П3: дописал сам|П1=код,П3=сессия", "сессия"],
   ["barRestsOn", "проверено чтением|П1=база", ""],
+  ["barSubjectFlags", "useEffect(() => tick(), []);", "time"],
+  ["barSubjectFlags", "img.onload = () => setReady(true);", "time,async"],
+  ["barSubjectFlags", "if (a == b) total = a;", ""],
+  ["barSubjectFlags", "<button onClick={load}>go</button>", ""],
+  ["barSubjectFlags", 'socket.on("message", onMessage);', "time"],
+  ["barSubjectFlags", "media.addListener(onChange);", "time"],
+  ["barSubjectFlags", "queueMicrotask(flush);", "time,async"],
+  ["barSubjectFlags", "fetch(url).catch(report);", "async"],
+  ["barSubjectFlags", "const reader = new FileReader();", "async"],
+  ["barSubjectFlags", "const rows = Array.from(items, toRow);", "list"],
+  ["barSubjectFlags", "for (const one of items) out.push(<li>{one}</li>);", "list"],
+  ["barSubjectFlags", "const total = sum(items);", ""],
+  ["barSubjectFlags", "const Box = styled.div`color: red;`;", "style"],
+  ["barSubjectFlags", '<div className="box" />', "style"],
+  ["barSubjectFlags", "<div className={styles.box} />", ""],
   ["barNoSubject", "D1|code=0,style=1", "файла кода в предмете правки нет"],
   ["barNoSubject", "J11|code=1,promise=0", "ни одна гарантия поведения не называет узел этой области"],
   ["barNoSubject", "J11|code=1,promise=1", ""],
