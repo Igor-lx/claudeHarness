@@ -81,6 +81,9 @@ import {
   selfCheck,
   touchesRuntime,
 } from "./graph.predicates.mjs";
+// Разбор модуля — что он берёт и что отдаёт — одной записью на текст: граф,
+// имена, поверхность и привязки читают её, а не каждый свой образец.
+import { parserFor, regexParser } from "./graph.parse.mjs";
 
 // Вывод в канал Node пишет асинхронно, а режимы кончаются `process.exit()`,
 // который обрывает недописанное. Замерено: из `20` запусков, печатавших в
@@ -939,7 +942,7 @@ const recipeVars = (fresh) => {
   // Звёздную бочку сверка состава не разбирает — рецепт на ней промолчал бы.
   const mapForm = files
     .filter((f) => !isTest(f))
-    .filter((f) => !/^\s*export\s+\*/m.test(readFileSync(f, "utf8")))
+    .filter((f) => !exportsStar(readFileSync(f, "utf8"), f))
     .map((f) => rel(f));
   const single = mapForm
     .filter(
@@ -1081,6 +1084,21 @@ const SHELF_CHECKS_TABLE = SHELF === null ? null : path.join(SHELF, "tools/check
  * расходится; посчитанная в трёх — расходится быстрее.
  */
 const REPO_AT = path.join(BASE, "..");
+
+/** Разбор модуля: компилятором TypeScript из пакетов проекта, когда он есть,
+ * иначе регулярными выражениями. Хуки среды графа не читают, а загрузка
+ * компилятора стоит `~200 мс` на каждый конец хода и каждую правку: им —
+ * регулярные выражения. */
+const HOOK_RUN =
+  process.argv.includes("--hook") || process.argv.includes("--session");
+let PARSER = null;
+const parseModule = (src, file) => {
+  if (PARSER === null) PARSER = HOOK_RUN ? regexParser : parserFor(REPO_AT);
+  return PARSER.parse(src, file);
+};
+/** Модуль переотдаёт чужое целиком: `export * from` либо `export * as`. */
+const exportsStar = (src, file) =>
+  parseModule(src, file).froms.some((s) => s.keyword === "export" && s.star);
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
 /** Имена конфига, который читает раннер тестов, в порядке его чтения: свой
  * конфиг раннера затеняет конфиг сборщика. Источник — запись семени в карте
@@ -2842,53 +2860,18 @@ const specsOf = new Map(); // файл -> спецификаторы как на
 const namesPulledBy = new Map(); // файл -> имена, которые он сам тянет откуда угодно
 
 const NAME_RE = /^[A-Za-z_$][\w$]*$/;
-/** Имя, объявленное экспортом в самом файле. Одна форма на оба разбора —
- * экспортов и объявлений: прежний список слов не знал `async`, `let`, `var`,
- * `declare` и `function*`, и асинхронная функция не числилась экспортом
- * вовсе — ни мёртвым, ни взятым. */
-const OWN_EXPORT =
-  /export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|abstract\s+class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
-
-/** Строка импорта и переотдачи: `import … from "x"`, `export … from "x"`.
- * Клаузе запрещено содержать кавычку и точку с запятой: с `[\s\S]*?` разбор
- * перешагивал через импорт-побочный-эффект и склеивал его со следующей
- * строкой. Один образец на граф и на прежний вид файла, по которому модель
- * свода считает сдвиг: два образца разошлись бы, и сдвиг назывался бы там,
- * где его нет. */
-const IMPORT_FROM =
-  /(?:^|\n)\s*(?:import|export)\s+([^;"']*?)\s*from\s*["']([^"']+)["']/g;
-/** Импорт-побочный-эффект: ребро графа без имён. */
-const IMPORT_BARE = /(?:^|\n)\s*import\s*["']([^"']+)["']/g;
-
 /** Имена, которые текст модуля отдаёт наружу: объявленные и переотданные.
- * `export type { … }` — тоже экспорт: разбор, требовавший скобку сразу за
- * словом `export`, такого типа не видел вовсе. Найдено пробой. */
-const surfaceOfText = (src) => {
-  const ex = new Set();
-  for (const mm of src.matchAll(OWN_EXPORT)) ex.add(mm[1]);
-  if (/export\s+default\s/.test(src)) ex.add("default");
-  for (const mm of src.matchAll(/export\s*(?:type\s*)?\{([^}]*)\}/g)) {
-    for (let part of mm[1].split(",")) {
-      part = part.trim().replace(/^type\s+/, "");
-      if (!part) continue;
-      const name = (
-        part.split(/\s+as\s+/)[1] ?? part.split(/\s+as\s+/)[0]
-      ).trim();
-      if (NAME_RE.test(name)) ex.add(name);
-    }
-  }
-  return ex;
-};
+ * Один разбор на граф и на прежний вид файла, по которому модель свода
+ * считает сдвиг: два разбора разошлись бы, и сдвиг назывался бы там, где его
+ * нет. */
+const surfaceOfText = (src, file) => parseModule(src, file).surface;
 
 /** Файлы, которые текст модуля называет в строках импорта. */
 const importTargetsOfText = (f, src) => {
   const out = new Set();
-  for (const m of src.matchAll(IMPORT_FROM)) {
-    const target = resolve(f, m[2]);
-    if (target) out.add(target);
-  }
-  for (const m of src.matchAll(IMPORT_BARE)) {
-    const target = resolve(f, m[1]);
+  const parsed = parseModule(src, f);
+  for (const one of [...parsed.froms, ...parsed.bare]) {
+    const target = resolve(f, one.spec);
     if (target) out.add(target);
   }
   return out;
@@ -2905,8 +2888,18 @@ const DATA_ATTR = /data-[a-z][a-z0-9-]*/g;
 /** Импорт листа модуля стилей: привязка и адрес. Нужен двум сверкам —
  * именам классов и отступлению от схемы стилизации, — поэтому объявлен
  * здесь, а не внутри одной из них. */
-const STYLE_IMPORT =
-  /import\s+(\w+)\s+from\s+["']([^"']*\.module\.(?:s?css|less))["']/g;
+const styleImportsOf = (src, file) =>
+  parseModule(src, file)
+    .froms.filter(
+      (s) =>
+        s.keyword === "import" &&
+        !s.typeOnly &&
+        !s.star &&
+        s.specifiers.length === 0 &&
+        /^\w+$/.test(s.defaultLocal) &&
+        /\.module\.(?:s?css|less)$/.test(s.spec),
+    )
+    .map((s) => ({ binding: s.defaultLocal, spec: s.spec }));
 
 /** Классы, ОБЪЯВЛЕННЫЕ листом стилей.
  *
@@ -2946,7 +2939,7 @@ const ownExportsOf = new Map(); // файл -> имена, объявленны�
 const reexportsOf = new Map(); // файл -> { named: имя наружу -> [{target, name}], stars: [target] }
 const namedImportsOf = new Map(); // файл -> [{ target, names: [имя там] | "*" | null }]
 
-const readNames = (f, src) => {
+const readNames = (f, parsed) => {
   const own = new Set();
   const named = new Map();
   const stars = [];
@@ -2958,70 +2951,47 @@ const readNames = (f, src) => {
     if (!named.has(outName)) named.set(outName, []);
     named.get(outName).push({ target, name });
   };
-  const clauseNames = (clause) => {
-    const out = [];
-    const braces = clause.match(/\{([\s\S]*)\}/);
-    if (braces)
-      for (let part of braces[1].split(",")) {
-        part = part.trim().replace(/^type\s+/, "");
-        if (!part) continue;
-        const [there, here] = part.split(/\s+as\s+/).map((x) => x.trim());
-        if (NAME_RE.test(there)) out.push([there, here ?? there]);
-      }
-    const def = clause
-      .replace(/\{[\s\S]*\}/, "")
-      .replace(/^type\s+/, "")
-      .split(",")[0]
-      .trim();
-    if (def && NAME_RE.test(def)) out.push(["default", def]);
-    return out;
-  };
-  for (const m of src.matchAll(
-    /(?:^|\n)\s*(import|export)\s+([^;"']*?)\s*from\s*["']([^"']+)["']/g,
-  )) {
-    const target = resolve(f, m[3]);
+  /** Имена клаузы: скобки — имя там и имя здесь, затем взятое по умолчанию. */
+  const clauseNames = (s) => [
+    ...s.specifiers
+      .filter((one) => NAME_RE.test(one.there))
+      .map((one) => [one.there, one.here]),
+    ...(NAME_RE.test(s.defaultLocal) ? [["default", s.defaultLocal]] : []),
+  ];
+  for (const s of parsed.froms) {
+    const target = resolve(f, s.spec);
     if (!target) continue;
-    const clause = m[2];
-    if (m[1] === "export") {
-      if (/^\*$/.test(clause.trim())) stars.push(target);
-      else if (clause.includes("*"))
-        addNamed(clause.split(/\s+as\s+/)[1]?.trim() ?? "*", target, "*");
+    if (s.keyword === "export") {
+      if (s.star && s.namespace === null) stars.push(target);
+      else if (s.star) addNamed(s.namespace, target, "*");
       else
-        for (const [there, here] of clauseNames(clause))
+        for (const [there, here] of clauseNames(s))
           addNamed(here, target, there);
       continue;
     }
-    if (clause.includes("*")) {
+    if (s.star) {
       imports.push({ target, names: "*" });
       continue;
     }
-    const pairs = clauseNames(clause);
+    const pairs = clauseNames(s);
     for (const [there, here] of pairs) bound.set(here, { target, name: there });
     imports.push({ target, names: pairs.map(([there]) => there) });
   }
-  for (const m of src.matchAll(/(?:^|\n)\s*import\s*["']([^"']+)["']/g)) {
-    const target = resolve(f, m[1]);
+  for (const one of parsed.bare) {
+    const target = resolve(f, one.spec);
     if (target) imports.push({ target, names: null });
   }
-  for (const m of src.matchAll(OWN_EXPORT)) own.add(m[1]);
-  const defaultName = /export\s+default\s+([A-Za-z_$][\w$]*)\s*;/.exec(src);
-  if (defaultName !== null && bound.has(defaultName[1])) {
-    const b = bound.get(defaultName[1]);
+  for (const name of parsed.own) own.add(name);
+  if (parsed.defaultBinding !== null && bound.has(parsed.defaultBinding)) {
+    const b = bound.get(parsed.defaultBinding);
     addNamed("default", b.target, b.name);
-  } else if (/export\s+default\s/.test(src)) own.add("default");
-  for (const m of src.matchAll(
-    /export\s*(?:type\s*)?\{([^}]*)\}(?!\s*from)/g,
-  ))
-    for (let part of m[1].split(",")) {
-      part = part.trim().replace(/^type\s+/, "");
-      if (!part) continue;
-      const [here, out] = part.split(/\s+as\s+/).map((x) => x.trim());
-      const name = out ?? here;
-      if (!NAME_RE.test(name)) continue;
-      if (bound.has(here))
-        addNamed(name, bound.get(here).target, bound.get(here).name);
-      else own.add(name);
-    }
+  } else if (parsed.hasDefault) own.add("default");
+  for (const { here, out } of parsed.local) {
+    if (!NAME_RE.test(out)) continue;
+    if (bound.has(here))
+      addNamed(out, bound.get(here).target, bound.get(here).name);
+    else own.add(out);
+  }
   ownExportsOf.set(f, own);
   reexportsOf.set(f, { named, stars });
   namedImportsOf.set(f, imports);
@@ -3031,49 +3001,29 @@ for (const f of files) {
   // Комментарии снимаются ДО разбора: ребро графа из комментария — не
   // косметика. Закомментированный импорт числился живым потребителем, и
   // мёртвый экспорт выглядел используемым.
-  const src = codeOf(readFileSync(f, "utf8"));
+  const parsed = parseModule(codeOf(readFileSync(f, "utf8")), f);
   importsOf.set(f, new Set());
-
-  // разбираемые формы: import { a, b as c } from "x" | import x from "y" | export {...} from "z"
-  // Ограничение было записано в базе как свойство инструмента; на деле оно
-  // чинится сужением класса, потому что настоящая клауза (`x`, `* as ns`,
-  // `{ a as b }`, `type { T }`) ни кавычек, ни точек с запятой не содержит.
-  const re = new RegExp(IMPORT_FROM.source, "g");
-  let m;
-  while ((m = re.exec(src))) {
-    const clause = m[1];
+  for (const s of parsed.froms) {
     if (!specsOf.has(f)) specsOf.set(f, new Set());
-    specsOf.get(f).add(m[2]);
-    const target = resolve(f, m[2]);
+    specsOf.get(f).add(s.spec);
+    const target = resolve(f, s.spec);
     if (!target) continue;
     importsOf.get(f).add(target);
     if (!importedNames.has(target)) importedNames.set(target, new Set());
     const set = importedNames.get(target);
     if (!namesPulledBy.has(f)) namesPulledBy.set(f, new Set());
     const mine = namesPulledBy.get(f);
-    if (clause.includes("*")) {
+    if (s.star) {
       set.add("*");
       mine.add("*");
       continue;
     }
-    const braces = clause.match(/\{([\s\S]*)\}/);
-    if (braces) {
-      for (let part of braces[1].split(",")) {
-        part = part.trim().replace(/^type\s+/, "");
-        if (!part) continue;
-        const name = part.split(/\s+as\s+/)[0].trim();
-        if (NAME_RE.test(name)) {
-          set.add(name);
-          mine.add(name);
-        }
+    for (const one of s.specifiers)
+      if (NAME_RE.test(one.there)) {
+        set.add(one.there);
+        mine.add(one.there);
       }
-    }
-    const def = clause
-      .replace(/\{[\s\S]*\}/, "")
-      .replace(/^type\s+/, "")
-      .split(",")[0]
-      .trim();
-    if (def && NAME_RE.test(def)) {
+    if (NAME_RE.test(s.defaultLocal)) {
       set.add("default");
       mine.add("default");
     }
@@ -3084,15 +3034,15 @@ for (const f of files) {
   // было вовсе, поэтому правила направления и изоляции на нём проходили
   // зелёными, а `blast` недосчитывал импортёров. Найдено пробой: импорт такой
   // формы из изолированного слоя в запрещённый прогон не уронил.
-  for (const mm of src.matchAll(IMPORT_BARE)) {
+  for (const one of parsed.bare) {
     if (!specsOf.has(f)) specsOf.set(f, new Set());
-    specsOf.get(f).add(mm[1]);
-    const target = resolve(f, mm[1]);
+    specsOf.get(f).add(one.spec);
+    const target = resolve(f, one.spec);
     if (target) importsOf.get(f).add(target);
   }
 
-  exportsOf.set(f, surfaceOfText(src));
-  readNames(f, src);
+  exportsOf.set(f, parsed.surface);
+  readNames(f, parsed);
 }
 
 // --- обратный граф: кто кого импортирует ------------------------------------
@@ -7555,11 +7505,10 @@ if (mode === "bar-probe") {
           .replace(/^\n+/, "");
         let was = readFileSync(inBox(f), "utf8");
         let last = -1;
-        for (const m of was.matchAll(IMPORT_FROM))
-          if (/^\s*import\b/.test(m[0].replace(/^\n/, "")))
-            last = Math.max(last, m.index + m[0].length);
-        for (const m of was.matchAll(IMPORT_BARE))
-          last = Math.max(last, m.index + m[0].length);
+        const parsed = parseModule(was, f);
+        for (const s of parsed.froms)
+          if (s.keyword === "import") last = Math.max(last, s.end);
+        for (const one of parsed.bare) last = Math.max(last, one.end);
         if (imports.length > 0 && last >= 0) {
           const cut = was.indexOf(NEWLINE, last);
           const at = cut < 0 ? was.length : cut;
@@ -8103,26 +8052,14 @@ const WRITER_KINDS = [
  * одних типов — тоже: менять в нём нечего. */
 const importBindingsOf = (f, src) => {
   const out = new Map();
-  for (const m of src.matchAll(
-    /(?:^|\n)\s*import\s+(?!type\b)([^;"']*?)\s*from\s*["']([^"']+)["']/g,
-  )) {
-    const target = resolve(f, m[2]);
+  for (const s of parseModule(src, f).froms) {
+    if (s.keyword !== "import" || s.typeOnly) continue;
+    const target = resolve(f, s.spec);
     if (target === null) continue;
-    const ns = /\*\s+as\s+([\w$]+)/.exec(m[1]);
-    if (ns !== null) out.set(ns[1], target);
-    const braces = /\{([\s\S]*)\}/.exec(m[1]);
-    for (let part of braces === null ? [] : braces[1].split(",")) {
-      part = part.trim();
-      if (part === "" || part.startsWith("type ")) continue;
-      const local = (part.split(/\s+as\s+/)[1] ?? part).trim();
-      if (NAME_RE.test(local)) out.set(local, target);
-    }
-    const def = m[1]
-      .replace(/\{[\s\S]*\}/, "")
-      .replace(/\*\s+as\s+[\w$]+/, "")
-      .split(",")[0]
-      .trim();
-    if (NAME_RE.test(def)) out.set(def, target);
+    if (s.namespace !== null) out.set(s.namespace, target);
+    for (const one of s.specifiers)
+      if (!one.typeOnly && NAME_RE.test(one.here)) out.set(one.here, target);
+    if (NAME_RE.test(s.defaultLocal)) out.set(s.defaultLocal, target);
   }
   return out;
 };
@@ -10327,7 +10264,7 @@ const barModelOf = (
     if (want("поверхность")) {
       const now = [...(exportsOf.get(f) ?? new Set())].sort();
       const h = headCode(f);
-      const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h);
+      const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h, f);
       const added = before === null ? [] : now.filter((n) => !before.has(n));
       const removed =
         before === null ? [] : [...before].filter((n) => !now.includes(n)).sort();
@@ -10615,7 +10552,7 @@ const barModelOf = (
     const outward = want("наружу") ? publicNamesOf(f) : { names: [], via: [] };
     if (outward.names.length) {
       const h = headCode(f);
-      const before = h === undefined || h === null ? null : surfaceOfText(h);
+      const before = h === undefined || h === null ? null : surfaceOfText(h, f);
       const added =
         h === undefined
           ? []
@@ -10995,7 +10932,7 @@ const barModelOf = (
         const reasons = [];
         if (h === null && layers.some((l) => rel(f).startsWith(l + "/")))
           reasons.push("новый файл в слое компонентов");
-        const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h);
+        const before = h === undefined ? null : h === null ? new Set() : surfaceOfText(h, f);
         const outward =
           before === null
             ? []
@@ -15930,7 +15867,7 @@ if (mode === "verify") {
     const onDisk = new Set(
       files
         .filter(
-          (f) => !isTest(f) && /^\s*export\s+\*/m.test(readFileSync(f, "utf8")),
+          (f) => !isTest(f) && exportsStar(readFileSync(f, "utf8"), f),
         )
         .map(rel),
     );
@@ -16000,7 +15937,7 @@ if (mode === "verify") {
       // законном: имена, пришедшие через `export *`, инструменту не видны.
       barrel =
         hits.length === 1 &&
-        !/^\s*export\s+\*/m.test(readFileSync(hits[0], "utf8"))
+        !exportsStar(readFileSync(hits[0], "utf8"), hits[0])
           ? { file: hits[0], named: [] }
           : null;
     }
@@ -16295,9 +16232,7 @@ if (mode === "verify") {
       };
       for (const file of readdirSync(dir).filter((n) => /\.ts$/.test(n))) {
         const code = readFileSync(path.join(dir, file), "utf8");
-        const names = [
-          ...code.matchAll(/^export const ([A-Z][A-Z0-9_]*)/gm),
-        ].map((m) => m[1]);
+        const names = parseModule(code, file).constants;
         if (names.length === 0) continue; // бочка и типы констант не объявляют
         const doc = path.join(docsDir, file.replace(/\.ts$/, ".md"));
         if (!existsSync(doc)) {
@@ -16351,10 +16286,11 @@ if (mode === "verify") {
       // «имя из своей пары» краснело бы на этом — замерено, такая ссылка есть.
       const settingNames = new Set();
       for (const file of readdirSync(dir).filter((n) => /\.ts$/.test(n)))
-        for (const mm of readFileSync(path.join(dir, file), "utf8").matchAll(
-          /^export const ([A-Z][A-Z0-9_]*)/gm,
-        ))
-          settingNames.add(mm[1]);
+        for (const name of parseModule(
+          readFileSync(path.join(dir, file), "utf8"),
+          file,
+        ).constants)
+          settingNames.add(name);
       for (const doc of readdirSync(docsDir).filter((n) => /\.md$/.test(n))) {
         const lines = readFileSync(path.join(docsDir, doc), "utf8").split(
           NEWLINE,
@@ -17833,9 +17769,8 @@ if (mode === "verify") {
           (n) =>
             /\.md$/.test(n) ||
             (/\.ts$/.test(n) &&
-              /^export const [A-Z][A-Z0-9_]*/m.test(
-                readFileSync(path.join(d, n), "utf8"),
-              )),
+              parseModule(readFileSync(path.join(d, n), "utf8"), n).constants
+                .length > 0),
         ),
     );
     if (found.length)
@@ -17895,7 +17830,7 @@ if (mode === "verify") {
   if (CONFIG.starBarrels == null) {
     disarmedLooked += 1;
     const found = files.filter(
-      (f) => !isTest(f) && /^\s*export\s+\*/m.test(readFileSync(f, "utf8")),
+      (f) => !isTest(f) && exportsStar(readFileSync(f, "utf8"), f),
     );
     if (found.length)
       disarmed.push(
@@ -19303,10 +19238,11 @@ if (mode === "verify") {
       const sheets = styleFiles.filter((f) => path.dirname(f) === dir);
       for (const f of files)
         if (path.dirname(f) === dir)
-          for (const m of codeOf(readFileSync(f, "utf8")).matchAll(
-            STYLE_IMPORT,
+          for (const one of styleImportsOf(
+            codeOf(readFileSync(f, "utf8")),
+            f,
           )) {
-            const at = norm(path.resolve(dir, m[2]));
+            const at = norm(path.resolve(dir, one.spec));
             if (existsSync(at) && !sheets.includes(at)) sheets.push(at);
           }
       return classesOf(sheets);
@@ -19332,9 +19268,9 @@ if (mode === "verify") {
       // --- сторона первая: обращения к привязке импорта и её псевдонимам ---
       const bindings = [];
       const sheets = [];
-      for (const m of body.matchAll(STYLE_IMPORT)) {
-        bindings.push(m[1]);
-        const at = norm(path.resolve(dir, m[2]));
+      for (const one of styleImportsOf(body, f)) {
+        bindings.push(one.binding);
+        const at = norm(path.resolve(dir, one.spec));
         if (existsSync(at)) sheets.push(at);
       }
       if (bindings.length) {
@@ -19533,9 +19469,7 @@ if (mode === "verify") {
       let takesMap = false;
       for (const f of kin) {
         const body = codeOf(readFileSync(f, "utf8"));
-        STYLE_IMPORT.lastIndex = 0;
-        if (STYLE_IMPORT.test(body)) ownSheet = true;
-        STYLE_IMPORT.lastIndex = 0;
+        if (styleImportsOf(body, f).length > 0) ownSheet = true;
         // Карта классов узнаётся так же, как в соседней сверке: по строению
         // с индексной подписью либо по соглашению об имени.
         if (
