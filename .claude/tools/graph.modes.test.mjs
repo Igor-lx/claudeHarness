@@ -1204,6 +1204,51 @@ describe("красная сверка-держатель режет печать
   }, 240000);
 });
 
+describe("граф видит импорт во время работы", () => {
+  it("`import()` против правила слоёв краснит направление и встаёт срезом в модели свода, цикл через `require` — цикл", () => {
+    const box = seatEmpty("dinam-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const boot = path.join(box, "src", "shared", "boot");
+      fs.mkdirSync(boot, { recursive: true });
+      fs.writeFileSync(
+        path.join(boot, "boot.ts"),
+        'export const boot = () => import("../../app/App");\n',
+      );
+      expect(
+        (verifyIn(box).get("Правила направления") ?? []).join("\n"),
+      ).toContain("shared/boot/boot.ts → app/App.tsx");
+      tool("bar", "shared/boot/boot.ts");
+      expect(
+        fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8"),
+      ).toMatch(
+        /\| П\d+ \| направление \| `shared\/boot\/boot\.ts` \|[^\n]*\| против правила \|/,
+      );
+      fs.writeFileSync(
+        path.join(boot, "a.ts"),
+        'export const a = (): unknown => require("./b");\n',
+      );
+      fs.writeFileSync(
+        path.join(boot, "b.ts"),
+        'export const b = (): unknown => require("./a");\n',
+      );
+      expect(tool("cycles")).toContain("Различных циклов: 1.");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");

@@ -2868,11 +2868,12 @@ const NAME_RE = /^[A-Za-z_$][\w$]*$/;
  * нет. */
 const surfaceOfText = (src, file) => parseModule(src, file).surface;
 
-/** Файлы, которые текст модуля называет в строках импорта. */
+/** Файлы, которые текст модуля называет в строках импорта и в импорте во
+ * время работы. */
 const importTargetsOfText = (f, src) => {
   const out = new Set();
   const parsed = parseModule(src, f);
-  for (const one of [...parsed.froms, ...parsed.bare]) {
+  for (const one of [...parsed.froms, ...parsed.bare, ...parsed.dynamic]) {
     const target = resolve(f, one.spec);
     if (target) out.add(target);
   }
@@ -2983,6 +2984,11 @@ const readNames = (f, parsed) => {
     const target = resolve(f, one.spec);
     if (target) imports.push({ target, names: null });
   }
+  // Импорт во время работы берёт модуль целиком, как пространство имён.
+  for (const one of parsed.dynamic) {
+    const target = resolve(f, one.spec);
+    if (target) imports.push({ target, names: "*" });
+  }
   for (const name of parsed.own) own.add(name);
   if (parsed.defaultBinding !== null && bound.has(parsed.defaultBinding)) {
     const b = bound.get(parsed.defaultBinding);
@@ -3041,6 +3047,24 @@ for (const f of files) {
     specsOf.get(f).add(one.spec);
     const target = resolve(f, one.spec);
     if (target) importsOf.get(f).add(target);
+  }
+
+  // Импорт во время работы — `import("x")` и `require("x")` — тоже ребро:
+  // направление и граница судят то, что модуль тянет, а не когда. Берёт он
+  // модуль целиком. Прежде граф его не видел, и ребро против правила слоёв,
+  // написанное через `import()`, проходило свод под печатью — замерено на
+  // стенде. Цикл через ленивый импорт — цикл того же рода, что через тип:
+  // терпим, но записан (`A9-бис`).
+  for (const one of parsed.dynamic) {
+    if (!specsOf.has(f)) specsOf.set(f, new Set());
+    specsOf.get(f).add(one.spec);
+    const target = resolve(f, one.spec);
+    if (!target) continue;
+    importsOf.get(f).add(target);
+    if (!importedNames.has(target)) importedNames.set(target, new Set());
+    importedNames.get(target).add("*");
+    if (!namesPulledBy.has(f)) namesPulledBy.set(f, new Set());
+    namesPulledBy.get(f).add("*");
   }
 
   exportsOf.set(f, parsed.surface);

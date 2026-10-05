@@ -160,6 +160,48 @@ describe.each(PARSERS)("разбор модуля (%s): экспорт", (_, par
   });
 });
 
+describe.each(PARSERS)(
+  "разбор модуля (%s): импорт во время работы",
+  (_, parse) => {
+    const calls = (src) => parse(src).dynamic.map((d) => d.call + " " + d.spec);
+
+    it("вызов импорта и `require` на любой глубине, адрес строкой и шаблоном", () => {
+      const src = [
+        'const lazy = () => import("../app/App");',
+        "export const load = async () => {",
+        "  const m = await import(`./part`);",
+        '  return require("./sync").value + m.x;',
+        "};",
+      ].join("\n");
+      expect(calls(src)).toEqual([
+        "import ../app/App",
+        "import ./part",
+        "require ./sync",
+      ]);
+      expect(parse(src).dynamic[0].end).toBe(src.indexOf('"../app/App"') + 12);
+    });
+
+    it("тип через импорт и импорт в строчном комментарии — не ребро", () => {
+      expect(
+        calls(
+          [
+            'type T = import("./t").Foo;',
+            'let u: typeof import("./u");',
+            '// const later = import("./later");',
+            "export const v = 1;",
+          ].join("\n"),
+        ),
+      ).toEqual([]);
+    });
+
+    it("адрес, собранный выражением, разбор не видит", () => {
+      expect(
+        calls('const at = "./x";\nimport(at);\nimport(`./${at}`);'),
+      ).toEqual([]);
+    });
+  },
+);
+
 /**
  * Где реализации расходятся — и права в каждом случае вторая: регулярные
  * выражения читают текст строками, компилятор — синтаксис.
@@ -194,6 +236,12 @@ describe("разбор модуля: в чём компилятор точнее
     const [regex, compiler] = both("export const A = 1, B = 2;");
     expect(regex.constants).toEqual(["A"]);
     expect(compiler.constants).toEqual(["A", "B"]);
+  });
+
+  it("импорт во время работы внутри строки — не импорт", () => {
+    const [regex, compiler] = both("const s = \"import('./fake')\";");
+    expect(regex.dynamic.map((d) => d.spec)).toEqual(["./fake"]);
+    expect(compiler.dynamic).toEqual([]);
   });
 
   it("обобщение стрелочной функции в .ts не ломает разбор следующих строк", () => {
@@ -246,6 +294,11 @@ describe("разбор модуля: обе реализации на коде",
       expect(compiler.bare, f).toEqual(regex.bare);
       for (const name of compiler.surface)
         expect(regex.surface.has(name), f + ": " + name).toBe(true);
+      // Импорт во время работы компилятор видит только в коде, а образец —
+      // и в строках: всё, что видит компилятор, видит и образец.
+      const seen = new Set(regex.dynamic.map((d) => d.call + " " + d.spec));
+      for (const d of compiler.dynamic)
+        expect(seen.has(d.call + " " + d.spec), f + ": " + d.spec).toBe(true);
       extra += regex.surface.size - compiler.surface.size;
     }
     // Тесты режимов несут код посадки строками: его «экспорты» регулярные

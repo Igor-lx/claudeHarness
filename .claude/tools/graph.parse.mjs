@@ -35,6 +35,41 @@ const BRACED = /export\s*(?:type\s*)?\{([^}]*)\}/g;
 const LOCAL = /export\s*(?:type\s*)?\{([^}]*)\}(?!\s*from)/g;
 /** Константа, отданная наружу с начала строки: таблица настроек. */
 const CONSTANT = /^export const ([A-Z][A-Z0-9_]*)/gm;
+/** Импорт во время работы: `import("x")` и `require("x")` с адресом
+ * строкой. Адрес, собранный выражением, разбор не видит. */
+const DYNAMIC =
+  /(?<![\w$.])(import|require)\s*\(\s*(["'`])([^"'`$\n]+)\2\s*\)/g;
+/** Строчный комментарий: снимается перед поиском импорта во время работы.
+ * Перед двумя косыми — начало строки, пробел либо скобка: двоеточие адреса
+ * `https://` комментарием не считается. */
+const LINE_COMMENT = /(^|[\s;{}()])\/\/[^\n]*/g;
+
+/** Импорты во время работы в тексте, найденные образцом. Тип
+ * `import("x").T` и `typeof import("x")` — не ребро исполнения: сборка его
+ * стирает. */
+const dynamicOf = (src) => {
+  const text = src.replace(
+    LINE_COMMENT,
+    (m, lead) => lead + " ".repeat(m.length - lead.length),
+  );
+  const out = [];
+  for (const m of text.matchAll(DYNAMIC)) {
+    const call = m[1];
+    const after = text.slice(m.index + m[0].length);
+    if (
+      call === "import" &&
+      (/typeof\s*$/.test(text.slice(Math.max(0, m.index - 16), m.index)) ||
+        /^\s*\.\s*[A-Za-z_$][\w$]*(?!\s*[(\w$])/.test(after))
+    )
+      continue;
+    out.push({
+      spec: m[3],
+      end: m.index + m[0].lastIndexOf(m[2]) + 1,
+      call,
+    });
+  }
+  return out;
+};
 
 /** Скобки клаузы — части по запятой, с пометкой «только тип». */
 const specifiersOf = (clause) => {
@@ -77,7 +112,8 @@ const defaultLocalOf = (clause) => {
  * объявленные экспортом; `hasDefault` — есть `export default`;
  * `defaultBinding` — имя в `export default X;`; `local` — `export { … }` без
  * источника: имя здесь и имя наружу; `surface` — всё, что модуль отдаёт по
- * имени; `constants` — константы, отданные с начала строки. */
+ * имени; `constants` — константы, отданные с начала строки; `dynamic` —
+ * импорты во время работы: адрес, `end` и вызов — `import` либо `require`. */
 export const parseModuleRegex = (src) => {
   const froms = [];
   for (const m of src.matchAll(FROM)) {
@@ -132,6 +168,7 @@ export const parseModuleRegex = (src) => {
     local,
     surface,
     constants,
+    dynamic: dynamicOf(src),
   };
 };
 
@@ -270,6 +307,29 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
   const surface = new Set(own);
   if (hasDefault) surface.add("default");
   for (const name of braced) surface.add(name);
+  // Импорт во время работы — вызов на любой глубине, а не строка верхнего
+  // уровня. Тип `import("x").T` — узел типа, а не вызов, и сюда не попадает.
+  const dynamic = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && node.arguments.length === 1) {
+      const arg = node.arguments[0];
+      const call =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
+          ? "import"
+          : ts.isIdentifier(node.expression) &&
+              node.expression.text === "require"
+            ? "require"
+            : null;
+      if (
+        call !== null &&
+        (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) &&
+        !arg.text.includes("\n")
+      )
+        dynamic.push({ spec: arg.text, end: arg.end, call });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
   return {
     froms,
     bare,
@@ -279,6 +339,7 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
     local,
     surface,
     constants,
+    dynamic,
   };
 };
 
@@ -301,15 +362,15 @@ export const compilerAt = (repoRoot) => {
   }
 };
 
-/** Разбор для проекта с корнем `repoRoot`: компилятором, когда он есть
- * среди пакетов проекта, иначе регулярными выражениями. `name` — какой
- * выбран, `parse(src, file)` — сам разбор. */
 /** Разбор регулярными выражениями — запасной и для тех, кому графа не надо. */
 export const regexParser = {
   name: "регулярные выражения",
   parse: (src) => parseModuleRegex(src),
 };
 
+/** Разбор для проекта с корнем `repoRoot`: компилятором, когда он есть
+ * среди пакетов проекта, иначе регулярными выражениями. `name` — какой
+ * выбран, `parse(src, file)` — сам разбор. */
 export const parserFor = (repoRoot) => {
   const ts = compilerAt(repoRoot);
   return ts === null
