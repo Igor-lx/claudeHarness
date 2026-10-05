@@ -1418,6 +1418,16 @@ const barMarks = (abs) =>
     file: rel(f),
     mark: existsSync(f) ? barDigest(readFileSync(f, "utf8")) : "нет файла",
   }));
+/** Код или стиль по виду и месту: модуль, тест или лист под корнем исходников.
+ * Так судят удалённый файл — корпус собирается обходом диска, и удалённого в
+ * нём нет. Без этого удалённый тест проходил конец хода, ворота и ревизию. */
+const codeByPlace = (abs) =>
+  SRC_ROOTS.some((r) => abs.startsWith(r + "/")) &&
+  BARE_EXT.test(abs) &&
+  !abs.endsWith(".d.ts");
+/** Работа свода — предмет без удалённых файлов: удалённый свод называет
+ * отпечатком «нет файла», а читать и судить в нём нечего. */
+const barWorkOf = (subject) => subject.filter((f) => existsSync(f));
 /** Предмет свода на задаче ИЗМЕНЕНИЯ: правленый код и стили.
  *
  * Возвращает `null`, когда состояние репозитория прочитать не удалось. Это не
@@ -1438,7 +1448,9 @@ const barChangedSubject = async (repoRoot) => {
     await withoutFormatOnly(
       all.filter(
         (f) =>
-          (files.includes(f) || styleFiles.includes(f)) &&
+          (files.includes(f) ||
+            styleFiles.includes(f) ||
+            (!existsSync(f) && codeByPlace(f))) &&
           !f.endsWith(".d.ts") &&
           !untouched(f),
       ),
@@ -5940,10 +5952,13 @@ const changedPaths = async (repoRoot) => {
   for (let i = 0; i < rows.length; i += 1) {
     if (rows[i] === "") continue;
     out.push(rows[i].slice(3));
-    // У переименования и копии за новым путём идёт прежний: берут новый.
-    if (/[RC]/.test(rows[i].slice(0, 2))) i += 1;
+    // За новым путём переименования идёт прежний — его на диске больше нет, и
+    // в правке он удалённый, как после `mv`. Прежний путь копии на месте.
+    const xy = rows[i].slice(0, 2);
+    if (xy.includes("R")) out.push(rows[i + 1] ?? "");
+    if (/[RC]/.test(xy)) i += 1;
   }
-  return out;
+  return out.filter(Boolean);
 };
 
 // --- gate: ворота перед коммитом --------------------------------------------
@@ -5973,9 +5988,21 @@ if (mode === "gate") {
     });
   let staged;
   try {
-    staged = zList(
-      git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"]),
+    // Пары «буква, путь». Без поиска переименований: прежний путь — удалённый
+    // файл, и он в предмете так же, как после `git rm`.
+    const said = zList(
+      git([
+        "diff",
+        "--cached",
+        "--name-status",
+        "-z",
+        "--no-renames",
+        "--diff-filter=ACMD",
+      ]),
     );
+    staged = [];
+    for (let i = 0; i + 1 < said.length; i += 2)
+      staged.push({ status: said[i], one: said[i + 1] });
   } catch {
     staged = null;
   }
@@ -5989,8 +6016,14 @@ if (mode === "gate") {
   let fromShelf = 0;
   let formatted = 0;
   const want = [];
-  for (const one of staged) {
+  for (const { status, one } of staged) {
     const abs = norm(path.join(REPO_AT, one));
+    // Удаление — тоже правка: удалённый код в предмете с отпечатком «нет
+    // файла», и свод обязан его назвать.
+    if (status === "D") {
+      if (codeByPlace(abs)) want.push({ file: rel(abs), mark: "нет файла" });
+      continue;
+    }
     if (!files.includes(abs) && !styleFiles.includes(abs)) continue;
     if (abs.endsWith(".d.ts")) continue;
     let body;
@@ -13293,7 +13326,7 @@ if (mode === "bar") {
   // которому её читают. На правке предмет при этом — правленое: его
   // отпечатки сверяют ворота перед коммитом, а сосед, тронутый после печати,
   // сам становится правленым и гасит её.
-  const work = focus ?? subject;
+  const work = focus ?? barWorkOf(subject);
   const area = kind === "на изменение" ? barAreaOf(work) : subject;
   const neighbours = barNeighboursOf(work, area);
   const marks = barMarks(subject);
@@ -22115,9 +22148,10 @@ if (mode === "verify") {
             )
             .map((o) => barKey(o.id, o.subject)),
         );
+        const work = barWorkOf(subject);
         const expected = barExpectedOf(
           live.all,
-          barSubjectsOf(subject, barNeighboursOf(subject, barAreaOf(subject))),
+          barSubjectsOf(work, barNeighboursOf(work, barAreaOf(work))),
         );
         const missing = expected.filter(
           (e) => !answered.has(barKey(e.c.id, e.subject)),
@@ -22393,15 +22427,38 @@ if (mode === "verify") {
         for (const hash of log) {
           let touched;
           try {
-            touched = zList(
-              git(["show", "--name-only", "-z", "--format=", hash]),
+            // Пары «буква, путь», без поиска переименований — как у ворот.
+            const said = zList(
+              git([
+                "show",
+                "--name-status",
+                "-z",
+                "--no-renames",
+                "--format=",
+                hash,
+              ]),
             );
+            touched = [];
+            for (let i = 0; i + 1 < said.length; i += 2)
+              touched.push({ status: said[i], one: said[i + 1] });
           } catch {
             continue;
           }
           const want = [];
-          for (const one of touched) {
+          for (const { status, one } of touched) {
             const abs = norm(path.join(REPO_AT, one));
+            // Удалённый этим коммитом код — в предмете, как у ворот.
+            if (status === "D") {
+              if (codeByPlace(abs))
+                want.push({
+                  file: rel(abs),
+                  mark: "нет файла",
+                  one,
+                  abs,
+                  was: null,
+                });
+              continue;
+            }
             // Предикат тот же, что у предмета свода и у ворот: корпус кода и
             // корпус стилей. Свой предикат здесь отбирал иначе — тесты в него
             // не попадали, — и ревизия объявляла непокрытым коммит, накрытый
@@ -22417,10 +22474,7 @@ if (mode === "verify") {
             // Замерено удалением узла на стенде. Такой файл судится видом и
             // местом — тем же признаком, каким его собирает обход корпуса:
             // модуль, тест или стиль под корнем исходников.
-            const goneSince =
-              !existsSync(abs) &&
-              SRC_ROOTS.some((r) => abs.startsWith(r + "/")) &&
-              (/\.[jt]sx?$/.test(abs) || isStylePath(abs));
+            const goneSince = !existsSync(abs) && codeByPlace(abs);
             if (!files.includes(abs) && !styleFiles.includes(abs) && !goneSince)
               continue;
             if (abs.endsWith(".d.ts")) continue;

@@ -804,6 +804,101 @@ describe("пути из git с кириллицей и пробелом", () => 
   }, 180000);
 });
 
+/**
+ * Удаление кода — тоже правка. Предмет собирался из корпуса, а корпус — обходом
+ * диска, и удалённый файл в него не попадал: удалённый тест проходил конец
+ * хода, ворота и ревизию. Теперь удалённое входит в предмет с отпечатком «нет
+ * файла» и держит ход и коммит, пока свод его не назовёт.
+ */
+describe("удалённый файл кода в предмете", () => {
+  it("удалённые модуль и тест держат конец хода и ворота, пока свод их не назовёт", () => {
+    const box = seatEmpty("udalen-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=udalen",
+            "-c",
+            "user.email=udalen@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      const app = path.join(box, "src", "app");
+      fs.writeFileSync(
+        path.join(app, "zzDel.ts"),
+        "export const zzDel = (n: number): number => n + 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(app, "tests", "zzDel.test.ts"),
+        [
+          'import { expect, it } from "vitest";',
+          'import { zzDel } from "../zzDel";',
+          "",
+          'it("adds one", () => {',
+          "  expect(zzDel(1)).toBe(2);",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.rmSync(path.join(app, "zzDel.ts"));
+      fs.rmSync(path.join(app, "tests", "zzDel.test.ts"));
+      const names = ["app/zzDel.ts", "app/tests/zzDel.test.ts"];
+      const stop = run("stop", "--hook");
+      expect(stop.status).toBe(2);
+      for (const name of names) expect(stop.stderr).toContain(name);
+      git("add", "-A");
+      const gate = run("gate");
+      expect(gate.status).toBe(1);
+      for (const name of names) expect(gate.stdout).toContain(name);
+      // Свод называет удалённое отпечатком «нет файла» — ход и коммит идут.
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      run("bar");
+      const said = fs.readFileSync(protoAt, "utf8");
+      for (const name of names) expect(said).toContain(name);
+      expect(said).toContain("нет файла");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(run("bar").stdout).toContain("печать поставлена");
+      expect(run("stop", "--hook").status).toBe(0);
+      git("add", "-A");
+      expect(run("gate").status).toBe(0);
+      // Переименование `git mv`: прежний путь — удалённый, и свод, ход и
+      // ворота видят оба пути, как после `mv`.
+      git("commit", "-qm", "снос со сводом", "--no-verify");
+      fs.writeFileSync(path.join(app, "zzOld.ts"), "export const zzOld = 1;\n");
+      git("add", "-A");
+      git("commit", "-qm", "файл под переименование", "--no-verify");
+      git("mv", "src/app/zzOld.ts", "src/app/zzNew.ts");
+      const moved = run("stop", "--hook");
+      expect(moved.status).toBe(2);
+      for (const name of ["app/zzOld.ts", "app/zzNew.ts"])
+        expect(moved.stderr).toContain(name);
+      run("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(run("bar").stdout).toContain("печать поставлена");
+      expect(run("stop", "--hook").status).toBe(0);
+      git("add", "-A");
+      expect(run("gate").status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
@@ -903,7 +998,11 @@ describe("ревизия сводов по истории", () => {
       expect(tool("bar")).toContain("печать поставлена");
       git("add", "-A");
       git("commit", "-qm", "свой код со сводом", "--no-verify");
+      // Снос узла — тоже правка: свод называет удалённый файл.
       fs.rmSync(path.join(app, "zzGone.ts"));
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain("печать поставлена");
       git("add", "-A");
       git("commit", "-qm", "снос узла", "--no-verify");
       const rows = tool("verify").split("\n");
@@ -922,6 +1021,13 @@ describe("ревизия сводов по истории", () => {
       const later = tool("verify").split("\n");
       const bare = later.indexOf("=== Коммит с кодом накрыт сводом ===");
       expect(later.slice(bare + 1, bare + 3)).toContain("  без свода: 1");
+      // Удаление мимо свода краснеет так же, как код мимо свода.
+      fs.rmSync(path.join(app, "zzKept.ts"));
+      git("add", "-A");
+      git("commit", "-qm", "снос мимо свода", "--no-verify");
+      const last = tool("verify").split("\n");
+      const gone = last.indexOf("=== Коммит с кодом накрыт сводом ===");
+      expect(last.slice(gone + 1, gone + 3)).toContain("  без свода: 2");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
