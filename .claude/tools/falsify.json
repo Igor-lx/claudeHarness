@@ -369,21 +369,21 @@
     {
       "section": "Напоминание о переходе включено",
       "file": ".claude/settings.json",
-      "find": "graph.mjs transition --hook",
-      "replace": "graph.mjs transition"
+      "find": "\"transition\",\n              \"--hook\"",
+      "replace": "\"transition\""
     },
     {
       "section": "Напоминание о переходе включено",
       "edits": [
         {
           "file": ".claude/settings.json",
-          "find": "graph.mjs transition",
-          "replace": "graph.mjs verify"
+          "find": "\"transition\"",
+          "replace": "\"verify\""
         },
         {
           "file": ".claude/settings.json",
-          "find": "graph.mjs transition",
-          "replace": "graph.mjs verify"
+          "find": "\"transition\"",
+          "replace": "\"verify\""
         }
       ]
     },
@@ -700,8 +700,8 @@
     {
       "section": "Ворота конца хода и страж обхода включены",
       "file": ".claude/settings.json",
-      "find": "\"command\": \"node .claude/tools/graph.mjs stop --hook\"",
-      "replace": "\"command\": \"node .claude/tools/graph.mjs stop\""
+      "find": "\"stop\",\n              \"--hook\"",
+      "replace": "\"stop\""
     },
     {
       "section": "Ворота конца хода и страж обхода включены",
@@ -712,8 +712,27 @@
     {
       "section": "Ворота конца хода и страж обхода включены",
       "file": ".claude/settings.json",
-      "find": "\"command\": \"node .claude/tools/graph.mjs stop --session\"",
-      "replace": "\"command\": \"node .claude/tools/graph.mjs stop\""
+      "find": "\"stop\",\n              \"--session\"",
+      "replace": "\"stop\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs\"",
+      "replace": "\".claude/tools/graph.mjs\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"hooks\": {",
+      "replace": "\"disableAllHooks\": true,\n  \"hooks\": {"
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "create": {
+        "path": ".claude/settings.local.json",
+        "text": "{ \"disableAllHooks\": true }"
+      }
     },
     {
       "section": "Решения адресуемы",

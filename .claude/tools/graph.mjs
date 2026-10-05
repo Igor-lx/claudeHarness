@@ -1432,6 +1432,13 @@ const barChangedSubject = async (repoRoot) => {
     )
   ).sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
 };
+/** Строка вызова хука среды: команда вместе с доводами. У запуска без
+ * оболочки режим и ключи лежат в `args`, а не в строке `command`, и поиск по
+ * одной команде их не видел бы. */
+const hookLine = (h) =>
+  [h?.command, ...(Array.isArray(h?.args) ? h.args : [])]
+    .map((x) => String(x ?? ""))
+    .join(" ");
 /** Шапка протокола, разобранная: род, отпечатки предмета, печать. */
 /** Путь против списка образцов Stryker: включающие и исключающие.
  *
@@ -25542,9 +25549,10 @@ if (mode === "verify") {
       if (parsed !== null) {
         // Ищется ВЫЗОВ РЕЖИМА, а не имя события: событий у среды несколько, и
         // проект вправе выбрать своё. Важно одно — что режим кто-то зовёт.
-        const calls = JSON.stringify(parsed.hooks ?? {}).includes(
-          "graph.mjs transition",
-        );
+        const calls = Object.values(parsed.hooks ?? {})
+          .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+          .flatMap((g) => (g?.hooks ?? []).map(hookLine))
+          .some((l) => l.includes("graph.mjs transition"));
         if (!calls)
           hookOff.push(
             "переход объявлен, а хук среды режим `transition` не зовёт: напоминания не будет",
@@ -25566,9 +25574,8 @@ if (mode === "verify") {
           for (const g of groups)
             for (const h of g?.hooks ?? [])
               if (
-                typeof h?.command === "string" &&
-                h.command.includes("graph.mjs transition") &&
-                !h.command.includes("--hook")
+                hookLine(h).includes("graph.mjs transition") &&
+                !hookLine(h).includes("--hook")
               )
                 hookOff.push(
                   event +
@@ -25622,7 +25629,7 @@ if (mode === "verify") {
       const calls = (event, tool) =>
         (Array.isArray(parsed.hooks?.[event]) ? parsed.hooks[event] : [])
           .filter((g) => tool === undefined || fits(g?.matcher, tool))
-          .flatMap((g) => (g?.hooks ?? []).map((h) => String(h?.command ?? "")));
+          .flatMap((g) => (g?.hooks ?? []).map(hookLine));
       const need = [
         [
           "Stop",
@@ -25646,6 +25653,39 @@ if (mode === "verify") {
       for (const [event, tool, call, why] of need)
         if (!calls(event, tool).some((c) => c.includes(call)))
           gateHooksOff.push(why);
+      // Путь инструмента — от каталога проекта, а не от текущей папки: хук
+      // идёт в текущей папке сессии, и из подпапки путь `.claude/tools/…` не
+      // находится — хук падает, а ход кончается без свода. Подстановку
+      // `${CLAUDE_PROJECT_DIR}` среда делает сама, до запуска команды.
+      for (const l of Object.values(parsed.hooks ?? {})
+        .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+        .flatMap((g) => (g?.hooks ?? []).map(hookLine))
+        .filter((x) => x.includes("graph.mjs")))
+        if (!/\$\{?CLAUDE_PROJECT_DIR\b/.test(l))
+          gateHooksOff.push(
+            "команда хука зовёт инструмент не от каталога проекта — из подпапки он не найдётся: " +
+              l,
+          );
+      // Хуки, выключенные одним полем, — тот же пропуск: файл их объявляет, а
+      // среда не зовёт. Местный файл среда применяет поверх общего.
+      if (parsed.disableAllHooks === true)
+        gateHooksOff.push(
+          "хуки выключены полем `disableAllHooks` в общем файле настроек",
+        );
+      const localAt = path.join(path.dirname(at), "settings.local.json");
+      if (existsSync(localAt))
+        try {
+          if (
+            JSON.parse(readFileSync(localAt, "utf8"))?.disableAllHooks === true
+          )
+            gateHooksOff.push(
+              "хуки выключены полем `disableAllHooks` в местном файле настроек",
+            );
+        } catch {
+          gateHooksOff.push(
+            "местный файл настроек не разбирается: " + rel0(localAt),
+          );
+        }
     }
   }
   checkHead("Ворота конца хода и страж обхода включены", {

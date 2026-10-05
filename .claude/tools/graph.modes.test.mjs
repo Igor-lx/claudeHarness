@@ -433,6 +433,54 @@ describe("ворота конца хода", () => {
   }, 180000);
 });
 
+/**
+ * Хуки зовут инструмент запуском без оболочки: режим и ключи лежат в `args`.
+ * Сверки, искавшие вызов в одной строке команды, его не видели. Путь от
+ * текущей папки из подпапки сессии инструмента не находит, а поле
+ * `disableAllHooks` выключает хуки, не трогая их объявления.
+ */
+describe("хуки обвязки стоят и исполнимы из любой папки", () => {
+  it("вызов в `args` виден; путь от текущей папки и выключенные хуки названы", () => {
+    const box = seatEmpty("huki-");
+    try {
+      const at = path.join(box, ".claude", "settings.json");
+      const seed = fs.readFileSync(at, "utf8");
+      const said = (section) => (verifyIn(box).get(section) ?? []).join("\n");
+      const GATES = "Ворота конца хода и страж обхода включены";
+      const REMIND = "Напоминание о переходе включено";
+      withTransitionDebt(box, []);
+      expect(said(GATES)).toBe("");
+      expect(said(REMIND)).toBe("");
+      fs.writeFileSync(
+        at,
+        seed.replace('"transition",\n              "--hook"', '"transition"'),
+      );
+      expect(said(REMIND)).toContain("без `--hook`");
+      fs.writeFileSync(
+        at,
+        seed.replace(
+          '"${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs"',
+          '".claude/tools/graph.mjs"',
+        ),
+      );
+      expect(said(GATES)).toContain("не от каталога проекта");
+      fs.writeFileSync(
+        at,
+        seed.replace('"hooks": {', '"disableAllHooks": true,\n  "hooks": {'),
+      );
+      expect(said(GATES)).toContain("в общем файле настроек");
+      fs.writeFileSync(at, seed);
+      fs.writeFileSync(
+        path.join(box, ".claude", "settings.local.json"),
+        '{ "disableAllHooks": true }\n',
+      );
+      expect(said(GATES)).toContain("в местном файле настроек");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
