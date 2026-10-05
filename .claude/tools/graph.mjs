@@ -46,6 +46,8 @@ import {
   BAR_CUTS,
   BAR_PRESENT,
   BAR_CHECKS,
+  BAR_CHECKS_MODELLED,
+  BAR_CHECK_KINDS,
   BAR_LINT,
   BAR_ATTENTION,
   BAR_FORMS,
@@ -11632,7 +11634,12 @@ const barChecksOf = (repoRoot) => {
   const run = spawnSync(
     process.execPath,
     [fileURLToPath(import.meta.url), "verify"],
-    { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, [BAR_NESTED]: "1" },
+    },
   );
   if (typeof run.stdout !== "string" || !run.stdout.includes("=== ")) return null;
   const found = new Map();
@@ -11640,16 +11647,66 @@ const barChecksOf = (repoRoot) => {
   for (const line of run.stdout.split(LF)) {
     const head = /^=== (.+) ===$/.exec(line);
     if (head !== null) {
-      at = { looked: 0, found: 0 };
+      at = { looked: 0, found: 0, lines: [] };
       found.set(head[1], at);
       continue;
     }
     if (at === null) continue;
     const looked = /^ {2}осмотрено [^:]+: (\d+)/.exec(line);
     if (looked !== null) at.looked += Number(looked[1]);
-    if (/^ {4}\S/.test(line)) at.found += 1;
+    if (/^ {4}\S/.test(line)) {
+      at.found += 1;
+      at.lines.push(line.trim());
+    }
   }
   return found;
+};
+/** Признак прогона сверок, который зовёт сам свод: приём протокола в нём
+ * не делается — его делает зовущий, и вложенный прогон звал бы его второй
+ * раз, линтом и моделью, а из сверки цепочки — самого себя. */
+const BAR_NESTED = "GRAPH_BAR_CHECKS";
+
+/** Файлы исходников, которые строка находки сверки называет: путём от
+ * корня исходников либо от корня репозитория, с номером строки или без. */
+let SOURCE_BY_NAME = null;
+const sourceNamedIn = (line) => {
+  if (SOURCE_BY_NAME === null) {
+    SOURCE_BY_NAME = new Map();
+    for (const f of [...files, ...styleFiles]) {
+      SOURCE_BY_NAME.set(rel(f), f);
+      SOURCE_BY_NAME.set(norm(path.relative(REPO_AT, f)), f);
+    }
+  }
+  const out = new Set();
+  for (const token of line.split(/[\s`«»"'(),;→]+/)) {
+    const f = SOURCE_BY_NAME.get(token.replace(/(?::\d+(?:[-–]\d+)?)?:?$/, ""));
+    if (f !== undefined) out.add(f);
+  }
+  return out;
+};
+
+/** Красная сверка-держатель, чья находка о предмете строки: называет его
+ * файл либо не называет ни одного файла исходников — тогда она о проекте
+ * целиком. Исход, который с ней спорит, печати не получает, как и исход,
+ * спорящий с линтом. Предупреждение прогон не роняет и спором не служит;
+ * сверка, чьи факты несёт модель, не спорит — их строку судит модель; у
+ * сверки многих критериев спорит находка своего вида. `null` — спора нет. */
+const barCheckRowOf = ({ checks, c, scope }) => {
+  const names = BAR_CHECKS[c.id];
+  if (checks === null || names === undefined) return null;
+  const inScope = new Set(scope);
+  for (const name of names) {
+    if (name.includes("предупреждение") || BAR_CHECKS_MODELLED.has(name))
+      continue;
+    const kind = BAR_CHECK_KINDS[name]?.[c.id];
+    for (const line of checks.get(name)?.lines ?? []) {
+      if (kind !== undefined && !kind.test(line)) continue;
+      const named = sourceNamedIn(line);
+      if (named.size === 0 || [...named].some((f) => inScope.has(f)))
+        return { name, line };
+    }
+  }
+  return null;
 };
 
 /** Срез, который режет без суждения и без записи решения: строка модели с
@@ -12126,6 +12183,7 @@ const barHolesOf = ({
   reads = [],
   salt = "",
   lintRow = null,
+  checkRow = null,
 }) => {
   const holes = [];
   const said = new Map();
@@ -12245,6 +12303,25 @@ const barHolesOf = ({
           ", " +
           barQuoted(machine.addr) +
           ")",
+      );
+    // То же — с красной сверкой-держателем: её находку о предмете строки не
+    // закрывают ни «чистым», ни «нет предмета», ни «починено».
+    const checked = checkRow === null ? null : checkRow(c, subject);
+    if (
+      checked !== null &&
+      (one.outcome !== "нашлось" || one.fate === "починено")
+    )
+      holes.push(
+        who +
+          ": сверка «" +
+          checked.name +
+          "» видит нарушение (" +
+          checked.line +
+          "), а " +
+          (one.outcome === "нашлось" ? "судьба" : "исход") +
+          " «" +
+          (one.outcome === "нашлось" ? one.fate : one.outcome) +
+          "»",
       );
     const known = debtNaming(c, subject);
     if (
@@ -12679,6 +12756,7 @@ const barAcceptOf = ({
   witnesses = [],
   reads = [],
   lintRow = null,
+  checkRow = null,
 }) => {
   const parsed = barRowsOf(was.body);
   const drift = barSubjectDriftOf({
@@ -12715,6 +12793,7 @@ const barAcceptOf = ({
     reads,
     salt: was.salt ?? "",
     lintRow,
+    checkRow,
   });
   return {
     drift,
@@ -12744,6 +12823,7 @@ const barProcess = ({
   witnesses = [],
   reads = [],
   lintRow = null,
+  checkRow = null,
   machineRow = null,
 }) => {
   const was = barHeader(at);
@@ -12766,6 +12846,7 @@ const barProcess = ({
           witnesses,
           reads,
           lintRow,
+          checkRow,
         });
   const parsedWas = accept?.parsed ?? null;
   if (accept === null || accept.drift !== "") {
@@ -13184,6 +13265,7 @@ const barInputsOf = async ({
   focus,
   manifestTouched,
   repoRoot,
+  checks = null,
 }) => {
   // Область — одна на оба рода задачи: правку сверяют по тому же объёму, по
   // которому её читают. На правке предмет при этом — правленое: его
@@ -13221,24 +13303,31 @@ const barInputsOf = async ({
   // отвечают за всю область.
   const flagsAll = barFlagsOf(area, manifestTouched);
   const flagsBy = new Map();
+  // Предмет строки: строка на работу — вся область, строка единицы переноса
+  // либо слоя — его файлы в области, строка соседей — соседи.
+  const scopeOf = (c, s) => {
+    const split = barSplitOf(c.id + "|" + c.level);
+    if (s === "" || split === "") return area;
+    if (s === BAR_AREA) return [...neighbours[split]];
+    return area.filter(
+      (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
+    );
+  };
   const noneOf = (c, s) => {
     const split = barSplitOf(c.id + "|" + c.level);
     if (s === "" || split === "") return barNoSubject(c.id + "|" + flagsAll);
     const k = split + "|" + s;
     if (!flagsBy.has(k))
-      flagsBy.set(
-        k,
-        barFlagsOf(
-          s === BAR_AREA
-            ? [...neighbours[split]]
-            : area.filter(
-                (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
-              ),
-          manifestTouched,
-        ),
-      );
+      flagsBy.set(k, barFlagsOf(scopeOf(c, s), manifestTouched));
     return barNoSubject(c.id + "|" + flagsBy.get(k));
   };
+  // Спор с красной сверкой-держателем — только у строки, чей предмет в
+  // работе есть: находка о проекте целиком не делает предмета там, где его
+  // нет, — строгость типов не о правке одних стилей.
+  const checkRow = (c, s) =>
+    noneOf(c, s) !== ""
+      ? null
+      : barCheckRowOf({ checks, c, scope: scopeOf(c, s) });
   // Страницы чтения: тела критериев, на которые отвечает сессия, полный текст
   // предмета и срез каждого соседа — той же области, что модель. Лозунг и
   // замеренную беспредметность инструмент проставил сам: тело такого
@@ -13290,6 +13379,7 @@ const barInputsOf = async ({
     witnesses,
     reads,
     lintRow,
+    checkRow,
     work,
     area,
     subjects,
@@ -13301,7 +13391,7 @@ const barInputsOf = async ({
 /** Почему печать протокола правки не признаётся: нарушения приёма на
  * нынешнем виде правленого и число строк исходов. Нарушений нет — печать
  * признаётся. */
-const barRefusalOf = async (was, repoRoot) => {
+const barRefusalOf = async (was, repoRoot, checks = null) => {
   const live = liveBarCriteria();
   if (live === null || live.blind || live.levelless.length > 0)
     return {
@@ -13318,6 +13408,7 @@ const barRefusalOf = async (was, repoRoot) => {
     focus: null,
     manifestTouched: change.manifestTouched,
     repoRoot,
+    checks,
   });
   return {
     faults: barAcceptOf({ was, ...inputs }).faults,
@@ -13465,9 +13556,13 @@ if (mode === "gate") {
   const fault = barCoverFault(want, body);
   // Печать — открытый отпечаток: протокол с «чисто» во всех строках и
   // печатью, посчитанной руками, прошёл бы по ней одной. Поэтому протокол
-  // принимают тем же приёмом, что режим `bar` делает перед печатью.
+  // принимают тем же приёмом, что режим `bar` делает перед печатью, — со
+  // сверками-держателями: исход, спорящий с красной, печать не держит.
   const refused =
-    fault === "" ? (await barRefusalOf(barHeaderOf(body), REPO_AT)).faults : [];
+    fault === ""
+      ? (await barRefusalOf(barHeaderOf(body), REPO_AT, barChecksOf(REPO_AT)))
+          .faults
+      : [];
   if (fault === "" && refused.length === 0) {
     console.log("  свод покрывает правку: коммит проходит");
     process.exit(0);
@@ -13705,6 +13800,10 @@ if (mode === "bar") {
     process.exit(0);
   }
 
+  // Сверки прогона и срезы модели — те же машинные держатели: строку, где
+  // они решают, машина заполняет тоже, а исход, спорящий с красной
+  // сверкой-держателем, печати не получает.
+  const checks = barChecksOf(repoRoot);
   const inputs = await barInputsOf({
     live,
     kind,
@@ -13712,6 +13811,7 @@ if (mode === "bar") {
     focus,
     manifestTouched,
     repoRoot,
+    checks,
   });
   const {
     work,
@@ -13723,10 +13823,8 @@ if (mode === "bar") {
     noneOf,
     lint,
     lintFiles,
+    checkRow,
   } = inputs;
-  // Сверки прогона и срезы модели — те же машинные держатели: строку, где
-  // они решают, машина заполняет тоже.
-  const checks = barChecksOf(repoRoot);
   const machineRow = (c, s) =>
     s !== ""
       ? null
@@ -13744,9 +13842,23 @@ if (mode === "bar") {
     .filter((one) => one !== null);
   const r = barProcess({ at, ...inputs, machineRow });
 
+  const disputed = [
+    ...new Set(
+      expected
+        .map(({ c, subject: one }) => ({ c, row: checkRow(c, one) }))
+        .filter((x) => x.row !== null)
+        .map((x) => x.c.id + " («" + x.row.name + "»)"),
+    ),
+  ];
   if (r.state === "напечатан") {
     console.log("=== Свод по планке: протокол напечатан ===");
     console.log(barMachineLine(lint, checks, machineMade));
+    if (disputed.length > 0)
+      console.log(
+        "  красна сверка-держатель о предмете строки: " +
+          disputed.join(", ") +
+          " — исход по ним «нашлось»: «чисто» и «нет предмета» печати не получат",
+      );
     if (r.carried > 0)
       console.log(
         "  исходы перенесены: " +
@@ -22390,7 +22502,8 @@ if (mode === "verify") {
   {
     const at =
       CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
-    const subject = at === null ? [] : await barChangedSubject(REPO);
+    const nested = process.env[BAR_NESTED] === "1";
+    const subject = at === null || nested ? [] : await barChangedSubject(REPO);
     {
       const all = liveBarCriteria();
       barCriteriaLive = all === null ? 0 : all.all.length;
@@ -22398,6 +22511,9 @@ if (mode === "verify") {
     if (at === null)
       barSaid =
         "протокол не ведётся — проход по планке держится памятью целиком";
+    else if (nested)
+      barSaid =
+        "прогон для свода: протокол принимает тот, кто его позвал, — режим `bar` либо ворота";
     else if (subject === null)
       barSaid =
         "состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет";

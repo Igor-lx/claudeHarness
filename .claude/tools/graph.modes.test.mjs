@@ -1111,6 +1111,99 @@ describe("печать, посчитанная руками", () => {
   }, 180000);
 });
 
+describe("красная сверка-держатель режет печать", () => {
+  it("«чисто» о строгости при снятой строгости не принимают ни свод, ни ворота, находку-вопрос — принимают", () => {
+    const box = seatEmpty("derzh-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=derzh",
+            "-c",
+            "user.email=derzh@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const tsAt = path.join(box, "tsconfig.json");
+      const ts = fs.readFileSync(tsAt, "utf8");
+      expect(ts).toContain('"strict": true');
+      fs.writeFileSync(tsAt, ts.replace('"strict": true', '"strict": false'));
+      const strictLine =
+        ts.split("\n").findIndex((l) => l.includes('"strict"')) + 1;
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzRatio.ts"),
+        "export const zzRatio = (a: number, b: number): number => a / b;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      expect(run("bar").stdout).toContain(
+        "красна сверка-держатель о предмете строки: D1 («Строгость компилятора там, где проверяются типы»)",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { D1: "чисто |  | строгость объявлена конфигом | " },
+      });
+      const refused = run("bar").stdout;
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toContain(
+        "D1: сверка «Строгость компилятора там, где проверяются типы» видит нарушение (tsconfig.json",
+      );
+      // Подлог мимо режима: та же «чисто», печать руками. Ворота считают
+      // сверки сами и протокол не принимают.
+      const body = fs.readFileSync(protoAt, "utf8");
+      const seal = createHash("sha1").update(body).digest("hex").slice(0, 12);
+      fs.writeFileSync(
+        protoAt,
+        body.replace("- печать: `нет`", "- печать: `" + seal + "`"),
+      );
+      git("add", "-A");
+      const gate = run("gate");
+      expect(gate.status).toBe(1);
+      expect(gate.stdout).toContain(
+        "D1: сверка «Строгость компилятора там, где проверяются типы» видит нарушение",
+      );
+      // Находка-развилка, названная списком вопросов, печать получает.
+      fs.rmSync(protoAt);
+      run("bar");
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\n## Вопрос 1. Строгость снята\n\n**Задан:** проба, `tsconfig.json`.\n\n" +
+          "**Что решить.** Вернуть ли строгость.\n\n" +
+          "**Последствие отсутствия ответа.** Типы проверяются без строгости.\n",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          D1:
+            "нашлось | tsconfig.json:" +
+            strictLine +
+            " | строгость снята | вопрос",
+        },
+        holds: { приложение: "нет" },
+      });
+      expect(run("bar").stdout).toContain("печать поставлена");
+      git("add", "-A");
+      expect(run("gate").status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
@@ -2916,9 +3009,21 @@ describe("свод на правке — по той же области, что
         /A6: чисто, а правка завела новое, а каталог источников проекта в основании не назван[^:]*: П\d+/,
       );
 
-      // Честный свод: каталог назван, факт соседа вынесен вопросом. У теста
-      // «база не требуется» законно, когда его называет реестр тестов: в карте
-      // своей строки у теста нет и быть не может.
+      // Честный свод: каталог назван, факт соседа вынесен вопросом, новое
+      // состояние записано — без записи сверка его владельца красна, и
+      // «чисто» о владельце печати не получает. У теста «база не требуется»
+      // законно, когда его называет реестр тестов: в карте своей строки у
+      // теста нет и быть не может.
+      fs.writeFileSync(
+        stateAt,
+        fs
+          .readFileSync(stateAt, "utf8")
+          .replace(
+            "| --- | --- | --- | --- | --- |\n",
+            "| --- | --- | --- | --- | --- |\n" +
+              "| счёт кнопки | `src/components/ZzCounter/ZzCounter.tsx` | `src/components/ZzCounter/ZzCounter.tsx` | — | экран |\n",
+          ),
+      );
       put(
         "src/components/ZzCounter/tests/ZzCounter.test.tsx",
         'import { ZzCounter } from "../ZzCounter";\n\nexport const zzProbe = ZzCounter;\n',
