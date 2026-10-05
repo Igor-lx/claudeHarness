@@ -1025,6 +1025,92 @@ describe("удалённый файл кода в предмете", () => {
   }, 180000);
 });
 
+/**
+ * Печать — открытый отпечаток, и посчитать её можно руками. Протокол со
+ * словом «чисто» в каждой пустой строке исхода и такой печатью проходил
+ * ворота по одной печати, а сверку — по счёту исходов. Теперь ворота и сверка
+ * принимают его тем же приёмом, что режим `bar` перед печатью.
+ */
+describe("печать, посчитанная руками", () => {
+  it("ворота и сверка держат протокол, запечатанный мимо режима, и пропускают честный", () => {
+    const box = seatEmpty("ruki-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=ruki",
+            "-c",
+            "user.email=ruki@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      const barSection = () =>
+        run("verify")
+          .stdout.split("=== Планка пройдена покритериально ===")[1]
+          .split("\n===")[0];
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzRuki.ts"),
+        "export const zzRuki = (n: number): number => n + 1;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      run("bar");
+      // Подлог: «чисто» в каждой пустой клетке исхода, печать — руками.
+      const blank = fs
+        .readFileSync(protoAt, "utf8")
+        .split("\n")
+        .map((line) => {
+          const c = line.split("|");
+          if (
+            c.length !== 9 ||
+            !/^ [A-U][0-9]+(-[а-я]+)? $/.test(c[1]) ||
+            c[4].trim() !== ""
+          )
+            return line;
+          c[4] = " чисто ";
+          return c.join("|");
+        })
+        .join("\n");
+      expect(blank).toContain("| чисто |");
+      const seal = createHash("sha1").update(blank).digest("hex").slice(0, 12);
+      fs.writeFileSync(
+        protoAt,
+        blank.replace("- печать: `нет`", "- печать: `" + seal + "`"),
+      );
+      git("add", "-A");
+      const gate = run("gate");
+      expect(gate.status).toBe(1);
+      expect(gate.stdout).toContain("печать стоит, а протокол не принят");
+      expect(barSection()).toContain("протокол не принят:");
+      // Честный свод тот же приём принимает: печать ставит режим, ворота
+      // пропускают, сверка называет протокол принятым.
+      fs.rmSync(protoAt);
+      run("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(run("bar").stdout).toContain("печать поставлена");
+      git("add", "-A");
+      expect(run("gate").status).toBe(0);
+      expect(barSection()).toContain("свод закрыт печатью и принят");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
@@ -2884,7 +2970,9 @@ describe("свод на правке — по той же области, что
         .replace(/^- печать: `.*`$/m, "- печать: `нет`");
       const forged = createHash("sha1").update(blank).digest("hex").slice(0, 12);
       fs.writeFileSync(protoAt, blank.replace("- печать: `нет`", "- печать: `" + forged + "`"));
-      expect(barSection()).toMatch(/исхода нет у строк: [1-9][0-9]* из [0-9]+ — [^\n]*для `соседи`/);
+      expect(barSection()).toMatch(
+        /протокол не принят: [^\n]*строки исходов не те: недостаёт [1-9][0-9]* из [0-9]+, лишних 0 — [^\n]*для `соседи`/,
+      );
 
       // Разбор берёт ту же область: партнёр по имени в ней есть.
       tool("bar", "components/ZzMeter");

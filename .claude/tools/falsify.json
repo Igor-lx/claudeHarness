@@ -423,6 +423,18 @@
       }
     },
     {
+      "section": "Планка пройдена покритериально",
+      "edits": [
+        {
+          "create": {
+            "path": "src/zzBarForged.ts",
+            "text": "export const zzBarForged = 1;"
+          }
+        },
+        { "forgeBar": true }
+      ]
+    },
+    {
       "section": "Тесты лежат в `tests/`",
       "create": {
         "path": "src/zzProbe.test.tsx",

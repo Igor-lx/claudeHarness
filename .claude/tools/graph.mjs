@@ -4805,6 +4805,52 @@ if (mode === "falsify") {
           undo.push(makeDirs(path.join(tmp, step.mkdir)));
           continue;
         }
+        // Подложить протокол свода мимо режима: скелет печатает режим, в
+        // каждую пустую клетку исхода — «чисто», печать считается руками.
+        // Печать — открытый отпечаток, и сверка планки обязана держать такой
+        // протокол приёмом, а не одной печатью.
+        if (step.forgeBar === true) {
+          if (CONFIG.barProtocol == null)
+            return give("протокол свода не объявлен: поле `barProtocol`");
+          const protoAt = path.join(
+            tmp,
+            path.relative(REPO_ROOT, BASE),
+            CONFIG.barProtocol,
+          );
+          const had = existsSync(protoAt) ? readFileSync(protoAt) : null;
+          undo.push(() => {
+            if (had === null) rmSync(protoAt, { force: true });
+            else writeFileSync(protoAt, had);
+          });
+          spawnSync(
+            process.execPath,
+            [path.join(tmp, ".claude/tools/graph.mjs"), "bar"],
+            { cwd: tmp, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+          );
+          if (!existsSync(protoAt))
+            return give("режим `bar` протокола не напечатал");
+          const blank = readFileSync(protoAt, "utf8")
+            .split(NEWLINE)
+            .map((line) => {
+              const c = line.split("|");
+              if (
+                c.length !== 9 ||
+                !/^ [A-U][0-9]+(-[а-я]+)? $/.test(c[1]) ||
+                c[4].trim() !== ""
+              )
+                return line;
+              c[4] = " чисто ";
+              return c.join("|");
+            })
+            .join(NEWLINE);
+          writeFileSync(
+            protoAt,
+            blank
+              .split(BAR_NOSEAL)
+              .join("- печать: " + barQuoted(barSealOf(blank))),
+          );
+          continue;
+        }
         const stepAt = path.join(tmp, step.file);
         if (!existsSync(stepAt)) return give("файла нет: " + step.file);
         // Прятание файла — та же форма, что у одиночного рецепта. Словарь
@@ -4864,7 +4910,7 @@ if (mode === "falsify") {
           // поломкой инструмента, а не негодным рецептом. Долг рецептов при
           // этом не печатался вовсе — одна опечатка гасила ВЕСЬ отчёт.
           return give(
-            "форма шага не опознана (ждали create, copyTo, rename, append, appendFrom или find): " +
+            "форма шага не опознана (ждали create, mkdir, forgeBar, copyTo, rename, append, appendFrom или find): " +
               step.file,
           );
         else {
@@ -6025,157 +6071,6 @@ const changedPaths = async (repoRoot) => {
   return out.filter(Boolean);
 };
 
-// --- gate: ворота перед коммитом --------------------------------------------
-//
-// Свод по планке спрашивался только с НЕЗАКОММИЧЕННОГО: предмет его —
-// правленое по `git status`, то есть рабочее дерево. Коммит дерево опустошает,
-// и сверка замолкала. Требование при этом не откладывалось — оно УДАЛЯЛОСЬ:
-// красное «свод на другом предмете» исчезало от коммита, а не от починки, и
-// ни один следующий прогон о нём не вспоминал.
-//
-// Ломалось это четырьмя обычными способами, и ни один не был жульничеством:
-// коммит раньше прогона; коммит поверх красного; сессия, кончившаяся посреди
-// работы; несколько коммитов подряд. Замерено на себе.
-//
-// Ворота стоят там, где ошибка совершается. Предмет их — ИНДЕКС, а не рабочее
-// дерево: отпечатки считаются с того содержимого, которое поедет в коммит, и
-// свод обязан быть в индексе вместе с ним. Иначе история получила бы правку
-// без свода, а ревизия — свод, которого в коммите нет.
-if (mode === "gate") {
-  const NEWLINE = String.fromCharCode(10);
-  const { execFileSync } = await import("node:child_process");
-  const git = (args) =>
-    execFileSync("git", args, {
-      cwd: REPO_AT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  let staged;
-  try {
-    // Пары «буква, путь». Без поиска переименований: прежний путь — удалённый
-    // файл, и он в предмете так же, как после `git rm`.
-    const said = zList(
-      git([
-        "diff",
-        "--cached",
-        "--name-status",
-        "-z",
-        "--no-renames",
-        "--diff-filter=ACMD",
-      ]),
-    );
-    staged = [];
-    for (let i = 0; i + 1 < said.length; i += 2)
-      staged.push({ status: said[i], one: said[i + 1] });
-  } catch {
-    staged = null;
-  }
-  if (staged === null) {
-    sayLooked("файлов в индексе", 0);
-    console.log("  git недоступен — ворота проверить нечем, и это не «чисто»");
-    process.exit(1);
-  }
-  sayLooked("файлов в индексе", staged.length);
-  // Коммит из процесса, который запустила сессия: хуки проекта в ней обязаны
-  // исполняться, и доказывает это свежий след стража с этой командой коммита.
-  // Сессия, стартовавшая выше проекта, его не оставляет — настройки проекта
-  // она не читает (`environment.md`).
-  if (inSession()) {
-    const dead = guardTraceFault(true);
-    if (dead !== null && dead !== "") {
-      console.log("=== Ворота перед коммитом ===");
-      console.log(
-        "  КОММИТ НЕ ПРОХОДИТ: коммит из сессии, где хуки проекта не исполняются (" +
-          dead +
-          "): команда `/cd` в папку проекта (`environment.md`)",
-      );
-      process.exit(1);
-    }
-  }
-  const seeds = seedOfPath();
-  let fromShelf = 0;
-  let formatted = 0;
-  const want = [];
-  for (const { status, one } of staged) {
-    const abs = norm(path.join(REPO_AT, one));
-    // Удаление — тоже правка: удалённый код в предмете с отпечатком «нет
-    // файла», и свод обязан его назвать.
-    if (status === "D") {
-      if (codeByPlace(abs)) want.push({ file: rel(abs), mark: "нет файла" });
-      continue;
-    }
-    if (!files.includes(abs) && !styleFiles.includes(abs)) continue;
-    if (abs.endsWith(".d.ts")) continue;
-    let body;
-    try {
-      body = git(["show", ":" + one]);
-    } catch {
-      continue;
-    }
-    // Семя, лежащее нетронутым, — работа обвязки, а не проекта.
-    const seedAt = seeds.has(one) ? shelfAt(seeds.get(one)) : null;
-    const seedBody =
-      seedAt !== null && existsSync(seedAt)
-        ? readFileSync(seedAt, "utf8")
-        : null;
-    if (
-      sameAsSeed(body, seedBody) ||
-      (await formatOnly(seedBody, body, abs))
-    ) {
-      fromShelf += 1;
-      continue;
-    }
-    let head = null;
-    try {
-      head = git(["show", "HEAD:" + one]);
-    } catch {
-      head = null;
-    }
-    if (await formatOnly(head, body, abs)) {
-      formatted += 1;
-      continue;
-    }
-    want.push({ file: rel(abs), mark: barDigest(body) });
-  }
-  want.sort((x, y) => (x.file < y.file ? -1 : 1));
-  console.log("=== Ворота перед коммитом ===");
-  console.log(
-    "  кода и стилей в индексе: " +
-      want.length +
-      (fromShelf ? ", и ещё " + fromShelf + " лежит семенем обвязки" : "") +
-      (formatted ? ", и ещё " + formatted + " — одно приведение формата" : ""),
-  );
-  if (!want.length) {
-    console.log("  кода в коммите нет — свод не спрашивается");
-    process.exit(0);
-  }
-  for (const one of want) console.log("    " + one.file);
-  let body = null;
-  if (CONFIG.barProtocol != null) {
-    const at = path.posix.join(
-      path.relative(REPO_AT, BASE).split(path.sep).join("/"),
-      CONFIG.barProtocol,
-    );
-    try {
-      body = git(["show", ":" + at]);
-    } catch {
-      body = null;
-    }
-  }
-  const fault = barCoverFault(want, body);
-  if (fault === "") {
-    console.log("  свод покрывает правку: коммит проходит");
-    process.exit(0);
-  }
-  console.log("  КОММИТ НЕ ПРОХОДИТ: " + fault);
-  console.log(
-    "  Свод по планке делают ДО коммита: node .claude/tools/graph.mjs bar",
-  );
-  console.log(
-    "  Протокол добавляют в тот же коммит — иначе история получит правку без свода.",
-  );
-  process.exit(1);
-}
 // --- stop: ворота конца хода -------------------------------------------------
 //
 // Ворота перед коммитом стоят там, где коммитят, а коммитит разработчик — по
@@ -12725,6 +12620,176 @@ const barHolesOf = ({
  * скелет пересобран, исходы перенесены), `запечатан`, `дыры`, `правлен` —
  * печать стоит и с телом не сходится. Печатает тот, кто зовёт: у задачи
  * изменения и у перехода разный вывод. */
+/** Чем предмет протокола разошёлся с нынешним: род, отпечатки, модель, набор
+ * строк, таблица базы, свидетели, страницы чтения, соль. Пусто — предмет тот
+ * же. Не тот — протокол собран на другом виде предмета: режим `bar` его
+ * пересобирает, а приём не принимает. */
+const barSubjectDriftOf = ({
+  was,
+  parsedWas,
+  kind,
+  marks,
+  model,
+  expected,
+  withBase,
+  baseFiles,
+  witnesses,
+  reads,
+}) => {
+  if (was.kind !== kind)
+    return (
+      "род задачи другой: " + (was.kind ?? "не назван") + ", нужен " + kind
+    );
+  if (!barSameMarks(was.marks, marks))
+    return "отпечатки предмета другие: правлен код либо сменился сам предмет";
+  // Собранные инструментом строки модели совпадают с тем, что он соберёт
+  // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
+  // Сравнение в обе стороны: строки, дописанные сессией, идут после
+  // собранных, и отличить их от строки, которую инструмент больше не
+  // собирает, можно только по числу собранных в шапке. Прежде сравнивался
+  // префикс, и строка, ушедшая из конца модели, оставалась в протоколе
+  // вместе с дырой по ней — замерено переходом стенда: граница, которой уже
+  // не было, требовала ответа. Протокол без этого числа пересобирается один
+  // раз, с переносом исходов.
+  const sameModel =
+    was.modelRows === model.length &&
+    model.every((m, k) => {
+      const r = parsedWas.model[k];
+      return (
+        r !== undefined &&
+        r.id === m.id &&
+        r.sort === m.sort &&
+        r.where === m.where &&
+        r.what === m.what &&
+        r.delta === m.delta &&
+        r.mark === m.mark
+      );
+    });
+  if (!sameModel) return "модель предмета другая";
+  // Набор строк — ровно ожидаемый: недостающая строка и лишняя одинаково
+  // означают, что скелет печатался под другой набор — политика сменилась,
+  // единица переноса стала бочкой, — и протокол пересобирается с переносом.
+  const have = new Set(parsedWas.outcomes.map((o) => barKey(o.id, o.subject)));
+  const want = new Set(expected.map((e) => barKey(e.c.id, e.subject)));
+  const missing = expected.filter((e) => !have.has(barKey(e.c.id, e.subject)));
+  const surplus = parsedWas.outcomes.filter(
+    (o) => !want.has(barKey(o.id, o.subject)),
+  );
+  if (missing.length > 0 || surplus.length > 0)
+    return (
+      "строки исходов не те: недостаёт " +
+      missing.length +
+      " из " +
+      expected.length +
+      ", лишних " +
+      surplus.length +
+      " — " +
+      [
+        ...missing.map((e) => barWho(e.c.id, e.subject)),
+        ...surplus.map((o) => barWho(o.id, o.subject)),
+      ]
+        .slice(0, 5)
+        .join(", ")
+    );
+  // Таблица базы — по тем же файлам: сосед, пришедший в область или ушедший
+  // из неё, иначе оставался бы без строки либо со строкой о чужом.
+  const wantBase = baseFiles ?? marks.map((m) => m.file);
+  if (
+    withBase &&
+    (parsedWas.base.size !== wantBase.length ||
+      !wantBase.every((f) => parsedWas.base.has(f)))
+  )
+    return "таблица базы и документации о других файлах";
+  // Свидетели — по тем же единицам и объявлениям и под теми же номерами:
+  // объявление, пришедшее в предмет или ушедшее из него, иначе оставалось бы
+  // без строки либо со строкой о том, чего нет.
+  const sameWitness =
+    parsedWas.witnesses.length === witnesses.length &&
+    witnesses.every(
+      (w, k) =>
+        parsedWas.witnesses[k]?.key === w.key &&
+        parsedWas.witnesses[k]?.id === w.id &&
+        parsedWas.witnesses[k]?.where === w.where,
+    );
+  if (!sameWitness) return "свидетели о других единицах и объявлениях";
+  // Страницы — те же и в том же порядке: страница, пришедшая или ушедшая,
+  // иначе оставалась бы без слова либо со словом о том, чего нет.
+  const sameRead =
+    parsedWas.reads.length === reads.length &&
+    reads.every((spec, k) => parsedWas.reads[k]?.spec === spec);
+  if (!sameRead) return "страницы чтения другие";
+  if (reads.length > 0 && was.salt === null) return "соли чтения нет";
+  return "";
+};
+/** Приём протокола свода на нынешнем виде предмета: тот ли у него предмет и
+ * какие в нём дыры. Режим `bar` по нему пересобирает протокол либо печатает
+ * дыры; ворота перед коммитом и сверка цепочки не признают печать, пока
+ * список нарушений не пуст: печать — открытый отпечаток, посчитать её можно
+ * руками, и одна она протокол не держит. */
+const barAcceptOf = ({
+  was,
+  kind,
+  marks,
+  model,
+  expected,
+  levelSubjects,
+  withBase,
+  repoRoot,
+  changedNow,
+  subjectAbs = [],
+  neighbours = null,
+  baseFiles = null,
+  witnesses = [],
+  reads = [],
+  lintRow = null,
+}) => {
+  const parsed = barRowsOf(was.body);
+  const drift = barSubjectDriftOf({
+    was,
+    parsedWas: parsed,
+    kind,
+    marks,
+    model,
+    expected,
+    withBase,
+    baseFiles,
+    witnesses,
+    reads,
+  });
+  if (drift !== "")
+    return {
+      drift,
+      parsed,
+      faults: ["протокол собран не на нынешнем виде предмета — " + drift],
+    };
+  const found = barHolesOf({
+    kind,
+    parsed,
+    expected,
+    levelSubjects,
+    repoRoot,
+    changedNow,
+    withBase,
+    marks,
+    subjectAbs,
+    neighbours,
+    baseFiles,
+    witnesses,
+    reads,
+    salt: was.salt ?? "",
+    lintRow,
+  });
+  return {
+    drift,
+    parsed,
+    ...found,
+    faults: [
+      ...found.twice.map((one) => "строка названа дважды: " + one),
+      ...found.extra.map((one) => "строка, которой в этом своде нет: " + one),
+      ...found.holes,
+    ],
+  };
+};
 const barProcess = ({
   at,
   kind,
@@ -12745,83 +12810,28 @@ const barProcess = ({
   machineRow = null,
 }) => {
   const was = barHeader(at);
-  const parsedWas = was === null ? null : barRowsOf(was.body);
-  // Собранные инструментом строки модели совпадают с тем, что он соберёт
-  // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
-  // Сравнение в обе стороны: строки, дописанные сессией, идут после
-  // собранных, и отличить их от строки, которую инструмент больше не
-  // собирает, можно только по числу собранных в шапке. Прежде сравнивался
-  // префикс, и строка, ушедшая из конца модели, оставалась в протоколе
-  // вместе с дырой по ней — замерено переходом стенда: граница, которой уже
-  // не было, требовала ответа. Протокол без этого числа пересобирается один
-  // раз, с переносом исходов.
-  const sameModel = (rows) =>
-    was?.modelRows === model.length &&
-    model.every((m, k) => {
-      const r = rows[k];
-      return (
-        r !== undefined &&
-        r.id === m.id &&
-        r.sort === m.sort &&
-        r.where === m.where &&
-        r.what === m.what &&
-        r.delta === m.delta &&
-        r.mark === m.mark
-      );
-    });
-  // Набор строк — ровно ожидаемый: недостающая строка и лишняя одинаково
-  // означают, что скелет печатался под другой набор — политика сменилась,
-  // единица переноса стала бочкой, — и протокол пересобирается с переносом.
-  const sameRows =
-    parsedWas !== null &&
-    (() => {
-      const want = new Set(expected.map((e) => barKey(e.c.id, e.subject)));
-      const have = new Set(
-        parsedWas.outcomes.map((o) => barKey(o.id, o.subject)),
-      );
-      return want.size === have.size && [...want].every((k) => have.has(k));
-    })();
-  // Таблица базы — по тем же файлам: сосед, пришедший в область или ушедший
-  // из неё, иначе оставался бы без строки либо со строкой о чужом.
-  const sameBase =
-    parsedWas !== null &&
-    (() => {
-      if (!withBase) return true;
-      const want = baseFiles ?? marks.map((m) => m.file);
-      return (
-        parsedWas.base.size === want.length &&
-        want.every((f) => parsedWas.base.has(f))
-      );
-    })();
-  // Свидетели — по тем же единицам и объявлениям и под теми же номерами:
-  // объявление, пришедшее в предмет или ушедшее из него, иначе оставалось бы
-  // без строки либо со строкой о том, чего нет.
-  const sameWitness =
-    parsedWas !== null &&
-    parsedWas.witnesses.length === witnesses.length &&
-    witnesses.every(
-      (w, k) =>
-        parsedWas.witnesses[k]?.key === w.key &&
-        parsedWas.witnesses[k]?.id === w.id &&
-        parsedWas.witnesses[k]?.where === w.where,
-    );
-  // Страницы — те же и в том же порядке: страница, пришедшая или ушедшая,
-  // иначе оставалась бы без слова либо со словом о том, чего нет.
-  const sameRead =
-    parsedWas !== null &&
-    parsedWas.reads.length === reads.length &&
-    reads.every((spec, k) => parsedWas.reads[k]?.spec === spec);
-  const sameSubject =
-    was !== null &&
-    was.kind === kind &&
-    barSameMarks(was.marks, marks) &&
-    sameModel(parsedWas.model) &&
-    sameRows &&
-    sameBase &&
-    sameWitness &&
-    sameRead &&
-    (reads.length === 0 || was.salt !== null);
-  if (!sameSubject) {
+  const accept =
+    was === null
+      ? null
+      : barAcceptOf({
+          was,
+          kind,
+          marks,
+          model,
+          expected,
+          levelSubjects,
+          withBase,
+          repoRoot,
+          changedNow,
+          subjectAbs,
+          neighbours,
+          baseFiles,
+          witnesses,
+          reads,
+          lintRow,
+        });
+  const parsedWas = accept?.parsed ?? null;
+  if (accept === null || accept.drift !== "") {
     // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
     // печать, но не работу. Прежде скелет печатался поверх, и прогон одного
     // форматтера по новому тесту стирал сто восемьдесят исходов разом —
@@ -12923,23 +12933,7 @@ const barProcess = ({
     };
   }
   const body = was.body;
-  const { holes, twice, extra, said, levelMap } = barHolesOf({
-    kind,
-    parsed: parsedWas,
-    expected,
-    levelSubjects,
-    repoRoot,
-    changedNow,
-    withBase,
-    marks,
-    subjectAbs,
-    neighbours,
-    baseFiles,
-    witnesses,
-    reads,
-    salt: was.salt ?? "",
-    lintRow,
-  });
+  const { holes, twice, extra, said, levelMap } = accept;
   const found = expected
     .map(({ c, subject }) => ({
       who: barWho(c.id, subject),
@@ -13221,6 +13215,343 @@ const barTransitionPlan = (s, live) => {
   };
 };
 
+/** Предмет задачи изменения: правленый код и стили — и тронут ли манифест.
+ * Один расчёт на режим `bar`, ворота перед коммитом и сверку цепочки.
+ * `null` — git недоступен. */
+const barChangeOf = async (repoRoot) => {
+  const subject = await barChangedSubject(repoRoot);
+  if (subject === null) return null;
+  // Манифест в предмет не входит — предмет только код и стили, — а
+  // критерии о зависимостях спрашивают именно с его правки. Признак, взятый
+  // из предмета, был ложен всегда: правка, добавившая пакет, получала «нет
+  // предмета» по зависимостям, и вопрос о пакете не задавался.
+  const manifestAt =
+    CONFIG.manifest == null ? null : norm(path.join(BASE, CONFIG.manifest));
+  const manifestTouched =
+    manifestAt !== null &&
+    ((await changedPaths(repoRoot)) ?? []).some(
+      (f) => norm(path.join(repoRoot, f)) === manifestAt,
+    );
+  return { subject: [...new Set(subject)], manifestTouched };
+};
+
+/** Входы свода по предмету: область, модель, ожидаемые строки, свидетели,
+ * страницы чтения, линт, правленое. Печать признают по тем же входам, по
+ * которым её ставили: режим `bar`, ворота и сверка цепочки зовут одну
+ * функцию. Сверок прогона здесь нет — их держатель зовёт прогон, а прогон
+ * зовёт приём. */
+const barInputsOf = async ({
+  live,
+  kind,
+  subject,
+  focus,
+  manifestTouched,
+  repoRoot,
+}) => {
+  // Область — одна на оба рода задачи: правку сверяют по тому же объёму, по
+  // которому её читают. На правке предмет при этом — правленое: его
+  // отпечатки сверяют ворота перед коммитом, а сосед, тронутый после печати,
+  // сам становится правленым и гасит её.
+  const work = focus ?? barWorkOf(subject);
+  const area = kind === "на изменение" ? barAreaOf(work) : subject;
+  const neighbours = barNeighboursOf(work, area);
+  const marks = barMarks(subject);
+  const model = barModelOf(work, {
+    kind,
+    subject,
+    area,
+    asked: new Set(live.all.map((c) => c.id)),
+  });
+  // Предметы уровней: ядро узла спрашивают по каждой тронутой единице
+  // переноса, ядро слоя — по каждому слою, соседей — одной строкой. Одна
+  // строка на правку двух узлов закрывала вопрос одного ответом о другом.
+  const subjects = barSubjectsOf(work, neighbours);
+  const expected = barExpectedOf(live.all, subjects);
+  // Свидетели — о самом предмете: соседей читают ради предмета, и их ядро
+  // отвечает одной строкой.
+  const witnesses = barWitnessesOf(
+    work,
+    new Set(expected.map((e) => e.c.id)),
+    { change: kind === "на изменение" },
+  );
+  const levelSubjects = {
+    узел: subjects.узел.length ? subjects.узел : [""],
+    слой: subjects.слой.length ? subjects.слой : [""],
+    приложение: [""],
+  };
+  // Признаки беспредметности — по предмету строки: лист стилей одной
+  // единицы переноса не делает предметом стилей соседнюю. Строки на работу
+  // отвечают за всю область.
+  const flagsAll = barFlagsOf(area, manifestTouched);
+  const flagsBy = new Map();
+  const noneOf = (c, s) => {
+    const split = barSplitOf(c.id + "|" + c.level);
+    if (s === "" || split === "") return barNoSubject(c.id + "|" + flagsAll);
+    const k = split + "|" + s;
+    if (!flagsBy.has(k))
+      flagsBy.set(
+        k,
+        barFlagsOf(
+          s === BAR_AREA
+            ? [...neighbours[split]]
+            : area.filter(
+                (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
+              ),
+          manifestTouched,
+        ),
+      );
+    return barNoSubject(c.id + "|" + flagsBy.get(k));
+  };
+  // Страницы чтения: тела критериев, на которые отвечает сессия, полный текст
+  // предмета и срез каждого соседа — той же области, что модель. Лозунг и
+  // замеренную беспредметность инструмент проставил сам: тело такого
+  // критерия читать незачем, и страница о нём была бы лишней работой.
+  const reads = barReadPagesOf({
+    ids: new Set(
+      expected
+        .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
+        .map(({ c }) => c.id),
+    ),
+    subject: work,
+    neighbours: area.filter((f) => !work.includes(f)),
+  });
+  // Держатель «линт»: линт проекта по файлам кода работы. Строки о соседях
+  // и строки по единицам переноса машина не заполняет: предмет правил
+  // словаря — файлы работы, а критериев ядра в словаре нет.
+  const lint = barLintOf(repoRoot, work);
+  const lintFiles = work.filter((f) => BAR_LINTABLE.test(f));
+  const lintRow = (c, s) =>
+    s !== ""
+      ? null
+      : barLintRowOf({ lint, c, files: lintFiles, asked: barAskedOf(c, model) });
+  // Правленое для «починено» — всё, что тронула работа, а не один предмет:
+  // находку, которую чинит правка конвейера, конфига или записи базы, иначе
+  // записать починенной нельзя, и остаются «вопрос» с «отложено» — неправда о
+  // сделанном. Замерено на стенде: долг конвейера, починенный правкой его
+  // описания.
+  const changedNow = new Set([
+    ...(kind === "на изменение"
+      ? subject
+      : ((await barChangedSubject(repoRoot)) ?? [])),
+    ...((await changedPaths(repoRoot)) ?? []).map((f) =>
+      norm(path.join(repoRoot, f)),
+    ),
+  ]);
+  return {
+    kind,
+    marks,
+    model,
+    expected,
+    levelSubjects,
+    withBase: true,
+    noneOf,
+    repoRoot,
+    changedNow,
+    subjectAbs: area,
+    neighbours,
+    baseFiles: area.map(rel),
+    witnesses,
+    reads,
+    lintRow,
+    work,
+    area,
+    subjects,
+    lint,
+    lintFiles,
+  };
+};
+
+/** Почему печать протокола правки не признаётся: нарушения приёма на
+ * нынешнем виде правленого и число строк исходов. Нарушений нет — печать
+ * признаётся. */
+const barRefusalOf = async (was, repoRoot) => {
+  const live = liveBarCriteria();
+  if (live === null || live.blind || live.levelless.length > 0)
+    return {
+      faults: ["живой набор критериев не прочитан: протокол сверить не с чем"],
+      rows: 0,
+    };
+  const change = await barChangeOf(repoRoot);
+  if (change === null)
+    return { faults: ["git недоступен: правленое не определить"], rows: 0 };
+  const inputs = await barInputsOf({
+    live,
+    kind: "на изменение",
+    subject: change.subject,
+    focus: null,
+    manifestTouched: change.manifestTouched,
+    repoRoot,
+  });
+  return {
+    faults: barAcceptOf({ was, ...inputs }).faults,
+    rows: inputs.expected.length,
+  };
+};
+
+// --- gate: ворота перед коммитом --------------------------------------------
+//
+// Свод по планке спрашивался только с НЕЗАКОММИЧЕННОГО: предмет его —
+// правленое по `git status`, то есть рабочее дерево. Коммит дерево опустошает,
+// и сверка замолкала. Требование при этом не откладывалось — оно УДАЛЯЛОСЬ:
+// красное «свод на другом предмете» исчезало от коммита, а не от починки, и
+// ни один следующий прогон о нём не вспоминал.
+//
+// Ломалось это четырьмя обычными способами, и ни один не был жульничеством:
+// коммит раньше прогона; коммит поверх красного; сессия, кончившаяся посреди
+// работы; несколько коммитов подряд. Замерено на себе.
+//
+// Ворота стоят там, где ошибка совершается. Предмет их — ИНДЕКС, а не рабочее
+// дерево: отпечатки считаются с того содержимого, которое поедет в коммит, и
+// свод обязан быть в индексе вместе с ним. Иначе история получила бы правку
+// без свода, а ревизия — свод, которого в коммите нет.
+if (mode === "gate") {
+  const NEWLINE = String.fromCharCode(10);
+  const { execFileSync } = await import("node:child_process");
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: REPO_AT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  let staged;
+  try {
+    // Пары «буква, путь». Без поиска переименований: прежний путь — удалённый
+    // файл, и он в предмете так же, как после `git rm`.
+    const said = zList(
+      git([
+        "diff",
+        "--cached",
+        "--name-status",
+        "-z",
+        "--no-renames",
+        "--diff-filter=ACMD",
+      ]),
+    );
+    staged = [];
+    for (let i = 0; i + 1 < said.length; i += 2)
+      staged.push({ status: said[i], one: said[i + 1] });
+  } catch {
+    staged = null;
+  }
+  if (staged === null) {
+    sayLooked("файлов в индексе", 0);
+    console.log("  git недоступен — ворота проверить нечем, и это не «чисто»");
+    process.exit(1);
+  }
+  sayLooked("файлов в индексе", staged.length);
+  // Коммит из процесса, который запустила сессия: хуки проекта в ней обязаны
+  // исполняться, и доказывает это свежий след стража с этой командой коммита.
+  // Сессия, стартовавшая выше проекта, его не оставляет — настройки проекта
+  // она не читает (`environment.md`).
+  if (inSession()) {
+    const dead = guardTraceFault(true);
+    if (dead !== null && dead !== "") {
+      console.log("=== Ворота перед коммитом ===");
+      console.log(
+        "  КОММИТ НЕ ПРОХОДИТ: коммит из сессии, где хуки проекта не исполняются (" +
+          dead +
+          "): команда `/cd` в папку проекта (`environment.md`)",
+      );
+      process.exit(1);
+    }
+  }
+  const seeds = seedOfPath();
+  let fromShelf = 0;
+  let formatted = 0;
+  const want = [];
+  for (const { status, one } of staged) {
+    const abs = norm(path.join(REPO_AT, one));
+    // Удаление — тоже правка: удалённый код в предмете с отпечатком «нет
+    // файла», и свод обязан его назвать.
+    if (status === "D") {
+      if (codeByPlace(abs)) want.push({ file: rel(abs), mark: "нет файла" });
+      continue;
+    }
+    if (!files.includes(abs) && !styleFiles.includes(abs)) continue;
+    if (abs.endsWith(".d.ts")) continue;
+    let body;
+    try {
+      body = git(["show", ":" + one]);
+    } catch {
+      continue;
+    }
+    // Семя, лежащее нетронутым, — работа обвязки, а не проекта.
+    const seedAt = seeds.has(one) ? shelfAt(seeds.get(one)) : null;
+    const seedBody =
+      seedAt !== null && existsSync(seedAt)
+        ? readFileSync(seedAt, "utf8")
+        : null;
+    if (
+      sameAsSeed(body, seedBody) ||
+      (await formatOnly(seedBody, body, abs))
+    ) {
+      fromShelf += 1;
+      continue;
+    }
+    let head = null;
+    try {
+      head = git(["show", "HEAD:" + one]);
+    } catch {
+      head = null;
+    }
+    if (await formatOnly(head, body, abs)) {
+      formatted += 1;
+      continue;
+    }
+    want.push({ file: rel(abs), mark: barDigest(body) });
+  }
+  want.sort((x, y) => (x.file < y.file ? -1 : 1));
+  console.log("=== Ворота перед коммитом ===");
+  console.log(
+    "  кода и стилей в индексе: " +
+      want.length +
+      (fromShelf ? ", и ещё " + fromShelf + " лежит семенем обвязки" : "") +
+      (formatted ? ", и ещё " + formatted + " — одно приведение формата" : ""),
+  );
+  if (!want.length) {
+    console.log("  кода в коммите нет — свод не спрашивается");
+    process.exit(0);
+  }
+  for (const one of want) console.log("    " + one.file);
+  let body = null;
+  if (CONFIG.barProtocol != null) {
+    const at = path.posix.join(
+      path.relative(REPO_AT, BASE).split(path.sep).join("/"),
+      CONFIG.barProtocol,
+    );
+    try {
+      body = git(["show", ":" + at]);
+    } catch {
+      body = null;
+    }
+  }
+  const fault = barCoverFault(want, body);
+  // Печать — открытый отпечаток: протокол с «чисто» во всех строках и
+  // печатью, посчитанной руками, прошёл бы по ней одной. Поэтому протокол
+  // принимают тем же приёмом, что режим `bar` делает перед печатью.
+  const refused =
+    fault === "" ? (await barRefusalOf(barHeaderOf(body), REPO_AT)).faults : [];
+  if (fault === "" && refused.length === 0) {
+    console.log("  свод покрывает правку: коммит проходит");
+    process.exit(0);
+  }
+  if (fault !== "") console.log("  КОММИТ НЕ ПРОХОДИТ: " + fault);
+  else {
+    console.log(
+      "  КОММИТ НЕ ПРОХОДИТ: печать стоит, а протокол не принят — нарушений " +
+        refused.length,
+    );
+    for (const one of refused.slice(0, 10)) console.log("    " + one);
+  }
+  console.log(
+    "  Свод по планке делают ДО коммита: node .claude/tools/graph.mjs bar",
+  );
+  console.log(
+    "  Протокол добавляют в тот же коммит — иначе история получит правку без свода.",
+  );
+  process.exit(1);
+}
+
 if (mode === "bar") {
   {
     const all = liveBarCriteria();
@@ -13410,8 +13741,8 @@ if (mode === "bar") {
     // пустой по смыслу, а настоящие партнёры узла оставались снаружи.
     subject = barAreaOf(focus);
   } else {
-    subject = await barChangedSubject(repoRoot);
-    if (subject === null) {
+    const change = await barChangeOf(repoRoot);
+    if (change === null) {
       console.log("=== Предмет свода не определить ===");
       console.log(
         "  git недоступен, а на задаче изменения предмет — это правленое.",
@@ -13422,17 +13753,8 @@ if (mode === "bar") {
       process.exit(1);
     }
     kind = "на изменение";
-    // Манифест в предмет не входит — предмет только код и стили, — а
-    // критерии о зависимостях спрашивают именно с его правки. Признак, взятый
-    // из предмета, был ложен всегда: правка, добавившая пакет, получала «нет
-    // предмета» по зависимостям, и вопрос о пакете не задавался.
-    const manifestAt =
-      CONFIG.manifest == null ? null : norm(path.join(BASE, CONFIG.manifest));
-    manifestTouched =
-      manifestAt !== null &&
-      ((await changedPaths(repoRoot)) ?? []).some(
-        (f) => norm(path.join(repoRoot, f)) === manifestAt,
-      );
+    subject = change.subject;
+    manifestTouched = change.manifestTouched;
   }
   subject = [...new Set(subject)];
 
@@ -13446,82 +13768,25 @@ if (mode === "bar") {
     process.exit(0);
   }
 
-  // Область — одна на оба рода задачи: правку сверяют по тому же объёму, по
-  // которому её читают. На правке предмет при этом — правленое: его
-  // отпечатки сверяют ворота перед коммитом, а сосед, тронутый после печати,
-  // сам становится правленым и гасит её.
-  const work = focus ?? barWorkOf(subject);
-  const area = kind === "на изменение" ? barAreaOf(work) : subject;
-  const neighbours = barNeighboursOf(work, area);
-  const marks = barMarks(subject);
-  const model = barModelOf(work, {
+  const inputs = await barInputsOf({
+    live,
     kind,
     subject,
-    area,
-    asked: new Set(live.all.map((c) => c.id)),
+    focus,
+    manifestTouched,
+    repoRoot,
   });
-  // Предметы уровней: ядро узла спрашивают по каждой тронутой единице
-  // переноса, ядро слоя — по каждому слою, соседей — одной строкой. Одна
-  // строка на правку двух узлов закрывала вопрос одного ответом о другом.
-  const subjects = barSubjectsOf(work, neighbours);
-  const expected = barExpectedOf(live.all, subjects);
-  // Свидетели — о самом предмете: соседей читают ради предмета, и их ядро
-  // отвечает одной строкой.
-  const witnesses = barWitnessesOf(
+  const {
     work,
-    new Set(expected.map((e) => e.c.id)),
-    { change: kind === "на изменение" },
-  );
-  const levelSubjects = {
-    узел: subjects.узел.length ? subjects.узел : [""],
-    слой: subjects.слой.length ? subjects.слой : [""],
-    приложение: [""],
-  };
-  // Признаки беспредметности — по предмету строки: лист стилей одной
-  // единицы переноса не делает предметом стилей соседнюю. Строки на работу
-  // отвечают за всю область.
-  const flagsAll = barFlagsOf(area, manifestTouched);
-  const flagsBy = new Map();
-  const noneOf = (c, s) => {
-    const split = barSplitOf(c.id + "|" + c.level);
-    if (s === "" || split === "") return barNoSubject(c.id + "|" + flagsAll);
-    const k = split + "|" + s;
-    if (!flagsBy.has(k))
-      flagsBy.set(
-        k,
-        barFlagsOf(
-          s === BAR_AREA
-            ? [...neighbours[split]]
-            : area.filter(
-                (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
-              ),
-          manifestTouched,
-        ),
-      );
-    return barNoSubject(c.id + "|" + flagsBy.get(k));
-  };
-  // Страницы чтения: тела критериев, на которые отвечает сессия, полный текст
-  // предмета и срез каждого соседа — той же области, что модель. Лозунг и
-  // замеренную беспредметность инструмент проставил сам: тело такого
-  // критерия читать незачем, и страница о нём была бы лишней работой.
-  const reads = barReadPagesOf({
-    ids: new Set(
-      expected
-        .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
-        .map(({ c }) => c.id),
-    ),
-    subject: work,
-    neighbours: area.filter((f) => !work.includes(f)),
-  });
-  // Держатель «линт»: линт проекта по файлам кода работы. Строки о соседях
-  // и строки по единицам переноса машина не заполняет: предмет правил
-  // словаря — файлы работы, а критериев ядра в словаре нет.
-  const lint = barLintOf(repoRoot, work);
-  const lintFiles = work.filter((f) => BAR_LINTABLE.test(f));
-  const lintRow = (c, s) =>
-    s !== ""
-      ? null
-      : barLintRowOf({ lint, c, files: lintFiles, asked: barAskedOf(c, model) });
+    area,
+    marks,
+    model,
+    subjects,
+    expected,
+    noneOf,
+    lint,
+    lintFiles,
+  } = inputs;
   // Сверки прогона и срезы модели — те же машинные держатели: строку, где
   // они решают, машина заполняет тоже.
   const checks = barChecksOf(repoRoot);
@@ -13540,38 +13805,7 @@ if (mode === "bar") {
     .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
     .map(({ c, subject: one }) => machineRow(c, one))
     .filter((one) => one !== null);
-  // Правленое для «починено» — всё, что тронула работа, а не один предмет:
-  // находку, которую чинит правка конвейера, конфига или записи базы, иначе
-  // записать починенной нельзя, и остаются «вопрос» с «отложено» — неправда о
-  // сделанном. Замерено на стенде: долг конвейера, починенный правкой его
-  // описания.
-  const changedNow = new Set([
-    ...(kind === "на изменение"
-      ? subject
-      : ((await barChangedSubject(repoRoot)) ?? [])),
-    ...((await changedPaths(repoRoot)) ?? []).map((f) =>
-      norm(path.join(repoRoot, f)),
-    ),
-  ]);
-  const r = barProcess({
-    at,
-    kind,
-    marks,
-    model,
-    expected,
-    levelSubjects,
-    withBase: true,
-    noneOf,
-    repoRoot,
-    changedNow,
-    subjectAbs: area,
-    neighbours,
-    baseFiles: area.map(rel),
-    witnesses,
-    reads,
-    lintRow,
-    machineRow,
-  });
+  const r = barProcess({ at, ...inputs, machineRow });
 
   if (r.state === "напечатан") {
     console.log("=== Свод по планке: протокол напечатан ===");
@@ -22211,10 +22445,11 @@ if (mode === "verify") {
   //
   // Печать пересчитывается на месте: протокол, правленный ПОСЛЕ печати, от
   // неё расходится, и «нашлось», переписанное в «чисто», всплывает здесь.
+  // Печать, посчитанную руками, держит приём — тот же, что у режима.
   //
-  // Сверка защищает от забывчивости, а не от подлога, и о верности исхода
-  // не говорит ничего: признаки планки прогоном не ловятся. Ловчесть самого
-  // прохода меряет режим `bar-probe`, а не эта строка.
+  // О верности исхода сверка не говорит ничего: признаки планки прогоном не
+  // ловятся. Ловчесть самого прохода меряет режим `bar-probe`, а не эта
+  // строка.
   const barGaps = [];
   let barCriteriaLive = 0;
   let barSaid = null;
@@ -22235,7 +22470,6 @@ if (mode === "verify") {
     else if (subject.length === 0) barSaid = "правленого кода и стилей нет";
     else {
       const was = barHeader(at);
-      const live = liveBarCriteria();
       const marks = barMarks(subject);
       if (was === null) barGaps.push("протокола нет: свод не делался");
       else if (was.kind !== "на изменение")
@@ -22255,52 +22489,26 @@ if (mode === "verify") {
         barGaps.push(
           "печать не сходится: протокол правлен после того, как закрыт",
         );
-      else if (live !== null && !live.blind) {
-        // Счёт — дешёвая вторая опора к печати: полноту сверяет режим при
-        // печати, но протокол, собранный мимо режима, печать бы унаследовал
-        // вместе с недостающими строками. Ждут строку на критерий и предмет:
-        // ядро узла — по каждой тронутой единице переноса, ядро слоя — по
-        // каждому слою. Разбор протокола общий с режимом.
-        //
-        // Исход сверяется со СЛОВАРЁМ, а не с непустотой. «Лозунг» стоит
-        // здесь наравне с исходами: он проставлен скелетом и означает, что
-        // исхода у пункта быть не может.
-        const answered = new Set(
-          barRowsOf(was.body)
-            .outcomes.filter((o) =>
-              ["чисто", "нет предмета", "нашлось", "лозунг"].includes(o.outcome),
-            )
-            .map((o) => barKey(o.id, o.subject)),
-        );
-        const work = barWorkOf(subject);
-        const expected = barExpectedOf(
-          live.all,
-          barSubjectsOf(work, barNeighboursOf(work, barAreaOf(work))),
-        );
-        const missing = expected.filter(
-          (e) => !answered.has(barKey(e.c.id, e.subject)),
-        );
-        if (missing.length)
-          barGaps.push(
-            "исхода нет у строк: " +
-              missing.length +
-              " из " +
-              expected.length +
-              " — " +
-              missing
-                .slice(0, 5)
-                .map((e) => barWho(e.c.id, e.subject))
-                .join(", "),
-          );
-        else
+      else {
+        // Печать — открытый отпечаток: протокол, собранный мимо режима, с
+        // «чисто» во всех строках и печатью, посчитанной руками, по ней одной
+        // сошёлся бы. Поэтому протокол принимают тем же приёмом, что режим
+        // делает перед печатью: тот ли предмет, нет ли дыр. Исход сверяется со
+        // словарём там же, в приёме, а не с непустотой.
+        const { faults, rows } = await barRefusalOf(was, REPO);
+        for (const one of faults.slice(0, 10))
+          barGaps.push("протокол не принят: " + one);
+        if (faults.length > 10)
+          barGaps.push("и ещё нарушений: " + (faults.length - 10));
+        if (faults.length === 0)
           barSaid =
-            "свод закрыт печатью: критериев " +
-            live.all.length +
+            "свод закрыт печатью и принят: критериев " +
+            barCriteriaLive +
             ", строк исходов " +
-            expected.length +
+            rows +
             ", файлов " +
             marks.length;
-      } else barSaid = "свод закрыт печатью, живой набор критериев не прочитан";
+      }
     }
   }
   // Предложенное сводом по планке живёт в реестре, а не в отчёте.
