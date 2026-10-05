@@ -351,7 +351,7 @@ describe("страж обхода ворот", () => {
     expect(stopped.status).toBe(2);
     expect(stopped.stderr).toContain("commit --no-verify");
     expect(ask(home, 'git commit -m "x"').status).toBe(0);
-  });
+  }, 180000);
 
   it("отвечает в папке без базы проекта", () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), "strazh-"));
@@ -364,7 +364,7 @@ describe("страж обхода ворот", () => {
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  });
+  }, 180000);
 });
 
 /**

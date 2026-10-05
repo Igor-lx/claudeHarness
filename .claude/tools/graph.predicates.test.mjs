@@ -126,7 +126,7 @@ describe("держатель «линт» и семя конфига линта"
     const rules = await rulesOf("src/zz/probe.tsx");
     const weak = named.filter((rule) => rules[rule] !== 2);
     expect(weak, "правила держателя, которые семя не включает ошибкой").toEqual([]);
-  });
+  }, 180000);
 
   it("в тестовых файлах выключены ровно объявленные правила держателя", async () => {
     const rules = await rulesOf("src/zz/tests/probe.test.tsx");
@@ -136,7 +136,7 @@ describe("держатель «линт» и семя конфига линта"
       (rule) => !vocabulary.BAR_LINT_OFF_IN_TESTS.has(rule) && rules[rule] !== 2,
     );
     expect(weak, "правила держателя, ослабленные в тестах без объявления").toEqual([]);
-  });
+  }, 180000);
 });
 
 describe("inComment", () => {

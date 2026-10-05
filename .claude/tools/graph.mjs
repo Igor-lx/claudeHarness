@@ -4247,6 +4247,7 @@ const CHECK_SECTIONS = [
   "Язык внутри корня исходников",
   "У каждого семени есть адрес назначения",
   "Доктрина названа в порядке чтения",
+  "Доктрина в бюджете",
   "Синоним термина словаря не заведён",
   "Документы названы в указателе",
   "Применимость разделов планки",
@@ -20058,6 +20059,95 @@ if (mode === "verify") {
       : `  расхождений: ${doctrineDrift.length}`,
   );
   for (const d of doctrineDrift) console.log("    " + d);
+
+  // Доктрина в бюджете.
+  //
+  // Доктрину среда кладёт в контекст сама: файл без шапки `paths:` — каждой
+  // сессии на входе, с шапкой — при открытии кода. Каждая сессия платит за
+  // этот текст до первой строки работы, а правило «новое называет, что оно
+  // вытесняет» держалось вниманием, и текст рос. Бюджет — два числа в карте
+  // посадки, по моменту чтения. Факт больше бюджета краснеет; бюджет больше
+  // факта сверх допуска — тоже: сокращение закрепляют, сбавив число, как поле
+  // долга. Символ — кодовая точка, концы строк приводятся к одному виду: на
+  // машине с иной политикой файл длиннее на знак каждой строкой, а текст тот же.
+  /** Допуск храповика в символах: сокращение меньше абзаца правки карты не
+   * требует, большее — закрепляют. */
+  const DOCTRINE_SLACK_CHARS = 1000;
+  const doctrineOver = [];
+  let doctrineFiles = 0;
+  let doctrineSaid = null;
+  {
+    const rulesAt = shelfAt("rules");
+    const mapAt = shelfAt("seat/map.json");
+    const budget =
+      mapAt !== null && existsSync(mapAt)
+        ? readJson(mapAt, {}).doctrineBudget
+        : undefined;
+    if (rulesAt === null || !existsSync(rulesAt))
+      doctrineSaid = "доктрины нет: полка не заявлена";
+    else {
+      const fact = { always: 0, paths: 0 };
+      for (const e of readdirSync(rulesAt).filter((n) => n.endsWith(".md"))) {
+        const text = readFileSync(path.join(rulesAt, e), "utf8")
+          .split(String.fromCharCode(13) + NEWLINE)
+          .join(NEWLINE);
+        const head = /^---\n([\s\S]*?)\n---\n/.exec(text);
+        fact[head !== null && /^paths:/m.test(head[1]) ? "paths" : "always"] +=
+          [...text].length;
+        doctrineFiles += 1;
+      }
+      const kinds = [
+        ["always", "без шапки `paths:`"],
+        ["paths", "с шапкой `paths:`"],
+      ];
+      if (
+        budget == null ||
+        kinds.some(([k]) => !Number.isInteger(budget[k]) || budget[k] < 0)
+      )
+        doctrineOver.push(
+          "бюджет не объявлен: поле `doctrineBudget` карты посадки — два целых числа, `always` и `paths`; факт сейчас — " +
+            fact.always +
+            " и " +
+            fact.paths,
+        );
+      else {
+        doctrineSaid =
+          kinds
+            .map(([k, label]) => label + " — " + fact[k] + " при бюджете " + budget[k])
+            .join("; ") + " символов";
+        for (const [k, label] of kinds) {
+          if (fact[k] > budget[k])
+            doctrineOver.push(
+              label +
+                ": " +
+                fact[k] +
+                " символов — больше бюджета " +
+                budget[k] +
+                " на " +
+                (fact[k] - budget[k]) +
+                ". Сократить: история и примеры — в обоснование (`writing.md`, раздел «Норма и обоснование»); поднять бюджет — решением с причиной",
+            );
+          else if (budget[k] - fact[k] > DOCTRINE_SLACK_CHARS)
+            doctrineOver.push(
+              label +
+                ": бюджет " +
+                budget[k] +
+                " больше факта " +
+                fact[k] +
+                " на " +
+                (budget[k] - fact[k]) +
+                " — сбавить поле `doctrineBudget` до факта: бюджет держит достигнутое",
+            );
+        }
+      }
+    }
+  }
+  checkHead("Доктрина в бюджете", {
+    n: doctrineFiles,
+    unit: "файлов доктрины",
+  });
+  if (doctrineSaid !== null) console.log("  " + doctrineSaid);
+  for (const d of doctrineOver) console.log("    " + d);
 
   checkHead("Документы названы в указателе", {
     n: indexDocs,
