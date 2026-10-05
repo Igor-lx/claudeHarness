@@ -424,7 +424,21 @@ let BASE;
 let CONFIG;
 try {
   ({ BASE, CONFIG } = await import("../../.context/graph.config.mjs"));
-} catch {
+} catch (e) {
+  // Файл есть, а не грузится, — причина в нём, а не в раскладке: «настройки
+  // нет» отправило бы искать файл, который лежит на месте.
+  const at = fileURLToPath(
+    new URL("../../.context/graph.config.mjs", import.meta.url),
+  );
+  if (existsSync(at)) {
+    console.log("=== Настройка проекта не грузится ===");
+    console.log(
+      "  " +
+        String(e).split(String.fromCharCode(10))[0] +
+        " — файл .context/graph.config.mjs",
+    );
+    process.exit(1);
+  }
   console.log("=== Настройки проекта нет ===");
   console.log(
     "  Ожидался файл: .context/graph.config.mjs рядом с папкой обвязки.",
@@ -1439,6 +1453,12 @@ const hookLine = (h) =>
   [h?.command, ...(Array.isArray(h?.args) ? h.args : [])]
     .map((x) => String(x ?? ""))
     .join(" ");
+/** Строка хука зовёт инструмент обвязки — обёртку `hook.mjs` либо мимо неё
+ * `graph.mjs`. Узнаётся по пути: своё имя `hook.mjs` бывает и у проекта. */
+const HOOK_TOOL = /\.claude[\\/]tools[\\/](?:graph|hook)\.mjs\b/;
+/** Строка хука зовёт режим — через обёртку либо мимо неё. */
+const hookCalls = (line, call) =>
+  new RegExp(HOOK_TOOL.source + " " + escapeRe(call) + "(?:\\s|$)").test(line);
 /** Шапка протокола, разобранная: род, отпечатки предмета, печать. */
 /** Путь против списка образцов Stryker: включающие и исключающие.
  *
@@ -25552,7 +25572,7 @@ if (mode === "verify") {
         const calls = Object.values(parsed.hooks ?? {})
           .flatMap((groups) => (Array.isArray(groups) ? groups : []))
           .flatMap((g) => (g?.hooks ?? []).map(hookLine))
-          .some((l) => l.includes("graph.mjs transition"));
+          .some((l) => hookCalls(l, "transition"));
         if (!calls)
           hookOff.push(
             "переход объявлен, а хук среды режим `transition` не зовёт: напоминания не будет",
@@ -25574,7 +25594,7 @@ if (mode === "verify") {
           for (const g of groups)
             for (const h of g?.hooks ?? [])
               if (
-                hookLine(h).includes("graph.mjs transition") &&
+                hookCalls(hookLine(h), "transition") &&
                 !hookLine(h).includes("--hook")
               )
                 hookOff.push(
@@ -25634,25 +25654,34 @@ if (mode === "verify") {
         [
           "Stop",
           undefined,
-          "graph.mjs stop --hook",
+          "stop --hook",
           "конец хода: режим `stop --hook` не зовётся — ход кончается с правкой без свода",
         ],
         [
           "PreToolUse",
           "Bash",
-          "graph.mjs guard --hook",
+          "guard --hook",
           "вызов Bash: режим `guard --hook` не зовётся — коммит мимо ворот проходит без вопроса",
         ],
         [
           "SessionStart",
           undefined,
-          "graph.mjs stop --session",
+          "stop --session",
           "начало сессии: режим `stop --session` не зовётся — пауза и след не печатаются",
         ],
       ];
       for (const [event, tool, call, why] of need)
-        if (!calls(event, tool).some((c) => c.includes(call)))
+        if (!calls(event, tool).some((c) => hookCalls(c, call)))
           gateHooksOff.push(why);
+      // Отказ инструмента — код `1` — хода не держит и коммита не
+      // останавливает: держит его обёртка, отвечая кодом `2` или вопросом.
+      const wrapperAt = path.join(TOOL_DIR, "hook.mjs");
+      if (!existsSync(wrapperAt))
+        gateHooksOff.push(
+          "обёртки хуков нет: " +
+            norm(path.relative(REPO_AT, wrapperAt)) +
+            " — хук, который её зовёт, падает, и ход кончается без свода",
+        );
       // Путь инструмента — от каталога проекта, а не от текущей папки: хук
       // идёт в текущей папке сессии, и из подпапки путь `.claude/tools/…` не
       // находится — хук падает, а ход кончается без свода. Подстановку
@@ -25660,12 +25689,18 @@ if (mode === "verify") {
       for (const l of Object.values(parsed.hooks ?? {})
         .flatMap((groups) => (Array.isArray(groups) ? groups : []))
         .flatMap((g) => (g?.hooks ?? []).map(hookLine))
-        .filter((x) => x.includes("graph.mjs")))
+        .filter((x) => HOOK_TOOL.test(x))) {
+        if (/[\\/]graph\.mjs\b/.test(l))
+          gateHooksOff.push(
+            "хук зовёт инструмент мимо обёртки — его отказ кончит ход без свода и пропустит коммит мимо стража: " +
+              l,
+          );
         if (!/\$\{?CLAUDE_PROJECT_DIR\b/.test(l))
           gateHooksOff.push(
             "команда хука зовёт инструмент не от каталога проекта — из подпапки он не найдётся: " +
               l,
           );
+      }
       // Хуки, выключенные одним полем, — тот же пропуск: файл их объявляет, а
       // среда не зовёт. Местный файл среда применяет поверх общего.
       if (parsed.disableAllHooks === true)
@@ -25695,7 +25730,7 @@ if (mode === "verify") {
   console.log(
     gateHooksOff.length
       ? "  не стоит: " + gateHooksOff.length
-      : "  хуки стоят: конец хода, вызов Bash, начало сессии",
+      : "  хуки стоят через обёртку: конец хода, вызов Bash, начало сессии",
   );
   for (const h of gateHooksOff) console.log("    " + h);
 

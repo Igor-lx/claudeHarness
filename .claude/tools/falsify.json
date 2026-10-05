@@ -718,8 +718,19 @@
     {
       "section": "Ворота конца хода и страж обхода включены",
       "file": ".claude/settings.json",
-      "find": "\"${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs\"",
-      "replace": "\".claude/tools/graph.mjs\""
+      "find": "\"${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs\"",
+      "replace": "\".claude/tools/hook.mjs\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs\"",
+      "replace": "\"${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/tools/hook.mjs",
+      "rename": "hook.mjs.hidden"
     },
     {
       "section": "Ворота конца хода и страж обхода включены",

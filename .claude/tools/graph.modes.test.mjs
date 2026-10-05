@@ -434,13 +434,14 @@ describe("ворота конца хода", () => {
 });
 
 /**
- * Хуки зовут инструмент запуском без оболочки: режим и ключи лежат в `args`.
+ * Хуки зовут обёртку запуском без оболочки: режим и ключи лежат в `args`.
  * Сверки, искавшие вызов в одной строке команды, его не видели. Путь от
- * текущей папки из подпапки сессии инструмента не находит, а поле
- * `disableAllHooks` выключает хуки, не трогая их объявления.
+ * текущей папки из подпапки сессии инструмента не находит, вызов мимо обёртки
+ * кончает ход при отказе инструмента, а поле `disableAllHooks` выключает хуки,
+ * не трогая их объявления.
  */
 describe("хуки обвязки стоят и исполнимы из любой папки", () => {
-  it("вызов в `args` виден; путь от текущей папки и выключенные хуки названы", () => {
+  it("вызов в `args` виден; путь от текущей папки, мимо обёртки и выключенные хуки названы", () => {
     const box = seatEmpty("huki-");
     try {
       const at = path.join(box, ".claude", "settings.json");
@@ -459,11 +460,26 @@ describe("хуки обвязки стоят и исполнимы из любо
       fs.writeFileSync(
         at,
         seed.replace(
-          '"${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs"',
-          '".claude/tools/graph.mjs"',
+          '"${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs"',
+          '".claude/tools/hook.mjs"',
         ),
       );
       expect(said(GATES)).toContain("не от каталога проекта");
+      fs.writeFileSync(
+        at,
+        seed.replace(
+          '"${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs"',
+          '"${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs"',
+        ),
+      );
+      expect(said(GATES)).toContain("мимо обёртки");
+      expect(said(GATES)).not.toContain("не от каталога проекта");
+      fs.writeFileSync(at, seed);
+      const wrapper = path.join(box, ".claude", "tools", "hook.mjs");
+      fs.renameSync(wrapper, wrapper + ".hidden");
+      expect(said(GATES)).toContain("обёртки хуков нет");
+      fs.renameSync(wrapper + ".hidden", wrapper);
+      expect(said(GATES)).toBe("");
       fs.writeFileSync(
         at,
         seed.replace('"hooks": {', '"disableAllHooks": true,\n  "hooks": {'),
@@ -475,6 +491,220 @@ describe("хуки обвязки стоят и исполнимы из любо
         '{ "disableAllHooks": true }\n',
       );
       expect(said(GATES)).toContain("в местном файле настроек");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Обёртка хуков отвечает за инструмент, который не отработал: среда держит ход
+ * и вызов только кодом `2`, а упавший режим отдаёт `1`. Держит: у конца хода —
+ * отказ с причиной, а повтор в том же запросе — пропуск со строкой человеку;
+ * у стража — вопрос человеку для команд git; у начала сессии и напоминания —
+ * строку человеку и агенту. Отработавший режим обёртка отдаёт как есть.
+ */
+describe("обёртка хуков держит, когда инструмент не отработал", () => {
+  // Свой срок у вызова: синхронный запуск срок теста не прерывает, и
+  // зависшая обёртка повесила бы весь прогон вместо падения теста.
+  const ask = (box, args, said) =>
+    spawnSync(
+      process.execPath,
+      [path.join(box, ".claude", "tools", "hook.mjs"), ...args],
+      {
+        cwd: box,
+        encoding: "utf8",
+        input: JSON.stringify(said),
+        timeout: 30000,
+      },
+    );
+  const json = (r) => (r.stdout.trim() === "" ? {} : JSON.parse(r.stdout));
+  const bash = (command) => ({
+    hook_event_name: "PreToolUse",
+    tool_name: "Bash",
+    tool_input: { command },
+  });
+  const halt = (graph) =>
+    graph.replace(
+      "const mode = process.argv[2];",
+      "const mode = process.argv[2];\nawait new Promise(() => setInterval(() => {}, 60000));",
+    );
+
+  it("сломанная настройка, отсутствующий инструмент, падение режима — у каждого хука", () => {
+    const box = seatEmpty("obertka-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=obertka",
+            "-c",
+            "user.email=obertka@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const graphAt = path.join(box, ".claude", "tools", "graph.mjs");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const recordAt = path.join(box, ".git", "claude-harness-hook.json");
+      const graph = fs.readFileSync(graphAt, "utf8");
+      const cfg = fs.readFileSync(cfgAt, "utf8");
+
+      // Отработавший режим — как есть: отказ стража с его причиной, конец
+      // хода без правки кода.
+      const bypass = ask(
+        box,
+        ["guard", "--hook"],
+        bash("git commit --no-verify -m x"),
+      );
+      expect(bypass.status).toBe(2);
+      expect(bypass.stderr).toContain("commit --no-verify");
+      expect(
+        ask(box, ["stop", "--hook"], {
+          hook_event_name: "Stop",
+          prompt_id: "p0",
+        }).status,
+      ).toBe(0);
+
+      const failures = [
+        [
+          "сломанная настройка",
+          () => fs.writeFileSync(cfgAt, "export const BASE = ;\n"),
+          "SyntaxError",
+        ],
+        [
+          "отсутствующий инструмент",
+          () => fs.rmSync(graphAt),
+          "Cannot find module",
+        ],
+        [
+          "падение режима",
+          () =>
+            fs.writeFileSync(
+              graphAt,
+              graph.replace(
+                "const mode = process.argv[2];",
+                'const mode = process.argv[2];\nthrow new Error("проба падения режима");',
+              ),
+            ),
+          "проба падения режима",
+        ],
+      ];
+      for (const [kind, spoil, cause] of failures) {
+        spoil();
+        const turn = { hook_event_name: "Stop", prompt_id: kind };
+        const held = ask(box, ["stop", "--hook"], turn);
+        expect(held.status, kind).toBe(2);
+        expect(held.stderr, kind).toContain("инструмент не отработал");
+        expect(held.stderr, kind).toContain(cause);
+        const again = ask(box, ["stop", "--hook"], turn);
+        expect(again.status, kind).toBe(0);
+        expect(json(again).systemMessage, kind).toContain(
+          "второй раз за запрос",
+        );
+        expect(
+          ask(box, ["stop", "--hook"], { ...turn, prompt_id: kind + "-2" })
+            .status,
+          kind,
+        ).toBe(2);
+        // Страж разбирается до настройки: сломанная настройка его не трогает.
+        const commit = ask(box, ["guard", "--hook"], bash("git commit -m x"));
+        expect(commit.status, kind).toBe(0);
+        if (kind === "сломанная настройка")
+          expect(commit.stdout, kind).toBe("");
+        else {
+          const said = json(commit).hookSpecificOutput;
+          expect(said.permissionDecision, kind).toBe("ask");
+          expect(said.permissionDecisionReason, kind).toContain(cause);
+          const ls = ask(box, ["guard", "--hook"], bash("ls -la"));
+          expect([ls.status, ls.stdout], kind).toEqual([0, ""]);
+        }
+        for (const [args, event] of [
+          [["stop", "--session"], "SessionStart"],
+          [["transition"], "SessionStart"],
+          [["transition", "--hook"], "PreToolUse"],
+        ]) {
+          const told = ask(box, args, { hook_event_name: event });
+          expect(told.status, kind + ": " + args.join(" ")).toBe(0);
+          const said = json(told);
+          expect(said.systemMessage, kind + ": " + args.join(" ")).toContain(
+            cause,
+          );
+          expect(said.hookSpecificOutput, kind + ": " + args.join(" ")).toEqual(
+            {
+              hookEventName: event,
+              additionalContext: said.systemMessage,
+            },
+          );
+        }
+        fs.writeFileSync(graphAt, graph);
+        fs.writeFileSync(cfgAt, cfg);
+      }
+
+      // Отработавший инструмент снимает запись клапана: следующий отказ в
+      // том же запросе снова держит ход.
+      expect(fs.existsSync(recordAt)).toBe(true);
+      expect(
+        ask(box, ["stop", "--hook"], {
+          hook_event_name: "Stop",
+          prompt_id: "падение режима",
+        }).status,
+      ).toBe(0);
+      expect(fs.existsSync(recordAt)).toBe(false);
+
+      // Запись клапана не ложится — ход не держится: петлю нечем прервать.
+      fs.mkdirSync(recordAt);
+      fs.rmSync(graphAt);
+      const loose = ask(box, ["stop", "--hook"], {
+        hook_event_name: "Stop",
+        prompt_id: "p9",
+      });
+      expect(loose.status).toBe(0);
+      expect(json(loose).systemMessage).toContain("запись клапана не легла");
+      fs.writeFileSync(graphAt, graph);
+      fs.rmSync(recordAt, { recursive: true });
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("зависший режим называет обёртка, а без git клапан стоит во временной папке", () => {
+    const box = seatEmpty("obertka-bez-git-");
+    try {
+      const hookAt = path.join(box, ".claude", "tools", "hook.mjs");
+      const graphAt = path.join(box, ".claude", "tools", "graph.mjs");
+      const wrapper = fs.readFileSync(hookAt, "utf8");
+      const graph = fs.readFileSync(graphAt, "utf8");
+      expect(wrapper).toContain("const LIMIT_S = 120;");
+      fs.writeFileSync(
+        hookAt,
+        wrapper.replace("const LIMIT_S = 120;", "const LIMIT_S = 2;"),
+      );
+      fs.writeFileSync(graphAt, halt(graph));
+      const turn = { hook_event_name: "Stop", prompt_id: "zavis" };
+      const held = ask(box, ["stop", "--hook"], turn);
+      expect(held.status).toBe(2);
+      expect(held.stderr).toContain("не ответил за 2 с");
+      expect(ask(box, ["stop", "--hook"], turn).status).toBe(0);
+      const commit = json(
+        ask(box, ["guard", "--hook"], bash("git commit -m x")),
+      );
+      expect(commit.hookSpecificOutput.permissionDecisionReason).toContain(
+        "не ответил за 2 с",
+      );
+      // Отработавший инструмент снимает запись и без git.
+      fs.writeFileSync(graphAt, graph);
+      expect(ask(box, ["stop", "--hook"], turn).status).toBe(0);
+      fs.writeFileSync(graphAt, halt(graph));
+      expect(ask(box, ["stop", "--hook"], turn).status).toBe(2);
+      fs.writeFileSync(graphAt, graph);
+      expect(ask(box, ["stop", "--hook"], turn).status).toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

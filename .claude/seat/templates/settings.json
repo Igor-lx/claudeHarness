@@ -135,7 +135,7 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs",
+              "${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs",
               "transition"
             ]
           },
@@ -143,7 +143,7 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs",
+              "${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs",
               "stop",
               "--session"
             ]
@@ -158,7 +158,7 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs",
+              "${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs",
               "stop",
               "--hook"
             ]
@@ -174,7 +174,7 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs",
+              "${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs",
               "transition",
               "--hook"
             ]
@@ -188,7 +188,7 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/.claude/tools/graph.mjs",
+              "${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs",
               "guard",
               "--hook"
             ]
