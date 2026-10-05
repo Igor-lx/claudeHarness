@@ -32,6 +32,11 @@ import {
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TOOL = path.join(TOOL_DIR, "graph.mjs");
 
+// Набор зовёт инструмент во временных папках, и признак сессии, унаследованный
+// от того, кто набор запустил, требовал бы там следа стража, которого там нет.
+// Снимается для всех запусков; тест следа ставит его себе сам.
+delete process.env.CLAUDE_CODE_CHILD_SESSION;
+
 /** Цель для режима, которому нужен путь: САМЫЙ НАСЫЩЕННЫЙ файл исходников.
  *
  * Прежде целью служил файл самого набора. Путь при этом передавался, и
@@ -836,6 +841,89 @@ describe("пути из git с кириллицей и пробелом", () => 
       expect(run("verify").stdout).toContain(
         note + ": `src/app/App.tsx:2` — якорь без цитаты",
       );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Хуки, объявленные верно, могут не исполняться: сессия, стартовавшая выше
+ * проекта, его настроек не читает. Исполнение доказывает след стража, который
+ * обёртка пишет на каждом вызове Bash; ворота и сверка базы, запущенные
+ * сессией, требуют его свежим, а ворота — ещё и о коммите.
+ */
+describe("хуки исполняются: след стража", () => {
+  it("обёртка пишет след; ворота и сверка из сессии требуют его свежим", () => {
+    const box = seatEmpty("sled-");
+    try {
+      const tools = path.join(box, ".claude", "tools");
+      const session = { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1" };
+      const run = (args, env = process.env) =>
+        spawnSync(process.execPath, [path.join(tools, "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+          env,
+        });
+      const guard = (command) =>
+        spawnSync(
+          process.execPath,
+          [path.join(tools, "hook.mjs"), "guard", "--hook"],
+          {
+            cwd: box,
+            encoding: "utf8",
+            input: JSON.stringify({
+              hook_event_name: "PreToolUse",
+              tool_name: "Bash",
+              tool_input: { command },
+            }),
+          },
+        );
+      const HOOKS = "=== Хуки проекта исполняются в этой сессии ===";
+      const said = (env) => {
+        const rows = run(["verify"], env).stdout.split("\n");
+        const at = rows.indexOf(HOOKS);
+        expect(at).toBeGreaterThan(-1);
+        return rows.slice(at + 1, at + 4).join("\n");
+      };
+      execFileSync("git", ["init", "-q"], { cwd: box });
+      const traceAt = path.join(box, ".git", "claude-harness-guard.json");
+
+      // Следа нет: из сессии ворота держат, сверка называет; вне — тихо.
+      const held = run(["gate"], session);
+      expect(held.status).toBe(1);
+      expect(held.stdout).toContain("хуки проекта не исполняются");
+      expect(held.stdout).toContain("/cd");
+      expect(run(["gate"]).status).toBe(0);
+      expect(said(session)).toContain("не исполняются");
+      expect(said(process.env)).toContain("прогон не из сессии");
+
+      // Обёртка пишет след на вызове Bash; коммит и сверка проходят.
+      guard("git commit -m x");
+      expect(JSON.parse(fs.readFileSync(traceAt, "utf8")).command).toBe(
+        "git commit -m x",
+      );
+      expect(run(["gate"], session).status).toBe(0);
+      expect(said(session)).toContain("след стража свежий");
+
+      // Последний вызов не коммит: ворота держат, сверке довольно свежести.
+      guard("ls -la");
+      const notCommit = run(["gate"], session);
+      expect(notCommit.status).toBe(1);
+      expect(notCommit.stdout).toContain("не коммит");
+      expect(said(session)).toContain("след стража свежий");
+
+      // След старше окна: держат и ворота, и сверка.
+      fs.writeFileSync(
+        traceAt,
+        JSON.stringify({
+          at: "2000-01-01T00:00:00.000Z",
+          command: "git commit",
+        }),
+      );
+      expect(run(["gate"], session).stdout).toContain("старше окна");
+      expect(said(session)).toContain("старше окна");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

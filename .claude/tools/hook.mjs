@@ -42,25 +42,52 @@ try {
   // Ввод не JSON: повтор узнаётся без номера запроса, команда стража пуста.
 }
 
-/** Запись клапана конца хода: какой запрос уже получил отказ «инструмент не
- * отработал». Лежит в папке git, как состояние режима `stop`; без git — во
- * временной папке, своей на каждый проект. */
-const recordAt = () => {
+/** Папка git проекта; без git — `null`. */
+const gitDir = () => {
   try {
     const dir = execFileSync("git", ["rev-parse", "--git-dir"], {
       cwd: ROOT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return path.join(path.resolve(ROOT, dir), "claude-harness-hook.json");
+    return path.resolve(ROOT, dir);
   } catch {
-    const tag = createHash("sha1")
-      .update(path.resolve(ROOT))
-      .digest("hex")
-      .slice(0, 12);
-    return path.join(tmpdir(), "claude-harness-hook-" + tag + ".json");
+    return null;
   }
 };
+
+/** Запись клапана конца хода: какой запрос уже получил отказ «инструмент не
+ * отработал». Лежит в папке git, как состояние режима `stop`; без git — во
+ * временной папке, своей на каждый проект. */
+const recordAt = () => {
+  const dir = gitDir();
+  if (dir !== null) return path.join(dir, "claude-harness-hook.json");
+  const tag = createHash("sha1")
+    .update(path.resolve(ROOT))
+    .digest("hex")
+    .slice(0, 12);
+  return path.join(tmpdir(), "claude-harness-hook-" + tag + ".json");
+};
+
+// След стража: время и начало команды на каждом вызове Bash. Ворота перед
+// коммитом и сверка базы, запущенные сессией, требуют его свежим — так видно,
+// что хуки проекта в ней исполняются. Пишет обёртка, а не режим: след о том,
+// что хук исполнился, а здоров ли инструмент — её же ответ ниже.
+if (isGuard) {
+  const dir = gitDir();
+  if (dir !== null)
+    try {
+      writeFileSync(
+        path.join(dir, "claude-harness-guard.json"),
+        JSON.stringify({
+          at: new Date().toISOString(),
+          command: String(said.tool_input?.command ?? "").slice(0, 200),
+        }) + "\n",
+      );
+    } catch {
+      // След не лёг — ворота и сверка назовут хуки неисполняемыми: это видно.
+    }
+}
 
 /** Что сломалось — одной строкой: строка ошибки из вывода, а не стек. */
 const whyFailed = (run) => {

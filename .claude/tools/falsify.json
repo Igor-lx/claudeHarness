@@ -746,6 +746,12 @@
       }
     },
     {
+      "section": "Хуки проекта исполняются в этой сессии",
+      "file": ".context/graph.config.mjs",
+      "find": "guardTraceAgeS: 1800,",
+      "replace": "guardTraceAgeS: 0,"
+    },
+    {
       "section": "Решения адресуемы",
       "create": {
         "path": "{решения}/9999-zz-proba.md",
