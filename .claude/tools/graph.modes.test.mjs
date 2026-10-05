@@ -1249,6 +1249,56 @@ describe("граф видит импорт во время работы", () => 
   }, 180000);
 });
 
+describe("отложенное держит решение", () => {
+  it("«отложено» без записи решения печати не получает, с ней — получает", () => {
+    const box = seatEmpty("otlozh-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzLater.ts"),
+        "export const zzLater = (n: number): number => n * 427;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const later = {
+        release: "не нужно: проба",
+        pick: {
+          H7: "нашлось | src/app/zzLater.ts:1 | число без имени | отложено",
+        },
+      };
+      tool("bar", "app/zzLater.ts");
+      fs.appendFileSync(
+        path.join(box, ".context", "02-todo.md"),
+        "\n## Имя числу\n\nЧто именно: `src/app/zzLater.ts` — число без имени.\n",
+      );
+      fillBar(protoAt, later);
+      const refused = tool("bar", "app/zzLater.ts");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toContain("H7: «отложено», а реестр решений");
+      fs.appendFileSync(
+        path.join(box, ".context", "09-decisions.md"),
+        "\n## Число без имени отложено\n\nКем решено: разработчик, `2026-10-05`. " +
+          "Файл `src/app/zzLater.ts`: имя числу — отдельной задачей.\n",
+      );
+      fs.rmSync(protoAt);
+      tool("bar", "app/zzLater.ts");
+      fillBar(protoAt, later);
+      expect(tool("bar", "app/zzLater.ts")).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
