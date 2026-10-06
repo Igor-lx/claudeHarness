@@ -6958,3 +6958,67 @@ describe("права, секреты и исчерпание в своде", () 
     }
   }, 300000);
 });
+
+describe("окно свежести и залежавшееся не молчат", () => {
+  it("без пометки своей оси окно отказывает, чужая пометка его не сдвигает, неверная область названа", () => {
+    // Блоки берутся из самого скилла: проверяется то, что сессия исполнит.
+    const skill = fs.readFileSync(
+      path.join(TOOL_DIR, "..", "skills", "probe", "SKILL.md"),
+      "utf8",
+    );
+    const blockAfter = (heading) => {
+      const from = skill.indexOf(heading);
+      expect(from).toBeGreaterThan(-1);
+      return /```\n([\s\S]*?)```/.exec(skill.slice(from))?.[1] ?? "";
+    };
+    const window = blockAfter("### Окно свежести считается, а не вспоминается");
+    const stale = blockAfter("**«Залежавшееся» — не холодный контур, и путать нельзя.**");
+    expect(stale).toContain("<область>");
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "okno-"));
+    try {
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=okno", "-c", "user.email=okno@local", ...args], {
+          cwd: repo,
+          stdio: "ignore",
+        });
+      const shell = (script) => {
+        // Промах git называет по-английски только в локали C.
+        const r = spawnSync("sh", ["-c", script], {
+          cwd: repo,
+          encoding: "utf8",
+          env: { ...process.env, LC_ALL: "C" },
+        });
+        return { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") };
+      };
+      git("init", "-q");
+      fs.writeFileSync(path.join(repo, "early.txt"), "1\n");
+      git("add", "-A");
+      git("commit", "-qm", "early");
+      fs.writeFileSync(path.join(repo, "early.txt"), "2\n");
+      // Пометки нет: окно не сжимается до одной незакоммиченной правки.
+      const none = shell(window);
+      expect(none.out).toContain("пометка: нет");
+      expect(none.code).not.toBe(0);
+      expect(none.out).not.toContain("early.txt");
+      git("commit", "-qam", "fix: zz\n\nProbe-run: hot; не поместилось: ничего");
+      fs.writeFileSync(path.join(repo, "later.txt"), "1\n");
+      git("add", "-A");
+      git("commit", "-qm", "later");
+      fs.writeFileSync(path.join(repo, "cold.txt"), "1\n");
+      git("add", "-A");
+      git("commit", "-qm", "fix: zz\n\nProbe-run: cold; не поместилось: ничего");
+      fs.writeFileSync(path.join(repo, "later.txt"), "2\n");
+      // Окно — от пометки своей оси: чужая его не сдвигает, правка после
+      // пометки и незакоммиченная — в нём, правка до пометки — нет.
+      const some = shell(window);
+      expect(some.code).toBe(0);
+      expect(some.out).toContain("later.txt");
+      expect(some.out).toContain("cold.txt");
+      expect(some.out).not.toContain("early.txt");
+      expect(shell(stale.split("<область>").join("nowhere")).out).toContain("did not match");
+      expect(shell(stale.split("<область>").join(".")).out).toMatch(/^\d{4}-\d{2}-\d{2} \S+$/m);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
