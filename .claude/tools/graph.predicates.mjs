@@ -4830,6 +4830,14 @@ export const PREDICATE_CASES = [
   ["gitHookBypass", "git -c core.hooksPath=/dev/null commit -m x", "-c core.hooksPath"],
   ["gitHookBypass", "git -c core.hooksPath=.claude/hooks/git commit -m x", ""],
   ["gitHookBypass", "git config core.hooksPath .claude/hooks/git", ""],
+  ["gitHookBypass", 'git config core.hooksPath "$(git rev-parse --show-prefix).claude/hooks/git"', ""],
+  ["gitHookBypass", "git config core.hooksPath app/web/.claude/hooks/git", ""],
+  ["gitHookBypass", "git config core.hooksPath ../.claude/hooks/git", "config core.hooksPath"],
+  ["gitHookBypass", "git config core.hooksPath /tmp/x/.claude/hooks/git", "config core.hooksPath"],
+  ["gitHookBypass", "git config core.hooksPath ~/x/.claude/hooks/git", "config core.hooksPath"],
+  ["gitHookBypass", 'git config core.hooksPath "$(echo /tmp)/.claude/hooks/git"', "config core.hooksPath"],
+  ["gitHookBypass", "git config core.hooksPath C:/x/.claude/hooks/git", "config core.hooksPath"],
+  ["gitHookBypass", "git config core.hooksPath .claude/hooks/gitx", "config core.hooksPath"],
   ["gitHookBypass", "git config core.hooksPath /tmp/x", "config core.hooksPath"],
   ["gitHookBypass", "git config --unset core.hooksPath", "config core.hooksPath"],
   ["gitHookBypass", "git config --get core.hooksPath", ""],
@@ -5020,8 +5028,20 @@ export const sandboxEscape = (recipe) => {
  * привычке, а прошедший мимо обход краснит ревизия сводов по истории. */
 export const gitHookBypass = (command) => {
   const OWN_HOOKS = ".claude/hooks/git";
-  const own = (value) =>
-    value.replace(/^\.\//, "").replace(/\/+$/, "") === OWN_HOOKS;
+  const SHOW_PREFIX = "$(git rev-parse --show-prefix)";
+  // Своя папка хуков — и от корня репозитория: у вложенного проекта путь
+  // начинается его папкой либо подстановкой, которую даёт посадка.
+  const own = (value) => {
+    const v = value.replace(/^\.\//, "").replace(/\/+$/, "");
+    if (v === OWN_HOOKS || v === SHOW_PREFIX + OWN_HOOKS) return true;
+    if (!v.endsWith("/" + OWN_HOOKS)) return false;
+    const head = v.slice(0, -OWN_HOOKS.length - 1);
+    return (
+      !/^[~/]/.test(head) &&
+      !/[$:]/.test(head) &&
+      !head.split("/").includes("..")
+    );
+  };
   // Тела встроенных документов — данные, а не команды.
   const kept = [];
   let until = null;

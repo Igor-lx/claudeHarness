@@ -1811,7 +1811,7 @@ const withoutFormatOnly = async (abs, repoRoot) => {
     const one = path.relative(repoRoot, f).split(path.sep).join("/");
     let head = null;
     try {
-      head = execFileSync("git", ["show", "HEAD:" + one], {
+      head = execFileSync("git", ["show", "HEAD:./" + one], {
         cwd: repoRoot,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -6114,6 +6114,24 @@ const guardTraceFault = (needCommit) => {
   return "";
 };
 
+/** Начало путей git до корня проекта: пусто у проекта, который сам
+ * репозиторий, и `пакет/` у вложенного в чужой. `git status` пишет путь от
+ * корня репозитория, а инструмент считает от корня проекта: во вложенном
+ * проекте правка не находилась вовсе. Найдено прогоном проб. */
+const GIT_PREFIX = new Map();
+const gitPrefixOf = (repoRoot) => {
+  if (!GIT_PREFIX.has(repoRoot))
+    GIT_PREFIX.set(
+      repoRoot,
+      execFileSync("git", ["rev-parse", "--show-prefix"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim(),
+    );
+  return GIT_PREFIX.get(repoRoot);
+};
+
 /** Записи вывода git с ключом `-z`: путь как на диске. Без ключа git берёт
  * путь не в ASCII и с пробелом в кавычки с восьмеричными кодами, и разбор его
  * не узнавал: файл выпадал из предмета конца хода, ворот и ревизии. */
@@ -6123,16 +6141,22 @@ const zList = (out) => out.split("\0").filter(Boolean);
  * `git diff` вторых не видит, а новый тест — обычный способ закрыть правку. */
 const changedPaths = async (repoRoot) => {
   let said;
+  let prefix;
   try {
     // `-uall`: без него новая ПАПКА печатается одной строкой, и файлы
     // внутри неё в правку не попадают — ровно новый тест целиком.
-    said = execFileSync("git", ["status", "--porcelain", "-z", "-uall"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      // stderr гасим: про недоступность git режим говорит сам.
-      stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 64 * 1024 * 1024,
-    });
+    said = execFileSync(
+      "git",
+      ["status", "--porcelain", "-z", "-uall", "--", "."],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        // stderr гасим: про недоступность git режим говорит сам.
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    prefix = gitPrefixOf(repoRoot);
   } catch {
     return null;
   }
@@ -6147,7 +6171,9 @@ const changedPaths = async (repoRoot) => {
     if (xy.includes("R")) out.push(rows[i + 1] ?? "");
     if (/[RC]/.test(xy)) i += 1;
   }
-  return out.filter(Boolean);
+  return out
+    .filter((one) => one !== "" && one.startsWith(prefix))
+    .map((one) => one.slice(prefix.length));
 };
 
 // --- stop: ворота конца хода -------------------------------------------------
@@ -9580,7 +9606,7 @@ const headTextOf = (abs) => {
   try {
     text = execFileSync(
       "git",
-      ["show", "HEAD:" + norm(path.relative(REPO_AT, abs))],
+      ["show", "HEAD:./" + norm(path.relative(REPO_AT, abs))],
       { cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
   } catch {
@@ -13702,6 +13728,7 @@ if (mode === "gate") {
       git([
         "diff",
         "--cached",
+        "--relative",
         "--name-status",
         "-z",
         "--no-renames",
@@ -13752,7 +13779,7 @@ if (mode === "gate") {
     if (abs.endsWith(".d.ts")) continue;
     let body;
     try {
-      body = git(["show", ":" + one]);
+      body = git(["show", ":./" + one]);
     } catch {
       continue;
     }
@@ -13771,7 +13798,7 @@ if (mode === "gate") {
     }
     let head = null;
     try {
-      head = git(["show", "HEAD:" + one]);
+      head = git(["show", "HEAD:./" + one]);
     } catch {
       head = null;
     }
@@ -13801,7 +13828,7 @@ if (mode === "gate") {
       CONFIG.barProtocol,
     );
     try {
-      body = git(["show", ":" + at]);
+      body = git(["show", ":./" + at]);
     } catch {
       body = null;
     }
@@ -23217,6 +23244,7 @@ if (mode === "verify") {
             const said = zList(
               git([
                 "show",
+                "--relative",
                 "--name-status",
                 "-z",
                 "--no-renames",
@@ -23266,7 +23294,7 @@ if (mode === "verify") {
             if (abs.endsWith(".d.ts")) continue;
             let was;
             try {
-              was = git(["show", hash + ":" + one]);
+              was = git(["show", hash + ":./" + one]);
             } catch {
               continue;
             }
@@ -23277,7 +23305,7 @@ if (mode === "verify") {
             if (seeds.has(one)) {
               const from = seeds.get(one);
               try {
-                seedWas = git(["show", hash + ":.claude/" + from]);
+                seedWas = git(["show", hash + ":./.claude/" + from]);
               } catch {
                 seedWas = null;
               }
@@ -23294,7 +23322,7 @@ if (mode === "verify") {
           want.sort((x, y) => (x.file < y.file ? -1 : 1));
           let said = null;
           try {
-            said = git(["show", hash + ":" + at]);
+            said = git(["show", hash + ":./" + at]);
           } catch {
             said = null;
           }
@@ -23306,7 +23334,7 @@ if (mode === "verify") {
             for (const w of want) {
               let before = null;
               try {
-                before = git(["show", hash + "^:" + w.one]);
+                before = git(["show", hash + "^:./" + w.one]);
               } catch {
                 before = null;
               }
@@ -23379,6 +23407,18 @@ if (mode === "verify") {
       const repo = gitSays(["rev-parse", "--git-dir"]);
       const where =
         repo === null ? null : gitSays(["config", "core.hooksPath"]);
+      // Сличается путь, по которому git ИЩЕТ хук, а не строка настройки:
+      // относительный путь git читает от корня репозитория, и у проекта,
+      // вложенного в чужой, та же строка вела мимо ворот. Найдено прогоном
+      // проб: хук не исполнялся, а сверка была зелёной.
+      const looks =
+        where === null ? null : gitSays(["rev-parse", "--git-path", "hooks"]);
+      const looksAt =
+        looks === null ? null : norm(path.resolve(REPO_AT, looks));
+      const setHooks =
+        'git config core.hooksPath "$(git rev-parse --show-prefix)' +
+        said.dir +
+        '"';
       // Проект со своим менеджером хуков держит `core.hooksPath` за собой и
       // возвращает его при каждой установке пакетов: husky делает это
       // сценарием `prepare`. Направить git к нам там нельзя — следующая
@@ -23389,9 +23429,9 @@ if (mode === "verify") {
       // молчали, а сверка требовала настройки, которая не держится.
       const callsGate = (dir) =>
         [
-          path.join(REPO_AT, dir, "pre-commit"),
+          path.join(dir, "pre-commit"),
           ...(path.basename(dir) === "_"
-            ? [path.join(REPO_AT, path.dirname(dir), "pre-commit")]
+            ? [path.join(path.dirname(dir), "pre-commit")]
             : []),
         ].some(
           (at) =>
@@ -23416,19 +23456,26 @@ if (mode === "verify") {
             "конвейер (`CI`): коммитов здесь не делают, и настройка ворот не нужна — коммит без свода ловит ревизия по истории";
       } else if (where === null)
         gateGap.push(
-          "`core.hooksPath` не задан — ворота не установлены: `git config core.hooksPath " +
-            said.dir +
+          "`core.hooksPath` не задан — ворота не установлены: `" +
+            setHooks +
             "`",
         );
-      else if (norm(where) !== norm(said.dir) && !callsGate(where))
+      else if (
+        looksAt !== norm(path.resolve(REPO_AT, said.dir)) &&
+        (looksAt === null || !callsGate(looksAt))
+      )
         gateGap.push(
-          "`core.hooksPath` ведёт в " +
+          "`core.hooksPath` = " +
             where +
+            ": git ищет хук в " +
+            (looksAt === null
+              ? "неизвестной папке"
+              : norm(path.relative(REPO_AT, looksAt)) || ".") +
             ", а ворота лежат в " +
             said.dir +
-            ", и хук " +
-            where +
-            " ворот не зовёт. Свой менеджер хуков — вызов " +
+            ", и хук там ворот не зовёт. Путь — от корня репозитория: `" +
+            setHooks +
+            "`; свой менеджер хуков — вызов " +
             "`node .claude/tools/graph.mjs gate` в его хуке перед коммитом",
         );
     }

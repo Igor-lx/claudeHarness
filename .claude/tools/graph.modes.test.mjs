@@ -7150,3 +7150,57 @@ describe("импорт с адресом-выражением в графе", ()
     }
   }, 180000);
 });
+
+describe("ворота в проекте, вложенном в чужой репозиторий", () => {
+  it("путь хуков — от корня репозитория, хук исполняется и видит правку проекта", () => {
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), "vlozh-"));
+    const box = path.join(outer, "proj");
+    fs.renameSync(seatEmpty("vlozh-proj-"), box);
+    try {
+      const env = { ...process.env };
+      delete env.CI;
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const sh = (script) => {
+        const r = spawnSync("sh", ["-c", script], { cwd: box, encoding: "utf8", env });
+        return { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") };
+      };
+      const gates = () => {
+        let out;
+        try {
+          out = execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env,
+          });
+        } catch (e) {
+          out = String(e.stdout ?? "");
+        }
+        return out.split("=== Ворота перед коммитом установлены ===")[1]?.split("\n===")[0] ?? "";
+      };
+      const who = "-c user.name=vlozh -c user.email=vlozh@local";
+      expect(sh("cd .. && git init -q && git add -A && git " + who + " -c core.hooksPath= commit -qm base").code).toBe(0);
+      // Путь от папки проекта: строка та же, что у проекта-репозитория, а git
+      // ищет хук от корня и ворот не находит.
+      sh("git config core.hooksPath .claude/hooks/git");
+      expect(gates()).toContain("git ищет хук в ../.claude/hooks/git");
+      // Команда посадки: путь от корня репозитория.
+      sh('git config core.hooksPath "$(git rev-parse --show-prefix).claude/hooks/git"');
+      const set = gates();
+      expect(set).toContain("осмотрено");
+      expect(set).not.toMatch(/^ {4}\S/m);
+      fs.writeFileSync(path.join(box, "src", "app", "zzNested.ts"), "export const zzNested = 1;\n");
+      // Правку видят и режимы рабочего дерева: путь git — от корня проекта.
+      const tested = sh("node .claude/tools/graph.mjs tested").out;
+      expect(tested).toContain("тронуто файлов кода: 1");
+      expect(tested).toMatch(/^ {4}app\/zzNested\.ts$/m);
+      sh("git add -A");
+      const commit = sh("git " + who + " commit -qm nested");
+      expect(commit.code).not.toBe(0);
+      expect(commit.out).toContain("КОММИТ НЕ ПРОХОДИТ");
+      expect(commit.out).toContain("app/zzNested.ts");
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+    }
+  }, 180000);
+});
