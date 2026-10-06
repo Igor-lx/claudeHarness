@@ -7531,26 +7531,48 @@ if (mode === "bar-probe") {
         if (f !== undefined) taken.add(f);
         return f;
       };
-      const cover = probeBook.cover ?? {
-        text: "export const normalizeLabel = (value) => String(value).trim();",
+      const notPlanted = (why) => {
+        console.log("=== Проба не посажена ===");
+        console.log("  " + why);
+        rmSync(box, { recursive: true, force: true });
+        process.exit(1);
       };
-      const roleFile = new Map();
-      for (const one of [...plant.into, cover]) {
-        const f = pickFor(one);
-        if (f === undefined) {
-          console.log("=== Проба не посажена ===");
-          console.log(
-            "  Посадке в существующий код нужно файлов кода без её имён: " +
-              (plant.into.length + 1) +
-              ", а нашлось " +
-              taken.size +
-              ".",
-          );
-          rmSync(box, { recursive: true, force: true });
-          process.exit(1);
-        }
-        roleFile.set(one === cover ? "правка" : (one.role ?? "виновник"), f);
+      const tooFew = () =>
+        notPlanted(
+          "Посадке в существующий код нужно файлов кода без её имён: " +
+            (plant.into.length + 1) +
+            ", а нашлось " +
+            taken.size +
+            ".",
+        );
+      // Маски — из книги посадок, а не из кода инструмента. Текст маски,
+      // записанный здесь, знал каждый, кто читал инструмент: правленых файлов
+      // два, один из них заведомо маска, и посаженное находилось исключением.
+      // Найдено пробой планки. Масок одна либо две, из пула, случайно: знание
+      // одной маски посаженного не выдаёт.
+      const covers = [...(probeBook.covers ?? [])];
+      if (covers.length === 0)
+        notPlanted(
+          "В книге посадок нет масок (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
+        );
+      for (let k = covers.length - 1; k > 0; k -= 1) {
+        const j = Math.floor(random() * (k + 1));
+        [covers[k], covers[j]] = [covers[j], covers[k]];
       }
+      const wanted = Math.min(covers.length, 1 + Math.floor(random() * 2));
+      const roleFile = new Map();
+      for (const one of plant.into) {
+        const f = pickFor(one);
+        if (f === undefined) tooFew();
+        roleFile.set(one.role ?? "виновник", f);
+      }
+      const masked = [];
+      for (const one of covers) {
+        if (masked.length === wanted) break;
+        const f = pickFor(one);
+        if (f !== undefined) masked.push([one, f]);
+      }
+      if (masked.length === 0) tooFew();
       const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
       const specFrom = (from, to) => {
         let r = norm(path.relative(path.dirname(from), to)).replace(
@@ -7598,7 +7620,7 @@ if (mode === "bar-probe") {
           ),
         );
       }
-      place(roleFile.get("правка"), bodyFor(cover, roleFile.get("правка")));
+      for (const [one, f] of masked) place(f, bodyFor(one, f));
       culprits = (plant.culprits ?? plant.into.map((one) => one.role ?? "виновник")).map(
         (role) => norm(inBox(roleFile.get(role))),
       );
@@ -7674,6 +7696,12 @@ if (mode === "bar-probe") {
       culprits.map((f) => norm(path.relative(plant.box, f))).join(", "),
   );
   let verdict;
+  // Суд мерит полноту: лишняя находка не штрафуется, и свод, назвавший у
+  // посаженного каждый критерий, поймает всегда. Поэтому рядом с исходом стоит,
+  // сколько находок дал свод и сколько критериев названо по адресу посадки:
+  // доля читается вместе с этим числом. Найдено пробой планки.
+  let found = null;
+  let atPlant = null;
   if (was === null) verdict = "свода нет";
   else if (was.seal === null || was.seal === "нет") verdict = "свод без печати";
   else if (was.seal !== barSealOf(was.body))
@@ -7691,6 +7719,8 @@ if (mode === "bar-probe") {
     const planted = culprits.map((f) => norm(path.relative(boxRoot, f)));
     const hitsPlanted = (one) =>
       one.outcome === "нашлось" && planted.some((p) => one.addr.includes(p));
+    found = rows.filter((one) => one.outcome === "нашлось").length;
+    atPlant = new Set(rows.filter(hitsPlanted).map((one) => one.id)).size;
     const mine = rows.filter((one) => one.id === plant.criterion);
     const mineFound = mine.filter((one) => one.outcome === "нашлось");
     if (mine.some(hitsPlanted)) verdict = "поймано";
@@ -7709,6 +7739,13 @@ if (mode === "bar-probe") {
     }
   }
   console.log("  исход: " + verdict);
+  if (found !== null)
+    console.log(
+      "  находок в своде: " +
+        found +
+        ", критериев по адресу посадки: " +
+        atPlant,
+    );
 
   if (ledgerAt !== null) {
     const book = existsSync(ledgerAt) ? readJson(ledgerAt, {}) : { runs: [] };
@@ -7717,17 +7754,28 @@ if (mode === "bar-probe") {
       verdict,
       kind: plant.kind ?? "новым файлом",
       when: new Date().toISOString().slice(0, 10),
+      ...(found === null ? {} : { found, atPlant }),
     });
     writeFileSync(ledgerAt, JSON.stringify(book, null, 2) + NEWLINE);
+    const median = (xs) =>
+      xs.length === 0
+        ? null
+        : [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
     for (const kind of ["новым файлом", "в существующем коде"]) {
       const mine = book.runs.filter((r) => (r.kind ?? "новым файлом") === kind);
+      const wide = median(
+        mine.filter((r) => typeof r.atPlant === "number").map((r) => r.atPlant),
+      );
+      const tail =
+        wide === null ? "" : ", критериев по адресу посадки — медиана " + wide;
       console.log(
         "  " +
           kind +
           ": проб " +
           mine.length +
           ", поймано " +
-          mine.filter((r) => r.verdict === "поймано").length,
+          mine.filter((r) => r.verdict === "поймано").length +
+          tail,
       );
     }
     console.log(
@@ -7736,6 +7784,10 @@ if (mode === "bar-probe") {
     console.log(
       "  посаженное в существующий код стоит среди обычной правки и ближе к жизни.",
     );
+    console.log(
+      "  Суд мерит полноту: свод, назвавший у посаженного много критериев, ловит",
+    );
+    console.log("  дёшево — медиану читают рядом с долей.");
   }
   rmSync(plant.box, { recursive: true, force: true });
   rmSync(mark, { force: true });

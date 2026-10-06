@@ -12,6 +12,7 @@ import {
   BAR_PRESENT,
   BAR_SIGNALS,
   WITNESS_COLUMNS,
+  bareCodeOf,
 } from "./graph.predicates.mjs";
 
 /**
@@ -4179,11 +4180,24 @@ describe("проба планки из нескольких файлов", () =>
     const box = seatEmpty("probaur-");
     let sandbox = null;
     try {
+      // Посадка своя, а не из книги: тест, пересказывающий книгу, выдал бы
+      // посаженное каждому, кто его читал.
       const probes = path.join(box, ".claude", "tools", "bar-probes.json");
-      const all = JSON.parse(fs.readFileSync(probes, "utf8"));
-      const one = all.plants.find((p) => p.criterion === "A5" && Array.isArray(p.create));
-      expect(one).toBeDefined();
-      fs.writeFileSync(probes, JSON.stringify({ ...all, plants: [one] }));
+      const one = {
+        criterion: "A5",
+        why: "общий слой берёт из приложения",
+        create: [
+          { path: "app/zzTitle.ts", text: 'export const zzTitle = "title";\n' },
+          {
+            path: "shared/zzBadge/zzBadge.ts",
+            text:
+              'import { zzTitle } from "../../app/zzTitle";\n\n' +
+              "export const zzBadge = (): string => zzTitle;\n",
+          },
+        ],
+        culprits: ["shared/zzBadge/zzBadge.ts"],
+      };
+      fs.writeFileSync(probes, JSON.stringify({ plants: [one], covers: [] }));
       const run = (cwd, ...args) => {
         try {
           return execFileSync(
@@ -4210,13 +4224,13 @@ describe("проба планки из нескольких файлов", () =>
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(/\| направление \|[^\n]*\| против правила \|/);
       fs.appendFileSync(
         path.join(sandbox, ".context", "13-questions.md"),
-        "\nВопрос о `src/shared/zzPlantLabel/zzPlantLabel.ts`.\n",
+        "\nВопрос о `src/shared/zzBadge/zzBadge.ts`.\n",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
         holds: { "слой@shared": "нет" },
         pick: {
-          "A5@shared": "нашлось | src/shared/zzPlantLabel/zzPlantLabel.ts:1 | общий слой берёт из приложения | вопрос",
+          "A5@shared": "нашлось | src/shared/zzBadge/zzBadge.ts:1 | общий слой берёт из приложения | вопрос",
         },
       });
       expect(run(sandbox, "bar")).toContain("печать поставлена");
@@ -4234,11 +4248,36 @@ describe("проба планки в существующем коде", () => {
     let sandbox = null;
     let markAt = null;
     try {
+      // Посадка и маска свои, а не из книги: тест, пересказывающий книгу,
+      // выдал бы посаженное каждому, кто его читал.
       const probes = path.join(box, ".claude", "tools", "bar-probes.json");
-      const all = JSON.parse(fs.readFileSync(probes, "utf8"));
-      const one = all.plants.find((p) => p.criterion === "C4" && Array.isArray(p.into));
-      expect(one).toBeDefined();
-      fs.writeFileSync(probes, JSON.stringify({ ...all, plants: [one] }));
+      const one = {
+        criterion: "C4",
+        why: "меняет чужой реестр, взятый импортом",
+        into: [
+          {
+            role: "владелец",
+            text: "export const tally = { hits: 0, keys: [] };",
+            ts: "export const tally = { hits: 0, keys: [] as string[] };",
+          },
+          {
+            role: "виновник",
+            text:
+              'import { tally } from "{{from:владелец}}";\n\n' +
+              "export const noteKey = (key) => {\n  tally.keys.push(key);\n};",
+            ts:
+              'import { tally } from "{{from:владелец}}";\n\n' +
+              "export const noteKey = (key: string): void => {\n  tally.keys.push(key);\n};",
+          },
+        ],
+        culprits: ["виновник"],
+      };
+      const mask = {
+        text: "export const zzMask = () => 1;",
+        ts: "export const zzMask = (): number => 1;",
+      };
+      // Без масок посаженное стояло бы одно в правленом: посадки нет.
+      fs.writeFileSync(probes, JSON.stringify({ plants: [one], covers: [] }));
       // Два файла без имён посадки — с импортом наверху; прочие файлы кода
       // эти имена уже несут, и посадка обязана их обойти.
       for (const [rel, text] of [
@@ -4266,7 +4305,7 @@ describe("проба планки в существующем коде", () => {
       for (const rel of busy)
         fs.appendFileSync(
           path.join(box, rel),
-          "\nexport const visitLog = 0;\nexport const recordVisit = (): string => \"busy\";\n",
+          '\nexport const tally = 0;\nexport const noteKey = (): string => "busy";\n',
         );
       const run = (cwd, ...args) => {
         try {
@@ -4281,6 +4320,9 @@ describe("проба планки в существующем коде", () => {
       };
       // Род «новым файлом» флагом отсекается: сажать нечего.
       expect(run(box, "bar-probe", "--new")).toContain("=== Сажать нечего ===");
+      expect(run(box, "bar-probe", "--existing")).toContain("нет масок");
+      const withMask = { plants: [one], covers: [mask] };
+      fs.writeFileSync(probes, JSON.stringify(withMask));
       const planted = run(box, "bar-probe", "--existing", "--seed=11");
       sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
       const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
@@ -4293,18 +4335,18 @@ describe("проба планки в существующем коде", () => {
       const culprit = mark.files[0];
       const text = fs.readFileSync(culprit, "utf8");
       // Импорт — к импортам файла, наверх; тело — с типами, как пишут вокруг.
-      expect(text.split("\n")[1]).toMatch(/^import \{ visitLog \} from "[^"]+";$/);
-      expect(text).toContain("export const recordVisit = (name: string): void => {");
+      expect(text.split("\n")[1]).toMatch(/^import \{ tally \} from "[^"]+";$/);
+      expect(text).toContain("export const noteKey = (key: string): void => {");
       expect(text).not.toMatch(/zzProbe/);
-      const spec = /import \{ visitLog \} from "([^"]+)";/.exec(text)[1];
+      const spec = /import \{ tally \} from "([^"]+)";/.exec(text)[1];
       const owner = ["", ".ts", ".tsx"]
         .map((ext) => path.resolve(path.dirname(culprit), spec) + ext)
         .find((f) => fs.existsSync(f));
-      expect(fs.readFileSync(owner, "utf8")).toContain("export const visitLog = { count: 0, names: [] as string[] };");
+      expect(fs.readFileSync(owner, "utf8")).toContain("export const tally = { hits: 0, keys: [] as string[] };");
       // Файлы, где имя посадки уже было, она обошла.
       expect([culprit, owner].map((f) => path.basename(f)).sort()).toEqual(["zzA.ts", "zzB.ts"]);
       for (const rel of busy)
-        expect(fs.readFileSync(path.join(sandbox, rel), "utf8").match(/visitLog/g)?.length).toBe(1);
+        expect(fs.readFileSync(path.join(sandbox, rel), "utf8").match(/tally/g)?.length).toBe(1);
       const changed = execFileSync("git", ["status", "--porcelain"], { cwd: sandbox, encoding: "utf8" })
         .split("\n")
         .filter(Boolean);
@@ -4318,7 +4360,7 @@ describe("проба планки в существующем коде", () => {
       );
       const parts = relCulprit.split("/");
       const unit = parts.length >= 3 ? parts.slice(0, 2).join("/") : relCulprit;
-      const line = text.split("\n").findIndex((l) => l.includes("visitLog.names.push")) + 1;
+      const line = text.split("\n").findIndex((l) => l.includes("tally.keys.push")) + 1;
       fs.appendFileSync(
         path.join(sandbox, ".context", "13-questions.md"),
         "\nВопрос о `src/" + relCulprit + "`.\n",
@@ -4346,6 +4388,11 @@ describe("проба планки в существующем коде", () => {
       const judged = run(box, "bar-probe", id);
       expect(judged).toContain("исход: поймано");
       expect(judged).toContain("в существующем коде: проб 2, поймано 1");
+      // Суд мерит и точность: сколько критериев свод назвал по адресу посадки.
+      expect(judged).toContain("критериев по адресу посадки: 1");
+      const ledgerAt = path.join(box, ".context", "bar-probe-ledger.json");
+      const last = JSON.parse(fs.readFileSync(ledgerAt, "utf8")).runs.at(-1);
+      expect(last).toMatchObject({ verdict: "поймано", atPlant: 1 });
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
       if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
@@ -4411,6 +4458,48 @@ describe("песочница пробы: пакеты проекта", () => {
       if (markAt) fs.rmSync(markAt, { force: true });
     }
   }, 240000);
+});
+
+/**
+ * Книга посадок не пересказана инструментом и его тестами. Маска, записанная
+ * в коде инструмента, и посадка, которую тест сажал из книги и сверял по
+ * тексту, выдавали посаженное каждому, кто их читал. Найдено пробой планки.
+ * Имя законно там, где файл объявляет его сам, в коде, а не в строке.
+ */
+describe("книга посадок не пересказана инструментом", () => {
+  it("составное имя посадки и маски стоит только своим объявлением файла", () => {
+    const book = JSON.parse(
+      fs.readFileSync(path.join(TOOL_DIR, "bar-probes.json"), "utf8"),
+    );
+    const named = new Map();
+    const grab = (text, whose) => {
+      const declared =
+        /\b(?:const|let|var|function|class|type|interface)\s+([A-Za-z_$][\w$]*)/g;
+      for (const m of String(text ?? "").matchAll(declared))
+        if (/^[a-zA-Z][a-z0-9]+[A-Z]/.test(m[1]) && m[1].length >= 6)
+          named.set(m[1], whose);
+    };
+    for (const p of book.plants) {
+      for (const one of [].concat(p.create ?? [])) grab(one.text, p.criterion);
+      for (const one of p.into ?? []) grab(one.text + "\n" + one.ts, p.criterion);
+    }
+    for (const one of book.covers ?? []) grab(one.text + "\n" + one.ts, "маска");
+    expect(named.size).toBeGreaterThan(0);
+    const leaks = [];
+    for (const name of fs.readdirSync(TOOL_DIR)) {
+      if (!/\.(?:mjs|md|json)$/.test(name) || name === "bar-probes.json") continue;
+      const text = fs.readFileSync(path.join(TOOL_DIR, name), "utf8");
+      const bare = bareCodeOf(text);
+      for (const [word, whose] of named) {
+        const esc = word.replace(/\$/g, "\\$");
+        if (!new RegExp("(?<![\\w$])" + esc + "(?![\\w$])").test(text)) continue;
+        const own = new RegExp("\\b(?:const|let|var|function|class)\\s+" + esc + "\\b");
+        if (!own.test(bare)) leaks.push(name + ": посадка " + whose);
+      }
+    }
+    // Имя не печатается: упавший тест не выдаёт посаженного.
+    expect(leaks).toEqual([]);
+  });
 });
 
 describe("проба планки: зерно", () => {
