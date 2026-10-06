@@ -7204,3 +7204,22 @@ describe("ворота в проекте, вложенном в чужой ре�
     }
   }, 180000);
 });
+
+describe("синоним термина словаря во всей прозе полки", () => {
+  it("отвергнутое слово в обосновании, справочнике, state/ и памятке полки находится", () => {
+    const box = seatEmpty("sinonim-");
+    try {
+      const said = () => verifyIn(box).get("Синоним термина словаря не заведён") ?? [];
+      expect(said()).toEqual([]);
+      for (const rel of ["rationale/loop.md", "tools/graph.md", "state/todo.md", "README.md"]) {
+        const at = path.join(box, ".claude", rel);
+        const was = fs.readFileSync(at, "utf8");
+        fs.writeFileSync(at, was + "\nПравило без ловца не держится.\n");
+        expect(said().join("\n")).toContain(".claude/" + rel);
+        fs.writeFileSync(at, was);
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
