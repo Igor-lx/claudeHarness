@@ -4356,6 +4356,7 @@ const CHECK_SECTIONS = [
   "Доктрина в бюджете",
   "Синоним термина словаря не заведён",
   "Проза полки названа",
+  "Обоснование под заголовками нормы",
   "Документы названы в указателе",
   "Применимость разделов планки",
   "Сверки, выключенные при живом предмете",
@@ -21002,6 +21003,47 @@ if (mode === "verify") {
         one +
         " — назвать там, где о нём нужно знать, либо удалить: файл, который не называет никто, не читает никто",
     );
+
+  // Обоснование под заголовками нормы.
+  //
+  // Случаи и замеры к правилу лежат в обосновании под тем же заголовком, что
+  // у раздела нормы, — по нему их и находят (`writing.md`, раздел «Норма и
+  // обоснование»). Раздел нормы, переименованный без обоснования, оставлял
+  // его раздел сиротой, а прогон молчал. Найдено прогоном проб. Заголовок
+  // первого уровня у обоснования свой — «Обоснование к …» — и не сличается.
+  const rationaleOrphans = [];
+  let rationaleLooked = 0;
+  {
+    const ratAt = shelfAt("rationale");
+    const rulesAt = shelfAt("rules");
+    const headsOf = (at, from) =>
+      readFileSync(at, "utf8")
+        .split(NEWLINE)
+        .filter((l) => new RegExp("^#{" + from + ",}\\s").test(l))
+        .map((l) => l.replace(/^#+\s*/, "").trim());
+    if (ratAt !== null && existsSync(ratAt))
+      for (const name of readdirSync(ratAt).filter((n) => n.endsWith(".md"))) {
+        const ruleAt = path.join(rulesAt, name);
+        if (!existsSync(ruleAt)) {
+          rationaleOrphans.push("rationale/" + name + " — нормы rules/" + name + " нет");
+          continue;
+        }
+        const ruleHeads = new Set(headsOf(ruleAt, 1));
+        for (const head of headsOf(path.join(ratAt, name), 2)) {
+          rationaleLooked += 1;
+          if (!ruleHeads.has(head))
+            rationaleOrphans.push(
+              "rationale/" + name + ": «" + head + "» — в норме такого раздела нет",
+            );
+        }
+      }
+  }
+  checkHead("Обоснование под заголовками нормы", {
+    n: rationaleLooked,
+    unit: "разделов обоснования",
+  });
+  console.log("  без раздела нормы: " + rationaleOrphans.length);
+  for (const one of rationaleOrphans) console.log("    " + one);
   checkHead("Доктрина названа в порядке чтения", {
     n: doctrineListed,
     unit: "документов в порядке чтения",

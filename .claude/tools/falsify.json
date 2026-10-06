@@ -1120,6 +1120,12 @@
       "append": "Правило без ловца не держится."
     },
     {
+      "section": "Обоснование под заголовками нормы",
+      "file": ".claude/rationale/close.md",
+      "find": "\n## Отчёт\n",
+      "replace": "\n## Отчёт, которого нет в норме\n"
+    },
+    {
       "section": "Проза полки названа",
       "create": {
         "path": ".claude/seat/zz-orphan-note.md",
