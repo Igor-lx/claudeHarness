@@ -10,6 +10,7 @@
 // TypeScript из пакетов проекта. Вход — текст как есть: снимать ли
 // комментарии, решает зовущий, как решал и прежде.
 
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -348,16 +349,13 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
  * выше по дереву; найденный по `NODE_PATH` — глобальная установка, которой
  * проект не объявлял, и она не в счёт. */
 export const compilerAt = (repoRoot) => {
-  const load = createRequire(path.join(repoRoot, "package.json"));
-  let at;
-  try {
-    at = load.resolve("typescript");
-  } catch {
-    return null;
-  }
+  // Пакет ищется по пути, а не по разрешённому адресу: пакет, поставленный
+  // ссылкой, разрешается в чужую папку, и песочница пробы, связывающая
+  // пакеты проекта, молча разбирала код регулярными выражениями. Найдено
+  // прогоном проб.
   for (let dir = path.resolve(repoRoot); ; dir = path.dirname(dir)) {
-    if (at.startsWith(path.join(dir, "node_modules") + path.sep))
-      return load("typescript");
+    const at = path.join(dir, "node_modules", "typescript", "package.json");
+    if (existsSync(at)) return createRequire(at)("typescript");
     if (path.dirname(dir) === dir) return null;
   }
 };

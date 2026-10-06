@@ -38,6 +38,21 @@ it("компилятор — только из пакетов проекта, н
   }
 });
 
+it("пакеты проекта, поставленные ссылкой, — тоже пакеты проекта", () => {
+  // Так их связывает песочница пробы: ссылка на папку пакетов стенда.
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "razbor-"));
+  const link = path.join(box, "node_modules");
+  try {
+    fs.writeFileSync(path.join(box, "package.json"), "{}");
+    fs.symlinkSync(path.join(ROOT, "node_modules"), link, "junction");
+    expect(compilerAt(box)).not.toBe(null);
+    expect(parserFor(box).name).toContain("компилятор TypeScript");
+  } finally {
+    fs.rmSync(link, { force: true });
+    fs.rmSync(box, { recursive: true, force: true });
+  }
+});
+
 const PARSERS = [
   ["регулярные выражения", (src) => parseModuleRegex(src)],
   ["компилятор", (src, file = "m.tsx") => parseModuleTs(src, ts, file)],
