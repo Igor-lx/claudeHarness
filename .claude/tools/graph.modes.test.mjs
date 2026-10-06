@@ -4248,7 +4248,7 @@ describe("проба планки в существующем коде", () => {
     let sandbox = null;
     let markAt = null;
     try {
-      // Посадка и маска свои, а не из книги: тест, пересказывающий книгу,
+      // Посадка и прикрытие свои, а не из книги: тест, пересказывающий книгу,
       // выдал бы посаженное каждому, кто его читал.
       const probes = path.join(box, ".claude", "tools", "bar-probes.json");
       const one = {
@@ -4272,11 +4272,11 @@ describe("проба планки в существующем коде", () => {
         ],
         culprits: ["виновник"],
       };
-      const mask = {
-        text: "export const zzMask = () => 1;",
-        ts: "export const zzMask = (): number => 1;",
+      const cover = {
+        text: "export const zzCover = () => 1;",
+        ts: "export const zzCover = (): number => 1;",
       };
-      // Без масок посаженное стояло бы одно в правленом: посадки нет.
+      // Без прикрытий посаженное стояло бы одно в правленом: посадки нет.
       fs.writeFileSync(probes, JSON.stringify({ plants: [one], covers: [] }));
       // Два файла без имён посадки — с импортом наверху; прочие файлы кода
       // эти имена уже несут, и посадка обязана их обойти.
@@ -4320,9 +4320,9 @@ describe("проба планки в существующем коде", () => {
       };
       // Род «новым файлом» флагом отсекается: сажать нечего.
       expect(run(box, "bar-probe", "--new")).toContain("=== Сажать нечего ===");
-      expect(run(box, "bar-probe", "--existing")).toContain("нет масок");
-      const withMask = { plants: [one], covers: [mask] };
-      fs.writeFileSync(probes, JSON.stringify(withMask));
+      expect(run(box, "bar-probe", "--existing")).toContain("нет прикрытий");
+      const withCover = { plants: [one], covers: [cover] };
+      fs.writeFileSync(probes, JSON.stringify(withCover));
       const planted = run(box, "bar-probe", "--existing", "--seed=11");
       sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
       const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
@@ -4461,13 +4461,13 @@ describe("песочница пробы: пакеты проекта", () => {
 });
 
 /**
- * Книга посадок не пересказана инструментом и его тестами. Маска, записанная
+ * Книга посадок не пересказана инструментом и его тестами. Прикрытие, записанное
  * в коде инструмента, и посадка, которую тест сажал из книги и сверял по
  * тексту, выдавали посаженное каждому, кто их читал. Найдено пробой планки.
  * Имя законно там, где файл объявляет его сам, в коде, а не в строке.
  */
 describe("книга посадок не пересказана инструментом", () => {
-  it("составное имя посадки и маски стоит только своим объявлением файла", () => {
+  it("составное имя посадки и прикрытия стоит только своим объявлением файла", () => {
     const book = JSON.parse(
       fs.readFileSync(path.join(TOOL_DIR, "bar-probes.json"), "utf8"),
     );
@@ -4480,10 +4480,11 @@ describe("книга посадок не пересказана инструме
           named.set(m[1], whose);
     };
     for (const p of book.plants) {
-      for (const one of [].concat(p.create ?? [])) grab(one.text, p.criterion);
-      for (const one of p.into ?? []) grab(one.text + "\n" + one.ts, p.criterion);
+      const whose = "посадка " + p.criterion;
+      for (const one of [].concat(p.create ?? [])) grab(one.text, whose);
+      for (const one of p.into ?? []) grab(one.text + "\n" + one.ts, whose);
     }
-    for (const one of book.covers ?? []) grab(one.text + "\n" + one.ts, "маска");
+    for (const one of book.covers ?? []) grab(one.text + "\n" + one.ts, "прикрытие");
     expect(named.size).toBeGreaterThan(0);
     const leaks = [];
     for (const name of fs.readdirSync(TOOL_DIR)) {
@@ -4494,7 +4495,7 @@ describe("книга посадок не пересказана инструме
         const esc = word.replace(/\$/g, "\\$");
         if (!new RegExp("(?<![\\w$])" + esc + "(?![\\w$])").test(text)) continue;
         const own = new RegExp("\\b(?:const|let|var|function|class)\\s+" + esc + "\\b");
-        if (!own.test(bare)) leaks.push(name + ": посадка " + whose);
+        if (!own.test(bare)) leaks.push(name + ": " + whose);
       }
     }
     // Имя не печатается: упавший тест не выдаёт посаженного.

@@ -7545,15 +7545,16 @@ if (mode === "bar-probe") {
             taken.size +
             ".",
         );
-      // Маски — из книги посадок, а не из кода инструмента. Текст маски,
-      // записанный здесь, знал каждый, кто читал инструмент: правленых файлов
-      // два, один из них заведомо маска, и посаженное находилось исключением.
-      // Найдено пробой планки. Масок одна либо две, из пула, случайно: знание
-      // одной маски посаженного не выдаёт.
+      // Прикрытия — из книги посадок, а не из кода инструмента. Текст
+      // прикрытия, записанный здесь, знал каждый, кто читал инструмент:
+      // правленых файлов два, один из них заведомо прикрытие, и посаженное
+      // находилось исключением. Найдено пробой планки. Прикрытий одно либо
+      // два, из пула, случайно: знание одного прикрытия посаженного не выдаёт.
+      // Словом «маска» в обвязке зовут шаблон путей, и сюда оно не идёт.
       const covers = [...(probeBook.covers ?? [])];
       if (covers.length === 0)
         notPlanted(
-          "В книге посадок нет масок (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
+          "В книге посадок нет прикрытий (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
         );
       for (let k = covers.length - 1; k > 0; k -= 1) {
         const j = Math.floor(random() * (k + 1));
@@ -7566,13 +7567,13 @@ if (mode === "bar-probe") {
         if (f === undefined) tooFew();
         roleFile.set(one.role ?? "виновник", f);
       }
-      const masked = [];
+      const coverFiles = [];
       for (const one of covers) {
-        if (masked.length === wanted) break;
+        if (coverFiles.length === wanted) break;
         const f = pickFor(one);
-        if (f !== undefined) masked.push([one, f]);
+        if (f !== undefined) coverFiles.push([one, f]);
       }
-      if (masked.length === 0) tooFew();
+      if (coverFiles.length === 0) tooFew();
       const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
       const specFrom = (from, to) => {
         let r = norm(path.relative(path.dirname(from), to)).replace(
@@ -7620,7 +7621,7 @@ if (mode === "bar-probe") {
           ),
         );
       }
-      for (const [one, f] of masked) place(f, bodyFor(one, f));
+      for (const [one, f] of coverFiles) place(f, bodyFor(one, f));
       culprits = (plant.culprits ?? plant.into.map((one) => one.role ?? "виновник")).map(
         (role) => norm(inBox(roleFile.get(role))),
       );
