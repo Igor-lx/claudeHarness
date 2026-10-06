@@ -18215,6 +18215,75 @@ if (mode === "verify") {
         ...(pkg.devDependencies ?? {}),
       }).filter((d) => !shelfDeps.has(d));
       const dep = (re) => deps.some((d) => re.test(d));
+      // Пакет, который код ВЗЯЛ, — предмет раздела, чей бы ни был пакет:
+      // подарок полки вычитается из манифеста, а не из кода. Прежде сеть по
+      // коду знала одни вызовы платформы, и запросы через `axios`, а строки
+      // через `i18next` — оба подарены полкой — разделов внешних данных и
+      // локализации не включали: замерено на стенде, разделы выпадали из
+      // протокола свода целиком, печать стояла.
+      const imports = (names) =>
+        new RegExp(
+          "(?:\\bfrom\\s+|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|^\\s*import\\s+)[\"'](?:" +
+            names +
+            ")[\"'/]",
+        );
+      // Два признака в одном файле: переход по значению и чтение адреса
+      // страницы — значение пришло снаружи.
+      const hasFileWith = (...res) =>
+        code.some((f) => {
+          const lines = readFileSync(f, "utf8").split(NEWLINE);
+          return res.every((re) =>
+            lines.some((line) => {
+              const m = re.exec(line);
+              return m !== null && !inComment(line, m.index);
+            }),
+          );
+        });
+      // Выкладка видна не только скриптом: конфигом площадки, контейнером
+      // и шагом конвейера. Скрипта `start` у семени на сборщике нет вовсе.
+      const ciTexts = () => {
+        const out = [];
+        const wf = path.join(BASE, "..", ".github", "workflows");
+        if (walkable(wf))
+          for (const n of readdirSync(wf))
+            if (/\.ya?ml$/.test(n))
+              out.push(readFileSync(path.join(wf, n), "utf8"));
+        for (const p of [
+          ".gitlab-ci.yml",
+          "bitbucket-pipelines.yml",
+          "azure-pipelines.yml",
+          ".drone.yml",
+          ".woodpecker.yml",
+          "Jenkinsfile",
+        ]) {
+          const at = path.join(BASE, "..", p);
+          if (existsSync(at) && statSync(at).isFile())
+            out.push(readFileSync(at, "utf8"));
+        }
+        return out;
+      };
+      const deployed = () =>
+        [
+          "vercel.json",
+          "now.json",
+          "netlify.toml",
+          "Dockerfile",
+          "docker-compose.yml",
+          "docker-compose.yaml",
+          "compose.yaml",
+          "fly.toml",
+          "render.yaml",
+          "Procfile",
+          "app.yaml",
+          "wrangler.toml",
+          "firebase.json",
+          "amplify.yml",
+        ].some((p) => existsSync(path.join(BASE, "..", p))) ||
+        ciTexts().some((t) =>
+          /\b(?:deploy|gh-pages|vercel|netlify|wrangler|firebase deploy|s3 sync|azure\/webapps-deploy|cloudflare\/pages-action)\b/i.test(
+            t,
+          ),
+        );
       // Признак ищется двумя сетями: по коду и по зависимостям. Вторая нужна
       // потому, что предмет чаще всего приезжает библиотекой, а её имя известно
       // заранее там, где выбор невелик: клиент запросов, обёртка хранилища,
@@ -18231,7 +18300,12 @@ if (mode === "verify") {
       const probe = {
         K: () =>
           hasCode(
-            /\bfetch\s*\(|XMLHttpRequest|localStorage|sessionStorage|indexedDB|document\.cookie|URLSearchParams|useSearchParams|location\.(search|hash)|import\.meta\.env\.(?!DEV\b|PROD\b|MODE\b)|process\.env/,
+            /\bfetch\s*\(|XMLHttpRequest|localStorage|sessionStorage|indexedDB|document\.cookie|URLSearchParams|useSearchParams|location\.(search|hash)|import\.meta\.env\.(?!DEV\b|PROD\b|MODE\b)|process\.env|\bnew\s+(?:WebSocket|EventSource)\b|\bnavigator\.sendBeacon\b|\b(?:createApi|fetchBaseQuery)\s*\(/,
+          ) ||
+          hasCode(
+            imports(
+              "axios|ky|got|superagent|ofetch|wretch|graphql-request|@apollo\\/client|urql|@urql\\/[\\w-]+|swr|@tanstack\\/[\\w-]*query[\\w-]*|socket\\.io-client|firebase|@firebase\\/[\\w-]+|@supabase\\/[\\w-]+|idb|idb-keyval|dexie|localforage|js-cookie",
+            ),
           ) ||
           dep(
             /^(axios|ky|got|superagent|node-fetch|swr|@tanstack\/|idb|dexie|localforage|js-cookie|dotenv)/i,
@@ -18244,7 +18318,7 @@ if (mode === "verify") {
         N: () =>
           hasCode(
             new RegExp(
-              "\\brequestAnimationFrame\\s*\\(|\\.animate\\s*\\(|pointerdown|pointermove|touchstart",
+              "\\brequestAnimationFrame\\s*\\(|\\.animate\\s*\\(|pointerdown|pointermove|touchstart|touchmove|mousemove|\\bon(?:Pointer|Mouse|Touch)Move\\b|\\bonWheel\\b|[\"']wheel[\"']",
             ),
           ) ||
           hasStyle(new RegExp("@keyframes|transition\\s*:|animation\\s*:")) ||
@@ -18253,6 +18327,12 @@ if (mode === "verify") {
           ),
         O: () =>
           styleFiles.length > 0 ||
+          hasCode(/\bstyle=\{\{/) ||
+          hasCode(
+            imports(
+              "styled-components|@emotion\\/[\\w-]+|@stitches\\/[\\w-]+|@vanilla-extract\\/[\\w-]+|@mui\\/[\\w-]+|@chakra-ui\\/[\\w-]+|goober|@linaria\\/[\\w-]+|styled-jsx|twin\\.macro",
+            ),
+          ) ||
           dep(
             /^(styled-components|@emotion|tailwindcss|stitches|vanilla-extract)/i,
           ),
@@ -18267,6 +18347,12 @@ if (mode === "verify") {
           ) ||
           dep(
             /^(dompurify|sanitize-html|xss|marked|markdown-it|helmet|next-auth|@auth\/|firebase|@supabase\/|oidc-client|keycloak|passport|jsonwebtoken|jose|@clerk\/|auth0|@auth0\/|@okta\/|@azure\/msal)/i,
+          ) ||
+          // Переход по значению, прочитанному из адреса страницы, — тот
+          // самый адрес снаружи, о котором `Q2`: `?next=` уводит куда угодно.
+          hasFileWith(
+            /\b(?:location\.(?:assign|replace)|window\.open|navigate|router\.(?:push|replace)|redirect)\s*\(\s*(?!["'`\d-])[^\s)]|\blocation\.href\s*=\s*(?!["'`])[^\s=]/,
+            /\bURLSearchParams\b|\buseSearchParams\b|\buseParams\b|\blocation\.(?:search|hash)\b|\bdocument\.referrer\b/,
           ),
         R: () =>
           script("build") ||
@@ -18274,11 +18360,22 @@ if (mode === "verify") {
         S: () =>
           script("deploy") ||
           script("start") ||
+          deployed() ||
+          hasCode(
+            imports(
+              "express|fastify|koa|hono|@nestjs\\/core|@remix-run\\/[\\w-]+|next|nuxt|astro",
+            ),
+          ) ||
           dep(
             /^(@sentry|@opentelemetry|pino|winston|loglevel|bugsnag|rollbar|web-vitals)/i,
           ),
         T: () =>
           hasCode(/\bIntl\.[A-Z]/) ||
+          hasCode(
+            imports(
+              "i18next|react-i18next|react-intl|@lingui\\/[\\w-]+|next-intl|i18n-js|vue-i18n|@formatjs\\/[\\w-]+|node-polyglot|typesafe-i18n|rosetta",
+            ),
+          ) ||
           dep(/(i18n|intl|locale|globalize|lingui|polyglot)/i),
         U: () =>
           [

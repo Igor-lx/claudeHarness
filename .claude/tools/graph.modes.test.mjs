@@ -1299,6 +1299,56 @@ describe("отложенное держит решение", () => {
   }, 180000);
 });
 
+describe("применимость разделов видит пакеты в коде, редирект и выкладку", () => {
+  it("подарок полки в коде, переход по адресу страницы и конфиг площадки включают свои разделы", () => {
+    const box = seatEmpty("primen-");
+    try {
+      const drift = () =>
+        (verifyIn(box).get("Применимость разделов планки") ?? [])
+          .join("\n")
+          .match(/предмет на диске есть: [K-U]/g)
+          ?.map((one) => one.slice(-1))
+          .sort()
+          .join("") ?? "";
+      const plant = (at, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, at)), { recursive: true });
+        fs.writeFileSync(path.join(box, at), text);
+      };
+      expect(drift()).toBe("");
+      plant(
+        "src/shared/zzApi/zzApi.ts",
+        'import axios from "axios";\n\nexport const zzApi = (id: string) => axios.get("/zz/" + id);\n',
+      );
+      expect(drift()).toBe("K");
+      // Переход на постоянный адрес рядом с чтением адреса — не адрес снаружи.
+      plant(
+        "src/app/zzHome.tsx",
+        'export const zzHome = (navigate: (to: string) => void) => {\n  const tab = new URLSearchParams(window.location.search).get("tab");\n  navigate("/home");\n  return tab;\n};\n',
+      );
+      expect(drift()).toBe("K");
+      plant(
+        "src/app/zzHello.tsx",
+        'import { useTranslation } from "react-i18next";\n\nexport const ZzHello = () => {\n  const { t } = useTranslation();\n  return <p>{t("hello")}</p>;\n};\n',
+      );
+      expect(drift()).toBe("KT");
+      plant(
+        "src/app/zzLogin.tsx",
+        'export const zzLogin = () => {\n  const next = new URLSearchParams(window.location.search).get("next") ?? "/";\n  window.location.assign(next);\n};\n',
+      );
+      expect(drift()).toBe("KQT");
+      plant("vercel.json", "{}\n");
+      expect(drift()).toBe("KQST");
+      plant(
+        "src/app/zzDrag.tsx",
+        "export const ZzDrag = ({ on }: { on: () => void }) => <div onPointerMove={on} style={{ width: 4 }} />;\n",
+      );
+      expect(drift()).toBe("KNOQST");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");

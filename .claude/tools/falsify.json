@@ -1471,6 +1471,17 @@
         "path": "CLAUDE.md",
         "text": "# Проба\n\nПравила заполнены.\n\n<!-- ЗАПОЛНИТЬ -->\nОтвечать по слотам.\n<!-- /ЗАПОЛНИТЬ -->"
       }
+    },
+    {
+      "section": "Применимость разделов планки",
+      "edits": [
+        {
+          "create": {
+            "path": "src/shared/zzNet/zzNet.ts",
+            "text": "import axios from \"axios\";\n\nexport const zzNet = (id: string) => axios.get(\"/zz/\" + id);\n"
+          }
+        }
+      ]
     }
   ]
 }
