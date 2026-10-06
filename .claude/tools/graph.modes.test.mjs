@@ -7022,3 +7022,49 @@ describe("окно свежести и залежавшееся не молча�
     }
   });
 });
+
+describe("сдвиг у комментария — по сырым строкам", () => {
+  it("неизменённый блочный комментарий правленого файла — не новое, дописанный — новое", () => {
+    const box = seatEmpty("sdvig-");
+    try {
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=sdvig", "-c", "user.email=sdvig@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          stdio: "ignore",
+        });
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const appAt = path.join(box, "src", "app", "App.tsx");
+      const was = fs.readFileSync(appAt, "utf8");
+      expect(was.startsWith("/**")).toBe(true);
+      fs.writeFileSync(appAt, was.replace("It works", "It still works"));
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const row = () =>
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .find((l) => /^\| П\d+ \| комментарий \| `app\/App\.tsx:1` \|/.test(l)) ?? "";
+      tool("bar");
+      expect(row()).toContain("комментарий");
+      expect(row()).not.toContain("| новое |");
+      fs.rmSync(protoAt);
+      fs.writeFileSync(appAt, "/** Root of the zz probe. */\n" + fs.readFileSync(appAt, "utf8"));
+      tool("bar");
+      expect(row()).toContain("| новое |");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

@@ -10288,10 +10288,14 @@ const barModelOf = (
     const was = importTargetsOfText(f, h);
     return new Set([...now].filter((t) => !was.has(t)));
   };
+  // Строки HEAD сличаются сырыми, как и правленые: HEAD без блочных
+  // комментариев числил каждый неизменённый комментарий правленого файла
+  // новым. Найдено прогоном проб.
   const headLines = (f) => {
-    const h = headCode(f);
-    if (h === undefined) return null;
-    return new Set((h ?? "").split(/\r?\n/).map((l) => l.trim()));
+    if (!change) return null;
+    return new Set(
+      (headTextOf(f) ?? "").split(/\r?\n/).map((l) => l.trim()),
+    );
   };
   // Признаки строкой модели: строка на вид и пометку, места — по номерам.
   // Вопрос, а не приговор: отвечает критерий вида. Сдвиг — новая строка.
