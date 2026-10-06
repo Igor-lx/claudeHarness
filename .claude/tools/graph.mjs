@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
@@ -1928,6 +1929,40 @@ const sandboxManifests = (from, to) => {
     if (!existsSync(manifest)) continue;
     mkdirSync(path.join(to, e), { recursive: true });
     writeFileSync(path.join(to, e, "package.json"), readFileSync(manifest));
+  }
+};
+
+/** Пакеты проекта для песочницы пробы — ссылкой на каждый пакет.
+ *
+ * Свод в песочнице пробы зовёт линт проекта, а линту нужны пакеты целиком.
+ * С одними манифестами `eslint` не разрешался: свод печатал «линт
+ * недоступен», правила линта как держатели в пробе молчали, и проба мерила
+ * проход не в тех условиях, в которых его делают. Найдено пробой планки.
+ *
+ * Копия весила бы сотни мегабайт, ссылка не весит ничего. Скрытые папки,
+ * кроме `.bin`, не связываются: туда пишут кэши раннеров, и запись из
+ * песочницы легла бы в папку проекта. Песочница фальсификации держит одни
+ * манифесты: рецепт ломает то, что лежит в песочнице, и ссылка донесла бы
+ * поломку до проекта. Ссылку завести нельзя — пакет едет манифестом. */
+const sandboxPackages = (from, to) => {
+  if (!existsSync(from)) return;
+  mkdirSync(to, { recursive: true });
+  for (const e of readdirSync(from)) {
+    if (e.startsWith(".") && e !== ".bin") continue;
+    const dir = path.join(from, e);
+    try {
+      symlinkSync(dir, path.join(to, e), "junction");
+    } catch {
+      if (!statSync(dir).isDirectory()) continue;
+      if (e.startsWith("@")) sandboxManifests(dir, path.join(to, e));
+      else if (existsSync(path.join(dir, "package.json"))) {
+        mkdirSync(path.join(to, e), { recursive: true });
+        writeFileSync(
+          path.join(to, e, "package.json"),
+          readFileSync(path.join(dir, "package.json")),
+        );
+      }
+    }
   }
 };
 /** ЧУЖИЕ связи через разметку и стили: имена, у которых один конец внутри
@@ -7390,7 +7425,7 @@ if (mode === "bar-probe") {
     const plant = plants[Math.floor(random() * plants.length)];
     rmSync(box, { recursive: true, force: true });
     sandboxTree(path.join(BASE, ".."), box);
-    sandboxManifests(
+    sandboxPackages(
       path.join(BASE, "..", "node_modules"),
       path.join(box, "node_modules"),
     );
@@ -11491,13 +11526,32 @@ const barLintOf = (repoRoot, list) => {
     exempt: new Map(),
   });
   if (files.length === 0) return none("в предмете нет файлов кода");
+  const manifestAt = path.join(repoRoot, "package.json");
   let entry = null;
   try {
-    entry = createRequire(path.join(repoRoot, "package.json")).resolve("eslint");
+    entry = createRequire(manifestAt).resolve("eslint");
   } catch {
     entry = null;
   }
-  if (entry === null) return none("пакета `eslint` у проекта нет");
+  // Объявлен, но не разрешается — другая причина, чем «пакета нет»: прежде обе
+  // печатались одной строкой, и песочница пробы, где пакеты не стояли,
+  // говорила о проекте неправду.
+  if (entry === null) {
+    let declared = false;
+    try {
+      const pkg = JSON.parse(readFileSync(manifestAt, "utf8"));
+      declared = ["dependencies", "devDependencies"].some(
+        (part) => pkg[part]?.eslint !== undefined,
+      );
+    } catch {
+      declared = false;
+    }
+    return none(
+      declared
+        ? "пакет `eslint` объявлен манифестом, но не разрешается: зависимости не установлены"
+        : "пакета `eslint` у проекта нет",
+    );
+  }
   const run = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", BAR_LINT_SCRIPT, entry, ...files],

@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -4353,6 +4354,65 @@ describe("проба планки в существующем коде", () => {
   }, 240000);
 });
 
+/**
+ * Песочница пробы берёт пакеты проекта ссылкой: с одними манифестами линт в
+ * ней не разрешался, и правила линта как держатели в пробе молчали. Папки
+ * кэшей не связываются. Найдено пробой планки.
+ */
+describe("песочница пробы: пакеты проекта", () => {
+  it("пакет разрешается из песочницы, кэш не связан, причина без линта верна", () => {
+    const box = seatEmpty("probapkg-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      const modules = path.join(box, "node_modules");
+      const pkgDir = path.join(modules, "zz-probe-pkg");
+      const manifest = { name: "zz-probe-pkg", main: "index.js" };
+      fs.mkdirSync(pkgDir, { recursive: true });
+      const manifestAt = path.join(pkgDir, "package.json");
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest));
+      fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = 1;\n");
+      fs.mkdirSync(path.join(modules, ".vite"), { recursive: true });
+      // Путь поиска пакетов пуст: иначе линт находился бы в пакетах хозяина,
+      // и ответ зависел бы от машины, на которой идут тесты.
+      const env = { ...process.env, NODE_PATH: "" };
+      const run = (cwd, ...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const planted = run(box, "bar-probe", "--new");
+      sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
+      const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
+      expect(sandbox).not.toBeNull();
+      markAt = path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
+      const fromSandbox = createRequire(path.join(sandbox, "package.json"));
+      expect(fs.realpathSync(fromSandbox.resolve("zz-probe-pkg"))).toBe(
+        fs.realpathSync(path.join(pkgDir, "index.js")),
+      );
+      const cache = path.join(sandbox, "node_modules", ".vite");
+      expect(fs.existsSync(cache)).toBe(false);
+      // Линта у проекта нет на диске, а манифест его объявляет: причина —
+      // неустановленные зависимости, а не отсутствие пакета. Первый вызов
+      // кладёт скелет протокола, второй его сверяет и называет состояние линта.
+      run(sandbox, "bar");
+      expect(run(sandbox, "bar")).toContain(
+        "пакет `eslint` объявлен манифестом, но не разрешается",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
+});
+
 describe("проба планки: зерно", () => {
   it("одно зерно — одна и та же посадка", () => {
     const box = seatEmpty("probaseed-");
@@ -6119,12 +6179,23 @@ describe("свод: строки держателя «линт» ставит м
       expect(rowOf("E1")?.[1].trim()).toBe("нашлось");
       expect(rowOf("E1")?.[2].trim()).toBe("app/zzLint.js:2");
       expect(rowOf("E1")?.[3]).toContain("срез: пустой перехват");
-      // Линта у проекта нет — его строки остаются сессии, и печать это
-      // называет; сверки отвечают и без него.
+      // Линт объявлен, но не поставлен — его строки остаются сессии, и печать
+      // называет настоящую причину; сверки отвечают и без него.
+      const noPath = { ...process.env, NODE_PATH: "" };
       fs.rmSync(protoAt);
-      expect(bar({ ...process.env, NODE_PATH: "" })).toContain("линт недоступен: пакета `eslint` у проекта нет");
+      expect(bar(noPath)).toContain(
+        "линт недоступен: пакет `eslint` объявлен манифестом, но не разрешается",
+      );
       expect(rowOf("E2")?.[1].trim()).toBe("");
       expect(rowOf("R6")?.[1].trim()).toBe("чисто");
+      // Не объявлен вовсе — причина другая.
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      delete pkg.devDependencies.eslint;
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      fs.rmSync(protoAt);
+      const absent = "линт недоступен: пакета `eslint` у проекта нет";
+      expect(bar(noPath)).toContain(absent);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
