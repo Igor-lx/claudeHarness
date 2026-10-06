@@ -7223,3 +7223,23 @@ describe("синоним термина словаря во всей прозе 
     }
   }, 300000);
 });
+
+describe("скиллы цитируют то, что печатают режимы", () => {
+  it("ярлыки ответов в скилле handoff и заглавные цитаты всех скиллов есть в инструменте", () => {
+    const skills = path.join(TOOL_DIR, "..", "skills");
+    const tool = ["graph.mjs", "hook.mjs"].map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8")).join("\n");
+    const missing = [];
+    const handoff = fs.readFileSync(path.join(skills, "handoff", "SKILL.md"), "utf8");
+    const labels = [...handoff.matchAll(/^- \*\*«([^»]+)»\*\*/gm)].map((m) => m[1]);
+    expect(labels.length).toBeGreaterThan(3);
+    for (const one of labels) if (!tool.includes(one)) missing.push("handoff: «" + one + "»");
+    for (const name of fs.readdirSync(skills)) {
+      const at = path.join(skills, name, "SKILL.md");
+      if (!fs.existsSync(at)) continue;
+      for (const m of fs.readFileSync(at, "utf8").matchAll(/«([^«»\n]+)»/g))
+        if (/^[А-ЯЁA-Z0-9 :,.=!—-]+$/.test(m[1]) && /[А-ЯЁ]{3}/.test(m[1]) && !tool.includes(m[1]))
+          missing.push(name + ": «" + m[1] + "»");
+    }
+    expect(missing).toEqual([]);
+  });
+});
