@@ -25,6 +25,34 @@ const NEWLINE = String.fromCharCode(10);
 const SEP1 = String.fromCharCode(59);
 const SEP2 = String.fromCharCode(58);
 
+/** Языки стилей — ОДНОЙ строкой, из которой собираются все образцы.
+ *
+ * Предикаты уже сводили это к одному месту, но образцы, перечисляющие
+ * расширения внутри себя, остались порознь: их восемь, и каждый называл
+ * один язык стилей. Самый дорогой — тот, которым инструмент ЧИТАЕТ адреса
+ * из базы: файл `.css`, названный в карте, не разбирался как адрес вовсе,
+ * то есть запись была, и не видел её никто. Проект на обычных модулях CSS
+ * не мог закрыть покрытие карты в принципе.
+ */
+export const STYLE_ALT = "css|scss|sass|less|styl";
+/** Языки кода: TypeScript и обычный JavaScript. */
+const CODE_ALT = "[jt]sx?";
+/** Код или стиль — альтернатива для образцов, а не готовый образец. */
+export const CODE_STYLE_ALT = CODE_ALT + "|" + STYLE_ALT;
+const STYLE_FILE = new RegExp("\\.(?:" + STYLE_ALT + ")$");
+const CODE_FILE = new RegExp("\\.(?:" + CODE_ALT + ")$");
+const TEST_SUFFIX = new RegExp("\\.(?:test|spec)\\.(?:" + CODE_ALT + ")$");
+/** Расширение кода или листа стилей — одним образцом на весь инструмент.
+ *
+ * Заведён после того, как восемь мест спрашивали его порознь и каждое называло
+ * один язык стилей из пяти. Проект на обычных модулях CSS от этого терял адреса
+ * в прозе, разбор коротких имён и опознание токенов — по одной сверке за место,
+ * и каждый раз молча. Один образец нельзя поправить наполовину. Собран из
+ * тех же строк, что и предикаты: прежде он стоял своим списком без обычного
+ * JavaScript, и проект на нём терял те же адреса. Найдено прогоном проб.
+ */
+export const CODE_OR_STYLE = new RegExp("\\.(?:" + CODE_STYLE_ALT + ")$");
+
 /** Тест: лежит в папке слоя `tests/` либо назван суффиксом. */
 // Имена тестов бывают двух видов, и второй не реже первого. `.spec` — форма из
 // мира, откуда пришли раннеры: её везут все поколения инструментов, и живой
@@ -37,7 +65,7 @@ const SEP2 = String.fromCharCode(58);
 export const isTestPath = (f) =>
   /\/tests\//.test(f) ||
   /\/__tests__\//.test(f) ||
-  /\.(test|spec)\.[jt]sx?$/.test(f);
+  TEST_SUFFIX.test(f);
 
 /** Лист стилей. В граф импортов не входит — его подключает сборщик.
  *
@@ -46,7 +74,7 @@ export const isTestPath = (f) =>
  * девяносто непустых строк — больше, чем весь его код — не попадали ни в карту,
  * ни в замер чтения, ни в поиск предмета для раздела планки о стилях. Раздел
  * из-за этого выключался молча, и сверка применимости была зелёной. */
-export const isStylePath = (f) => /\.(css|scss|sass|less|styl)$/.test(f);
+export const isStylePath = (f) => STYLE_FILE.test(f);
 
 /** Документ. */
 export const isDocPath = (f) => /\.md$/.test(f);
@@ -55,7 +83,7 @@ export const isDocPath = (f) => /\.md$/.test(f);
  * Исполняемый модуль: то, у чего есть форма и ответ, то есть контракт. Тест
  * сюда не входит — он сам проверка, поверхности у него нет.
  */
-export const isCodePath = (f) => /\.[jt]sx?$/.test(f) && !isTestPath(f);
+export const isCodePath = (f) => CODE_FILE.test(f) && !isTestPath(f);
 
 /**
  * То, чья правка меняет наблюдаемое поведение продукта: код или стиль. Стиль
@@ -355,7 +383,7 @@ const MEMBER = "\\s*\\??\\.\\s*";
 const abortOf = (name) => "\\b" + name + MEMBER + "abort\\s*\\(";
 const byName = (build) => (line) => {
   const bound =
-    /(?:\b(?:const|let|var)\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*=(?![=>])/.exec(
+    /([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*=(?![=>])/.exec(
       line,
     );
   return bound === null ? [] : [build(escapeRe(bound[1]))];
@@ -437,6 +465,12 @@ export const RESOURCE_KINDS = [
     releases: null,
   },
 ];
+
+/** Роды ресурсов, которые текст захватывает, — через запятую. */
+export const resourceKindsIn = (text) =>
+  RESOURCE_KINDS.filter((one) => one.take.test(text))
+    .map((one) => one.name)
+    .join(", ");
 
 /** Строка, где снят тот же ресурс, что захвачен в строке `at`, — по паре
  * его рода; снятие в комментарии снятием не считается. На входе
@@ -2225,7 +2259,7 @@ const WITNESS_AUTO = new Set([
 ]);
 /** Союз, который делит фразу надвое: «считает раскладку И публикует
  * переменные». Слово целиком: союз внутри слова союзом не является. */
-const WITNESS_JOIN = /(^|[\s,])(и|а также|плюс|затем|а|но|and|then)(?=\s)/iu;
+const WITNESS_JOIN = /(^|[\s,])(и|плюс|затем|а|но|and|then)(?=\s)/iu;
 const witnessPlain = (x) =>
   (x ?? "")
     .toLowerCase()
@@ -2740,8 +2774,18 @@ const ABBREVIATIONS = new Set(
 /** Величины, у которых есть единица: время, длина, скорость, доля. */
 const QUANTITY =
   "(?:[Dd]uration|[Dd]elay|[Tt]imeout|[Ii]nterval|[Tt]ime|[Ww]ait|[Tt]tl|[Gg]ap|[Oo]ffset|[Ss]ize|[Ww]idth|[Hh]eight|[Dd]istance|[Ss]peed|[Mm]argin|[Pp]adding|[Rr]adius|[Tt]hreshold|[Pp]eriod|[Ll]ifetime|DURATION|DELAY|TIMEOUT|INTERVAL|TIME|WAIT|TTL|GAP|OFFSET|SIZE|WIDTH|HEIGHT|DISTANCE|SPEED|MARGIN|PADDING|RADIUS|THRESHOLD|PERIOD|LIFETIME)";
-const UNIT_SUFFIX =
-  /(?:ms|millis(?:econds)?|secs?|seconds|px|rem|em|pct|percent|deg|rad|frames|fps|hz|kb|mb|bytes|count|ratio|factor|mins?|minutes|hours|days)$/i;
+/** Единица — отдельным словом имени (`msDelay`, `MS_DELAY`): образец
+ * величины берёт имя, которое кончается словом величины, и единица хвостом
+ * (`delayMs`) до проверки не доходит. Прежде проверялся хвост, и проверка
+ * не срабатывала ни разу. Найдено прогоном проб. */
+const UNIT_WORD =
+  /^(?:ms|millis|milliseconds|secs?|seconds|px|rem|em|pct|percent|deg|rad|frames|fps|hz|kb|mb|bytes|count|ratio|factor|mins?|minutes|hours|days)$/i;
+/** Слова имени: границы — подчёркивание, знак доллара и смена регистра. */
+const nameWordsOf = (name) =>
+  name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s_$]+/)
+    .filter(Boolean);
 /** Слова комментария, предупреждающие о слабом месте: место описано, а не
  * переписано. */
 const WARNING_WORDS =
@@ -2750,7 +2794,14 @@ const WARNING_WORDS =
  * выражено типом. */
 const OBLIGATION_WORDS =
   /\b(?:must(?: not)? (?:be|call)|only (?:after|before|once|when)|never call|do(?:n't| not) (?:call|pass|change|mutate)|has to be|callers? (?:must|should)|should be (?:stable|memoized)|keep (?:it )?stable)\b|обязан|только после|только до|нельзя (?:менять|звать|вызывать|передавать)|вызывающ/i;
-const CONSTRAINT_MARK = /\b(?:CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/;
+// Граница слова `\b` кириллицы не видит: пометка «ОГРАНИЧЕНИЕ —» прежде не
+// давала строки модели вовсе. Найдено прогоном проб.
+const CONSTRAINT_MARK = /(?<![\p{L}\p{N}_])(?:CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/u;
+/** Начало имени, а не поле: перед ним ни буквы, ни одиночной точки
+ * обращения к полю. Три точки разворота — не обращение: `...items` берёт сам
+ * `items`. Прежде разворот читался полем, и имя, взятое одним разворотом,
+ * числилось мёртвым. Найдено прогоном проб. */
+const NAME_START = String.raw`(?<![\w$])(?<!(?:^|[^.])\.)`;
 /** Сеттер состояния — `setЧто-то(`; таймеры `setTimeout`, `setInterval` и
  * `setImmediate` записью состояния не являются, хотя пишутся так же. */
 const SETTER = "(?<![\\w$.])set(?!Timeout\\b|Interval\\b|Immediate\\b)[A-Z][\\w$]*\\s*\\(";
@@ -2785,12 +2836,15 @@ const COMMAND_QUERY_NAMES =
 /** Комментарии кода — строкой на каждый ряд: предупреждающий, ставящий
  * условие вызывающему, объявляющий ограничение. Модуль и тест разбирает один
  * разбор: правило о комментарии — правило о коде, а тест — тоже код. */
+/** Текст комментария без открывающего знака — для строки модели. */
+export const commentSampleOf = (said) =>
+  said.replace(/^\s*(?:\/\/+|\/\*+|\*)\s*/, "");
 const commentSignals = (text, line) => {
   const lines = text.split(NEWLINE);
   for (const run of (commentRunsOf(text) || "").split(SEP1).filter(Boolean)) {
     const [, from, , rows] = run.split(SEP2).map((x, k) => (k === 0 ? x : Number(x)));
     const said = lines.slice(from - 1, from - 1 + rows).join(" ");
-    const sample = said.replace(/^\s*(?:\/\/+|\/\*+|\*)\s*/, "");
+    const sample = commentSampleOf(said);
     line("комментарий", from, sample, WARNING_WORDS.test(said) ? "предупреждение" : "");
     if (OBLIGATION_WORDS.test(said)) line("требование", from, sample);
     if (CONSTRAINT_MARK.test(said)) line("ограничение", from, sample);
@@ -2954,8 +3008,7 @@ const codeSignalsOf = (file, text, own) => {
   for (const [from, to] of loops)
     for (const m of bare
       .slice(from, to)
-      .matchAll(/(?<![\w$.])([\w$]+)\s*\.\s*(find|findIndex|indexOf|includes|filter|some)\s*\(/g)) {
-      if (/^(?:Object|Array|Math|String|Number|JSON|Promise|Reflect)$/.test(m[1])) continue;
+      .matchAll(new RegExp(NAME_START + String.raw`([\w$]+)\s*\.\s*(find|findIndex|indexOf|includes|filter|some)\s*\(`, "g"))) {
       if (searched.has(from + m.index)) continue;
       searched.add(from + m.index);
       at("поиск", from + m.index, m[1] + "." + m[2]);
@@ -2968,7 +3021,7 @@ const codeSignalsOf = (file, text, own) => {
   const chainOf = (raw) => raw.replace(/[\s?]/g, "");
   const walks = [];
   each(
-    new RegExp("(?<![\\w$.])" + CHAIN + "(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex)\\s*\\(", "g"),
+    new RegExp(NAME_START + CHAIN + "(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex)\\s*\\(", "g"),
     bare,
     (m) => {
       const p = m.index + m[0].length - 1;
@@ -2988,7 +3041,7 @@ const codeSignalsOf = (file, text, own) => {
     for (const m of bare
       .slice(from, to)
       .matchAll(
-        new RegExp("(?<![\\w$.])" + CHAIN + "(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex|indexOf|includes)\\s*\\(", "g"),
+        new RegExp(NAME_START + CHAIN + "(?:map|filter|forEach|reduce|some|every|flatMap|find|findIndex|indexOf|includes)\\s*\\(", "g"),
       )) {
       if (chainOf(m[1]) !== outer || squared.has(from + m.index)) continue;
       squared.add(from + m.index);
@@ -3059,7 +3112,8 @@ const codeSignalsOf = (file, text, own) => {
     new RegExp("(?<=[{,]\\s*)([\\w$]*" + QUANTITY + ")\\s*:\\s*-?\\d", "g"),
   ])
     each(re, bare, (m) => {
-      if (!UNIT_SUFFIX.test(m[1].replace(/_/g, ""))) at("величина", m.index, m[1]);
+      if (!nameWordsOf(m[1]).some((word) => UNIT_WORD.test(word)))
+        at("величина", m.index, m[1]);
     });
 
   // --- модель рендера: запомненное, эффекты, переходы, проброс --------------
@@ -3083,7 +3137,7 @@ const codeSignalsOf = (file, text, own) => {
     const deps = parts.length > 1 ? parts[parts.length - 1] : null;
     if (deps !== null && deps.replace(/\s+/g, "") === "[]") {
       const reads = stateNames.some((n) =>
-        new RegExp("(?<![\\w$.])" + escapeRe(n) + "(?![\\w$])").test(body),
+        new RegExp(NAME_START + escapeRe(n) + "(?![\\w$])").test(body),
       );
       const schedules = /\bset(?:Interval|Timeout)\s*\(|\baddEventListener\s*\(|\.\s*subscribe\s*\(/.test(body);
       at("однократно", m.index, "эффект с пустыми зависимостями", reads && schedules ? "захват" : "");
@@ -3239,7 +3293,7 @@ const codeSignalsOf = (file, text, own) => {
     for (const part of topLevelParts(one.params, 0)) {
       const name = /^\s*([A-Za-z_$][\w$]*)\s*(?:[?:=]|$)/.exec(part.text)?.[1];
       if (name === undefined || WHOLE_FREE.test(name)) continue;
-      const uses = [...body.matchAll(new RegExp("(?<![\\w$.])" + escapeRe(name) + "(?![\\w$])", "g"))];
+      const uses = [...body.matchAll(new RegExp(NAME_START + escapeRe(name) + "(?![\\w$])", "g"))];
       const fields = new Set();
       let bare1 = true;
       for (const u of uses) {
@@ -3276,7 +3330,7 @@ const codeSignalsOf = (file, text, own) => {
   });
   // Цепочка сквозь соседей: узел знает устройство чужих узлов.
   each(
-    /(?<![\w$.])([a-z_$][\w$]*)((?:\s*\??\.\s*[A-Za-z_$][\w$]*){3,})(?![\w$]|\s*\()/g,
+    new RegExp(NAME_START + String.raw`([a-z_$][\w$]*)((?:\s*\??\.\s*[A-Za-z_$][\w$]*){3,})(?![\w$]|\s*\()`, "g"),
     bare,
     (m) => {
       if (GLOBAL_BASES.has(m[1])) return;
@@ -3343,7 +3397,7 @@ const codeSignalsOf = (file, text, own) => {
   for (const [k, row] of bareLines.entries()) {
     const m = /^(?:const|let|var|function\*?|class)\s+([\w$]+)/.exec(row);
     if (m === null) continue;
-    const seen = bare.match(new RegExp("(?<![\\w$.])" + escapeRe(m[1]) + "(?![\\w$])", "g")) ?? [];
+    const seen = bare.match(new RegExp(NAME_START + escapeRe(m[1]) + "(?![\\w$])", "g")) ?? [];
     if (seen.length === 1) line("мёртвое", k + 1, m[1]);
   }
 
@@ -3375,7 +3429,7 @@ const codeSignalsOf = (file, text, own) => {
     each(/\.\s*focus\s*\(\s*\)|\bautoFocus\b/g, bare, (m) => at("доступность", m.index, m[0], "фокус"));
     if (!/\baria-live\b|\brole\s*=\s*["'](?:status|alert)["']/.test(plain))
       each(
-        /(?:\b|(?<=[a-z]))(?:error|err|message|msg|status|notice|warning|success|toast|alert)\w*\s*&&\s*\(?\s*</gi,
+        /(?:\b|(?<=[a-z]))(?:err|message|msg|status|notice|warning|success|toast|alert)\w*\s*&&\s*\(?\s*</gi,
         bare,
         (m) => at("доступность", m.index, m[0].replace(/\s*&&[\s\S]*$/, ""), "без объявления"),
       );
@@ -3402,7 +3456,7 @@ const codeSignalsOf = (file, text, own) => {
     each(/(?<![=-])>([^<>{}]*\p{L}[^<>{}]*)<\/?[A-Za-z]/gu, bare, (m) =>
       at("текст", m.index + 1, m[1].trim(), "в разметке"),
     );
-    each(/\b(?:title|placeholder|alt|aria-label|label)\s*=\s*["']([^"'\n]*\p{L}[^"'\n]*)["']/gu, plain, (m) =>
+    each(/\b(?:title|placeholder|alt|label)\s*=\s*["']([^"'\n]*\p{L}[^"'\n]*)["']/gu, plain, (m) =>
       at("текст", m.index, m[1], "в разметке"),
     );
   }
@@ -3470,15 +3524,13 @@ const styleSignalsOf = (text, project) => {
     line(
       "комментарий",
       from,
-      said.replace(/^\s*\/\*+\s*/, ""),
+      commentSampleOf(said),
       WARNING_WORDS.test(said) ? "предупреждение" : "",
     );
   }
   return hits;
 };
 
-/** Признаки тестового файла: тест без утверждения, подмена, проверка
- * «изменилось» и сверка снимка. */
 /** Утверждения, чей довод — ожидаемое значение. `toThrow` и
  * `toBeInstanceOf` сюда не входят: класс ошибки и класс значения берут из
  * проверяемого кода законно — это его имя, а не его ответ. */
@@ -3488,6 +3540,8 @@ const EXPECTED_MATCHERS =
 const EXPECTED_ASSERTS =
   /\bassert\s*\.\s*(?:equal|strictEqual|deepEqual|deepStrictEqual|notEqual|notStrictEqual)\s*\(/g;
 
+/** Признаки тестового файла: тест без утверждения, подмена, проверка
+ * «изменилось» и сверка снимка. */
 const testSignalsOf = (text, own) => {
   const bare = bareCodeOf(text);
   const { hits, at, line } = signalSink(text);
@@ -3515,7 +3569,7 @@ const testSignalsOf = (text, own) => {
   if (own !== undefined && own.size > 0) {
     const ownIn = (arg) => [
       ...new Set(
-        [...arg.matchAll(/(?<![\w$.])[A-Za-z_$][\w$]*/g)]
+        [...arg.matchAll(new RegExp(NAME_START + "[A-Za-z_$][\\w$]*", "g"))]
           .map((x) => x[0])
           .filter((name) => own.has(name)),
       ),
@@ -3527,8 +3581,16 @@ const testSignalsOf = (text, own) => {
         const q = closeOf(bare, p);
         if (q < 0) continue;
         const parts = topLevelParts(bare.slice(p + 1, q), p + 1);
-        const expected =
-          re === EXPECTED_ASSERTS ? parts[1]?.text ?? "" : parts[0]?.text ?? "";
+        // Ожидаемое — второй довод `assert`, у утверждений — каждый довод,
+        // кроме номера вызова и точности сравнения. Прежде брался только
+        // первый, и ожидание вторым доводом вызова проходило мимо. Найдено
+        // прогоном проб.
+        const from = re === EXPECTED_ASSERTS || /NthCalledWith/.test(m[0]) ? 1 : 0;
+        const upto = re === EXPECTED_ASSERTS || /toBeCloseTo/.test(m[0]) ? from + 1 : parts.length;
+        const expected = parts
+          .slice(from, upto)
+          .map((x) => x.text)
+          .join(",");
         const names = ownIn(expected);
         if (names.length > 0)
           at("тест", m.index, names.join(", "), "ожидание из кода");
@@ -3593,6 +3655,34 @@ export const PREDICATE_CASES = [
   ["stateFormOf", "  let i = 0;", ""],
   ["stateFormOf", "this.setState({ open: true });", "состояние класса"],
   ["stateFormOf", "this.setStateLike = 1;", ""],
+  ["stateFormOf", "const [s, dispatch] = useReducer(reduce, start);", "хук состояния"],
+  ["stateFormOf", "const box = useRef(null);", "хук состояния"],
+  ["stateFormOf", "const id = useId();", "хук состояния"],
+  ["stateFormOf", "const snap = useSyncExternalStore(listen, read);", "хук состояния"],
+  ["stateFormOf", "sessionStorage.setItem(k, v);", "хранилище браузера"],
+  ["stateFormOf", "const request = indexedDB.open(name);", "хранилище браузера"],
+  ["stateFormOf", "import { get } from \"idb-keyval\";", "хранилище браузера"],
+  ["stateFormOf", "import { openDB } from \"idb\";", "хранилище браузера"],
+  ["stateFormOf", "import Dexie from \"dexie\";", "хранилище браузера"],
+  ["stateFormOf", "const { id } = useParams();", "адрес страницы"],
+  ["stateFormOf", "const where = useLocation();", "адрес страницы"],
+  ["stateFormOf", "const raw = location.search;", "адрес страницы"],
+  ["stateFormOf", "const tag = location.hash;", "адрес страницы"],
+  ["stateFormOf", "const path = location.pathname;", "адрес страницы"],
+  ["stateFormOf", "history.pushState(null, \"\", next);", "адрес страницы"],
+  ["stateFormOf", "import { atom } from \"jotai\";", "внешнее хранилище"],
+  ["stateFormOf", "import { proxy } from \"valtio\";", "внешнее хранилище"],
+  ["stateFormOf", "import { makeAutoObservable } from \"mobx\";", "внешнее хранилище"],
+  ["stateFormOf", "import { createStore } from \"effector\";", "внешнее хранилище"],
+  ["stateFormOf", "import { atom } from \"nanostores\";", "внешнее хранилище"],
+  ["stateFormOf", "import { createStore } from \"redux\";", "внешнее хранилище"],
+  ["stateFormOf", "import { configureStore } from \"@reduxjs/toolkit\";", "внешнее хранилище"],
+  ["stateFormOf", "import { atom } from \"recoil\";", "внешнее хранилище"],
+  ["stateFormOf", "import { createStore } from \"@xstate/store\";", "внешнее хранилище"],
+  ["stateFormOf", "const { data } = useSuspenseQuery({ queryKey });", "кэш серверных данных"],
+  ["stateFormOf", "const pages = useInfiniteQuery({ queryKey });", "кэш серверных данных"],
+  ["stateFormOf", "const { data } = useSWR(key, load);", "кэш серверных данных"],
+  ["stateFormOf", "const pages = useSWRInfinite(keyOf, load);", "кэш серверных данных"],
   // --- commentRunsOf: ряды комментариев, длина в СЛОВАХ ---
   ["commentRunsOf", "const a = 1;", ""],
   ["commentRunsOf", "// три коротких слова", "line:1:3:1"],
@@ -3672,6 +3762,66 @@ export const PREDICATE_CASES = [
   ["barSubjectFlags", "const Box = styled.div`color: red;`;", "style"],
   ["barSubjectFlags", '<div className="box" />', "style"],
   ["barSubjectFlags", "<div className={styles.box} />", ""],
+  ["barSubjectFlags", "useLayoutEffect(() => measure(), []);", "time"],
+  ["barSubjectFlags", "useInsertionEffect(() => inject(), []);", "time"],
+  ["barSubjectFlags", "const snap = useSyncExternalStore(listen, read);", "time"],
+  ["barSubjectFlags", "setTimeout(tick, delay);", "time"],
+  ["barSubjectFlags", "setInterval(tick, delay);", "time"],
+  ["barSubjectFlags", "setImmediate(tick);", "time"],
+  ["barSubjectFlags", "requestAnimationFrame(draw);", "time"],
+  ["barSubjectFlags", "requestIdleCallback(idle);", "time,async"],
+  ["barSubjectFlags", "window.addEventListener(\"resize\", onResize);", "time"],
+  ["barSubjectFlags", "emitter.once(\"done\", onDone);", "time"],
+  ["barSubjectFlags", "const watcher = new ResizeObserver(onResize);", "time"],
+  ["barSubjectFlags", "store.subscribe(onChange);", "time"],
+  ["barSubjectFlags", "navigator.geolocation.watchPosition(onMove);", "time"],
+  ["barSubjectFlags", "const socket = new WebSocket(url);", "time,async"],
+  ["barSubjectFlags", "const feed = new EventSource(url);", "time,async"],
+  ["barSubjectFlags", "const job = new Worker(url);", "time,async"],
+  ["barSubjectFlags", "const shared = new SharedWorker(url);", "time,async"],
+  ["barSubjectFlags", "const channel = new BroadcastChannel(name);", "time"],
+  ["barSubjectFlags", "const pipe = new MessageChannel();", "time"],
+  ["barSubjectFlags", "async function load() {}", "async"],
+  ["barSubjectFlags", "const data = await read();", "async"],
+  ["barSubjectFlags", "return Promise.resolve(value);", "async"],
+  ["barSubjectFlags", "load().then(show);", "async"],
+  ["barSubjectFlags", "load().catch(report);", "async"],
+  ["barSubjectFlags", "load().finally(stop);", "async"],
+  ["barSubjectFlags", "const ctrl = new AbortController();", "async"],
+  ["barSubjectFlags", "fetch(url);", "async"],
+  ["barSubjectFlags", "const xhr = new XMLHttpRequest();", "async"],
+  ["barSubjectFlags", "worker.postMessage(data);", "async"],
+  ["barSubjectFlags", "items.map(toRow);", "list"],
+  ["barSubjectFlags", "items.flatMap(toRows);", "list"],
+  ["barSubjectFlags", "items.reduce(add, start);", "list"],
+  ["barSubjectFlags", "items.forEach(show);", "list"],
+  ["barSubjectFlags", "while (queue.length > limit) queue.shift();", "list"],
+  ["barSubjectFlags", "<div className={cn(\"box\", active && \"on\")} />", "style"],
+  ["barSubjectFlags", "<div className={clsx(\"box\", active && \"on\")} />", "style"],
+  ["barSubjectFlags", "<div className={classnames(\"box\", active && \"on\")} />", "style"],
+  ["barSubjectFlags", "<div className={twMerge(\"box\", tone)} />", "style"],
+  ["barSubjectFlags", "<div style={{ color }} />", "style"],
+  ["barSubjectFlags", "const Box = styled(Base)`color: red;`;", "style"],
+  ["barSubjectFlags", "const rule = css`color: red;`;", "style"],
+  ["barSubjectFlags", "const fade = keyframes`from { opacity: 0; }`;", "style"],
+  ["barSubjectFlags", "const Global = createGlobalStyle`body { margin: 0; }`;", "style"],
+  ["barSubjectFlags", "<Box sx={{ color: \"red\" }} />", "style"],
+  ["barSubjectFlags", "const button = tw`px-2`;", "style"],
+  ["resourceKindsIn", "window.addEventListener(\"resize\", onResize);", "слушатель события"],
+  ["resourceKindsIn", "const t = setTimeout(f, delay);", "таймер"],
+  ["resourceKindsIn", "const id = setInterval(f, delay);", "интервал"],
+  ["resourceKindsIn", "frame.current = requestAnimationFrame(tick);", "кадр"],
+  ["resourceKindsIn", "const off = store.subscribe(f);", "подписка"],
+  ["resourceKindsIn", "const sizes = new ResizeObserver(f);", "наблюдатель"],
+  ["resourceKindsIn", "const ws = new WebSocket(url);", "соединение"],
+  ["resourceKindsIn", "const feed = new EventSource(url);", "соединение"],
+  ["resourceKindsIn", "const job = new Worker(url);", "соединение"],
+  ["resourceKindsIn", "const ac = new AbortController();", "отмена"],
+  ["resourceKindsIn", "useEffect(() => off, []);", "эффект"],
+  ["resourceKindsIn", "useLayoutEffect(() => off, []);", "эффект"],
+  ["resourceKindsIn", "useInsertionEffect(() => off, []);", "эффект"],
+  ["resourceKindsIn", "const total = sum(items);", ""],
+  ["resourceKindsIn", "const t = setTimeout(f, delay);\nconst id = setInterval(f, delay);", "таймер, интервал"],
   ["barReleaseLine", "наблюдатель|1|const sizes = new ResizeObserver(f);\nsizes.observe(el);\nreturn () => sizes.disconnect();", "3"],
   ["barReleaseLine", "наблюдатель|1|const changes = new MutationObserver(f);\nconst sizes = new ResizeObserver(g);\nreturn () => sizes.disconnect();", ""],
   ["barReleaseLine", "наблюдатель|1|ref.current = new ResizeObserver(f);\nreturn () => ref.current?.disconnect();", "2"],
@@ -4129,6 +4279,7 @@ export const PREDICATE_CASES = [
   ["barWitnessFault", "строка||x", "вид свидетеля неизвестен"],
   // --- barWitnessVerdict: согласие исхода со свидетелями ---
   ["barWitnessVerdict", "A1|чисто|Св1 — один вопрос|Св1:единица:да;Св2:объявление:да", ""],
+  ["barWitnessVerdict", "A1|чисто|по Св1 — один вопрос|Св1:единица:да;Св2:объявление:да", ""],
   ["barWitnessVerdict", "A1|чисто|Св2 разобран|Св1:единица:да;Св2:объявление:да", "чисто без опоры на фразу единицы: назвать Св1"],
   [
     "barWitnessVerdict",
@@ -4252,6 +4403,8 @@ export const PREDICATE_CASES = [
   ["isStylePath", "src/a/b.module.scss", true],
   ["isStylePath", "src/a/b.module.css", true],
   ["isStylePath", "src/a/b.less", true],
+  ["isStylePath", "src/a/b.sass", true],
+  ["isStylePath", "src/a/b.styl", true],
   ["isStylePath", "src/a/b.ts", false],
 
   // --- isDocPath ---
@@ -4347,6 +4500,14 @@ export const PREDICATE_CASES = [
   ["escapeRe", "ab", "ab"],
   ["joinsTwo", "считает раскладку и публикует переменные", true],
   ["joinsTwo", "считает раскладку", false],
+  ["joinsTwo", "и считает раскладку", true],
+  ["joinsTwo", "считает раскладку плюс публикует переменные", true],
+  ["joinsTwo", "считает раскладку затем публикует переменные", true],
+  ["joinsTwo", "считает раскладку а публикует переменные", true],
+  ["joinsTwo", "считает раскладку но публикует переменные", true],
+  ["joinsTwo", "computes layout and publishes variables", true],
+  ["joinsTwo", "computes layout then publishes variables", true],
+  ["joinsTwo", "считает раскладку, а также публикует переменные", true],
   // --- bareCodeOf: комментарии и содержимое строк гасятся, позиции те же ---
   ["bareCodeOf", "a // b", "a     "],
   ["bareCodeOf", "a + b", "a + b"],
@@ -4402,6 +4563,137 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const at = Date.now();", "1:время"],
   ["signalsSummary", "src/a.ts\nexport const at = new Date(stamp);", ""],
   ["signalsSummary", "src/a.tsx\nexport const A = () => <p>{Date.now()}</p>;", "1:время;1:разметка"],
+  ["signalsSummary", "src/a.css\n.a {\n  transition: margin 1s;\n  transition: padding 1s;\n}", "2:стиль/раскладка в движении;3:стиль/раскладка в движении;2:движение/стиль"],
+  ["signalsSummary", "src/a.css\n@media (min-width: 40em) {\n  .a { color: red; }\n}\n@media (min-width: 60rem) {\n  .b { color: red; }\n}", "1:стиль/перелом;4:стиль/перелом"],
+  ["signalsSummary", "src/a.css\n.a { height: 100dvh; }\n.b { height: 100svh; }\n.c { height: 100lvh; }\n.d { width: 100vw; }", "1:стиль/вьюпорт;2:стиль/вьюпорт;3:стиль/вьюпорт;4:стиль/вьюпорт"],
+  ["signalsSummary", "src/a.css\n.a { color: rgb(0, 0, 0); }\n.b { color: rgb(0, 0, 0); }\n.c { color: hsl(0, 0%, 0%); }\n.d { color: hsl(0, 0%, 0%); }\n.e { margin: 4px; }\n.f { margin: 4px; }\n.g { margin: 12px; }\n.h { margin: 12px; }", "1:стиль/повтор величины;3:стиль/повтор величины;5:стиль/повтор величины;7:стиль/повтор величины"],
+  ["signalsSummary", "src/a.css\n.a {\n  transition: height 1s;\n  transition: top 1s;\n  transition: left 1s;\n  transition: right 1s;\n  transition: bottom 1s;\n  transition: margin-top 1s;\n  transition: padding-left 1s;\n  transition: all 1s;\n  transition: opacity 1s;\n}", "2:стиль/раскладка в движении;3:стиль/раскладка в движении;4:стиль/раскладка в движении;5:стиль/раскладка в движении;6:стиль/раскладка в движении;7:стиль/раскладка в движении;8:стиль/раскладка в движении;9:стиль/раскладка в движении;2:движение/стиль;3:движение/стиль;4:движение/стиль;5:движение/стиль;6:движение/стиль;7:движение/стиль;8:движение/стиль;9:движение/стиль;10:движение/стиль"],
+  ["signalsSummary", "src/a.css\n@keyframes k0 { to { width: 0; } }\n@keyframes k1 { to { height: 0; } }\n@keyframes k2 { to { top: 0; } }\n@keyframes k3 { to { left: 0; } }\n@keyframes k4 { to { right: 0; } }\n@keyframes k5 { to { bottom: 0; } }\n@keyframes k6 { to { margin: 0; } }\n@keyframes k7 { to { padding: 0; } }", "1:стиль/раскладка в движении;2:стиль/раскладка в движении;3:стиль/раскладка в движении;4:стиль/раскладка в движении;5:стиль/раскладка в движении;6:стиль/раскладка в движении;7:стиль/раскладка в движении;8:стиль/раскладка в движении;1:движение/стиль;2:движение/стиль;3:движение/стиль;4:движение/стиль;5:движение/стиль;6:движение/стиль;7:движение/стиль;8:движение/стиль"],
+  ["signalsSummary", "src/a.css\n.b { animation: spin 1s; }", "1:движение/стиль"],
+  ["signalsSummary", "src/a.css\n.a { transform: translateZ(0); }\n.b { transform: translate3d(0, 0, 0); }", "1:стиль/слой композитора;2:стиль/слой композитора"],
+  ["signalsSummary", "src/a.css\n.a:focus { outline: 0; }", "1:стиль/без фокуса"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMIT } from \"../add\";\nexpect(add(a, b)).toStrictEqual(LIMIT);\nexpect(add(a, b)).toBeCloseTo(LIMIT);\nexpect(add(a, b)).toMatchObject(LIMIT);\nexpect(add(a, b)).toContain(LIMIT);\nexpect(add(a, b)).toContainEqual(LIMIT);\nexpect(add(a, b)).toHaveLength(LIMIT);\nexpect(add(a, b)).toHaveProperty(LIMIT);\nexpect(add(a, b)).toMatch(LIMIT);\nexpect(add(a, b)).toHaveBeenCalledWith(LIMIT);\nexpect(add(a, b)).toHaveBeenLastCalledWith(LIMIT);\nexpect(add(a, b)).toHaveReturnedWith(LIMIT);\nexpect(add(a, b)).toBeGreaterThan(LIMIT);\nexpect(add(a, b)).toBeGreaterThanOrEqual(LIMIT);\nexpect(add(a, b)).toBeLessThan(LIMIT);\nexpect(add(a, b)).toBeLessThanOrEqual(LIMIT);", "2:тест/ожидание из кода;3:тест/ожидание из кода;4:тест/ожидание из кода;5:тест/ожидание из кода;6:тест/ожидание из кода;7:тест/ожидание из кода;8:тест/ожидание из кода;9:тест/ожидание из кода;10:тест/ожидание из кода;11:тест/ожидание из кода;12:тест/ожидание из кода;13:тест/ожидание из кода;14:тест/ожидание из кода;15:тест/ожидание из кода;16:тест/ожидание из кода"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMIT } from \"../add\";\nexpect(spy).toHaveBeenNthCalledWith(first, LIMIT);\nexpect(spy).toHaveBeenCalledWith(first, LIMIT);\nexpect(add(a, b)).toBeCloseTo(value, LIMIT);", "2:тест/ожидание из кода;3:тест/ожидание из кода"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMIT } from \"../add\";\nassert.strictEqual(add(a, b), LIMIT);\nassert.deepEqual(add(a, b), LIMIT);\nassert.deepStrictEqual(add(a, b), LIMIT);\nassert.notEqual(add(a, b), LIMIT);\nassert.notStrictEqual(add(a, b), LIMIT);", "2:тест/ожидание из кода;3:тест/ожидание из кода;4:тест/ожидание из кода;5:тест/ожидание из кода;6:тест/ожидание из кода"],
+  ["signalsSummary", "src/tests/a.test.ts\ntest(\"runs\", () => {\n  run();\n});\nit.only(\"runs\", () => {\n  run();\n});\nit.concurrent(\"runs\", () => {\n  run();\n});\nit.skip(\"runs\", () => {\n  run();\n});", "1:тест/без утверждения;4:тест/без утверждения;7:тест/без утверждения;10:тест/без утверждения"],
+  ["signalsSummary", "src/tests/a.test.ts\nit(\"runs\", () => {\n  assert(ok());\n});\nit(\"goes\", () => {\n  value.should.equal(expected);\n});", ""],
+  ["signalsSummary", "src/tests/a.test.ts\njest.mock(\"../a\");\nvi.doMock(\"../a\");\nvi.spyOn(api, \"load\");\nexport const stub = vi.fn();\nvi.stubGlobal(\"fetch\", stub);\nvi.stubEnv(\"MODE\", \"test\");\nsinon.stub(api, \"load\");", "1:тест/подмена;2:тест/подмена;3:тест/подмена;4:тест/подмена;5:тест/подмена;6:тест/подмена;7:тест/подмена"],
+  ["signalsSummary", "src/tests/a.test.ts\nexpect(key(a)).not.toEqual(key(b));\nexpect(key(a)).not.toStrictEqual(key(b));", "1:тест/различие;2:тест/различие"],
+  ["signalsSummary", "src/a.ts\nexport const show = (order) => render(order.id, { ...order });", ""],
+  ["signalsSummary", "src/a.ts\nexport const pick = (order) => ({ ...order.customer.address.zone });", "1:целое;1:сквозь"],
+  ["signalsSummary", "src/a.ts\nconst [items, setItems] = useState([]);\nuseEffect(() => {\n  const id = setInterval(() => log([...items]), delay);\n  return () => clearInterval(id);\n}, []);", "2:однократно/захват"],
+  ["signalsSummary", "src/a.ts\nexport const pairs = () => [...items.filter((a) => items.includes(a))];", "1:поиск;1:рост/та же коллекция"],
+  ["signalsSummary", "src/a.ts\nexport const pairs = () => items.map((a) => [...items.filter((b) => b !== a)]);", "1:поиск;1:рост/та же коллекция"],
+  ["signalsSummary", "src/tests/a.test.ts\nimport { add, LIMITS } from \"../add\";\nexpect(add(1, 2)).toEqual([...LIMITS]);", "2:тест/ожидание из кода"],
+  ["signalsSummary", "src/a.tsx\nconst ariaProps = { \"aria-disabled\": busy };\nexport const S = ({ label }) => <button className=\"save loading\" {...ariaProps}>{label}</button>;", ""],
+  ["signalsSummary", "src/a.ts\nexport const noun = (count: number) => (count != 1 ? \"items\" : \"item\");", "1:текст/множественное"],
+  ["signalsSummary", "src/a.ts\nexport const f = (userID: number, itemID: number) => userID + itemID;", "1:идентификаторы"],
+  ["signalsSummary", "src/a.ts\nexport interface State { data?: string; error?: string; ready?: number }", "1:необязательные"],
+  ["signalsSummary", "src/a.ts\nexport const label = (kind: string) => {\n  switch (kind) {\n    case \"a\":\n      return \"one\";\n    case \"b\":\n      return \"two\";\n    default:\n      return \"none\";\n  }\n};", ""],
+  ["signalsSummary", "src/a.ts\nexport function outer() {\n  return inner();\n  function inner() {\n    return value;\n  }\n}", ""],
+  ["signalsSummary", "src/a.ts\nlet unusedA = start;\nvar unusedB = start;\nfunction unusedC() {}\nclass UnusedD {}\nexport const used = start;", "1:мёртвое;2:мёртвое;3:мёртвое;4:мёртвое"],
+  ["signalsSummary", "src/a.ts\nnode.animate(frames, timing);\nexport const Box = motion.div;\ngsap.to(node, vars);\nexport const spring = useSpring(config);", "1:движение/код;2:движение/код;3:движение/код;4:движение/код"],
+  ["signalsSummary", "src/a.tsx\nexport const A0 = () => <span onClick={go} />;\nexport const A1 = () => <li onClick={go} />;\nexport const A2 = () => <td onClick={go} />;\nexport const A3 = () => <tr onClick={go} />;\nexport const A4 = () => <p onClick={go} />;\nexport const A5 = () => <section onClick={go} />;\nexport const A6 = () => <article onClick={go} />;\nexport const A7 = () => <img onClick={go} alt=\"\" />;\nexport const A8 = () => <label onClick={go} />;", "1:доступность/не кнопка;2:доступность/не кнопка;3:доступность/не кнопка;4:доступность/не кнопка;5:доступность/не кнопка;6:доступность/не кнопка;7:доступность/не кнопка;8:доступность/не кнопка;9:доступность/не кнопка"],
+  ["signalsSummary", "src/a.tsx\nexport const E0 = () => <div onMouseDown={go} />;\nexport const E1 = () => <div onMouseUp={go} />;\nexport const E2 = () => <div onPointerDown={go} />;\nexport const E3 = () => <div onPointerUp={go} />;\nexport const E4 = () => <div onKeyDown={go} />;", "1:доступность/не кнопка;2:доступность/не кнопка;3:доступность/не кнопка;4:доступность/не кнопка;5:доступность/не кнопка;1:доступность/указатель;2:доступность/указатель;3:доступность/указатель;4:доступность/указатель"],
+  ["signalsSummary", "src/a.tsx\nexport const P0 = () => <button onMouseEnter={go} />;\nexport const P1 = () => <button onMouseLeave={go} />;\nexport const P2 = () => <button onTouchStart={go} />;\nexport const P3 = () => <button onTouchEnd={go} />;", "1:доступность/указатель;2:доступность/указатель;3:доступность/указатель;4:доступность/указатель"],
+  ["signalsSummary", "src/a.tsx\nexport const I0 = () => <button><svg /></button>;\nexport const I1 = () => <button><img alt=\"\" /></button>;\nexport const I2 = () => <button><Icon /></button>;\nexport const I3 = () => <button><CloseIcon /></button>;", "1:доступность/без имени;2:доступность/без имени;3:доступность/без имени;4:доступность/без имени"],
+  ["signalsSummary", "src/a.tsx\nexport const N0 = () => <button aria-label=\"Close\"><svg /></button>;\nexport const N1 = () => <button title=\"Close\"><svg /></button>;\nexport const N2 = () => <button aria-labelledby=\"close-label\"><svg /></button>;", "1:текст/в разметке;2:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const S = ({ label }) => <button className=\"save loading\" disabled={busy}>{label}</button>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const S = ({ label }) => <button className=\"save loading\" aria-disabled={busy}>{label}</button>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const S = ({ label }) => <button className=\"save loading\" aria-busy={busy}>{label}</button>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const S0 = ({ label }) => <button className=\"save disabled\">{label}</button>;\nexport const S1 = ({ label }) => <button className=\"save busy\">{label}</button>;\nexport const S2 = ({ label }) => <button className=\"save pending\">{label}</button>;", "1:доступность/состояние;2:доступность/состояние;3:доступность/состояние"],
+  ["signalsSummary", "src/a.tsx\nexport const go = () => node.focus();", "1:доступность/фокус"],
+  ["signalsSummary", "src/a.tsx\nexport const M = ({ error }) => <p aria-live=\"polite\">{error && <span>{error}</span>}</p>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const M = ({ error }) => <p role=\"status\">{error && <span>{error}</span>}</p>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const W0 = () => <p>{saveError && <span />}</p>;\nexport const W1 = () => <p>{error && <span />}</p>;\nexport const W2 = () => <p>{err && <span />}</p>;\nexport const W3 = () => <p>{message && <span />}</p>;\nexport const W4 = () => <p>{msg && <span />}</p>;\nexport const W5 = () => <p>{status && <span />}</p>;\nexport const W6 = () => <p>{notice && <span />}</p>;\nexport const W7 = () => <p>{warning && <span />}</p>;\nexport const W8 = () => <p>{success && <span />}</p>;\nexport const W9 = () => <p>{toast && <span />}</p>;\nexport const W10 = () => <p>{alert && <span />}</p>;", "1:доступность/без объявления;2:доступность/без объявления;3:доступность/без объявления;4:доступность/без объявления;5:доступность/без объявления;6:доступность/без объявления;7:доступность/без объявления;8:доступность/без объявления;9:доступность/без объявления;10:доступность/без объявления;11:доступность/без объявления"],
+  ["signalsSummary", "src/a.ts\nnode.innerHTML = html;\nnode.outerHTML = html;\nnode.insertAdjacentHTML(\"beforeend\", html);\ndocument.write(html);", "1:вставка/разметка;2:вставка/разметка;3:вставка/разметка;4:вставка/разметка"],
+  ["signalsSummary", "src/a.ts\nwindow.location = next;\nlocation.assign(next);\nlocation.replace(next);\nlet location = next;\nvar location = next;", "1:вставка/адрес;2:вставка/адрес;3:вставка/адрес"],
+  ["signalsSummary", "src/a.tsx\nexport const A = () => <a href={next} />;", "1:вставка/адрес"],
+  ["signalsSummary", "src/a.tsx\nexport const run = new Function(source);\nexport const S = () => <script src={url} />;\nexport const F = () => <iframe src={url} />;", "1:вставка/сторонний;2:вставка/сторонний;3:вставка/сторонний"],
+  ["signalsSummary", "src/a.ts\nexport const tag = document.createElement(\"script\");\nexport const frame = document.createElement(\"iframe\");", "1:вставка/сторонний;2:вставка/сторонний"],
+  ["signalsSummary", "src/a.ts\nconsole.info(value);\nconsole.debug(value);\nconsole.warn(value);\nconsole.error(value);\nconsole.trace(value);\nconsole.table(value);\nconsole.dir(value);", "1:журнал;2:журнал;3:журнал;4:журнал;5:журнал;6:журнал;7:журнал"],
+  ["signalsSummary", "src/a.ts\nperformance.measure(name);\nconsole.time(name);\nconsole.timeEnd(name);\nconsole.timeLog(name);\nexport const watcher = new PerformanceObserver(onEntries);", "1:измерение;2:измерение;3:измерение;4:измерение;5:измерение"],
+  ["signalsSummary", "src/a.tsx\nexport const T0 = () => <p title=\"Hello\" />;\nexport const T1 = () => <img alt=\"Logo\" />;\nexport const T2 = () => <p aria-label=\"Close\" />;\nexport const T3 = () => <Field label=\"Name\" />;", "1:текст/в разметке;2:текст/в разметке;3:текст/в разметке;4:текст/в разметке"],
+  ["signalsSummary", "src/a.ts\nexport const a = date.toLocaleDateString();\nexport const b = date.toLocaleTimeString();\nexport const c = value.toLocaleString();", "1:текст/формат;2:текст/формат;3:текст/формат"],
+  ["signalsSummary", "src/a.ts\nexport const noun = (count: number) => (count !== 1 ? \"items\" : \"item\");", "1:текст/множественное"],
+  ["signalsSummary", "src/a.ts\nimport { Store } from \"./store\";\nexport const a = () => Store.getInstance();\nexport const b = () => Store.instance;", "2:создаёт;3:создаёт"],
+  ["signalsSummary", "src/a.ts\nlet last = start;\nexport const read = (k) => {\n  last = k;\n  return cache[k];\n};", "2:команда"],
+  ["signalsSummary", "src/a.ts\nconst cache = load();\nlet last = start;\nexport const read = (k) => {\n  last = k;\n  return cache[k];\n};", "3:команда"],
+  ["signalsSummary", "src/a.ts\nexport function read(k) {\n  setLast(k);\n  return cache[k];\n}", "1:команда"],
+  ["signalsSummary", "src/a.ts\nconst cache = load();\nexport function read(k) {\n  setLast(k);\n  return cache[k];\n}", "2:команда"],
+  ["signalsSummary", "src/a.ts\nexport const read = k => {\n  setLast(k);\n  return cache[k];\n};", "1:команда"],
+  ["signalsSummary", "src/a.ts\nexport const read = (k) => {\n  const later = function () {\n    setLast(k);\n  };\n  later();\n  return cache[k];\n};", ""],
+  ["signalsSummary", "src/a.ts\nexport const first = <T>(xs: T[]) => xs.at(start);", "1:обобщение"],
+  ["signalsSummary", "src/a.ts\nexport type Box<T> = { value: T };\nexport interface Holder<T> { value: T }\nexport class Keeper<T> { value?: T }", "1:обобщение;2:обобщение;3:обобщение"],
+  ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.format();", "1:целое"],
+  ["signalsSummary", "src/a.ts\nconst limit = load();\nconst seen = new Set();\nexport const remember = (k) => seen.add(k);\nuse(limit);", "2:кэш"],
+  ["signalsSummary", "src/a.ts\nconst log = [];\nexport const note = (x) => log.push(x);", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nconst byId = {};\nexport const keep = (k, v) => { byId[k] = v; };", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nimport { x } from \"./x\";\nexport const slots = 8;\nexport const width = (total: number) => total / 8 + x;", "3:дубль"],
+  ["signalsSummary", "src/a.ts\nexport const a = (xs: string[]) => xs.length > -1;\nexport const b = (xs: string[]) => xs.length < 0;", "1:всегда;2:всегда"],
+  ["signalsSummary", "src/a.ts\nfor (const x of items) {\n  if (items.includes(x)) hits.push(x);\n}", "2:поиск;2:рост/та же коллекция"],
+  ["signalsSummary", "src/a.tsx\nexport const Card = ({ title }) => <Head title={title} />;", "1:проброс"],
+  ["signalsSummary", "src/a.tsx\nexport const Card = memo(({ title }) => <Head title={title} />);", "1:мемо;1:проброс"],
+  ["signalsSummary", "src/a.tsx\nexport const Card = forwardRef(({ title }, ref) => <Head title={title} ref={ref} />);", "1:проброс"],
+  ["signalsSummary", "src/a.ts\nexport const a = items.map((x) => ids.find((y) => y === x.id));\nexport const b = items.map((x) => ids.findIndex((y) => y === x.id));\nexport const c = items.map((x) => ids.some((y) => y === x.id));", "1:поиск;2:поиск;3:поиск"],
+  ["signalsSummary", "src/a.ts\nfor (let x of items) {\n  if (items.includes(x)) hits.push(x);\n}", "2:поиск;2:рост/та же коллекция"],
+  ["signalsSummary", "src/a.ts\nfor (var x of items) {\n  if (items.includes(x)) hits.push(x);\n}", "2:поиск;2:рост/та же коллекция"],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useReducer(append, []);\nexport const add = (x) => setLog((prev) => [...prev, x]);", "2:рост/без предела"],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => prev.concat(x));", "2:рост/без предела"],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x]);\nexport const prune = () => setLog((prev) => prev.filter(keep));", ""],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x]);\nexport const drop = () => setLog((prev) => { prev.splice(start, count); return prev; });", ""],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x]);\nexport const clear = () => setLog([]);", ""],
+  ["signalsSummary", "src/a.tsx\nconst [log, setLog] = useState([]);\nexport const add = (x) => setLog((prev) => [...prev, x]);\nexport const cap = (x) => setLog((prev) => (prev.length > limit ? prev : [...prev, x]));", ""],
+  ["signalsSummary", "src/a.tsx\nconst [open, setOpen] = useState(false);\nconst [shown, setShown] = useState(true);\nuse(open, shown);", "1:имя/булево;2:имя/булево"],
+  ["signalsSummary", "src/a.ts\nconst open = false;\nvar shown = true;\nlet busy = true;\nuse(open, shown, busy);", "1:имя/булево;2:имя/булево;3:имя/булево"],
+  ["signalsSummary", "src/a.ts\nlet cfg = load();\nvar tmp = load();\nuse(cfg, tmp);", "1:имя/сокращение;2:имя/сокращение"],
+  ["signalsSummary", "src/a.ts\nexport function show(msg) {\n  return msg;\n}", "1:имя/сокращение"],
+  ["signalsSummary", "src/a.ts\nexport const a = useCallback(() => go(), []);\nexport const B = memo(View);\nexport const c = computed(() => total());\nexport const d = memoizeOne(calc);", "1:мемо;2:мемо;3:мемо;4:мемо"],
+  ["signalsSummary", "src/a.ts\nconst [count, setCount] = useState(0);\nuseEffect(() => {\n  const id = setTimeout(() => log(count), delay);\n  return () => clearTimeout(id);\n}, []);\nuseEffect(() => {\n  window.addEventListener(\"focus\", () => log(count));\n}, []);\nuseEffect(() => {\n  const off = store.subscribe(() => log(count));\n  return off;\n}, []);", "2:однократно/захват;6:однократно/захват;9:однократно/захват;2:порядок"],
+  ["signalsSummary", "src/a.ts\nsetTimeout(a, delay);\nsetTimeout(b, delay);\nsetTimeout(c, delay);\nsetInterval(a, delay);\nsetInterval(b, delay);\nsetInterval(c, delay);\nsetImmediate(a, delay);\nsetImmediate(b, delay);\nsetImmediate(c, delay);", ""],
+  ["signalsSummary", "src/a.ts\nexport const a = read() as any; // the reader is untyped\nexport const b = <any>read(); // the reader is untyped", "1:обход/любое;2:обход/любое"],
+  ["signalsSummary", "src/a.ts\nexport const v0 = read() as string; // the reader is untyped\nexport const v1 = read() as number; // the reader is untyped\nexport const v2 = read() as boolean; // the reader is untyped\nexport const v3 = read() as object; // the reader is untyped\nexport const v4 = read() as never; // the reader is untyped\nexport const v5 = read() as bigint; // the reader is untyped\nexport const v6 = read() as symbol; // the reader is untyped", "1:обход/приведение;2:обход/приведение;3:обход/приведение;4:обход/приведение;5:обход/приведение;6:обход/приведение;7:обход/приведение"],
+  ["signalsSummary", "src/a.ts\nimport { a as Thing } from \"./b\";", ""],
+  ["signalsSummary", "src/a.ts\nexport { a as Thing } from \"./b\";", ""],
+  ["signalsSummary", "src/a.ts\n/* @ts-ignore */\ngo();\n// @ts-expect-error\ngo();\n// @ts-nocheck\ngo();\n// eslint-disable-next-line no-console\ngo();", "1:обход/подавление;3:обход/подавление;5:обход/подавление;7:обход/подавление;1:комментарий;3:комментарий;5:комментарий;7:комментарий"],
+  ["signalsSummary", "src/a.ts\nif (width < limit) return;\nif (width >= limit) return;\nif (width > limit) return;\nif (width <= limit) throw failure;\nfor (const w of widths) {\n  if (w <= limit) continue;\n  if (w <= limit) break;\n}", "1:страж;2:страж;3:страж;4:страж;6:страж;7:страж;4:бросок"],
+  ["signalsSummary", "src/a.ts\nexport const fail = () => Promise.reject(failure);", "1:бросок"],
+  ["signalsSummary", "src/a.ts\nawait Promise.allSettled(jobs);\nawait Promise.race(jobs);\nawait Promise.any(jobs);", "1:пакет;2:пакет;3:пакет"],
+  ["signalsSummary", "src/a.ts\nwhile (queue.length > limit) {\n  await run(queue.shift());\n}", "1:пакет"],
+  ["signalsSummary", "src/a.ts\nexport const go = () => {\n  load().then((v) => setValue(v));\n};", "2:гонка/без отмены"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  const controller = new AbortController();\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (cancelled) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (ignore) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (!mounted) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (!active) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (stale) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (id !== requestId) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (v !== latestValue) return;\n  setValue(v);\n};", "2:гонка"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, idx) => <li key={idx}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:имя/сокращение"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, index) => <li key={index}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, rowIndex) => <li key={rowIndex}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
+  ["signalsSummary", "src/a.tsx\nexport const A0 = () => <div onScroll={go} />;\nexport const A1 = () => <div onMouseMove={go} />;\nexport const A2 = () => <div onPointerMove={go} />;\nexport const A3 = () => <div onTouchMove={go} />;\nexport const A4 = () => <div onWheel={go} />;\nexport const A5 = () => <div onDrag={go} />;\nexport const A6 = () => <div onDragOver={go} />;\nexport const watcher = new ResizeObserver(onResize);", "1:частое;2:частое;3:частое;4:частое;5:частое;6:частое;7:частое;8:частое"],
+  ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"mousemove\", go);\nwindow.addEventListener(\"pointermove\", go);\nwindow.addEventListener(\"touchmove\", go);\nwindow.addEventListener(\"wheel\", go);\nwindow.addEventListener(\"resize\", go);\nwindow.addEventListener(\"drag\", go);\nwindow.addEventListener(\"dragover\", go);", "1:частое;2:частое;3:частое;4:частое;5:частое;6:частое;7:частое"],
+  ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;\nnode.style.setProperty(\"--w\", w + \"px\");", "1:раскладка/чтение и запись"],
+  ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;\nnode.classList.add(\"wide\");", "1:раскладка/чтение и запись"],
+  ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;\nnode.classList.remove(\"wide\");", "1:раскладка/чтение и запись"],
+  ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;\nnode.classList.toggle(\"wide\");", "1:раскладка/чтение и запись"],
+  ["signalsSummary", "src/a.ts\nexport const r0 = node.offsetWidth;\nexport const r1 = node.offsetHeight;\nexport const r2 = node.offsetTop;\nexport const r3 = node.offsetLeft;\nexport const r4 = node.clientWidth;\nexport const r5 = node.clientHeight;\nexport const r6 = node.scrollTop;\nexport const r7 = node.scrollLeft;\nexport const r8 = node.scrollWidth;\nexport const r9 = node.scrollHeight;\nexport const look = getComputedStyle(node);", "1:раскладка/чтение;2:раскладка/чтение;3:раскладка/чтение;4:раскладка/чтение;5:раскладка/чтение;6:раскладка/чтение;7:раскладка/чтение;8:раскладка/чтение;9:раскладка/чтение;10:раскладка/чтение;11:раскладка/чтение"],
+  ["signalsSummary", "src/a.ts\nexport const a = window.outerHeight;\nexport const b = window.innerWidth;\nexport const c = visualViewport;", "1:раскладка/окно;2:раскладка/окно;3:раскладка/окно"],
+  ["signalsSummary", "src/a.ts\nexport const w0 = items.map((x) => ids.includes(x.id));\nexport const w1 = items.forEach((x) => ids.includes(x.id));\nexport const w2 = items.reduce((acc, x) => acc + ids.indexOf(x.id), start);\nexport const w3 = items.some((x) => ids.includes(x.id));\nexport const w4 = items.every((x) => ids.includes(x.id));\nexport const w5 = items.flatMap((x) => ids.filter((y) => y === x.id));\nexport const w6 = items.find((x) => ids.includes(x.id));\nexport const w7 = items.findIndex((x) => ids.includes(x.id));", "1:поиск;2:поиск;3:поиск;4:поиск;5:поиск;6:поиск;7:поиск;8:поиск"],
+  ["signalsSummary", "src/a.ts\nfor (const x of items) {\n  if (ids.includes(x.id)) found.push(x);\n}\nwhile (queue.length > limit) {\n  if (ids.includes(queue.shift())) hits.push(queue.length);\n}", "2:поиск;5:поиск"],
+  ["signalsSummary", "src/a.ts\nexport const a = axios(url);\nexport const b = axios.get(url);\nexport const c = new XMLHttpRequest();\nexport const d = new WebSocket(url);\nexport const e = new EventSource(url);\nnavigator.sendBeacon(url, body);", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;4:внешнее/сеть;5:внешнее/сеть;6:внешнее/сеть"],
+  ["signalsSummary", "src/a.ts\nexport const a = sessionStorage.getItem(k);\nexport const b = indexedDB.open(name);\nexport const c = document.cookie;\nexport const d = caches.open(name);\nexport const e = caches.match(request);\nexport const f = caches.keys();\nexport const g = caches.delete(name);", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;5:внешнее/хранилище;6:внешнее/хранилище;7:внешнее/хранилище"],
+  ["signalsSummary", "src/a.ts\nexport const a = location.hash;\nexport const b = location.href;\nexport const c = location.pathname;\nexport const d = useSearchParams();\nexport const e = useParams();\nexport const f = useLocation();", "1:внешнее/адрес;2:внешнее/адрес;3:внешнее/адрес;4:внешнее/адрес;5:внешнее/адрес;6:внешнее/адрес"],
+  ["signalsSummary", "src/a.ts\nworker.postMessage(data);\nworker.onmessage = onMessage;", "1:внешнее/сообщение;2:внешнее/сообщение"],
+  ["signalsSummary", "src/a.ts\naxios.post(url, body);\naxios.put(url, body);\naxios.patch(url, body);\naxios.delete(url);", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;4:внешнее/сеть;1:запись/сеть;2:запись/сеть;3:запись/сеть;4:запись/сеть"],
+  ["signalsSummary", "src/a.ts\nsessionStorage.setItem(k, v);\nlocalStorage.removeItem(k);\nlocalStorage.clear();\ndocument.cookie = line;", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;1:запись/хранилище;2:запись/хранилище;3:запись/хранилище;4:запись/хранилище"],
+  ["signalsSummary", "src/a.ts\nawait fetch(url, { method: \"PUT\" });\nawait fetch(url, { method: \"PATCH\" });\nawait fetch(url, { method: \"DELETE\" });", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;1:запись/сеть;2:запись/сеть;3:запись/сеть"],
+  ["signalsSummary", "src/a.ts\nexport const a = isAdmin;\nexport const b = isOwner;\nexport const c = isModerator;\nexport const d = isStaff;\nexport const e = isSuperuser;\nexport const f = hasRole(user, name);\nexport const g = hasPermission(user, name);\nexport const h = checkPermission(user, name);\nexport const i = userRole;\nexport const j = roles.includes(name);\nexport const k = permissions.includes(name);\nexport const l = permissions.has(name);", "1:права;2:права;3:права;4:права;5:права;6:права;7:права;8:права;9:права;10:права;11:права;12:права"],
+  ["signalsSummary", "src/a.ts\nexport const a = sessionStorage.getItem(\"role\");\nexport const b = localStorage.getItem(\"adminMode\");\nexport const c = localStorage.getItem(\"permissions\");\nexport const d = localStorage.getItem(\"accessLevel\");\nexport const e = searchParams.get(\"role\");\nexport const f = searchParams.get(\"admin\");", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;1:права/из клиента;2:права/из клиента;3:права/из клиента;4:права/из клиента;5:права/из клиента;6:права/из клиента"],
+  ["signalsSummary", "src/a.ts\nexport const a = import.meta.env.VITE_DB_PRIVATE_KEY;\nexport const b = import.meta.env.VITE_ADMIN_PASSWORD;\nexport const c = import.meta.env.VITE_GITHUB_TOKEN;\nexport const d = import.meta.env.VITE_MAPS_API_KEY;\nexport const e = process.env.NEXT_PUBLIC_STRIPE_SECRET;\nexport const f = process.env.REACT_APP_DB_PRIVATE_KEY;\nexport const g = process.env.EXPO_PUBLIC_ADMIN_PASSWORD;\nexport const h = process.env.PUBLIC_GITHUB_TOKEN;\nexport const i = process.env.VITE_MAPS_API_KEY;", "1:внешнее/окружение;2:внешнее/окружение;3:внешнее/окружение;4:внешнее/окружение;5:внешнее/окружение;6:внешнее/окружение;7:внешнее/окружение;8:внешнее/окружение;9:внешнее/окружение;1:секрет/в поставку;2:секрет/в поставку;3:секрет/в поставку;4:секрет/в поставку;5:секрет/в поставку;6:секрет/в поставку;7:секрет/в поставку;8:секрет/в поставку;9:секрет/в поставку"],
+  ["signalsSummary", "src/a.ts\nexport const a = \"sk_live_abc\";\nexport const b = \"sk_test_abc\";\nexport const c = \"rk_live_abc\";\nexport const d = \"ghp_abc\";\nexport const e = \"gho_abc\";\nexport const f = \"github_pat_abc\";\nexport const g = \"xoxb-abc\";\nexport const h = \"AKIAABCDEFGHIJKLMNOP\";\nexport const i = \"-----BEGIN RSA PRIVATE KEY-----\";", "1:секрет/литерал;2:секрет/литерал;3:секрет/литерал;4:секрет/литерал;5:секрет/литерал;6:секрет/литерал;7:секрет/литерал;8:секрет/литерал;9:секрет/литерал"],
+  ["signalsSummary", "src/a.ts\nexport const a = new Date();\nexport const b = performance.now();\nexport const c = Math.random();\nexport const d = crypto.randomUUID();\nexport const e = crypto.getRandomValues(bytes);", "1:время;2:время;3:время;4:время;5:время"],
   ["signalsSummary", "src/a.ts\nexport const x: any = read();", "1:обход/любое;1:обход/без причины"],
   ["signalsSummary", "src/a.ts\nexport const x: any = read(); // the reader is untyped", "1:обход/любое"],
   ["signalsSummary", "src/a.ts\nexport const x: unknown = read();", ""],
@@ -4435,6 +4727,18 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\n// workaround for the race\ngo();", "1:комментарий/предупреждение"],
   ["signalsSummary", "src/a.ts\n// callers must call init first\ngo();", "1:комментарий;1:требование"],
   ["signalsSummary", "src/a.ts\n// CONSTRAINT — width never shrinks\ngo();", "1:комментарий;1:ограничение"],
+  ["signalsSummary", "src/a.ts\n// hack around the cache\ngo();\n// hacky but fast\ngo();\n// careful with order\ngo();\n// caution: shared\ngo();\n// fragile ordering\ngo();\n// beware of reentry\ngo();\n// temporary until the next release\ngo();\n// kludge for safari\ngo();\n// don't touch this\ngo();\n// do not touch this\ngo();\n// осторожно с порядком\ngo();\n// костыль для сафари\ngo();\n// обходной путь\ngo();\n// временное решение\ngo();\n// хрупкий порядок\ngo();\n// не трогать\ngo();", "1:комментарий/предупреждение;3:комментарий/предупреждение;5:комментарий/предупреждение;7:комментарий/предупреждение;9:комментарий/предупреждение;11:комментарий/предупреждение;13:комментарий/предупреждение;15:комментарий/предупреждение;17:комментарий/предупреждение;19:комментарий/предупреждение;21:комментарий/предупреждение;23:комментарий/предупреждение;25:комментарий/предупреждение;27:комментарий/предупреждение;29:комментарий/предупреждение;31:комментарий/предупреждение"],
+  ["signalsSummary", "src/a.ts\n// must be sorted\ngo();\n// must call init\ngo();\n// only after mount\ngo();\n// only before render\ngo();\n// only once per page\ngo();\n// only when visible\ngo();\n// never call twice\ngo();\n// don't call directly\ngo();\n// do not pass null\ngo();\n// don't change the order\ngo();\n// do not mutate the input\ngo();\n// has to be stable\ngo();\n// caller must lock first\ngo();\n// callers should retry\ngo();\n// should be stable across renders\ngo();\n// should be memoized upstream\ngo();\n// keep it stable\ngo();\n// обязан звать первым\ngo();\n// только после монтирования\ngo();\n// только до отрисовки\ngo();\n// нельзя менять порядок\ngo();\n// нельзя звать дважды\ngo();\n// нельзя вызывать из рендера\ngo();\n// нельзя передавать пустое\ngo();\n// вызывающий держит порядок\ngo();", "1:комментарий;1:требование;3:комментарий;3:требование;5:комментарий;5:требование;7:комментарий;7:требование;9:комментарий;9:требование;11:комментарий;11:требование;13:комментарий;13:требование;15:комментарий;15:требование;17:комментарий;17:требование;19:комментарий;19:требование;21:комментарий;21:требование;23:комментарий;23:требование;25:комментарий;25:требование;27:комментарий;27:требование;29:комментарий;29:требование;31:комментарий;31:требование;33:комментарий;33:требование;35:комментарий;35:требование;37:комментарий;37:требование;39:комментарий;39:требование;41:комментарий;41:требование;43:комментарий;43:требование;45:комментарий;45:требование;47:комментарий;47:требование;49:комментарий;49:требование"],
+  ["signalsSummary", "src/a.ts\n// ОГРАНИЧЕНИЕ — ширина не убывает\ngo();", "1:комментарий;1:ограничение"],
+  ["signalsSummary", "src/a.ts\nexport const msDelay = 101;\nexport const millisDelay = 102;\nexport const millisecondsDelay = 103;\nexport const secDelay = 104;\nexport const secondsDelay = 105;\nexport const pxGap = 106;\nexport const remGap = 107;\nexport const emGap = 108;\nexport const pctWidth = 109;\nexport const percentWidth = 110;\nexport const degOffset = 111;\nexport const radOffset = 112;\nexport const framesDelay = 113;\nexport const fpsSpeed = 114;\nexport const hzSpeed = 115;\nexport const kbSize = 116;\nexport const mbSize = 117;\nexport const bytesSize = 118;\nexport const countThreshold = 119;\nexport const ratioThreshold = 120;\nexport const factorSpeed = 121;\nexport const minsDelay = 122;\nexport const minutesTimeout = 123;\nexport const hoursTtl = 124;\nexport const daysTtl = 125;\nexport const MS_DELAY = 126;", ""],
+  ["signalsSummary", "src/a.ts\nexport const hasItems = false;\nexport const haveRows = false;\nexport const canEdit = false;\nexport const couldRetry = false;\nexport const shouldShow = false;\nexport const mustSave = false;\nexport const wasSent = false;\nexport const wereLoaded = false;\nexport const willClose = false;\nexport const didMount = false;\nexport const doesFit = false;\nexport const needsSave = false;\nexport const allowsDrop = false;\nexport const mayRetry = false;\nexport const OPEN_BY_DEFAULT = false;", ""],
+  ["signalsSummary", "src/a.ts\nexport const f0 = (e) => e.target;\nexport const f1 = (ev) => ev.target;\nexport const f2 = (evt) => evt.target;\nexport const f3 = (event) => event.target;\nexport const f4 = (props) => props.title;\nexport const f5 = (_input) => _input.value;\nexport const f6 = (args) => args.first;\nexport const f7 = (rest) => rest.tail;\nexport const f8 = (ctx) => ctx.user;\nexport const f9 = (context) => context.user;", "2:имя/сокращение;3:имя/сокращение;9:имя/сокращение"],
+  ["signalsSummary", "src/a.ts\nexport const useThing = (k) => { setSlot0(k); return cache[k]; };\nexport const Thing = (k) => { setSlot1(k); return cache[k]; };\nexport const popItem = (k) => { setSlot2(k); return cache[k]; };\nexport const takeItem = (k) => { setSlot3(k); return cache[k]; };\nexport const shiftItem = (k) => { setSlot4(k); return cache[k]; };\nexport const nextItem = (k) => { setSlot5(k); return cache[k]; };\nexport const incrementCount = (k) => { setSlot6(k); return cache[k]; };\nexport const decrementCount = (k) => { setSlot7(k); return cache[k]; };\nexport const consumeToken = (k) => { setSlot8(k); return cache[k]; };\nexport const pullItem = (k) => { setSlot9(k); return cache[k]; };\nexport const dequeueItem = (k) => { setSlot10(k); return cache[k]; };\nexport const claimSlot = (k) => { setSlot11(k); return cache[k]; };\nexport const acquireLock = (k) => { setSlot12(k); return cache[k]; };\nexport const reserveSeat = (k) => { setSlot13(k); return cache[k]; };\nexport const toggleOpen = (k) => { setSlot14(k); return cache[k]; };", ""],
+  ["signalsSummary", "src/a.jsx\nexport const B = () => <button onClick={go}>x</button>;", "1:текст/в разметке"],
+  ["commentSampleOf", "  // workaround here", "workaround here"],
+  ["commentSampleOf", "/** contract of the node */", "contract of the node */"],
+  ["commentSampleOf", " * second line of a block", "second line of a block"],
+  ["commentSampleOf", "plain text", "plain text"],
   ["signalsSummary", "src/a.ts\ngo(); // trailing note", ""],
   ["signalsSummary", "src/a.ts\nlet open = false;\nuse(open);", "1:имя/булево"],
   ["signalsSummary", "src/a.ts\nlet isOpen = false;\nuse(isOpen);", ""],
@@ -4532,6 +4836,8 @@ export const PREDICATE_CASES = [
   ["gitHookBypass", "git commit -F - <<'EOF'" + NEWLINE + "--no-verify" + NEWLINE + "EOF", ""],
   ["gitHookBypass", "git commit -m \"$(cat <<'EOF'" + NEWLINE + "-n" + NEWLINE + "EOF" + NEWLINE + ")\"", ""],
   ["gitHookBypass", "bash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
+  ["gitHookBypass", "zsh -c \"git commit --no-verify -m x\"", "commit --no-verify"],
+  ["gitHookBypass", "/bin/dash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
 ];
 
 /**
@@ -4591,28 +4897,6 @@ export const selfCheck = () => {
  * несогласие — разные вещи, и вторая лучше первой.
  */
 
-/** Расширение кода или листа стилей — одним образцом на весь инструмент.
- *
- * Заведён после того, как восемь мест спрашивали его порознь и каждое называло
- * один язык стилей из пяти. Проект на обычных модулях CSS от этого терял адреса
- * в прозе, разбор коротких имён и опознание токенов — по одной сверке за место,
- * и каждый раз молча. Один образец нельзя поправить наполовину.
- */
-export const CODE_OR_STYLE = /\.(tsx?|css|scss|sass|less|styl)$/;
-
-/** Языки стилей — ОДНОЙ строкой, из которой собираются все образцы.
- *
- * Предикаты уже сводили это к одному месту, но образцы, перечисляющие
- * расширения внутри себя, остались порознь: их восемь, и каждый называл
- * один язык стилей. Самый дорогой — тот, которым инструмент ЧИТАЕТ адреса
- * из базы: файл `.css`, названный в карте, не разбирался как адрес вовсе,
- * то есть запись была, и не видел её никто. Проект на обычных модулях CSS
- * не мог закрыть покрытие карты в принципе.
- */
-export const STYLE_ALT = "css|scss|sass|less|styl";
-
-/** Код или стиль — альтернатива для образцов, а не готовый образец. */
-export const CODE_STYLE_ALT = "[jt]sx?|" + STYLE_ALT;
 
 /** Разбор вывода сверки: секция → МНОЖЕСТВО её строк находок.
  *

@@ -30,6 +30,7 @@ import {
   barNoSubject,
   barReleaseLine,
   RESOURCE_KINDS,
+  resourceKindsIn,
   barSubjectFlags,
   barCoreCriterion,
   barModelFault,
@@ -8083,9 +8084,9 @@ const directionFaults = () => {
 /** Подписки, которые узел берёт: захваты ресурсов со снятием. Узел,
  * нарисованный в обходе списка, берёт их на каждый элемент. */
 const subscriptionsOf = (f) => {
-  const text = codeOf(readFileSync(f, "utf8"));
+  const taken = resourceKindsIn(codeOf(readFileSync(f, "utf8"))).split(", ");
   return RESOURCE_KINDS.filter(
-    (k) => k.releases !== null && k.take.test(text),
+    (k) => k.releases !== null && taken.includes(k.name),
   ).map((k) => k.name);
 };
 /** Узлы, которые файл рисует в обходе списка разметкой, и их подписки:
@@ -10439,8 +10440,9 @@ const barModelOf = (
           owesState ? "нет" : "да",
           isNewLine(line) ? "новое" : "",
         );
+      const taken = resourceKindsIn(line).split(", ");
       for (const res of RESOURCE_KINDS) {
-        if (!res.take.test(line)) continue;
+        if (!taken.includes(res.name)) continue;
         const given =
           res.releases === null
             ? ""

@@ -1,5 +1,12 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
+import { compilerAt } from "./graph.parse.mjs";
 import * as vocabulary from "./graph.predicates.mjs";
 
 const {
@@ -96,6 +103,166 @@ describe("словарь области", () => {
       expect(seen.size, `${name} проверен только одной стороной`).toBe(2);
     }
   });
+});
+
+/**
+ * Каждая альтернатива образца словаря держится случаем: снятая, она роняет
+ * самопроверку. Случаи держали одну-две формы признака из многих, и форма,
+ * выпавшая правкой, уходила без красного — замерено прогоном проб: `650`
+ * альтернатив из `805` снимались молча, среди них образец, не узнававший
+ * кириллическую пометку ограничения вовсе. Альтернатива, которую не ловит ни
+ * один случай, либо получает случай, либо мёртвая и снимается.
+ *
+ * Образцы, собранные из строк, сюда не попадают: их альтернативы держат
+ * случаи предикатов, которые их собирают. `inComment` — двух доводов, и его
+ * держат тесты ниже.
+ */
+describe("каждая альтернатива образца в словаре держится случаем", () => {
+  it("снятие любой альтернативы роняет самопроверку", async () => {
+    const toolDir = path.dirname(fileURLToPath(import.meta.url));
+    const ts = compilerAt(path.join(toolDir, "..", ".."));
+    expect(ts, "без компилятора образцы не найти").not.toBe(null);
+    const name = "graph.predicates.mjs";
+    const src = fs.readFileSync(path.join(toolDir, name), "utf8");
+    const file = ts.createSourceFile(
+      name,
+      src,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.JS,
+    );
+    const exempt = file.statements
+      .filter(
+        (st) =>
+          ts.isVariableStatement(st) &&
+          st.declarationList.declarations.some(
+            (d) => d.name.getText(file) === "inComment",
+          ),
+      )
+      .map((st) => [st.getStart(file), st.end]);
+    // Спаны альтернатив в каждой группе тела, включая внешнюю.
+    const groupsOf = (body) => {
+      const out = [];
+      const stack = [{ start: 0, bars: [] }];
+      for (let k = 0; k < body.length; k += 1) {
+        const ch = body[k];
+        if (ch === "\\") k += 1;
+        else if (ch === "[") {
+          for (k += 1; k < body.length && body[k] !== "]"; k += 1)
+            if (body[k] === "\\") k += 1;
+        } else if (ch === "(") {
+          const lead = /^\?(?:[:=!]|<[=!]|<[A-Za-z_$][\w$]*>)/.exec(
+            body.slice(k + 1),
+          );
+          stack.push({ start: k + 1 + (lead?.[0].length ?? 0), bars: [] });
+        } else if (ch === ")") {
+          const g = stack.pop();
+          if (g.bars.length > 0) out.push({ ...g, end: k });
+        } else if (ch === "|") stack[stack.length - 1].bars.push(k);
+      }
+      if (stack[0].bars.length > 0) out.push({ ...stack[0], end: body.length });
+      return out;
+    };
+    const mutants = [];
+    const visit = (node) => {
+      if (
+        node.kind === ts.SyntaxKind.RegularExpressionLiteral &&
+        !exempt.some(([a, b]) => node.getStart(file) >= a && node.end <= b)
+      ) {
+        const text = node.getText(file);
+        const close = text.lastIndexOf("/");
+        const body = text.slice(1, close);
+        for (const g of groupsOf(body)) {
+          const cuts = [g.start, ...g.bars.map((b) => b + 1)];
+          const ends = [...g.bars, g.end];
+          for (let k = 0; k < cuts.length; k += 1) {
+            const [a, b] =
+              k === 0 ? [cuts[0], cuts[1]] : [ends[k - 1], ends[k]];
+            mutants.push({
+              where:
+                file.getLineAndCharacterOfPosition(node.getStart(file)).line +
+                1,
+              alternative: body.slice(cuts[k], ends[k]),
+              text:
+                src.slice(0, node.getStart(file)) +
+                "/" +
+                body.slice(0, a) +
+                body.slice(b) +
+                text.slice(close) +
+                src.slice(node.end),
+            });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    expect(
+      mutants.length,
+      "образцов с альтернативами не нашлось",
+    ).toBeGreaterThan(500);
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "formy-"));
+    try {
+      mutants.forEach((one, k) => {
+        fs.mkdirSync(path.join(box, "m" + k));
+        fs.writeFileSync(path.join(box, "m" + k, name), one.text);
+      });
+      // Мутант — свежий модуль, а модуль процесс не выгружает: пачка на
+      // процесс держит память в пределах, процессы идут по ядрам.
+      const worker = path.join(box, "worker.mjs");
+      // Адрес модуля — ссылкой на файл: голый путь Windows импорт не берёт,
+      // и каждый мутант читался бы убитым.
+      fs.writeFileSync(
+        worker,
+        "import { pathToFileURL } from 'node:url';\n" +
+          "const out = [];\n" +
+          "for (const d of process.argv.slice(2)) {\n" +
+          "  try { out.push((await import(pathToFileURL(d + '/" +
+          name +
+          "').href)).selfCheck().length); }\n" +
+          "  catch { out.push(-1); }\n" +
+          "}\n" +
+          "console.log(JSON.stringify(out));\n",
+      );
+      const BATCH = 60;
+      const batches = [];
+      for (let k = 0; k < mutants.length; k += BATCH)
+        batches.push(
+          mutants
+            .slice(k, k + BATCH)
+            .map((_, j) => path.join(box, "m" + (k + j))),
+        );
+      const runBatch = (dirs) =>
+        new Promise((done, fail) => {
+          const child = spawn(process.execPath, [worker, ...dirs], {
+            stdio: ["ignore", "pipe", "inherit"],
+          });
+          let said = "";
+          child.stdout.on("data", (x) => (said += x));
+          child.on("error", fail);
+          child.on("close", () => done(JSON.parse(said.trim() || "[]")));
+        });
+      // Контроль: исходный модуль через тот же путь грузится и проходит
+      // самопроверку. Без него сломанный исполнитель убивал бы каждого.
+      fs.mkdirSync(path.join(box, "control"));
+      fs.writeFileSync(path.join(box, "control", name), src);
+      expect(await runBatch([path.join(box, "control")])).toEqual([0]);
+      const counts = [];
+      const lanes = Math.max(1, Math.min(4, os.cpus().length));
+      for (let k = 0; k < batches.length; k += lanes)
+        for (const one of await Promise.all(
+          batches.slice(k, k + lanes).map(runBatch),
+        ))
+          counts.push(...one);
+      expect(counts.length).toBe(mutants.length);
+      const survivors = mutants
+        .filter((_, k) => counts[k] === 0)
+        .map((one) => one.where + ": −" + one.alternative);
+      expect(survivors).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 600000);
 });
 
 /**
