@@ -7304,3 +7304,38 @@ describe("модуль .mjs под корнем исходников — в гр
     }
   }, 180000);
 });
+
+describe("вид поля настройки — у чисел, строк и списков тоже", () => {
+  it("окно следа строкой и поле без объявленного вида роняют запуск с именем поля", () => {
+    const box = seatEmpty("vid-");
+    try {
+      const at = path.join(box, ".context", "graph.config.mjs");
+      const seed = fs.readFileSync(at, "utf8");
+      const run = () => {
+        try {
+          execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          return { code: 0, out: "" };
+        } catch (e) {
+          return { code: e.status, out: String(e.stdout ?? "") };
+        }
+      };
+      expect(seed).toMatch(/^ {2}guardTraceAgeS: \d+,$/m);
+      fs.writeFileSync(at, seed.replace(/^( {2}guardTraceAgeS: )(\d+),$/m, '$1"$2",'));
+      const string = run();
+      expect(string.code).toBe(2);
+      expect(string.out).toContain("поле:    guardTraceAgeS");
+      expect(string.out).toContain("ожидали: число");
+      fs.writeFileSync(at, seed.replace(/^( {2}guardTraceAgeS: \d+,)$/m, "$1\n  zzUnknown: 3,"));
+      const unknown = run();
+      expect(unknown.code).toBe(2);
+      expect(unknown.out).toContain("=== ВИД ПОЛЯ НАСТРОЙКИ НЕ ОБЪЯВЛЕН ===");
+      expect(unknown.out).toContain("поле:  zzUnknown");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

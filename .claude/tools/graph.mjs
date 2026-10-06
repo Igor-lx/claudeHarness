@@ -517,6 +517,57 @@ const SHAPED = {
  */
 const SHAPE_FREE = new Set(["toolchain", "verifiedVersions", "debt"]);
 
+/** Вид остальных полей: число, строка либо список. Закрытый, как и вид
+ * объектов: поле, которого здесь нет, называется строкой. Прежде вид
+ * спрашивали только у объектов, и окно следа стража, заданное строкой,
+ * читалось вслепую: число в кавычках сравнивалось приведением, а
+ * «30 минут» давало молчаливое «не число» в каждом сравнении. Найдено
+ * прогоном проб. */
+const SCALAR = {
+  seating: "число",
+  exceptionLimit: "число",
+  guardTraceAgeS: "число",
+  src: "строка",
+  map: "строка",
+  tests: "строка",
+  invariants: "строка",
+  decisions: "строка",
+  rulesHeading: "строка",
+  isolationHeading: "строка",
+  shelf: "строка",
+  settingsProject: "строка",
+  testedLedger: "строка",
+  barProtocol: "строка",
+  barSince: "строка",
+  barProbeLedger: "строка",
+  todo: "строка",
+  questions: "строка",
+  manifest: "строка",
+  smokeCommand: "строка",
+  mutationReport: "строка",
+  mutationConfig: "строка",
+  mutationLedger: "строка",
+  seeded: "список",
+  pathShortcuts: "список",
+  forks: "список",
+  docPathExceptions: "список",
+  namePrefixes: "список",
+  foreignNames: "список",
+  baselineSections: "список",
+  starBarrels: "список",
+  smokeScope: "список",
+  corpusOutside: "список",
+  componentsAt: "список",
+  testsOutside: "список",
+  testDirs: "список",
+  publicEntries: "список",
+};
+const SCALAR_OK = {
+  число: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
+  строка: (v) => typeof v === "string",
+  список: (v) => Array.isArray(v),
+};
+
 /** Виды долга описания — закрытый список, и он же единственный.
  *
  * Проверяется отдельно от `SHAPED` по двум причинам. Первая: части долга
@@ -616,6 +667,17 @@ for (const [field, parts] of Object.entries(SHAPED)) {
   process.exit(2);
 }
 
+for (const [field, v] of Object.entries(CONFIG)) {
+  if (v == null || SCALAR[field] === undefined || SCALAR_OK[SCALAR[field]](v))
+    continue;
+  console.log("=== НАСТРОЙКА ЗАДАНА НЕВЕРНО ===");
+  console.log("  поле:    " + field);
+  console.log("  ожидали: " + SCALAR[field]);
+  console.log("  стоит:   " + JSON.stringify(v));
+  console.log("  Править: .context/graph.config.mjs");
+  process.exit(2);
+}
+
 // Объектное поле, вид которого нигде не объявлен, — сама по себе поломка.
 //
 // Прежде список видов пополняли по случаю: падало на поле — вписывали поле. За
@@ -626,17 +688,19 @@ for (const [field, parts] of Object.entries(SHAPED)) {
 //
 // Список `SHAPE_FREE` называет те объектные поля, чей вид проверяют иначе:
 // объявление звеньев цепочки, минимумы версий, таблицы настроек. Он закрытый,
-// и держать его дешевле, чем ловить пятый случай.
+// и держать его дешевле, чем ловить пятый случай. Числа, строки и списки
+// объявлены своим списком, `SCALAR`, и поле вне всех трёх — та же поломка.
 for (const [field, v] of Object.entries(CONFIG)) {
-  if (v == null || typeof v !== "object" || Array.isArray(v)) continue;
+  if (v == null) continue;
   if (SHAPED[field] !== undefined || SHAPE_FREE.has(field)) continue;
+  if (SCALAR[field] !== undefined) continue;
   console.log("=== ВИД ПОЛЯ НАСТРОЙКИ НЕ ОБЪЯВЛЕН ===");
   console.log("  поле:  " + field);
   console.log("  стоит: " + JSON.stringify(v));
   console.log(
-    "  Поле держит объект, а частей его никто не назвал: первое обращение",
+    "  Вида поля не объявил ни один список: первое обращение к нему пойдёт",
   );
-  console.log("  к части уйдёт в undefined и кончится стеком вместо имени.");
+  console.log("  вслепую и кончится стеком либо молчаливым неверным ответом.");
   console.log("  Править: список видов в .claude/tools/graph.mjs.");
   process.exit(2);
 }
