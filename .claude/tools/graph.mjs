@@ -27,6 +27,8 @@ import {
   sandboxEscape,
   barRowFault,
   barNoSubject,
+  barReleaseLine,
+  RESOURCE_KINDS,
   barSubjectFlags,
   barCoreCriterion,
   barModelFault,
@@ -54,6 +56,7 @@ import {
   BAR_FORMS,
   BAR_FORMS_SPLIT,
   barFormsOf,
+  barSpotsUnnamed,
   barHoldOf,
   barGripOf,
   BAR_GRIPS,
@@ -7984,35 +7987,17 @@ const directionFaults = () => {
 // Модель собирает инструмент из кода и базы, сессия дописывает недостающее и
 // ставит снятие ресурсов, а архитектурные вердикты называют строку модели
 // СВОЕГО уровня. Виды строк общие для любого кода и не знают ни фреймворка,
-// ни проекта. Распознаватели ниже — данные, а не логика: у другого окружения
-// другие вызовы, и дописывают их сюда, а не ветку в разбор.
-
-/** Захват ресурса и его снятие: пара образцов на род. */
-const RESOURCE_KINDS = [
-  { name: "слушатель события", take: /\baddEventListener\s*\(/, give: /\bremoveEventListener\s*\(/ },
-  { name: "таймер", take: /\bsetTimeout\s*\(/, give: /\bclearTimeout\s*\(/ },
-  { name: "интервал", take: /\bsetInterval\s*\(/, give: /\bclearInterval\s*\(/ },
-  {
-    name: "кадр",
-    take: /\brequestAnimationFrame\s*\(/,
-    give: /\bcancelAnimationFrame\s*\(/,
-  },
-  { name: "подписка", take: /\.subscribe\s*\(/, give: /\bunsubscribe\b/ },
-  { name: "наблюдатель", take: /\bnew\s+\w*Observer\s*\(/, give: /\.disconnect\s*\(|\.unobserve\s*\(/ },
-  { name: "соединение", take: /\bnew\s+(?:WebSocket|EventSource|Worker)\s*\(/, give: /\.close\s*\(|\.terminate\s*\(/ },
-  { name: "отмена", take: /\bnew\s+AbortController\s*\(/, give: /\.abort\s*\(/ },
-  // Эффект фреймворка: снятие — возвращаемая им функция, и опознать её
-  // по строке нельзя; клетку ставит сессия.
-  { name: "эффект", take: /\buse(?:Layout|Insertion)?Effect\s*\(/, give: null },
-];
+// ни проекта. Распознаватели — данные, а не логика: ресурсов — в словаре
+// (`RESOURCE_KINDS`), писателей — ниже; у другого окружения другие вызовы, и
+// дописывают их туда, а не ветку в разбор.
 
 /** Подписки, которые узел берёт: захваты ресурсов со снятием. Узел,
  * нарисованный в обходе списка, берёт их на каждый элемент. */
 const subscriptionsOf = (f) => {
   const text = codeOf(readFileSync(f, "utf8"));
-  return RESOURCE_KINDS.filter((k) => k.give !== null && k.take.test(text)).map(
-    (k) => k.name,
-  );
+  return RESOURCE_KINDS.filter(
+    (k) => k.releases !== null && k.take.test(text),
+  ).map((k) => k.name);
 };
 /** Узлы, которые файл рисует в обходе списка разметкой, и их подписки:
  * `{ line, name, target, takes }`. */
@@ -10367,16 +10352,16 @@ const barModelOf = (
       for (const res of RESOURCE_KINDS) {
         if (!res.take.test(line)) continue;
         const given =
-          res.give === null
-            ? -1
-            : lines.findIndex((l, k) => k !== i && res.give.test(l));
+          res.releases === null
+            ? ""
+            : barReleaseLine(res.name + "|" + (i + 1) + "|" + text);
         add(
           "ресурс",
           where + ":" + (i + 1),
           line.trim().slice(0, 70),
           "",
           isNewLine(line) ? "новое" : "",
-          given >= 0 ? "есть: строка " + (given + 1) : "",
+          given !== "" ? "есть: строка " + given : "",
         );
       }
     });
@@ -14284,6 +14269,10 @@ if (mode === "bar-hold") {
   const problems = [
     ...holes.map((id) => id + ": нет решения, чем держится, — ни держателя, ни записанной причины"),
     ...formFaults,
+    ...barSpotsUnnamed().map(
+      (key) =>
+        "UNSEEN." + key + ": пятно словаря, которого не называет ни один критерий, — не объявляет ничего",
+    ),
     ...[...named]
       .filter((id) => !ids.has(id))
       .sort()

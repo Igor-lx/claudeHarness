@@ -335,6 +335,132 @@ export const barSubjectFlags = (text) =>
     .map(([k]) => k)
     .join(",");
 
+/** Захват ресурса и снятие ТОГО ЖЕ экземпляра — пара на род. Снятие
+ * называет имя экземпляра — переменную, поле, ссылку, — а слушатель
+ * снимается с той же цели, тем же событием и тем же обработчиком либо
+ * отменой того контроллера, чей сигнал ему передан. Прежде снятием
+ * считалась любая строка снятия того же рода в файле, и модель сама
+ * вписывала «есть» наблюдателю, которого никто не снимал, по снятию
+ * соседнего: замерено на стенде, печать стояла.
+ *
+ * Экземпляр без имени — таймер без переменной, слушатель с обработчиком
+ * стрелкой, сигнал без контроллера в строке — пары не имеет: ответ даёт
+ * сессия, и машина его не подсказывает. Одноимённых экземпляров в разных
+ * областях видимости имя не различает — это форма вне держателя. У эффекта
+ * фреймворка снятие — возвращаемая им функция, и пары по строке нет вовсе.
+ *
+ * Распознаватели — данные, а не логика: у другого окружения другие вызовы,
+ * и дописывают их сюда, а не ветку в разбор. */
+const MEMBER = "\\s*\\??\\.\\s*";
+const abortOf = (name) => "\\b" + name + MEMBER + "abort\\s*\\(";
+const byName = (build) => (line) => {
+  const bound =
+    /(?:\b(?:const|let|var)\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*=(?![=>])/.exec(
+      line,
+    );
+  return bound === null ? [] : [build(escapeRe(bound[1]))];
+};
+const listenerReleases = (line) => {
+  const add = /([\w$.]+)\s*\.\s*addEventListener\s*\(/.exec(line);
+  if (add === null) return [];
+  const args = line.slice(add.index + add[0].length);
+  const out = [];
+  const signal = /\bsignal\s*:\s*([\w$.]+?)\.signal\b/.exec(args);
+  if (signal !== null) out.push(abortOf(escapeRe(signal[1])));
+  const named = /^\s*(["'`])([^"'`]+)\1\s*,\s*([\w$.]+)\s*[,)]/.exec(args);
+  if (named !== null)
+    out.push(
+      "\\b" +
+        escapeRe(add[1]) +
+        MEMBER +
+        "removeEventListener\\s*\\(\\s*([\"'`])" +
+        escapeRe(named[2]) +
+        "\\1\\s*,\\s*" +
+        escapeRe(named[3]) +
+        "\\s*[,)]",
+    );
+  return out;
+};
+export const RESOURCE_KINDS = [
+  {
+    name: "слушатель события",
+    take: /\baddEventListener\s*\(/,
+    releases: listenerReleases,
+  },
+  {
+    name: "таймер",
+    take: /\bsetTimeout\s*\(/,
+    releases: byName((n) => "\\bclearTimeout\\s*\\(\\s*" + n + "\\s*\\)"),
+  },
+  {
+    name: "интервал",
+    take: /\bsetInterval\s*\(/,
+    releases: byName((n) => "\\bclearInterval\\s*\\(\\s*" + n + "\\s*\\)"),
+  },
+  {
+    name: "кадр",
+    take: /\brequestAnimationFrame\s*\(/,
+    releases: byName(
+      (n) => "\\bcancelAnimationFrame\\s*\\(\\s*" + n + "\\s*\\)",
+    ),
+  },
+  {
+    name: "подписка",
+    take: /\.subscribe\s*\(/,
+    releases: byName(
+      (n) =>
+        "\\b" +
+        n +
+        "\\s*(?:(?:\\?\\.)?\\(\\s*\\)|\\??\\.\\s*unsubscribe\\s*\\()",
+    ),
+  },
+  {
+    name: "наблюдатель",
+    take: /\bnew\s+\w*Observer\s*\(/,
+    releases: byName(
+      (n) => "\\b" + n + MEMBER + "(?:disconnect|unobserve)\\s*\\(",
+    ),
+  },
+  {
+    name: "соединение",
+    take: /\bnew\s+(?:WebSocket|EventSource|Worker)\s*\(/,
+    releases: byName((n) => "\\b" + n + MEMBER + "(?:close|terminate)\\s*\\("),
+  },
+  {
+    name: "отмена",
+    take: /\bnew\s+AbortController\s*\(/,
+    releases: byName(abortOf),
+  },
+  {
+    name: "эффект",
+    take: /\buse(?:Layout|Insertion)?Effect\s*\(/,
+    releases: null,
+  },
+];
+
+/** Строка, где снят тот же ресурс, что захвачен в строке `at`, — по паре
+ * его рода; снятие в комментарии снятием не считается. На входе
+ * `род|номер строки|текст`, на выходе номер строки снятия либо пустая
+ * строка. */
+export const barReleaseLine = (input) => {
+  const [kind, at, ...rest] = input.split("|");
+  const lines = rest.join("|").split("\n");
+  const i = Number(at) - 1;
+  const of = RESOURCE_KINDS.find((one) => one.name === kind)?.releases ?? null;
+  const releases = (of === null ? [] : of(lines[i] ?? "")).map(
+    (one) => new RegExp(one),
+  );
+  const k = lines.findIndex(
+    (line, j) =>
+      j !== i &&
+      releases.some((re) => {
+        const hit = re.exec(line);
+        return hit !== null && !inComment(line, hit.index);
+      }),
+  );
+  return k < 0 ? "" : String(k + 1);
+};
+
 /** Архитектурное ядро планки: критерии о ФОРМЕ вещи, а не о её деталях.
  *
  * Про них спрашивают основание даже на исходе «чисто». Остальные критерии
@@ -1070,14 +1196,12 @@ const UNSEEN = {
     "сеть через клиент, которого нет в образце, — образец знает `fetch`, `axios`, `XMLHttpRequest`, `WebSocket`, `EventSource` и `sendBeacon`",
   resource:
     "ресурс, которого нет в образце: медиапоток, адрес объекта `URL.createObjectURL`, `BroadcastChannel`, соединение базы — образец перечисляет пары «захват — снятие»",
-  release:
-    "снятие не на каждой ветке выхода и снятие не того экземпляра — срез ищет вызов снятия где угодно в файле, а не его ветку и довод",
   // Те же пятна у критериев, которые держит и линт: его правила судят уборку
   // эффекта, и сказать «срез не видит» без линта значило бы соврать.
   resourceLinted:
     "ресурс, которого нет ни в образце, ни в правилах линта: медиапоток, адрес объекта `URL.createObjectURL`, `BroadcastChannel`, соединение базы — образец перечисляет пары «захват — снятие», а правила линта судят слушатель, таймер, интервал и наблюдатели размера и пересечения",
   releaseLinted:
-    "снятие не на каждой ветке выхода вне эффекта — срез ищет вызов снятия где угодно в файле, а правила линта судят уборку эффекта",
+    "снятие не на каждой ветке выхода, снятие экземпляра без имени и снятие одноимённого экземпляра в другой области видимости — срез ищет снятие того же экземпляра по имени где угодно в файле, а не его ветку и область; правила линта судят уборку эффекта у слушателя, таймера, интервала и наблюдателей размера и пересечения, а вне эффекта и у прочих ресурсов эти формы не видит никто",
   race:
     "асинхронный результат, который пишут не сеттером: в хранилище, в ссылку, в поле — признак гонки ставится, когда в файле есть `await` либо `.then` и запись сеттером",
   flag: "флаг без пометки типа и без умолчания — признак ищет `: boolean` и умолчание `true` либо `false`",
@@ -1760,6 +1884,17 @@ export const barFormsOf = (id) => {
   if (one.closed !== undefined) return "закрыто";
   if (one.forms !== undefined) return "форм: " + one.forms.length;
   return "не по форме: " + one.fault;
+};
+
+/** Пятна словаря (`UNSEEN`), которых не называет ни один критерий. Такое
+ * пятно не объявляет ничего: в словаре оно читается объявленной формой, а
+ * страница критерия его не печатает. Так «снятие не того экземпляра»
+ * выпало из форм трёх критериев и осталось мёртвой строкой. */
+export const barSpotsUnnamed = () => {
+  const named = new Set(Object.values(BAR_FORMS).flat());
+  return Object.entries(UNSEEN)
+    .filter(([, form]) => typeof form === "string" && !named.has(form))
+    .map(([key]) => key);
 };
 
 /** Чем держится критерий: вход `критерий|лозунг`, выход — держатели через
@@ -3520,6 +3655,28 @@ export const PREDICATE_CASES = [
   ["barSubjectFlags", "const Box = styled.div`color: red;`;", "style"],
   ["barSubjectFlags", '<div className="box" />', "style"],
   ["barSubjectFlags", "<div className={styles.box} />", ""],
+  ["barReleaseLine", "наблюдатель|1|const sizes = new ResizeObserver(f);\nsizes.observe(el);\nreturn () => sizes.disconnect();", "3"],
+  ["barReleaseLine", "наблюдатель|1|const changes = new MutationObserver(f);\nconst sizes = new ResizeObserver(g);\nreturn () => sizes.disconnect();", ""],
+  ["barReleaseLine", "наблюдатель|1|ref.current = new ResizeObserver(f);\nreturn () => ref.current?.disconnect();", "2"],
+  ["barReleaseLine", "наблюдатель|1|const sizes = new ResizeObserver(f);\n// return () => sizes.disconnect();", ""],
+  ["barReleaseLine", "таймер|1|const t = setTimeout(f, 10);\nreturn () => clearTimeout(t);", "2"],
+  ["barReleaseLine", "таймер|1|setTimeout(f, 10);\nclearTimeout(other);", ""],
+  ["barReleaseLine", "таймер|1|const t = setTimeout(() => clearTimeout(t), 10);", ""],
+  ["barReleaseLine", "интервал|1|const id = setInterval(tick, 100);\nreturn () => clearInterval(id);", "2"],
+  ["barReleaseLine", "кадр|1|frame.current = requestAnimationFrame(tick);\ncancelAnimationFrame(frame.current);", "2"],
+  ["barReleaseLine", "подписка|1|const off = store.subscribe(f);\nreturn () => off();", "2"],
+  ["barReleaseLine", "подписка|1|const off = bus.subscribe(f);\nreturn () => off?.();", "2"],
+  ["barReleaseLine", "подписка|1|const off = store.subscribe(f);\nreturn () => other();", ""],
+  ["barReleaseLine", "соединение|1|const ws = new WebSocket(url);\nreturn () => ws.close();", "2"],
+  ["barReleaseLine", "отмена|1|const ac = new AbortController();\nreturn () => ac.abort();", "2"],
+  ["barReleaseLine", "эффект|1|useEffect(() => {\nreturn () => off();", ""],
+  ["barReleaseLine", 'слушатель события|1|window.addEventListener("resize", onResize);\nreturn () => window.removeEventListener("resize", onResize);', "2"],
+  ["barReleaseLine", 'слушатель события|1|window.addEventListener("scroll", onScroll);\nreturn () => window.removeEventListener("resize", onResize);', ""],
+  ["barReleaseLine", 'слушатель события|1|el.addEventListener("click", () => go());\nel.removeEventListener("click", go);', ""],
+  ["barReleaseLine", 'слушатель события|1|el.addEventListener("click", go, { signal: ac.signal });\nreturn () => ac.abort();', "2"],
+  ["barReleaseLine", 'слушатель события|1|el.addEventListener("click", go, { signal: ac.signal });\nreturn () => other.abort();', ""],
+  ["barReleaseLine", 'слушатель события|1|el.addEventListener("click", () => go(), { signal: ac.signal });\nreturn () => ac.abort();', "2"],
+  ["barReleaseLine", 'слушатель события|1|el.addEventListener("click", go, { signal });\nreturn () => ac.abort();', ""],
   ["barNoSubject", "D1|code=0,style=1", "файла кода в предмете правки нет"],
   ["barNoSubject", "J11|code=1,promise=0", "ни одна гарантия поведения не называет узел этой области"],
   ["barNoSubject", "J11|code=1,promise=1", ""],
