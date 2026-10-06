@@ -7068,3 +7068,53 @@ describe("сдвиг у комментария — по сырым строка�
     }
   }, 180000);
 });
+
+describe("проба планки: посадка по вместимости", () => {
+  it("выбор идёт из посадок, которые проект вмещает; не вмещает ни одной — так и сказано", () => {
+    const box = seatEmpty("probafit-");
+    const boxes = [];
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      // Посадки свои, а не из книги: тест, пересказывающий книгу, выдаёт
+      // посаженное каждому, кто его читал.
+      const wide = {
+        criterion: "A1",
+        why: "проба вместимости",
+        into: [0, 1, 2, 3, 4, 5].map((k) => ({ role: "r" + k, text: "export const zzWide" + k + " = () => " + k + ";" })),
+      };
+      const narrow = { criterion: "H7", why: "проба вместимости", into: [{ text: "export const zzNarrow = () => 1;" }] };
+      const cover = { text: "export const zzShield = () => 1;" };
+      const run = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      fs.writeFileSync(probes, JSON.stringify({ plants: [wide, narrow], covers: [cover] }));
+      for (const seed of [1, 2, 3, 4]) {
+        const out = run("bar-probe", "--existing", "--seed=" + seed);
+        const sandbox = /песочница: (.+)/.exec(out)?.[1]?.trim();
+        const id = /bar-probe (\d+)/.exec(out)?.[1];
+        expect(sandbox, out).toBeDefined();
+        boxes.push(sandbox, path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json"));
+        expect(out).toContain("проект не вместил посадок: 1 из 2");
+        expect(JSON.parse(fs.readFileSync(boxes[boxes.length - 1], "utf8")).criterion).toBe("H7");
+      }
+      fs.writeFileSync(probes, JSON.stringify({ plants: [wide], covers: [cover] }));
+      const refused = run("bar-probe", "--existing", "--seed=1");
+      expect(refused).toContain("=== Проба не посажена ===");
+      const [, need, have] = /не меньше (\d+), а файлов кода в проекте (\d+)/.exec(refused) ?? [];
+      expect(Number(need)).toBe(7);
+      expect(Number(have)).toBeLessThan(7);
+      expect(refused).not.toContain("песочница:");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      for (const one of boxes) fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 240000);
+});

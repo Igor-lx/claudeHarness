@@ -7420,10 +7420,102 @@ if (mode === "bar-probe") {
       console.log("  Посадок рода «" + only + "» в списке нет.");
       process.exit(1);
     }
+    const notPlanted = (why) => {
+      console.log("=== Проба не посажена ===");
+      console.log("  " + why);
+      process.exit(1);
+    };
+    // Файлы посадки в существующий код считаются ДО выбора, и выбор идёт из
+    // посадок, которые проект вмещает: роль на файл и ещё файл под
+    // прикрытие. Прежде выбор шёл по всему списку, и в малом проекте зерно
+    // выпадало на посадку, которой файлов не хватало. Найдено прогоном проб.
+    const pool = files
+      .filter(
+        (f) =>
+          !isTest(f) &&
+          !f.endsWith(".d.ts") &&
+          !isBarrel(f) &&
+          /\.[cm]?[jt]sx?$/.test(f),
+      )
+      .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
+    for (let k = pool.length - 1; k > 0; k -= 1) {
+      const j = Math.floor(random() * (k + 1));
+      [pool[k], pool[j]] = [pool[j], pool[k]];
+    }
+    // Файл, где имя посадки уже есть, не выбирается — иначе посадка ломала
+    // бы его объявлением-двойником, и находкой стала бы поломка, а не
+    // посаженное.
+    const namesIn = (text) =>
+      [
+        ...text.matchAll(
+          /\b(?:const|let|var|function|class)\s+([\w$]+)|import\s*\{([^}]*)\}/g,
+        ),
+      ].flatMap((m) =>
+        m[1] !== undefined
+          ? [m[1]]
+          : m[2]
+              .split(",")
+              .map((x) => x.trim().split(/\s+as\s+/).pop())
+              .filter(Boolean),
+      );
+    const textOf = new Map();
+    const clashes = (f, one) => {
+      if (!textOf.has(f)) textOf.set(f, readFileSync(f, "utf8"));
+      return namesIn(one.text + NEWLINE + (one.ts ?? "")).some((n) =>
+        new RegExp("(?<![\\w$])" + n.replace(/\$/g, "\\$") + "(?![\\w$])").test(
+          textOf.get(f),
+        ),
+      );
+    };
+    // Прикрытия — из книги посадок, а не из кода инструмента. Текст
+    // прикрытия, записанный здесь, знал каждый, кто читал инструмент:
+    // правленых файлов два, один из них заведомо прикрытие, и посаженное
+    // находилось исключением. Найдено пробой планки. Прикрытий одно либо
+    // два, из пула, случайно: знание одного прикрытия посаженного не выдаёт.
+    // Словом «маска» в обвязке зовут шаблон путей, и сюда оно не идёт.
+    const covers = [...(probeBook.covers ?? [])];
+    if (covers.length === 0 && plants.some((p) => p.into !== undefined))
+      notPlanted(
+        "В книге посадок нет прикрытий (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
+      );
+    for (let k = covers.length - 1; k > 0; k -= 1) {
+      const j = Math.floor(random() * (k + 1));
+      [covers[k], covers[j]] = [covers[j], covers[k]];
+    }
+    const freeFor = (one, taken) =>
+      pool.find((x) => !taken.has(x) && !clashes(x, one));
+    const rolesOf = (p) => {
+      const taken = new Set();
+      const roleFile = new Map();
+      for (const one of p.into) {
+        const f = freeFor(one, taken);
+        if (f === undefined) return null;
+        taken.add(f);
+        roleFile.set(one.role ?? "виновник", f);
+      }
+      return { taken, roleFile };
+    };
+    const fits = (p) => {
+      if (p.into === undefined) return true;
+      const roles = rolesOf(p);
+      return (
+        roles !== null &&
+        covers.some((one) => freeFor(one, roles.taken) !== undefined)
+      );
+    };
+    const fitting = plants.filter(fits);
+    if (fitting.length === 0)
+      notPlanted(
+        "Проект не вмещает ни одной посадки: посадке в существующий код нужно файлов кода без её имён не меньше " +
+          Math.min(...plants.map((p) => p.into.length + 1)) +
+          ", а файлов кода в проекте " +
+          pool.length +
+          ".",
+      );
+    const plant = fitting[Math.floor(random() * fitting.length)];
     const id = String(Date.now()).slice(-8);
     const box = path.join(tmpdir(), "bar-probe-" + id);
     const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
-    const plant = plants[Math.floor(random() * plants.length)];
     rmSync(box, { recursive: true, force: true });
     sandboxTree(path.join(BASE, ".."), box);
     sandboxPackages(
@@ -7486,95 +7578,23 @@ if (mode === "bar-probe") {
       // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`.
       //
       // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
-      // вариант с типами, импорт встаёт к импортам файла. Файл, где такое имя
-      // уже есть, не выбирается — иначе посадка ломала бы его объявлением-
-      // двойником, и находкой стала бы поломка, а не посаженное.
-      const pool = files
-        .filter(
-          (f) =>
-            !isTest(f) &&
-            !f.endsWith(".d.ts") &&
-            !isBarrel(f) &&
-            /\.[cm]?[jt]sx?$/.test(f),
-        )
-        .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
-      for (let k = pool.length - 1; k > 0; k -= 1) {
-        const j = Math.floor(random() * (k + 1));
-        [pool[k], pool[j]] = [pool[j], pool[k]];
-      }
+      // вариант с типами, импорт встаёт к импортам файла.
       const typed = (f) => /\.[cm]?tsx?$/.test(f);
       const bodyFor = (one, f) =>
         (typed(f) && one.ts !== undefined ? one.ts : one.text)
           .split("\n")
           .join(NEWLINE);
-      const namesIn = (text) =>
-        [
-          ...text.matchAll(
-            /\b(?:const|let|var|function|class)\s+([\w$]+)|import\s*\{([^}]*)\}/g,
-          ),
-        ].flatMap((m) =>
-          m[1] !== undefined
-            ? [m[1]]
-            : m[2]
-                .split(",")
-                .map((x) => x.trim().split(/\s+as\s+/).pop())
-                .filter(Boolean),
-        );
-      const clashes = (f, one) =>
-        namesIn(one.text + NEWLINE + (one.ts ?? "")).some((n) =>
-          new RegExp("(?<![\\w$])" + n.replace(/\$/g, "\\$") + "(?![\\w$])").test(
-            readFileSync(f, "utf8"),
-          ),
-        );
-      const taken = new Set();
-      const pickFor = (one) => {
-        const f = pool.find((x) => !taken.has(x) && !clashes(x, one));
-        if (f !== undefined) taken.add(f);
-        return f;
-      };
-      const notPlanted = (why) => {
-        console.log("=== Проба не посажена ===");
-        console.log("  " + why);
-        rmSync(box, { recursive: true, force: true });
-        process.exit(1);
-      };
-      const tooFew = () =>
-        notPlanted(
-          "Посадке в существующий код нужно файлов кода без её имён: " +
-            (plant.into.length + 1) +
-            ", а нашлось " +
-            taken.size +
-            ".",
-        );
-      // Прикрытия — из книги посадок, а не из кода инструмента. Текст
-      // прикрытия, записанный здесь, знал каждый, кто читал инструмент:
-      // правленых файлов два, один из них заведомо прикрытие, и посаженное
-      // находилось исключением. Найдено пробой планки. Прикрытий одно либо
-      // два, из пула, случайно: знание одного прикрытия посаженного не выдаёт.
-      // Словом «маска» в обвязке зовут шаблон путей, и сюда оно не идёт.
-      const covers = [...(probeBook.covers ?? [])];
-      if (covers.length === 0)
-        notPlanted(
-          "В книге посадок нет прикрытий (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
-        );
-      for (let k = covers.length - 1; k > 0; k -= 1) {
-        const j = Math.floor(random() * (k + 1));
-        [covers[k], covers[j]] = [covers[j], covers[k]];
-      }
+      // Посадка вмещается: роли встают теми же файлами, что при проверке.
+      const { taken, roleFile } = rolesOf(plant);
       const wanted = Math.min(covers.length, 1 + Math.floor(random() * 2));
-      const roleFile = new Map();
-      for (const one of plant.into) {
-        const f = pickFor(one);
-        if (f === undefined) tooFew();
-        roleFile.set(one.role ?? "виновник", f);
-      }
       const coverFiles = [];
       for (const one of covers) {
         if (coverFiles.length === wanted) break;
-        const f = pickFor(one);
-        if (f !== undefined) coverFiles.push([one, f]);
+        const f = freeFor(one, taken);
+        if (f === undefined) continue;
+        taken.add(f);
+        coverFiles.push([one, f]);
       }
-      if (coverFiles.length === 0) tooFew();
       const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
       const specFrom = (from, to) => {
         let r = norm(path.relative(path.dirname(from), to)).replace(
@@ -7654,6 +7674,14 @@ if (mode === "bar-probe") {
     );
     console.log("=== Проба планки посажена ===");
     console.log("  песочница: " + norm(box));
+    if (fitting.length < plants.length)
+      console.log(
+        "  проект не вместил посадок: " +
+          (plants.length - fitting.length) +
+          " из " +
+          plants.length +
+          " — выбор шёл из остальных",
+      );
     console.log("");
     console.log("  Что делать: сделать свод в песочнице обычным порядком —");
     console.log("    cd " + norm(box));
