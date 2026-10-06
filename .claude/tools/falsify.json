@@ -679,8 +679,8 @@
     {
       "section": "Версия среды (предупреждение, прогон не роняет)",
       "file": "package.json",
-      "find": "\"node\": \">=22.0.0\"",
-      "replace": "\"node\": \">=99.0.0\"",
+      "find": "\"node\": \">=",
+      "replace": "\"node\": \">=99.0.0\", \"node-was\": \">=",
       "own": true
     },
     {
@@ -1197,8 +1197,8 @@
       "section": "Диапазон среды объявлен",
       "own": true,
       "file": "package.json",
-      "find": "  \"engines\": {\n    \"node\": \">=22.0.0\",\n    \"npm\": \">=11.0.0\"\n  },\n",
-      "replace": ""
+      "find": "\"engines\": {",
+      "replace": "\"engines-was\": {"
     },
     {
       "section": "Красное звено названо находкой",

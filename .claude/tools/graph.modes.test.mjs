@@ -7243,3 +7243,16 @@ describe("скиллы цитируют то, что печатают режим
     expect(missing).toEqual([]);
   });
 });
+
+describe("семена версии среды — по проверенной связке", () => {
+  it("`.nvmrc` называет проверенную версию среды, `engines` начинается с проверенных", () => {
+    const seeds = path.join(TOOL_DIR, "..", "seat", "templates");
+    const config = fs.readFileSync(path.join(seeds, "graph.config.mjs"), "utf8");
+    const verified = /verifiedVersions:\s*\{([\s\S]*?)\}/.exec(config)?.[1] ?? "";
+    const pin = (name) => new RegExp("(?:^|\\s)" + name + ':\\s*"([^"]+)"', "m").exec(verified)?.[1];
+    expect(pin("node")).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(fs.readFileSync(path.join(seeds, ".nvmrc"), "utf8").trim()).toBe(pin("node"));
+    const engines = JSON.parse(fs.readFileSync(path.join(seeds, "package.json"), "utf8")).engines;
+    expect(engines).toEqual({ node: ">=" + pin("node"), npm: ">=" + pin("npm") });
+  });
+});
