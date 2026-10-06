@@ -107,8 +107,9 @@
     },
     {
       "section": "Доктрина в бюджете",
-      "file": ".claude/rules/safety.md",
-      "append": "Абзац, дописанный в доктрину сверх её бюджета."
+      "file": ".claude/rules/quality.md",
+      "find": "---\npaths:",
+      "replace": "---\nwas-paths:"
     },
     {
       "section": "Конфиг звена цепочки на месте",
