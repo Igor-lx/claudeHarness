@@ -491,3 +491,18 @@ describe("шапки правил о коде — перечнем словар�
     expect(headed).toBeGreaterThan(3);
   });
 });
+
+describe("расширения звеньев и линта семени — перечнем словаря", () => {
+  it("звено типов читает TypeScript, звено линта — весь код, линт семени разбирает каждое расширение кода", () => {
+    const shelf = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const map = JSON.parse(fs.readFileSync(path.join(shelf, "seat", "map.json"), "utf8"));
+    const link = (name) => map.chainScripts.find((one) => one.name === name).needsFiles.slice().sort();
+    expect(link("typecheck")).toEqual([...vocabulary.TS_EXTENSIONS].sort());
+    expect(link("lint")).toEqual([...vocabulary.CODE_EXTENSIONS].sort());
+    const lint = fs.readFileSync(path.join(shelf, "seat", "templates", "eslint.config.mjs"), "utf8");
+    const linted = new Set(
+      [...lint.matchAll(/"\*\*\/\*\.\{([^}]+)\}"/g)].flatMap((m) => m[1].split(",")),
+    );
+    expect([...linted].sort()).toEqual([...vocabulary.CODE_EXTENSIONS].sort());
+  });
+});

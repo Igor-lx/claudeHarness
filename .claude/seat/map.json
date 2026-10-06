@@ -233,12 +233,12 @@
     {
       "name": "typecheck",
       "recognise": "^\\s*(?:node\\s+\\S*graph\\.mjs\\s+types\\s+--\\s+)?tsc\\b[^&|]*$",
-      "needsFiles": ["ts", "tsx"]
+      "needsFiles": ["ts", "tsx", "mts", "cts"]
     },
     {
       "name": "lint",
       "recognise": "^\\s*(?:node\\s+\\S*graph\\.mjs\\s+lint\\s+--\\s+)?eslint\\b(?![^&|]*--fix)[^&|]*$",
-      "needsFiles": ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+      "needsFiles": ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"]
     },
     {
       "name": "format:check",

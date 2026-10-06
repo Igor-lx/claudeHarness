@@ -120,7 +120,7 @@ export default tseslint.config(
 
   // Исходники, полки и тесты: линт с типами.
   {
-    files: ["**/*.{ts,tsx}"],
+    files: ["**/*.{ts,tsx,mts,cts}"],
     // Конфиги сборки в корне исключены ОТСЮДА и разобраны ниже без типов.
     // Проект компилятора у живого репозитория обычно накрывает `src` и
     // только его, а конфиг лежит в корне: под образец он попадает, в проект
@@ -268,7 +268,7 @@ export default tseslint.config(
   // `act` возвращает thenable только в async-скоупе, поэтому помощники
   // объявляют `async` без `await` внутри — это требование API, а не оплошность.
   {
-    files: ["**/tests/**/*.{ts,tsx,js,jsx}"],
+    files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     rules: { "@typescript-eslint/require-await": "off" },
   },
 
@@ -276,7 +276,7 @@ export default tseslint.config(
   // ref тест читает и подменяет по своему праву. Оба правила описывают код
   // компонентов, а не тестов.
   {
-    files: ["**/tests/**/*.{ts,tsx,js,jsx}"],
+    files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     rules: {
       "react-hooks/globals": "off",
       "react-hooks/refs": "off",
@@ -286,7 +286,7 @@ export default tseslint.config(
   // Ожидаемое в тесте пишется литералом: `J13` требует знать его независимо
   // от проверяемого кода, а имя константы тянуло бы его из кода.
   {
-    files: ["**/tests/**/*.{ts,tsx,js,jsx}"],
+    files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },
   },
 
