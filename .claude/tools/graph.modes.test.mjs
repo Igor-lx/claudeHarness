@@ -7118,3 +7118,35 @@ describe("проба планки: посадка по вместимости", 
     }
   }, 240000);
 });
+
+describe("импорт с адресом-выражением в графе", () => {
+  it("файл под постоянным путём шаблона не мёртв и не ничей, адрес без пути назван оговоркой", () => {
+    const box = seatEmpty("shablon-");
+    try {
+      const app = path.join(box, "src", "app");
+      fs.mkdirSync(path.join(app, "zzPages"), { recursive: true });
+      fs.writeFileSync(path.join(app, "zzPages", "ZzHome.tsx"), "export const ZzHome = () => null;\n");
+      fs.writeFileSync(
+        path.join(app, "zzRoutes.ts"),
+        "export const zzLoad = (name: string) => import(`./zzPages/${name}.tsx`);\n",
+      );
+      const run = (...args) =>
+        execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      const users = () => sectionOf(run("brief", "app/zzPages/ZzHome.tsx"), "пользуются им");
+      expect(run("dead")).not.toContain("app/zzPages/ZzHome.tsx");
+      expect(users()).toContain("app/zzRoutes.ts");
+      expect(run("dead")).not.toContain("адресом-выражением");
+      // Адрес-значение: цели не установить, и «никто» идёт с оговоркой.
+      fs.writeFileSync(path.join(app, "zzLazy.ts"), "export const zzLazy = (at: string) =>\n  import(at);\n");
+      expect(run("dead")).toContain("цели которого граф не знает: app/zzLazy.ts:2");
+      expect(run("blast")).toContain("цели которого граф не знает: app/zzLazy.ts:2");
+      expect(users()).toContain("адресом-выражением: app/zzLazy.ts:2");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

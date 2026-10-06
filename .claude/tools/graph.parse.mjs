@@ -37,9 +37,16 @@ const LOCAL = /export\s*(?:type\s*)?\{([^}]*)\}(?!\s*from)/g;
 /** Константа, отданная наружу с начала строки: таблица настроек. */
 const CONSTANT = /^export const ([A-Z][A-Z0-9_]*)/gm;
 /** Импорт во время работы: `import("x")` и `require("x")` с адресом
- * строкой. Адрес, собранный выражением, разбор не видит. */
+ * строкой. */
 const DYNAMIC =
   /(?<![\w$.])(import|require)\s*\(\s*(["'`])([^"'`$\n]+)\2\s*\)/g;
+/** Импорт во время работы с адресом-шаблоном: постоянное начало до первой
+ * подстановки и хвост после последней. */
+const TEMPLATED =
+  /(?<![\w$.])(import|require)\s*\(\s*`([^`$]*)\$\{([^`]*)`\s*\)/g;
+/** Импорт во время работы с адресом-значением: переменной, вызовом,
+ * сложением строк. */
+const VALUED = /(?<![\w$.])(import|require)\s*\(\s*(?=[A-Za-z_$(])/g;
 /** Строчный комментарий: снимается перед поиском импорта во время работы.
  * Перед двумя косыми — начало строки, пробел либо скобка: двоеточие адреса
  * `https://` комментарием не считается. */
@@ -48,11 +55,13 @@ const LINE_COMMENT = /(^|[\s;{}()])\/\/[^\n]*/g;
 /** Импорты во время работы в тексте, найденные образцом. Тип
  * `import("x").T` и `typeof import("x")` — не ребро исполнения: сборка его
  * стирает. */
-const dynamicOf = (src) => {
-  const text = src.replace(
+const commentlessOf = (src) =>
+  src.replace(
     LINE_COMMENT,
     (m, lead) => lead + " ".repeat(m.length - lead.length),
   );
+const dynamicOf = (src) => {
+  const text = commentlessOf(src);
   const out = [];
   for (const m of text.matchAll(DYNAMIC)) {
     const call = m[1];
@@ -70,6 +79,24 @@ const dynamicOf = (src) => {
     });
   }
   return out;
+};
+
+/** Импорты во время работы, чей адрес собран выражением: `call`,
+ * постоянное начало `prefix`, постоянный хвост `suffix` и смещение довода
+ * `at`. У адреса-значения начало и хвост пусты. */
+const computedOf = (src) => {
+  const text = commentlessOf(src);
+  const out = [];
+  for (const m of text.matchAll(TEMPLATED))
+    out.push({
+      call: m[1],
+      prefix: m[2],
+      suffix: m[3].slice(m[3].lastIndexOf("}") + 1),
+      at: m.index + m[0].indexOf("`"),
+    });
+  for (const m of text.matchAll(VALUED))
+    out.push({ call: m[1], prefix: "", suffix: "", at: m.index + m[0].length });
+  return out.sort((x, y) => x.at - y.at);
 };
 
 /** Скобки клаузы — части по запятой, с пометкой «только тип». */
@@ -114,7 +141,8 @@ const defaultLocalOf = (clause) => {
  * `defaultBinding` — имя в `export default X;`; `local` — `export { … }` без
  * источника: имя здесь и имя наружу; `surface` — всё, что модуль отдаёт по
  * имени; `constants` — константы, отданные с начала строки; `dynamic` —
- * импорты во время работы: адрес, `end` и вызов — `import` либо `require`. */
+ * импорты во время работы: адрес, `end` и вызов — `import` либо `require`;
+ * `computed` — импорты во время работы с адресом, собранным выражением. */
 export const parseModuleRegex = (src) => {
   const froms = [];
   for (const m of src.matchAll(FROM)) {
@@ -170,6 +198,7 @@ export const parseModuleRegex = (src) => {
     surface,
     constants,
     dynamic: dynamicOf(src),
+    computed: computedOf(src),
   };
 };
 
@@ -311,6 +340,7 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
   // Импорт во время работы — вызов на любой глубине, а не строка верхнего
   // уровня. Тип `import("x").T` — узел типа, а не вызов, и сюда не попадает.
   const dynamic = [];
+  const computed = [];
   const visit = (node) => {
     if (ts.isCallExpression(node) && node.arguments.length === 1) {
       const arg = node.arguments[0];
@@ -321,12 +351,15 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
               node.expression.text === "require"
             ? "require"
             : null;
-      if (
-        call !== null &&
-        (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) &&
-        !arg.text.includes("\n")
-      )
-        dynamic.push({ spec: arg.text, end: arg.end, call });
+      if (call !== null && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
+        if (!arg.text.includes("\n")) dynamic.push({ spec: arg.text, end: arg.end, call });
+      } else if (call !== null)
+        computed.push({
+          call,
+          prefix: ts.isTemplateExpression(arg) ? arg.head.text : "",
+          suffix: ts.isTemplateExpression(arg) ? arg.templateSpans[arg.templateSpans.length - 1].literal.text : "",
+          at: arg.getStart(source),
+        });
     }
     ts.forEachChild(node, visit);
   };
@@ -341,6 +374,7 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
     surface,
     constants,
     dynamic,
+    computed,
   };
 };
 

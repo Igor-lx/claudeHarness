@@ -209,10 +209,22 @@ describe.each(PARSERS)(
       ).toEqual([]);
     });
 
-    it("адрес, собранный выражением, разбор не видит", () => {
+    it("адрес, собранный выражением, идёт своим списком: постоянные начало и хвост", () => {
+      const src = [
+        'const at = "./x";',
+        "import(at);",
+        "import(`./pages/${at}.tsx`);",
+        "require(`${base}/x`);",
+        "// import(`./later/${at}`);",
+      ].join("\n");
+      expect(calls(src)).toEqual([]);
       expect(
-        calls('const at = "./x";\nimport(at);\nimport(`./${at}`);'),
-      ).toEqual([]);
+        parse(src).computed.map((one) => [one.call, one.prefix, one.suffix, src.slice(one.at, one.at + 3)]),
+      ).toEqual([
+        ["import", "", "", "at)"],
+        ["import", "./pages/", ".tsx", "`./"],
+        ["require", "", "/x", "`${"],
+      ]);
     });
   },
 );
@@ -314,6 +326,10 @@ describe("разбор модуля: обе реализации на коде",
       const seen = new Set(regex.dynamic.map((d) => d.call + " " + d.spec));
       for (const d of compiler.dynamic)
         expect(seen.has(d.call + " " + d.spec), f + ": " + d.spec).toBe(true);
+      const shaped = (one) => one.call + " " + one.prefix + "…" + one.suffix;
+      const seenComputed = new Set(regex.computed.map(shaped));
+      for (const one of compiler.computed)
+        expect(seenComputed.has(shaped(one)), f + ": " + shaped(one)).toBe(true);
       extra += regex.surface.size - compiler.surface.size;
     }
     // Тесты режимов несут код посадки строками: его «экспорты» регулярные

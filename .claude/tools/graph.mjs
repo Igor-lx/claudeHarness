@@ -2885,6 +2885,30 @@ const resolve = (fromFile, spec) => {
   for (const c of cands) if (files.includes(c)) return c;
   return null;
 };
+/** Файлы, которые берёт импорт во время работы с адресом-шаблоном: всё под
+ * постоянным началом адреса — относительным либо коротким — с постоянным
+ * хвостом, вглубь: подстановка бывает и с косой чертой. Начало не путь —
+ * `null`, цель не установить. Тест под шаблон не попадает: шаблон берёт
+ * страницы, а не их тесты. */
+const computedTargets = (fromFile, one) => {
+  const tail = one.prefix.endsWith("/") ? "/" : "";
+  let head;
+  if (one.prefix.startsWith("./") || one.prefix.startsWith("../"))
+    head = norm(path.resolve(path.dirname(fromFile), one.prefix)) + tail;
+  else {
+    const hit = ALIASES.filter((a) => one.prefix.startsWith(a.head)).sort(
+      (x, y) => y.head.length - x.head.length,
+    )[0];
+    if (hit === undefined) return null;
+    head = norm(path.join(hit.to, one.prefix.slice(hit.head.length))) + tail;
+  }
+  return files.filter(
+    (c) =>
+      c !== fromFile && !isTest(c) && c.startsWith(head) && c.endsWith(one.suffix),
+  );
+};
+/** Импорты во время работы, чьих целей граф не знает: «файл:строка». */
+const unresolvedComputed = [];
 /** Расширение выходного файла → расширения исходника, как их сопоставляет
  * компилятор при разрешении модуля. */
 const TS_OF_JS = {
@@ -2917,6 +2941,8 @@ const importTargetsOfText = (f, src) => {
     const target = resolve(f, one.spec);
     if (target) out.add(target);
   }
+  for (const one of parsed.computed)
+    for (const target of computedTargets(f, one) ?? []) out.add(target);
   return out;
 };
 
@@ -3029,6 +3055,9 @@ const readNames = (f, parsed) => {
     const target = resolve(f, one.spec);
     if (target) imports.push({ target, names: "*" });
   }
+  for (const one of parsed.computed)
+    for (const target of computedTargets(f, one) ?? [])
+      imports.push({ target, names: "*" });
   for (const name of parsed.own) own.add(name);
   if (parsed.defaultBinding !== null && bound.has(parsed.defaultBinding)) {
     const b = bound.get(parsed.defaultBinding);
@@ -3049,7 +3078,8 @@ for (const f of files) {
   // Комментарии снимаются ДО разбора: ребро графа из комментария — не
   // косметика. Закомментированный импорт числился живым потребителем, и
   // мёртвый экспорт выглядел используемым.
-  const parsed = parseModule(codeOf(readFileSync(f, "utf8")), f);
+  const code = codeOf(readFileSync(f, "utf8"));
+  const parsed = parseModule(code, f);
   importsOf.set(f, new Set());
   for (const s of parsed.froms) {
     if (!specsOf.has(f)) specsOf.set(f, new Set());
@@ -3105,6 +3135,27 @@ for (const f of files) {
     importedNames.get(target).add("*");
     if (!namesPulledBy.has(f)) namesPulledBy.set(f, new Set());
     namesPulledBy.get(f).add("*");
+  }
+
+  // Адрес-шаблон с постоянным путём в начале — ребро на каждый файл под ним.
+  // Адрес, чьё начало не путь, — место записывается: «никто» и «мёртвый» о
+  // файле, который берут только так, без оговорки были бы ложью. Найдено
+  // прогоном проб: страница, взятая шаблоном, стояла мёртвой и ничьей.
+  for (const one of parsed.computed) {
+    const targets = computedTargets(f, one);
+    if (targets === null) {
+      unresolvedComputed.push(
+        rel(f) + ":" + code.slice(0, one.at).split(/\r?\n/).length,
+      );
+      continue;
+    }
+    for (const target of targets) {
+      importsOf.get(f).add(target);
+      if (!importedNames.has(target)) importedNames.set(target, new Set());
+      importedNames.get(target).add("*");
+      if (!namesPulledBy.has(f)) namesPulledBy.set(f, new Set());
+      namesPulledBy.get(f).add("*");
+    }
   }
 
   exportsOf.set(f, parsed.surface);
@@ -5641,6 +5692,15 @@ if (mode === "handoff") {
   }
   process.exit(process.exitCode ?? 0);
 }
+/** Оговорка к «никто» и «мёртвый»: импорты, чьих целей граф не знает. */
+const sayUnresolvedComputed = () => {
+  if (unresolvedComputed.length === 0) return;
+  console.log(
+    "\nИмпорт во время работы с адресом-выражением, цели которого граф не знает: " +
+      unresolvedComputed.join(", ") +
+      ".\nФайл, который берут только так, назван здесь ничьим ложно.",
+  );
+};
 if (mode === "dead") {
   sayLooked(
     "файлов с экспортами",
@@ -5662,6 +5722,7 @@ if (mode === "dead") {
   }
   console.log(`
 Файлов с неимпортируемым экспортом: ${rows.length}.`);
+  sayUnresolvedComputed();
 }
 
 if (mode === "blast") {
@@ -5704,6 +5765,7 @@ if (mode === "blast") {
     console.log("\n--- файлы, которые не импортирует никто (кроме тестов) ---");
     for (const [f, n] of rows) if (n === 0) console.log(`     ${f}`);
   }
+  sayUnresolvedComputed();
 }
 
 if (mode === "plan") {
@@ -14754,6 +14816,11 @@ if (mode === "brief") {
               ? "  " + upCode.join(NEWLINE + "  ")
               : "  никто — ни один файл проекта его имён не берёт",
           );
+          if (unresolvedComputed.length)
+            console.log(
+              "  и неизвестно, кого берёт импорт с адресом-выражением: " +
+                unresolvedComputed.join(", "),
+            );
           const outward = reexportersOf(target).map(rel).sort();
           if (outward.length)
             console.log("  наружу отдают бочки: " + outward.join(", "));
