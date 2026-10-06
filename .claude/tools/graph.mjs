@@ -12352,15 +12352,55 @@ const barHolesOf = ({
             : [],
         );
   // Запись, куда ведёт судьба: список вопросов, отложенное, долг перехода.
-  const namedIn = (field, what, spot, abs) => {
+  // Запись файла базы — от заголовка либо жирного начала строки до
+  // следующего такого начала либо черты; строка таблицы — запись сама.
+  const recordsOf = (text) => {
+    const out = [];
+    let lines = [];
+    const close = () => {
+      if (lines.length > 0) out.push(lines.join("\n"));
+      lines = [];
+    };
+    for (const line of text.split(/\r?\n/)) {
+      if (/^\s*\|/.test(line)) {
+        close();
+        out.push(line);
+        continue;
+      }
+      if (/^(?:#{1,6}\s|\*\*|---\s*$)/.test(line)) close();
+      lines.push(line);
+    }
+    close();
+    return out;
+  };
+  const idIn = (record, id) =>
+    new RegExp(
+      "(?<![\\p{L}\\p{N}-])" +
+        id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+        "(?![\\p{L}\\p{N}-])",
+      "u",
+    ).test(record);
+  // `id` — обозначение критерия, которое обязано стоять в той же записи, что
+  // и файл: решение откладывает находку, а не файл. Прежде реестр, с первого
+  // дня называющий точку входа и корневой компонент, держал «отложено» по
+  // любой находке в них. Найдено прогоном проб.
+  const namedIn = (field, what, spot, abs, id = null) => {
     const file = field === "transition" ? CONFIG.transition?.file : CONFIG[field];
     const at = file == null ? null : path.join(BASE, file);
     const text = at !== null && existsSync(at) ? readFileSync(at, "utf8") : null;
-    if (text !== null && formsOf(spot, abs).some((f) => text.includes(f)))
-      return "";
-    return text === null
-      ? what + " нет (поле `" + field + "`)"
-      : what + " " + barQuoted(file) + " не называет " + barQuoted(spot[1]);
+    const names = (piece) => formsOf(spot, abs).some((f) => piece.includes(f));
+    if (text !== null && id === null && names(text)) return "";
+    if (text !== null && id !== null)
+      if (recordsOf(text).some((r) => names(r) && idIn(r, id))) return "";
+    if (text === null) return what + " нет (поле `" + field + "`)";
+    return (
+      what +
+      " " +
+      barQuoted(file) +
+      " не называет " +
+      barQuoted(spot[1]) +
+      (id === null ? "" : " в одной записи с " + barQuoted(id))
+    );
   };
   for (const { c, subject } of expected) {
     const who = barWho(c.id, subject);
@@ -12508,17 +12548,18 @@ const barHolesOf = ({
     // «Отложено» — после ответа разработчика, и запись уходит в отложенное:
     // прежде судьба принималась голой, и отложенная находка исчезала со
     // следующим проходом. «Долг» — находка перехода: план называет её файл.
-    for (const [fate, field, what] of [
-      ["вопрос", "questions", "список вопросов"],
-      ["отложено", "todo", "отложенное"],
+    for (const [fate, field, what, own] of [
+      ["вопрос", "questions", "список вопросов", false],
+      ["отложено", "todo", "отложенное", false],
       // Откладывают по ответу разработчика, и ответ записан решением:
       // строка отложенного, которую сессия дописала себе сама, судьбы не
       // держит — замерено на стенде, находка линта ушла под печать так.
-      ["отложено", "decisions", "реестр решений"],
-      ["долг", "transition", "файл перехода"],
+      // Решение — о самой находке: его запись называет и её критерий.
+      ["отложено", "decisions", "реестр решений", true],
+      ["долг", "transition", "файл перехода", false],
     ]) {
       if (one.fate !== fate) continue;
-      const loose = namedIn(field, what, spot, abs);
+      const loose = namedIn(field, what, spot, abs, own ? c.id : null);
       if (loose !== "") holes.push(who + ": «" + fate + "», а " + loose);
     }
   }

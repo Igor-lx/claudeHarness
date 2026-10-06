@@ -1286,10 +1286,24 @@ describe("отложенное держит решение", () => {
       const refused = tool("bar", "app/zzLater.ts");
       expect(refused).not.toContain("печать поставлена");
       expect(refused).toContain("H7: «отложено», а реестр решений");
+      // Решение о файле, а не о находке, судьбы не держит: реестр с первого
+      // дня называет точку входа и корневой компонент, и прежде любая их
+      // запись держала «отложено» по любой находке в них.
+      const decisions = path.join(box, ".context", "09-decisions.md");
       fs.appendFileSync(
-        path.join(box, ".context", "09-decisions.md"),
+        decisions,
+        "\n## Файл заведён для пробы\n\nФайл `src/app/zzLater.ts` — проба.\n" +
+          "\n| Решение | Почему |\n| --- | --- |\n" +
+          "| файл `src/app/zzLater.ts` — проба | — |\n| H7 — отдельно | — |\n",
+      );
+      fs.rmSync(protoAt);
+      tool("bar", "app/zzLater.ts");
+      fillBar(protoAt, later);
+      expect(tool("bar", "app/zzLater.ts")).toContain("в одной записи с");
+      fs.appendFileSync(
+        decisions,
         "\n## Число без имени отложено\n\nКем решено: разработчик, `2026-10-05`. " +
-          "Файл `src/app/zzLater.ts`: имя числу — отдельной задачей.\n",
+          "Файл `src/app/zzLater.ts`, находка `H7`: имя числу — отдельной задачей.\n",
       );
       fs.rmSync(protoAt);
       tool("bar", "app/zzLater.ts");
