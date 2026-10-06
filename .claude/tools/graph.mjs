@@ -17968,6 +17968,37 @@ if (mode === "verify") {
       for (const line of readFileSync(at, "utf8").split(NEWLINE))
         if (/^#{2,}\s/.test(line))
           allHeads.add(line.replace(/^#+\s*/, "").trim());
+    // Ссылка, назвавшая файл, разрешается в НЁМ, а не в любом заголовке
+    // корпуса. Прежде заголовки шли одним набором на весь корпус, и ссылка на
+    // переименованный раздел находила одноимённый в другом файле — или в
+    // обосновании, которое повторяет заголовки нормы. Найдено прогоном проб.
+    const headsOfFile = new Map();
+    const filesByName = new Map();
+    for (const at of new Set(
+      [...headSources, ...skillFiles, ...sources.map(([, one]) => one)].map(norm),
+    )) {
+      const own = new Set();
+      for (const line of readFileSync(at, "utf8").split(NEWLINE))
+        if (/^#{2,}\s/.test(line)) own.add(line.replace(/^#+\s*/, "").trim());
+      headsOfFile.set(at, own);
+      const name = path.basename(at);
+      filesByName.set(name, [...(filesByName.get(name) ?? []), at]);
+    }
+    // Файл ссылки: «раздел «X» в `f.md`» либо «`f.md`, раздел «X»» в одной
+    // фразе. Из одноимённых — тот, что в папке ссылки, иначе норма, а не её
+    // обоснование.
+    const namedFile = (from, before, after) => {
+      const hit =
+        /^\s+(?:в|из|файла)\s+`([^`\s]+\.md)`/.exec(after) ??
+        /`([^`\s]+\.md)`(?:\]\([^)\s]*\))?[^`«».;\n]{0,40}$/.exec(before);
+      if (hit === null) return null;
+      const all = filesByName.get(path.basename(hit[1])) ?? [];
+      if (all.length === 0) return null;
+      const here = all.filter((f) => path.dirname(f) === path.dirname(norm(from)));
+      if (here.length) return here;
+      const norms = all.filter((f) => !f.includes("/rationale/"));
+      return norms.length ? norms : all;
+    };
     for (const [name, at] of sources) {
       const body = readFileSync(at, "utf8");
       REF_RE.lastIndex = 0;
@@ -18003,14 +18034,34 @@ if (mode === "verify") {
         const bare = (one) =>
           one
             .toLowerCase()
-            .replace(/^[a-zа-яё0-9]{1,3}[.)]s*/i, "")
+            .replace(/^[a-zа-яё0-9]{1,3}[.)]\s*/i, "")
             .trim();
         const want = bare(title);
-        const found = [...allHeads].some((h) => {
+        // Начало заголовка — до тире либо двоеточия: «Отчёт» не называет ни
+        // «Отчётность», ни «Отчёт о сборке обвязки».
+        const target = namedFile(
+          at,
+          body.slice(Math.max(0, m.index - 80), m.index),
+          body.slice(m.index + m[0].length, m.index + m[0].length + 80),
+        );
+        const pool =
+          target === null
+            ? allHeads
+            : new Set(target.flatMap((f) => [...headsOfFile.get(f)]));
+        const found = [...pool].some((h) => {
           const has = bare(h);
-          return has === want || has.startsWith(want);
+          return (
+            has === want ||
+            (has.startsWith(want) && /^\s*[—–:-]/.test(has.slice(want.length)))
+          );
         });
-        if (!found) danglingRefs.push(`${name}: «${title}»`);
+        if (!found)
+          danglingRefs.push(
+            `${name}: «${title}»` +
+              (target === null
+                ? ""
+                : " — в " + path.basename(target[0]) + " такого раздела нет"),
+          );
       }
     }
     for (const one of skip)

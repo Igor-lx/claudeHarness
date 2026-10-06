@@ -7256,3 +7256,26 @@ describe("семена версии среды — по проверенной �
     expect(engines).toEqual({ node: ">=" + pin("node"), npm: ">=" + pin("npm") });
   });
 });
+
+describe("ссылка на раздел разрешается в названном файле", () => {
+  it("переименованный раздел не находится ни в обосновании, ни в длинном заголовке с тем же началом", () => {
+    const box = seatEmpty("razdel-");
+    try {
+      const said = () => (verifyIn(box).get("Ссылки на разделы") ?? []).join("\n");
+      const closeAt = path.join(box, ".claude", "rules", "close.md");
+      const loopAt = path.join(box, ".claude", "rules", "loop.md");
+      const close = fs.readFileSync(closeAt, "utf8");
+      const loop = fs.readFileSync(loopAt, "utf8");
+      expect(close).toMatch(/^## Отчёт$/m);
+      expect(said()).toBe("");
+      // Начало заголовка до двоеточия называет раздел: это законно.
+      fs.writeFileSync(loopAt, loop + "\nСм. `loop.md`, раздел «Петля».\n");
+      expect(said()).toBe("");
+      fs.writeFileSync(loopAt, loop);
+      fs.writeFileSync(closeAt, close.replace(/^## Отчёт$/m, "## Отчётность"));
+      expect(said()).toContain("rules/safety.md: «Отчёт» — в close.md такого раздела нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
