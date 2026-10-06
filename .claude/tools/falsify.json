@@ -122,6 +122,12 @@
       "replace": "# Отложенное\n\nЗдесь 7 правил и 3 сверки."
     },
     {
+      "section": "Таблица базы не разорвана комментарием",
+      "file": ".context/08-tests.md",
+      "find": "| --- | --- |\n",
+      "replace": "| --- | --- |\n<!-- zz -->\n"
+    },
+    {
       "section": "Ссылки markdown",
       "file": ".context/00-map.md",
       "find": "# Карта исходников",
@@ -305,7 +311,7 @@
     },
     {
       "section": "Запись о семени помечена каркасом вместе с ним",
-      "file": ".claude/seat/templates/08-tests.md",
+      "file": ".claude/seat/templates/00-map.md",
       "find": "<!-- /КАРКАС -->",
       "replace": "| `tests/setup.ts` | проба |\n<!-- /КАРКАС -->"
     },

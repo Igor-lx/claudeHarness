@@ -5210,6 +5210,33 @@ describe("номер записи в заголовке не счёт", () => {
 });
 
 /**
+ * Комментарий разметки между строками таблицы обрывает её: отрисовка по GFM
+ * показывает строки ниже прозой, а читатель таблиц инструмента берёт первую
+ * из них за шапку. Так стояли пометки каркаса в семенах карты и реестра
+ * тестов — найдено пробой планки.
+ */
+describe("таблица базы не разорвана комментарием", () => {
+  it("свежая посадка чиста, комментарий между строками назван, за таблицей законен", () => {
+    const box = seatEmpty("torn-");
+    try {
+      const tests = path.join(box, ".context", "08-tests.md");
+      const seeded = fs.readFileSync(tests, "utf8");
+      const torn = "Таблица базы не разорвана комментарием";
+      const said = () => (verifyIn(box).get(torn) ?? []).join("\n");
+      expect(said()).toBe("");
+      const head = "| --- | --- |\n";
+      fs.writeFileSync(tests, seeded.replace(head, head + "<!-- КАРКАС -->\n"));
+      expect(said()).toContain(".context/08-tests.md:8");
+      const tail = "входы не меняются |\n";
+      fs.writeFileSync(tests, seeded.replace(tail, tail + "<!-- конец -->\n"));
+      expect(said()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
  * Находки прогона обвязки на мини-стенде: посадка, переход и две работы
  * по слову пользователя. Каждая — поломка, которую прежде не ловило ничто,
  * а ловил человек, проходивший процесс руками.

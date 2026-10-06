@@ -4292,6 +4292,7 @@ const CHECK_SECTIONS = [
   "Имена из кода в тексте",
   "Числа в прозе базы",
   "Имена констант в тексте",
+  "Таблица базы не разорвана комментарием",
   "Тесты лежат в `tests/`",
   "Объявленный состав папок и радиусы",
   "Не разобрано (проверкой не покрыто)",
@@ -22198,6 +22199,51 @@ if (mode === "verify") {
   });
   console.log(`  нет в исходниках: ${goneNames.length}`);
   for (const g of goneNames) console.log("    " + g);
+
+  // Таблица базы не разорвана комментарием.
+  //
+  // Строка комментария разметки между строками таблицы обрывает таблицу:
+  // отрисовка по GFM кончает её на первой строке без черты, а строки ниже
+  // показывает прозой. Читатель таблиц инструмента делает то же, только
+  // берёт первую строку после обрыва за шапку: модель свода писала «в карте
+  // не описан» о файле, который сверка «Покрытие карты» считала описанным.
+  // Найдено пробой планки: так стояли пометки каркаса в семенах карты и
+  // реестра тестов. Строке таблицы пометка не нужна вовсе — запись о
+  // каркасе узнаётся по адресу и по совпадению со строкой семени.
+  const tornTables = [];
+  const tornFiles = [];
+  if (existsSync(BASE)) {
+    for (const name of readdirSync(BASE))
+      if (name.endsWith(".md")) tornFiles.push(path.join(BASE, name));
+    for (const r of CONFIG.rulesManifest?.rules ?? []) {
+      const at = path.join(BASE, r);
+      if (existsSync(at) && !tornFiles.includes(at)) tornFiles.push(at);
+    }
+  }
+  for (const at of tornFiles) {
+    const lines = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+    for (let i = 1; i < lines.length; i += 1) {
+      if (!lines[i].trim().startsWith("<!--")) continue;
+      if (!lines[i - 1].trim().startsWith("|")) continue;
+      let shut = i;
+      while (shut < lines.length && !lines[shut].includes("-->")) shut += 1;
+      if ((lines[shut + 1] ?? "").trim().startsWith("|")) {
+        const where = norm(path.relative(REPO, at)) + ":" + (i + 1);
+        tornTables.push(where + " — " + lines[i].trim());
+      }
+    }
+  }
+  checkHead("Таблица базы не разорвана комментарием", {
+    n: tornFiles.length,
+    unit: "файлов базы и правил проекта",
+  });
+  console.log("  комментариев между строками таблицы: " + tornTables.length);
+  for (const t of tornTables)
+    console.log(
+      "    " +
+        t +
+        " — таблица кончается на нём, строки ниже читаются прозой: вынести за таблицу либо снять",
+    );
 
   // 16. тест лежит в папке `tests/` своего слоя.
   // Соглашение несущее: база описывает каждый тест ПУТЁМ, а размер папки
