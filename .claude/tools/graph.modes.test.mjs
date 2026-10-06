@@ -6224,6 +6224,12 @@ describe("свод: строки держателя «линт» ставит м
   it("нарушение — «нашлось» без сессии, спор с линтом — дыра, починили — «чисто»", () => {
     const box = seatEmpty("lint-row-");
     try {
+      // Диапазон среды — по машине прогона: `R6` спрашивает и версию среды, а
+      // семя требует проверенную, которой у машины прогона может не быть.
+      const pkgAt0 = path.join(box, "package.json");
+      const pkg0 = JSON.parse(fs.readFileSync(pkgAt0, "utf8"));
+      pkg0.engines.node = ">=" + process.versions.node;
+      fs.writeFileSync(pkgAt0, JSON.stringify(pkg0, null, 2) + "\n");
       const graph = path.join(box, ".claude", "tools", "graph.mjs");
       const withLint = { ...process.env, NODE_PATH: path.join(process.cwd(), "node_modules") };
       const bar = (env) =>
