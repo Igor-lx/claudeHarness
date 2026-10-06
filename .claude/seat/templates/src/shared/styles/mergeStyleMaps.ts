@@ -15,6 +15,5 @@ export function mergeStyleMaps<T extends StyleMap>(
     }
   }
 
-  // Keys come from the inputs at run time; the compiler cannot see them.
-  return result as T;
+  return result as T; // keys come from the inputs at run time; the compiler cannot see them
 }

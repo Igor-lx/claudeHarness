@@ -1447,7 +1447,9 @@ export const BAR_FORMS = {
     "ослабление в файле (`@ts-nocheck`) — его спрашивает признак обхода (`D2`)",
   ],
   D2: [
-    "приведение к своему типу (`value as Foo`) — правила линта видят «любое», утверждение ненулевого и гашение проверки комментарием, а признак — `as any`",
+    "приведение угловыми скобками (`<Foo>value`) и к имени типа со строчной буквы — признак видит `as` с именем типа с заглавной буквы и примитивы, «любое» и утверждение «не пусто», а правила линта — «любое», утверждение ненулевого и гашение проверки комментарием",
+    "причина в той же строке, которая обхода не объясняет, — признак видит, есть ли в строке комментарий, а не что в нём сказано",
+    "подавление проверки (`@ts-ignore`, `@ts-expect-error`) без причины — признак видит подавление, а причину у директивы не спрашивает",
     "охранная функция типа (`x is T`), которая не проверяет утверждаемое, — признак и правила линта видят явный обход, а ложное сужение — нет",
   ],
   D3: [
@@ -2841,8 +2843,23 @@ const codeSignalsOf = (file, text, own) => {
     at("разметка", reached, [...outsideKinds].join(", "));
 
   // --- обход компилятора --------------------------------------------------
-  each(/:\s*any\b|\bas\s+any\b|<any>/g, bare, (m) => at("обход", m.index, m[0], "любое"));
+  // Законная форма обхода одна: точечно, с причиной в той же строке (`D2`).
+  // Строка без комментария получает вторую строку признака — `без причины`:
+  // прежде модель показывала приведение, а есть ли рядом причина, решало
+  // одно чтение, и семя обвязки держало причину строкой выше. Найдено пробой
+  // планки.
   const bareLineAt = lineIndexOf(bare);
+  const textLines = text.split(NEWLINE);
+  const plainLines = plain.split(NEWLINE);
+  const reasonless = (m) => {
+    const k = bareLineAt(m.index) - 1;
+    return (textLines[k] ?? "") === (plainLines[k] ?? "");
+  };
+  const bypass = (m, mark) => {
+    at("обход", m.index, m[0], mark);
+    if (reasonless(m)) at("обход", m.index, m[0], "без причины");
+  };
+  each(/:\s*any\b|\bas\s+any\b|<any>/g, bare, (m) => bypass(m, "любое"));
   each(
     /\bas\s+(?:unknown\s+as\s+)?(?:[A-Z_$][\w$.]*|string|number|boolean|object|never|bigint|symbol)\b/g,
     bare,
@@ -2850,13 +2867,13 @@ const codeSignalsOf = (file, text, own) => {
     const row = bareLines[bareLineAt(m.index) - 1] ?? "";
     // Переименование в импорте и реэкспорте — не приведение типа.
     if (!/^\s*(?:import\b|export\s*(?:type\s*)?[{*])/.test(row))
-      at("обход", m.index, m[0], "приведение");
+      bypass(m, "приведение");
     },
   );
   each(/(?:\/\/|\/\*)[^\n]*?(@ts-(?:ignore|expect-error|nocheck)|eslint-disable[\w-]*)/g, text, (m) =>
     at("обход", m.index, m[1], "подавление"),
   );
-  each(/[\w$)\]]!(?=[.)\],;[])/g, bare, (m) => at("обход", m.index, m[0], "не пусто"));
+  each(/[\w$)\]]!(?=[.)\],;[])/g, bare, (m) => bypass(m, "не пусто"));
 
   // --- отказы -------------------------------------------------------------
   each(
@@ -4385,13 +4402,15 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const at = Date.now();", "1:время"],
   ["signalsSummary", "src/a.ts\nexport const at = new Date(stamp);", ""],
   ["signalsSummary", "src/a.tsx\nexport const A = () => <p>{Date.now()}</p>;", "1:время;1:разметка"],
-  ["signalsSummary", "src/a.ts\nexport const x: any = read();", "1:обход/любое"],
+  ["signalsSummary", "src/a.ts\nexport const x: any = read();", "1:обход/любое;1:обход/без причины"],
+  ["signalsSummary", "src/a.ts\nexport const x: any = read(); // the reader is untyped", "1:обход/любое"],
   ["signalsSummary", "src/a.ts\nexport const x: unknown = read();", ""],
-  ["signalsSummary", "src/a.ts\nexport const element = node as HTMLElement;", "1:обход/приведение"],
+  ["signalsSummary", "src/a.ts\nexport const element = node as HTMLElement;", "1:обход/приведение;1:обход/без причины"],
+  ["signalsSummary", "src/a.ts\nexport const element = node as HTMLElement; // created above as a div", "1:обход/приведение"],
   ["signalsSummary", "src/a.ts\nimport { a as b } from \"./b\";", ""],
   ["signalsSummary", "src/a.ts\nexport { a as b } from \"./b\";", ""],
   ["signalsSummary", "src/a.ts\n// @ts-ignore\ngo();", "1:обход/подавление;1:комментарий"],
-  ["signalsSummary", "src/a.ts\nref.current!.focus();", "1:обход/не пусто"],
+  ["signalsSummary", "src/a.ts\nref.current!.focus();", "1:обход/не пусто;1:обход/без причины"],
   ["signalsSummary", "src/a.ts\nif (a !== b) go();", ""],
   ["signalsSummary", "src/a.ts\nif (width <= 0) return;", "1:страж"],
   ["signalsSummary", "src/a.ts\nif (!(width > 0)) return;", ""],
