@@ -34,13 +34,23 @@ const SEP2 = String.fromCharCode(58);
  * то есть запись была, и не видел её никто. Проект на обычных модулях CSS
  * не мог закрыть покрытие карты в принципе.
  */
-export const STYLE_ALT = "css|scss|sass|less|styl";
-/** Языки кода: TypeScript и обычный JavaScript. */
-const CODE_ALT = "[jt]sx?";
+export const STYLE_EXTENSIONS = ["css", "scss", "sass", "less", "styl"];
+/** Расширения кода: TypeScript и JavaScript, с модульными `m` и `c`. Тот же
+ * перечень несут шапки правил о коде, и тест обвязки их сличает: прежде
+ * обход корпуса брал `[jt]sx?`, часть мест — `[cm]?[jt]sx?`, а шапки —
+ * восемь расширений, и модуль `.mjs` под корнем исходников граф не видел
+ * вовсе. Найдено прогоном проб. */
+export const TS_EXTENSIONS = ["ts", "tsx", "mts", "cts"];
+export const CODE_EXTENSIONS = [...TS_EXTENSIONS, "js", "jsx", "mjs", "cjs"];
+export const STYLE_ALT = STYLE_EXTENSIONS.join("|");
+const CODE_ALT = CODE_EXTENSIONS.join("|");
 /** Код или стиль — альтернатива для образцов, а не готовый образец. */
 export const CODE_STYLE_ALT = CODE_ALT + "|" + STYLE_ALT;
 const STYLE_FILE = new RegExp("\\.(?:" + STYLE_ALT + ")$");
-const CODE_FILE = new RegExp("\\.(?:" + CODE_ALT + ")$");
+/** Файл кода по расширению — тест он или нет. */
+export const CODE_FILE = new RegExp("\\.(?:" + CODE_ALT + ")$");
+/** Файл TypeScript: его разбирает компилятор и линт с типами. */
+export const TS_FILE = new RegExp("\\.(?:" + TS_EXTENSIONS.join("|") + ")$");
 const TEST_SUFFIX = new RegExp("\\.(?:test|spec)\\.(?:" + CODE_ALT + ")$");
 /** Расширение кода или листа стилей — одним образцом на весь инструмент.
  *
@@ -4395,6 +4405,8 @@ export const PREDICATE_CASES = [
   ["isTestPath", "src/a/b.spec.tsx", true],
   ["isTestPath", "src/a/b.test.jsx", true],
   ["isTestPath", "src/a/b.spec.js", true],
+  ["isTestPath", "src/a/b.test.mjs", true],
+  ["isTestPath", "src/a/b.spec.mts", true],
   ["isTestPath", "__tests__/b.spec.tsx", true],
   ["isTestPath", "src/a/b.ts", false],
   ["isTestPath", "src/a/testing/b.ts", false],
@@ -4417,6 +4429,12 @@ export const PREDICATE_CASES = [
   ["isCodePath", "src/a/b.js", true],
   ["isCodePath", "src/a/b.jsx", true],
   ["isCodePath", "src/a/b.test.jsx", false],
+  ["isCodePath", "src/a/b.mjs", true],
+  ["isCodePath", "src/a/b.cjs", true],
+  ["isCodePath", "src/a/b.mts", true],
+  ["isCodePath", "src/a/b.cts", true],
+  ["isCodePath", "src/a/b.mtsx", false],
+  ["isCodePath", "src/a/b.json", false],
   ["isCodePath", "src/a/tests/b.test.tsx", false],
   ["isCodePath", "src/a/b.test.ts", false],
   ["isCodePath", "src/a/README.md", false],

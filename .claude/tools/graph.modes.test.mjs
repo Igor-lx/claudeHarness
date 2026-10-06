@@ -7279,3 +7279,28 @@ describe("ссылка на раздел разрешается в назван�
     }
   }, 180000);
 });
+
+describe("модуль .mjs под корнем исходников — в графе", () => {
+  it("экспорт модуля .mjs без потребителей назван мёртвым, импорт его — ребром", () => {
+    const box = seatEmpty("mjs-");
+    try {
+      const lib = path.join(box, "src", "shared", "zzMod");
+      fs.mkdirSync(lib, { recursive: true });
+      fs.writeFileSync(path.join(lib, "util.mjs"), "export const zzUtil = 1;\nexport const zzSpare = 2;\n");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzUse.ts"),
+        'import { zzUtil } from "../shared/zzMod/util.mjs";\nexport const zzUse = zzUtil;\n',
+      );
+      const run = (...args) =>
+        execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      expect(run("dead")).toMatch(/shared\/zzMod\/util\.mjs\n\s+zzSpare\n/);
+      expect(sectionOf(run("brief", "shared/zzMod/util.mjs"), "пользуются им")).toContain("app/zzUse.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

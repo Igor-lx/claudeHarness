@@ -1,7 +1,7 @@
 ---
 paths:
   - "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
-  - "**/*.{css,scss,sass,less}"
+  - "**/*.{css,scss,sass,less,styl}"
 ---
 
 # Работа с кодом — узел, тесты, мутации, парные копии

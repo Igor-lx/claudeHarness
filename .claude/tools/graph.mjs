@@ -77,6 +77,9 @@ import {
   inComment,
   isCodePath,
   isDocPath,
+  CODE_EXTENSIONS,
+  CODE_FILE,
+  TS_FILE,
   CODE_OR_STYLE,
   CODE_STYLE_ALT,
   isStylePath,
@@ -2369,7 +2372,7 @@ const collect = (dir) => {
     if (outOfTree(e, path.join(dir, e))) continue;
     const full = norm(path.join(dir, e));
     if (statSync(full).isDirectory()) collect(full);
-    else if (/\.[jt]sx?$/.test(e)) {
+    else if (CODE_FILE.test(e)) {
       if (!files.includes(full)) files.push(full);
     } else if (/\.md$/.test(e) && !isMachinery(full)) docFiles.push(full);
     else if (isStylePath(full) && !styleFiles.includes(full))
@@ -7525,7 +7528,7 @@ if (mode === "bar-probe") {
           !isTest(f) &&
           !f.endsWith(".d.ts") &&
           !isBarrel(f) &&
-          /\.[cm]?[jt]sx?$/.test(f),
+          CODE_FILE.test(f),
       )
       .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
     for (let k = pool.length - 1; k > 0; k -= 1) {
@@ -7669,7 +7672,7 @@ if (mode === "bar-probe") {
       //
       // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
       // вариант с типами, импорт встаёт к импортам файла.
-      const typed = (f) => /\.[cm]?tsx?$/.test(f);
+      const typed = (f) => TS_FILE.test(f);
       const bodyFor = (one, f) =>
         (typed(f) && one.ts !== undefined ? one.ts : one.text)
           .split("\n")
@@ -7688,7 +7691,7 @@ if (mode === "bar-probe") {
       const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
       const specFrom = (from, to) => {
         let r = norm(path.relative(path.dirname(from), to)).replace(
-          /\.[cm]?[jt]sx?$/,
+          CODE_FILE,
           "",
         );
         if (!r.startsWith(".")) r = "./" + r;
@@ -7947,7 +7950,7 @@ const walkAll = (dir) => {
     const full = path.join(dir, e);
     if (outOfTree(e, full)) continue;
     if (statSync(full).isDirectory()) walkAll(full);
-    else if (/\.[jt]sx?$/.test(e) || isStylePath(e) || /\.md$/.test(e)) {
+    else if (CODE_FILE.test(e) || isStylePath(e) || /\.md$/.test(e)) {
       everyPath.push(full.split(path.sep).join("/"));
       if (!e.endsWith(".md")) everyFile.push(everyPath[everyPath.length - 1]);
     }
@@ -9525,14 +9528,15 @@ const barReadSection = (pages, carried) =>
  * переносят копированием, и берут у неё только вход. Вход — бочка; у папки
  * без бочки — файл узла, названный как папка: раскладка умолчания бочки не
  * требует, и импорт самого компонента иначе читался бы обходом входа. */
+/** Вход единицы переноса: `index` с расширением кода. */
+const INDEX_FILE = new RegExp("^index\\.(?:" + CODE_EXTENSIONS.join("|") + ")$");
 const foreignInside = (from, to) => {
   for (const layer of CONFIG.componentsAt ?? ["components"]) {
     const m = new RegExp("^" + layer + "/([^/]+)/(.+)$").exec(rel(to));
     if (m === null) continue;
     const unit = layer + "/" + m[1] + "/";
     if (rel(from).startsWith(unit)) return false;
-    const entry = /^index\.[cm]?[jt]sx?$/;
-    if (entry.test(m[2])) return false;
+    if (INDEX_FILE.test(m[2])) return false;
     // Типы в корне узла — его публичный контракт (`code.md`, раздел «Внутри
     // папки узла — тоже раскладка, и она такая же жёсткая»): пропы и карту
     // классов для перекраски берут оттуда законно.
@@ -9562,7 +9566,7 @@ const unitHasEntry = (t) => {
     if (!r.startsWith(unit)) return false;
     const tail = r.slice(unit.length);
     return (
-      /^index\.[cm]?[jt]sx?$/.test(tail) ||
+      INDEX_FILE.test(tail) ||
       (!tail.includes("/") && tail.replace(/\.[^.]+$/, "").toLowerCase() === name)
     );
   });
@@ -11666,7 +11670,7 @@ const barCatalogLine = () => {
 // не давая признака. Зовут линт проекта — тот же, что гоняет цепочка.
 
 /** Файл кода, который разбирает линт. */
-const BAR_LINTABLE = /\.[cm]?[jt]sx?$/;
+const BAR_LINTABLE = CODE_FILE;
 
 /** Разовый скрипт линта: нарушения по файлам и правила, которые конфиг
  * проекта включает ошибкой для каждого файла. Без второго «чисто» о правиле,
@@ -19126,7 +19130,9 @@ if (mode === "verify") {
         };
         if (inc !== null)
           for (const e of seeds) {
-            if (!/[.][jt]sx?$/.test(e.to)) continue;
+            // Компилятор и линт с типами разбирают TypeScript; остальной код
+            // линт читает без типов, и область компилятора ему не нужна.
+            if (!TS_FILE.test(e.to)) continue;
             // Конфиг в корне репозитория компилятору не принадлежит: его
             // читает свой инструмент, и в область типов он не входит.
             if (!e.to.includes("/")) continue;
@@ -20494,7 +20500,7 @@ if (mode === "verify") {
           walk(at);
           continue;
         }
-        if (!/[.][jt]sx?$/.test(e.name) && !isStylePath(e.name)) continue;
+        if (!CODE_FILE.test(e.name) && !isStylePath(e.name)) continue;
         // Файл в самом корне репозитория — настройка, а не код проекта:
         // тот же признак, что у описи кода.
         if (norm(dir) === norm(REPO)) continue;
@@ -24251,7 +24257,7 @@ if (mode === "verify") {
             const at = norm(path.join(dir, e.name));
             if (e.isDirectory()) walk(at);
             else if (
-              (/[.][jt]sx?$/.test(e.name) || isStylePath(e.name)) &&
+              (CODE_FILE.test(e.name) || isStylePath(e.name)) &&
               norm(dir) !== norm(REPO)
             )
               everywhere.push(at);
