@@ -4355,6 +4355,7 @@ const CHECK_SECTIONS = [
   "Доктрина названа в порядке чтения",
   "Доктрина в бюджете",
   "Синоним термина словаря не заведён",
+  "Проза полки названа",
   "Документы названы в указателе",
   "Применимость разделов планки",
   "Сверки, выключенные при живом предмете",
@@ -20835,7 +20836,7 @@ if (mode === "verify") {
           return /.md$/.test(e) ? [full] : [];
         });
       };
-      const corpus = [...walkMd(SHELF), ...walkMd(BASE)];
+      const corpus = [...shelfProse().map(([, full]) => full), ...walkMd(BASE)];
       for (const f of corpus) {
         const rows = readFileSync(f, "utf8").split(NEWLINE);
         for (let i = 0; i < rows.length; i += 1) {
@@ -20904,6 +20905,52 @@ if (mode === "verify") {
     console.log("  синонимов в корпусе: " + bannedWords.length);
   for (const one of bannedWords)
     console.log("    " + one + ". Один термин — одна концепция");
+
+  // Проза полки названа.
+  //
+  // Файл прозы полки, который не называет ни один другой её файл, не читает
+  // никто: правила среда кладёт сама, скилл зовут по имени из шапки, а
+  // заметку рядом с семенем находят, только зная о ней заранее. Найдено
+  // прогоном проб: заметка, почему настройки форматтера такие, лежала рядом с
+  // семенем, и ни один файл полки её не называл.
+  const shelfOrphans = [];
+  let proseLooked = 0;
+  if (SHELF !== null && existsSync(SHELF)) {
+    // Называют файл и данные полки, и её код: карта посадки — семена, код
+    // инструмента — свои справочники.
+    const walkAll = (dir) =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = norm(path.join(dir, e.name));
+        return e.isDirectory() ? walkAll(full) : [full];
+      });
+    const texts = walkAll(SHELF)
+      .filter((f) => /\.(?:md|json|mjs)$/.test(f))
+      .map((f) => [f, readFileSync(f, "utf8")]);
+    for (const [, f] of shelfProse()) {
+      const own = norm(path.relative(SHELF, f));
+      if (/^rules\/[^/]+$/.test(own) || /^skills\/[^/]+\/SKILL\.md$/.test(own))
+        continue;
+      proseLooked += 1;
+      const base = path.basename(f);
+      if (
+        !texts.some(
+          ([g, text]) => g !== f && (text.includes(own) || text.includes(base)),
+        )
+      )
+        shelfOrphans.push(own);
+    }
+  }
+  checkHead("Проза полки названа", {
+    n: proseLooked,
+    unit: "файлов прозы полки",
+  });
+  console.log("  не названо ни одним файлом полки: " + shelfOrphans.length);
+  for (const one of shelfOrphans)
+    console.log(
+      "    " +
+        one +
+        " — назвать там, где о нём нужно знать, либо удалить: файл, который не называет никто, не читает никто",
+    );
   checkHead("Доктрина названа в порядке чтения", {
     n: doctrineListed,
     unit: "документов в порядке чтения",
