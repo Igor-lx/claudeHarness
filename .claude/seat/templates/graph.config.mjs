@@ -882,10 +882,16 @@ export const CONFIG = {
   lintConfigOff: {
     file: "../eslint.config.mjs",
     allowed: [
-      ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "@typescript-eslint/require-await"],
+      [
+        "**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "@typescript-eslint/require-await",
+      ],
       ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "react-hooks/globals"],
       ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "react-hooks/refs"],
-      ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "@typescript-eslint/no-magic-numbers"],
+      [
+        "**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "@typescript-eslint/no-magic-numbers",
+      ],
       ["**", "sonarjs/todo-tag"],
       ["**", "sonarjs/fixme-tag"],
       ["**", "@eslint-react/rules-of-hooks"],
