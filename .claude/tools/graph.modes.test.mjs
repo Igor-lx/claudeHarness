@@ -7384,6 +7384,49 @@ describe("синоним термина словаря во всей прозе 
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("в коде полки спрашивается комментарий, а строка кода — нет", () => {
+    const box = seatEmpty("sinonim-kod-");
+    try {
+      const said = () => verifyIn(box).get("Синоним термина словаря не заведён") ?? [];
+      const plant = (rel, tail) => {
+        const at = path.join(box, ".claude", rel);
+        const was = fs.readFileSync(at, "utf8");
+        fs.writeFileSync(at, was + tail);
+        const out = said().join("\n");
+        fs.writeFileSync(at, was);
+        return out;
+      };
+      expect(plant("tools/hook.mjs", "\n// Правило без ловца не держится.\n")).toContain(
+        ".claude/tools/hook.mjs",
+      );
+      expect(plant("hooks/git/pre-commit", "\n# Правило без ловца не держится.\n")).toContain(
+        ".claude/hooks/git/pre-commit",
+      );
+      expect(
+        plant("tools/hook.mjs", '\nexport const zzPlant = "Правило без ловца не держится.";\n'),
+      ).toBe("");
+      // Счёт — запрещённых слов, а не ключей файла: их два, и третье слово
+      // счёт ключей не сдвигал.
+      const bookAt = path.join(box, ".claude", "rules", "glossary.banned.json");
+      const book = JSON.parse(fs.readFileSync(bookAt, "utf8"));
+      book.banned.push({ forms: ["зззслово"], instead: "проба", found: "проба" });
+      fs.writeFileSync(bookAt, JSON.stringify(book));
+      let out;
+      try {
+        out = execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (e) {
+        out = String(e.stdout ?? "");
+      }
+      expect(out).toContain("осмотрено терминов словаря под запретом: " + book.banned.length);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 describe("скиллы цитируют то, что печатают режимы", () => {

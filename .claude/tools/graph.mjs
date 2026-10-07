@@ -21005,7 +21005,7 @@ if (mode === "verify") {
   //
   // Второе слово для одного понятия запрещено критерием `H6`, и правило это
   // держалось вниманием — пока рядом с объявленным КРЮЧКОМ не завёлся
-  // «ловец» и не расползся по четырём местам доктрины.
+  // синоним и не расползся по четырём местам доктрины.
   //
   // Чего сверка НЕ умеет: поймать синоним, которого ещё никто не назвал.
   // Список нельзя перечислить заранее — синоним придумывают на ходу. Что она
@@ -21020,7 +21020,7 @@ if (mode === "verify") {
       bannedSaid = "списка отвергнутых слов рядом нет";
     else {
       const book = JSON.parse(readFileSync(at, "utf8"));
-      bannedTerms = Object.keys(book).length;
+      bannedTerms = (book.banned ?? []).length;
       // Корпус — вся проза полки и файлы базы: именно там термин и живёт;
       // исходники сюда не идут — в них говорят на языке кода. Прежде корпус
       // брал три папки полки, и обоснования, справочники и `state/` лежали
@@ -21034,9 +21034,28 @@ if (mode === "verify") {
         });
       };
       const corpus = [...shelfProse().map(([, full]) => full), ...walkMd(BASE)];
-      for (const f of corpus) {
+      // Комментарии кода самой полки — тоже проза: инструмент, его тесты, хук
+      // и семена говорят на языке свода. Код проекта сюда не идёт: в нём
+      // говорят на языке кода. Строки кода не спрашиваются — тест сажает
+      // отвергнутое слово строкой, и это поломка, а не речь. Найдено чтением
+      // сверки языка: синоним крючка стоял в комментарии инструмента, и не
+      // видела его ни одна сверка.
+      const shelfCode = (dir) =>
+        readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+          const full = norm(path.join(dir, e.name));
+          if (e.isDirectory()) return shelfCode(full);
+          return CODE_FILE.test(e.name) || /(?:^|\/)hooks\//.test(full)
+            ? [full]
+            : [];
+        });
+      const commentOnly = new Set(
+        SHELF !== null && existsSync(SHELF) ? shelfCode(SHELF) : [],
+      );
+      for (const f of [...corpus, ...commentOnly]) {
         const rows = readFileSync(f, "utf8").split(NEWLINE);
         for (let i = 0; i < rows.length; i += 1) {
+          const line = rows[i].trim();
+          if (commentOnly.has(f) && !/^(?:\/\/|\/\*|\*|#)/.test(line)) continue;
           const low = rows[i].toLowerCase();
           for (const one of book.banned ?? []) {
             if (!one.forms.some((w) => low.includes(w))) continue;
