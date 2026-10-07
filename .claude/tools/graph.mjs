@@ -17267,6 +17267,9 @@ if (mode === "verify") {
     if (total < COMMENT_SHARE_FLOOR) continue;
     shareLooked += 1;
     if (commentLines / total <= COMMENT_SHARE) continue;
+    // Доля печатается с десятой. Округлённая до целого, она читалась «10 % при
+    // потолке 10 %» — нарушение без видимой причины: замерено на семени, где
+    // строк комментария `18` из `174`.
     chattyFiles.push(
       rel(f) +
         " — строк комментария " +
@@ -17274,7 +17277,7 @@ if (mode === "verify") {
         " из " +
         total +
         ", это " +
-        Math.round((100 * commentLines) / total) +
+        ((100 * commentLines) / total).toFixed(1) +
         " % при потолке " +
         Math.round(100 * COMMENT_SHARE) +
         " %",

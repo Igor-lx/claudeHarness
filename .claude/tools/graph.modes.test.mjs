@@ -1721,6 +1721,28 @@ describe("конфиг в корне — под правилом о коммен
     }
   }, 180000);
 
+  it("доля сверх потолка печатается с десятой", () => {
+    const box = seatEmpty("konfig-dolya-");
+    try {
+      // Строк комментария `7` из `68`: доля чуть выше потолка, и до целого
+      // она округлилась бы ровно в потолок.
+      const lines = [];
+      for (let i = 0; i < 7; i += 1)
+        lines.push("// шаг " + i, "export const zzStep" + i + " = " + i + ";");
+      for (let i = 7; i < 60; i += 1)
+        lines.push("export const zzStep" + i + " = " + i + ";");
+      fs.writeFileSync(
+        path.join(box, "zz.config.mjs"),
+        [...lines, ""].join("\n"),
+      );
+      expect(verifyIn(box).get("Доля комментариев в файле") ?? []).toEqual([
+        "zz.config.mjs — строк комментария 7 из 68, это 10.3 % при потолке 10 %. Объяснения переносят в документ слоя",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("семя, приведённое к формату проекта, судится как семя", () => {
     const home = path.join(TOOL_DIR, "..", "..");
     const box = seatEmpty("konfig-format-");
