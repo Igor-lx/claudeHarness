@@ -369,6 +369,4 @@ notice is kept.
 agentic coding, harness, guardrails, prompt engineering, context engineering,
 code review, clean code, software architecture, code knowledge base,
 dependency graph, mutation testing, test automation, documentation as code,
-frontend, React, TypeScript, Vite, Vitest · качество кода, контроль качества
-кода, обвязка для Claude Code, промпт-инжиниринг, ИИ-агент, ревью кода, база
-знаний о коде.</sub>
+frontend, React, TypeScript, Vite, Vitest.</sub>
