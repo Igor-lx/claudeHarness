@@ -1435,16 +1435,101 @@ npx vitest run --config .claude/tools/vitest.config.mjs
 перестают запускать. Решено разработчиком.
 
 **В репозитории раздачи пакетов и базы нет**, и наборы гоняют в посадке —
-обвязке, посаженной в пустую папку вне репозитория. Правку переносят туда
-копированием `.claude` без файлов настроек проекта, а сверку базы из сессии,
-стартовавшей в репозитории раздачи, зовут без признака сессии
-(`env -u CLAUDE_CODE_CHILD_SESSION`): хуки посадки этой сессии не исполняются.
+обвязке, посаженной в пустую папку вне репозитория. Как её завести и
+обновлять — раздел «Испытательная посадка».
 
 **Когда их гоняют:** в мастерской обвязки — перед каждой выкладкой в раздачу;
 в проекте — когда правка тронула папку инструмента, и об этом напоминает режим
 `tested` секцией «Тронута обвязка». Словарь области прогоняется и без них, при
 каждом вызове инструмента (раздел «Словарь области — проверяется раньше
-ответа»).
+ответа»). По ходу правки гоняют тесты затронутого по имени
+(`npx vitest run --config .claude/tools/vitest.config.mjs -t "<имя>"`), полный
+набор — один раз перед отправкой.
+
+### Испытательная посадка
+
+Нужна только в мастерской обвязки. Заводится один раз на сессию, вне
+репозитория, и обновляется копированием `.claude` после каждой правки.
+
+Завести — из корня репозитория обвязки:
+
+```bash
+H="$(git rev-parse --show-toplevel)"
+F="${TMPDIR:-/tmp}/harness-seat"
+rm -rf "$F" && mkdir -p "$F"
+node -e '
+const fs=require("fs"),p=require("path");
+const [shelf,box]=process.argv.slice(1);
+const map=JSON.parse(fs.readFileSync(p.join(shelf,"seat/map.json"),"utf8"));
+const own=new Set(map.projectOwnedInsideHarness??[]);
+for (const d of map.dirs) fs.mkdirSync(p.join(box,d),{recursive:true});
+fs.cpSync(shelf,p.join(box,".claude"),{recursive:true,
+  filter:(s)=>p.dirname(s)!==shelf||!own.has(p.basename(s))});
+for (const one of map.copy){ if(one.notAtSeating!==undefined) continue;
+  const dst=p.join(box,one.to); fs.mkdirSync(p.dirname(dst),{recursive:true});
+  fs.copyFileSync(p.join(shelf,one.from),dst); }' "$H/.claude" "$F"
+cd "$F"
+npx -y npm@11 install --no-audit --no-fund
+git init -q && git add -A
+git -c user.name=seat -c user.email=seat@local commit -qm seat
+git config core.hooksPath .claude/hooks/git
+B=$(git rev-list --max-parents=0 HEAD)
+sed -i "s#^  barSince: null,#  barSince: \"$B\",#" .context/graph.config.mjs
+git -c user.name=seat -c user.email=seat@local commit -qam "barSince"
+env -u CLAUDE_CODE_CHILD_SESSION node .claude/tools/graph.mjs verify; echo "verify: $?"
+```
+
+Обновить после правки — копия `.claude` без файлов настроек проекта;
+удалённое в репозитории удаляется и в посадке:
+
+```bash
+node -e '
+const fs=require("fs"),p=require("path");
+const [src,dst]=process.argv.slice(1);
+const own=new Set(["settings.json","settings.local.json"]);
+const walk=(d,base,out=[])=>{for(const e of fs.readdirSync(p.join(base,d),{withFileTypes:true})){
+  const r=p.join(d,e.name); if(e.isDirectory()) walk(r,base,out); else out.push(r);} return out;};
+const keep=(r)=>!(p.dirname(r)==="."&&own.has(r));
+const want=new Set(walk(".",src).filter(keep));
+for(const r of want){fs.mkdirSync(p.dirname(p.join(dst,r)),{recursive:true});
+  fs.copyFileSync(p.join(src,r),p.join(dst,r));}
+for(const r of walk(".",dst).filter(keep)) if(!want.has(r)) fs.rmSync(p.join(dst,r));
+' "$H/.claude" "$F/.claude"
+```
+
+Проверки — из папки посадки: тесты обвязки (около `12` минут), сверка базы
+с `env -u CLAUDE_CODE_CHILD_SESSION`, `falsify` (около `13` минут) — когда
+тронуты сверки или рецепты, `bar-hold` — когда тронуты планка или её словари,
+`npx prettier --check` по правленым файлам. Замер `2026-10-07`.
+
+Ловушки, на которых уже спотыкались:
+
+- **Хуки посадки в этой сессии не исполняются**: сессия стартовала в
+  репозитории обвязки. Сверка «Хуки проекта исполняются в этой сессии» тогда
+  красная по праву, поэтому сверку базы зовут без признака сессии; тесты
+  обвязки снимают его сами, фальсификация ставит свой.
+- **Набор тестов идёт дольше `10` минут** — его запускают в фоне и ждут строки
+  с кодом возврата в файле вывода. Оборванный прогон оставляет в базе посадки
+  файлы, названные полями `barProtocol` и `testedLedger` настройки: их
+  удаляют до следующей сверки базы.
+- **`falsify` не гонят одновременно с тестами**: его песочница лежит внутри
+  посадки, и оба прогона спорят за процессор и за файлы.
+- **`npm install` версии `10`** падает на семени без lock-файла ошибкой
+  `edgesOut`, поэтому установка — через `npm@11`.
+- **Сверка краснеет без `core.hooksPath` и поля `barSince`**; процедура выше
+  ставит оба. Коммит в посадке идёт через ворота перед коммитом.
+- **Обновление не трогает файлы посадки вне `.claude`.** Правка семени,
+  которое лежит в корне или в базе посадки, — конфиги корня, таблица скиллов в
+  `.context/01-facts.md`, `.claude/settings.json`, — переносится в посадку
+  руками; иначе посадка изображает проект, посаженный прежней редакцией.
+  Тем же путём видно, что после обновления увидит такой проект.
+- **`git checkout` и `git stash` в посадке снимают** синхронизированную
+  `.claude` и правленое поле настройки: обвязку возвращают синхронизацией,
+  поле — из семени.
+- **Форматирование проверяет prettier посадки**: в корне репозитория обвязки
+  манифеста нет, и случайный prettier берёт другую настройку.
+- **`pkill -f <образец>` находит и собственную оболочку**, если образец стоит
+  в её командной строке, и обрывает её.
 
 ---
 
