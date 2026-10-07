@@ -704,6 +704,13 @@
       }
     },
     {
+      "section": "Якоря на документацию в коде",
+      "create": {
+        "path": "zz.config.mjs",
+        "text": "// See .claude/seat/zz-no-such-note.md\nexport default {};"
+      }
+    },
+    {
       "section": "Обещания без опоры собираются сводкой",
       "file": ".context/07-invariants.md",
       "append": "**Проба.**\nДержится: привычкой.",
@@ -943,6 +950,13 @@
       "create": {
         "path": "src/zzPoem.ts",
         "text": "// This run of words is deliberately far longer than the ceiling the rules\n// name, so that the check has something real to catch when the recipe plants\n// it here, and it keeps going well past fifteen words by any count at all.\nexport const zzPoem = 1;"
+      }
+    },
+    {
+      "section": "Комментарий не перерос в прозу",
+      "create": {
+        "path": "zz.config.mjs",
+        "text": "// A config in the repository root is code too: this run of words is far\n// longer than the ceiling, and the check has to read the root to catch it.\nexport default {};"
       }
     },
     {

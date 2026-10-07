@@ -1667,6 +1667,117 @@ describe("долг комментариев — сумма находок трё
 });
 
 /**
+ * Конфиг в корне репозитория — код, и правило о комментариях действует на
+ * него без исключения: так решил разработчик на вопросе прогона проб. Прежде
+ * сверки комментариев читали одну опись кода, а семя конфига линта несло ряд
+ * в `300` слов, не давая ни одной находки. Держит четыре вещи: семена
+ * конфигов лежат в потолке; длинный ряд и мёртвый якорь в конфиге корня
+ * сверки называют; якорь на заметку полки живой; семя, которое проект лишь
+ * привёл к своему формату, судится как семя, а не как его код.
+ */
+describe("конфиг в корне — под правилом о комментариях", () => {
+  const SECTIONS = [
+    "Закомментированного кода нет",
+    "Комментарий не перерос в прозу",
+    "Доля комментариев в файле",
+    "Якоря на документацию в коде",
+  ];
+
+  it("семена в потолке, ряд и мёртвый якорь конфига корня названы", () => {
+    const box = seatEmpty("konfig-");
+    try {
+      const fresh = verifyIn(box);
+      for (const s of SECTIONS)
+        expect([s, fresh.get(s) ?? []]).toEqual([s, []]);
+      fs.writeFileSync(
+        path.join(box, "zz.config.mjs"),
+        [
+          "// Этот конфиг лежит в корне репозитория, и ряд его комментария нарочно",
+          "// длиннее потолка: сверка обязана прочесть корень и назвать его.",
+          "export const zzWide = 1;",
+          "// See .claude/seat/zz-no-such-note.md",
+          "export const zzDead = 1;",
+          "// See .claude/seat/eslint.config-why.md",
+          "export default {};",
+          "",
+        ].join("\n"),
+      );
+      const planted = verifyIn(box);
+      expect(planted.get("Комментарий не перерос в прозу") ?? []).toEqual([
+        expect.stringMatching(
+          /^zz\.config\.mjs:1 — ряд, слов \d+ при потолке 15\./,
+        ),
+      ]);
+      // Якорь на заметку полки живой: мёртвым назван только якорь в никуда.
+      expect(planted.get("Якоря на документацию в коде") ?? []).toEqual([
+        "zz.config.mjs → .claude/seat/zz-no-such-note.md",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("семя, приведённое к формату проекта, судится как семя", () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    const box = seatEmpty("konfig-format-");
+    try {
+      fs.cpSync(
+        path.join(home, "node_modules", "prettier"),
+        path.join(box, "node_modules", "prettier"),
+        { recursive: true },
+      );
+      // Свой код есть: без него судится всё, и признак семени не спрашивают.
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzOwn.ts"),
+        "export const zzOwn = 1;\n",
+      );
+      // Поле шире сводит код конфига в меньшее число строк, а комментарий
+      // оставляет: доля в семени, судимом как свой код, выходит за потолок.
+      fs.writeFileSync(
+        path.join(box, ".prettierrc.json"),
+        JSON.stringify({ printWidth: 400 }) + "\n",
+      );
+      execFileSync(
+        process.execPath,
+        [
+          path.join(box, "node_modules", "prettier", "bin", "prettier.cjs"),
+          "--write",
+          "eslint.config.mjs",
+        ],
+        { cwd: box, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const seed = fs.readFileSync(
+        path.join(TOOL_DIR, "..", "seat", "templates", "eslint.config.mjs"),
+        "utf8",
+      );
+      expect(
+        fs.readFileSync(path.join(box, "eslint.config.mjs"), "utf8"),
+      ).not.toBe(seed);
+      let out;
+      try {
+        out = execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      } catch (e) {
+        out = String(e.stdout ?? "");
+      }
+      // Счёт осмотренного, а не одни находки: семя в корпусе сверки дало бы
+      // файл от потолка строк и выше, а свой файл проекта — однострочный.
+      const lines = out.split("\n");
+      const share = lines.indexOf("=== Доля комментариев в файле ===");
+      expect(lines.slice(share + 1, share + 3)).toEqual([
+        "  осмотрено файлов от потолка строк и выше: 0",
+        "  файлов сверх потолка: 0",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
  * Звенья цепочки проект вправе держать под своими именами — `types`, `fmt`, —
  * и базовая линия пишет их теми же именами. Сверка «Красное звено названо
  * находкой» спрашивала звенья по семенным именам: проект, назвавший по-своему
