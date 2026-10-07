@@ -301,13 +301,8 @@ to that stack:
   typescript-eslint strict type-checked, strict React rules, hooks,
   accessibility and SonarJS rule sets; where the harness's setting is stricter
   than the project's, the harness's is set, and the report says so;
-- the project layout is `src/app`, `src/components/<Name>`,
-  `src/shared/<area>`, and components are styled with CSS modules in cascade
-  layers;
 - some checks know the stack: class names used in code must exist in the
-  component's stylesheet;
-- an empty project also gets a working app skeleton and the application set:
-  routing, state, HTTP, validation, i18n.
+  component's stylesheet.
 
 **Verified versions.** Seating is tested on a concrete set of versions,
 declared in the seed config:
@@ -326,8 +321,8 @@ missing, and packages below the set are named by the run — a notice, not a
 failure; whether to upgrade is your call.
 
 **Other stacks.** The graph, the knowledge base, the quality bar and most
-checks work on any TypeScript or JavaScript code. The templates, the layout,
-the styling scheme and the stack-specific checks assume React and Vite.
+checks work on any TypeScript or JavaScript code. The templates and the
+stack-specific checks assume React and Vite.
 
 ## Quick start
 
