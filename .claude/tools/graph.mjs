@@ -4418,19 +4418,100 @@ const reportUnknown = (given) => {
 /** Модель качества, с которой сверяется карта в политике: ISO/IEC 25010,
  * редакция 2023 года. Безопасность — security, раздел Q планки;
  * безвредность — safety, вред людям и среде. */
-const QUALITY_CHARACTERISTICS = [
-  "функциональная пригодность",
-  "производительность",
-  "совместимость",
-  "взаимодействие с пользователем",
-  "надёжность",
-  "безопасность",
-  "сопровождаемость",
-  "гибкость",
-  "безвредность",
-];
+const QUALITY_SUBCHARACTERISTICS = {
+  "функциональная пригодность": [
+    "функциональная полнота",
+    "функциональная корректность",
+    "функциональная уместность",
+  ],
+  производительность: [
+    "временные характеристики",
+    "использование ресурсов",
+    "ёмкость",
+  ],
+  совместимость: ["сосуществование", "способность к взаимодействию"],
+  "взаимодействие с пользователем": [
+    "узнаваемость пригодности",
+    "обучаемость",
+    "управляемость",
+    "защита от ошибки пользователя",
+    "вовлечённость",
+    "инклюзивность",
+    "помощь пользователю",
+    "самоописательность",
+  ],
+  надёжность: [
+    "безотказность",
+    "доступность",
+    "устойчивость к отказам",
+    "восстанавливаемость",
+  ],
+  безопасность: [
+    "конфиденциальность",
+    "целостность",
+    "неотказуемость",
+    "подотчётность",
+    "подлинность",
+    "стойкость",
+  ],
+  сопровождаемость: [
+    "модульность",
+    "повторная используемость",
+    "анализируемость",
+    "изменяемость",
+    "тестируемость",
+  ],
+  гибкость: [
+    "адаптируемость",
+    "масштабируемость",
+    "устанавливаемость",
+    "заменяемость",
+  ],
+  безвредность: [
+    "эксплуатационные ограничения",
+    "выявление рисков",
+    "безопасный отказ",
+    "предупреждение об опасности",
+    "безопасная интеграция",
+  ],
+};
+const QUALITY_CHARACTERISTICS = Object.keys(QUALITY_SUBCHARACTERISTICS);
 const QUALITY_MAP_HEADING =
   "| Характеристика | Разделы и критерии планки | Вне планки и чем держится |";
+/** Второй уровень карты — подхарактеристики модели — лежит таблицей в
+ * обосновании планки: на каждую правку кода его не читают, а сверке и
+ * режиму `bar-hold` он нужен целиком. */
+const QUALITY_SUBMAP_HEADING =
+  "| Характеристика | Подхарактеристика | Критерии планки | Вне планки и чем держится |";
+/** Строки второго уровня карты: характеристика, подхарактеристика,
+ * названные разделы и критерии, третья графа. `null` — таблицы нет. */
+const qualitySubMap = () => {
+  const at = shelfAt("rationale/quality.md");
+  if (at === null || !existsSync(at)) return null;
+  const NEWLINE = String.fromCharCode(10);
+  const lines = readFileSync(at, "utf8").split(NEWLINE);
+  const head = lines.findIndex((l) => l.trim() === QUALITY_SUBMAP_HEADING);
+  if (head < 0) return null;
+  const { rows, problem } = tableAfter(lines, head);
+  return {
+    problem,
+    rows: rows.map((row) => {
+      const [char, sub, held, outside] = row
+        .split("|")
+        .slice(1, -1)
+        .map((c) => c.trim());
+      return {
+        char,
+        sub,
+        named:
+          held === "—"
+            ? []
+            : held.split(",").map((s) => s.trim().replace(/^`|`$/g, "")),
+        outside: outside ?? "",
+      };
+    }),
+  };
+};
 
 const CHECK_SECTIONS = [
   "Покрытие карты",
@@ -14653,6 +14734,31 @@ if (mode === "bar-hold") {
     "  «Чисто» по форме вне держателя стоит на чтении: формы печатаются на",
   );
   console.log("  странице критерия, которую сессия читает, судя.");
+  // Подхарактеристика модели качества держится тем же, чем её критерии:
+  // опора вычисляется из матрицы выше, а не записывается второй раз.
+  const subMap = qualitySubMap();
+  if (subMap !== null) {
+    console.log("=== Подхарактеристики ISO/IEC 25010: самая сильная опора ===");
+    console.log("| характеристика | подхарактеристика | критерии | опора |");
+    console.log("| --- | --- | --- | --- |");
+    for (const r of subMap.rows) {
+      const held = r.named.flatMap((one) =>
+        /^[A-Z]$/.test(one)
+          ? all.filter((c) => c.id.startsWith(one))
+          : all.filter((c) => c.id === one),
+      );
+      const grips = held.map((c) => barGripOf(c.id + "|" + (c.slogan ? "лозунг" : "")));
+      const tier =
+        r.named.length === 0
+          ? "вне планки"
+          : (BAR_TIERS.find(([, gs]) => grips.some((g) => gs.includes(g)))?.[0] ??
+            "лозунг");
+      console.log(
+        "| " + r.char + " | " + r.sub + " | " +
+          (r.named.length === 0 ? "—" : r.named.join(", ")) + " | " + tier + " |",
+      );
+    }
+  }
   const ids = new Set(all.map((c) => c.id));
   const named = new Set([
     ...BAR_SIGNALS.flatMap((s) => s.ids),
@@ -22035,6 +22141,7 @@ if (mode === "verify") {
         const { rows, problem } = tableAfter(lines, at);
         if (problem !== null) qualityMapDrift.push(problem);
         const seen = new Set();
+        const level1 = new Map();
         for (const row of rows) {
           qualityMapRows += 1;
           const [name, held, outside] = row
@@ -22047,6 +22154,7 @@ if (mode === "verify") {
             qualityMapDrift.push(`«${name}»: строка задвоена`);
           seen.add(name);
           const named = held === "—" ? [] : held.split(",").map((s) => s.trim());
+          level1.set(name, named);
           for (const one of named)
             if (!letters.has(one) && !ids.has(one))
               qualityMapDrift.push(
@@ -22060,6 +22168,65 @@ if (mode === "verify") {
         for (const name of QUALITY_CHARACTERISTICS)
           if (!seen.has(name))
             qualityMapDrift.push(`«${name}»: строки в карте нет`);
+        // Второй уровень: строка на каждую подхарактеристику, и критерии
+        // сходятся с первым уровнем в обе стороны — иначе две таблицы
+        // описывали бы планку по-разному.
+        const sub = qualitySubMap();
+        if (sub === null)
+          qualityMapDrift.push(
+            `таблица подхарактеристик в обосновании не найдена: ${QUALITY_SUBMAP_HEADING}`,
+          );
+        else {
+          if (sub.problem !== null) qualityMapDrift.push(sub.problem);
+          const letterOf = (one) => (/^[A-Z]/.exec(one) ?? [""])[0];
+          const subSeen = new Set();
+          const used = new Map();
+          for (const r of sub.rows) {
+            qualityMapRows += 1;
+            const where = `«${r.char} / ${r.sub}»`;
+            const subs = QUALITY_SUBCHARACTERISTICS[r.char];
+            if (subs === undefined) {
+              qualityMapDrift.push(`${where}: такой характеристики в модели нет`);
+              continue;
+            }
+            if (!subs.includes(r.sub)) {
+              qualityMapDrift.push(`${where}: такой подхарактеристики у неё в модели нет`);
+              continue;
+            }
+            if (subSeen.has(r.char + "/" + r.sub))
+              qualityMapDrift.push(`${where}: строка задвоена`);
+            subSeen.add(r.char + "/" + r.sub);
+            const top = level1.get(r.char) ?? [];
+            for (const one of r.named) {
+              if (!letters.has(one) && !ids.has(one))
+                qualityMapDrift.push(
+                  `${where}: ${one} — ни раздела, ни критерия с таким именем в планке нет`,
+                );
+              else if (!top.includes(one) && !top.includes(letterOf(one)))
+                qualityMapDrift.push(
+                  `${where}: ${one} не назван строкой «${r.char}» первого уровня`,
+                );
+              const mine = used.get(r.char) ?? new Set();
+              mine.add(one);
+              mine.add(letterOf(one));
+              used.set(r.char, mine);
+            }
+            if (r.named.length === 0 && !r.outside.startsWith("вне планки"))
+              qualityMapDrift.push(
+                `${where}: критериев не названо, а последняя графа не говорит «вне планки»`,
+              );
+          }
+          for (const [char, subs] of Object.entries(QUALITY_SUBCHARACTERISTICS))
+            for (const one of subs)
+              if (!subSeen.has(char + "/" + one))
+                qualityMapDrift.push(`«${char} / ${one}»: строки во втором уровне нет`);
+          for (const [char, named] of level1)
+            for (const one of named)
+              if (!(used.get(char) ?? new Set()).has(one))
+                qualityMapDrift.push(
+                  `«${char}»: ${one} назван первым уровнем, а ни одной подхарактеристикой — нет`,
+                );
+        }
       }
     }
   }

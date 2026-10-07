@@ -1394,6 +1394,56 @@ describe("применимость разделов видит пакеты в �
   }, 240000);
 });
 
+describe("карта качества сверяется и на втором уровне", () => {
+  it("подхарактеристика без строки, критерий чужой характеристики и имя первого уровня без подхарактеристики роняют сверку, а bar-hold печатает опору", () => {
+    const box = seatEmpty("iso-sub-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Характеристика качества названа в планке") ?? []).join("\n");
+      const at = path.join(box, ".claude", "rationale", "quality.md");
+      const was = fs.readFileSync(at, "utf8");
+      const plant = (from, to) => {
+        expect(was).toContain(from);
+        fs.writeFileSync(at, was.replace(from, to));
+        const out = said();
+        fs.writeFileSync(at, was);
+        return out;
+      };
+      expect(said()).toBe("");
+      expect(
+        plant(
+          "| производительность | ёмкость | `G6-бис`, `G9` |",
+          "| производительность | всплеск | `G6-бис`, `G9` |",
+        ),
+      ).toContain("«производительность / ёмкость»: строки во втором уровне нет");
+      expect(
+        plant(
+          "| управляемость | `P1`, `P2`, `P3-бис`, `P4-бис` |",
+          "| управляемость | `P1`, `P2`, `P3-бис`, `P4-бис`, `N2` |",
+        ),
+      ).toContain("N2 не назван строкой «взаимодействие с пользователем» первого уровня");
+      expect(
+        plant("| сосуществование | `O1`, `O2-бис`, `R2` |", "| сосуществование | `O1`, `O2-бис` |"),
+      ).toContain("«совместимость»: R2 назван первым уровнем, а ни одной подхарактеристикой — нет");
+      let hold;
+      try {
+        hold = execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar-hold"], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (e) {
+        hold = String(e.stdout ?? "");
+      }
+      expect(hold).toContain("=== Подхарактеристики ISO/IEC 25010: самая сильная опора ===");
+      expect(hold).toContain("| производительность | ёмкость | G6-бис, G9 |");
+      expect(hold).toContain("| безвредность | безопасный отказ | — | вне планки |");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 describe("ревизия сводов по истории", () => {
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
