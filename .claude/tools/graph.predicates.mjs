@@ -2760,7 +2760,14 @@ const OUTSIDE_KINDS = [
     /\bnew\s+FileReader\s*\(|\.\s*dataTransfer\b|\btarget\s*\.\s*files\b|\bshowOpenFilePicker\s*\(/g,
   ],
   ["буфер обмена", /\bnavigator\s*\.\s*clipboard\b/g],
+  [
+    "данные маршрута",
+    /\buse(?:Route)?LoaderData\s*\(|\buse(?:ActionData|AsyncValue|Fetcher)\s*\(/g,
+  ],
 ];
+/** Подписка на сообщение: имя события стоит строкой, и код без строк его не
+ * показывает — образец читают по коду, где строки на месте. */
+const MESSAGE_LISTEN = /\baddEventListener\s*\(\s*["']message["']/g;
 /** Запись наружу: повтор её удваивает, а многошаговая — расходится. */
 const WRITE_KINDS = [
   ["сеть", /\baxios\s*\.\s*(?:post|put|patch|delete)\s*\(/g],
@@ -2808,6 +2815,7 @@ export const SCOPE_LINE_KINDS = [
     kind,
     once(re),
   ]),
+  ["K", "подписка на сообщение", once(MESSAGE_LISTEN)],
   ["L", "ожидание ответа", SUBJECT_ASYNC],
   ["L", "таймеры и наблюдатели", SCOPE_TIMERS],
   [
@@ -3018,7 +3026,7 @@ const codeSignalsOf = (file, text, own) => {
       outsideKinds.add(mark);
       if (reached < 0 || m.index < reached) reached = m.index;
     });
-  each(/addEventListener\s*\(\s*["']message["']/g, plain, (m) => {
+  each(MESSAGE_LISTEN, plain, (m) => {
     at("внешнее", m.index, "message", "сообщение");
     outsideKinds.add("сообщение");
   });
@@ -4842,6 +4850,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const a = sessionStorage.getItem(k);\nexport const b = indexedDB.open(name);\nexport const c = document.cookie;\nexport const d = caches.open(name);\nexport const e = caches.match(request);\nexport const f = caches.keys();\nexport const g = caches.delete(name);", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;5:внешнее/хранилище;6:внешнее/хранилище;7:внешнее/хранилище"],
   ["signalsSummary", "src/a.ts\nexport const a = location.hash;\nexport const b = location.href;\nexport const c = location.pathname;\nexport const d = useSearchParams();\nexport const e = useParams();\nexport const f = useLocation();", "1:внешнее/адрес;2:внешнее/адрес;3:внешнее/адрес;4:внешнее/адрес;5:внешнее/адрес;6:внешнее/адрес"],
   ["signalsSummary", "src/a.ts\nworker.postMessage(data);\nworker.onmessage = onMessage;", "1:внешнее/сообщение;2:внешнее/сообщение"],
+  ["signalsSummary", "src/a.ts\nexport const a = useLoaderData();\nexport const b = useActionData();", "1:внешнее/данные маршрута;2:внешнее/данные маршрута"],
   ["signalsSummary", "src/a.ts\naxios.post(url, body);\naxios.put(url, body);\naxios.patch(url, body);\naxios.delete(url);", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;4:внешнее/сеть;1:запись/сеть;2:запись/сеть;3:запись/сеть;4:запись/сеть"],
   ["signalsSummary", "src/a.ts\nsessionStorage.setItem(k, v);\nlocalStorage.removeItem(k);\nlocalStorage.clear();\ndocument.cookie = line;", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;1:запись/хранилище;2:запись/хранилище;3:запись/хранилище;4:запись/хранилище"],
   ["signalsSummary", "src/a.ts\nawait fetch(url, { method: \"PUT\" });\nawait fetch(url, { method: \"PATCH\" });\nawait fetch(url, { method: \"DELETE\" });", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;1:запись/сеть;2:запись/сеть;3:запись/сеть"],
@@ -5026,6 +5035,15 @@ export const PREDICATE_CASES = [
   ["scopeKindsOfLine", "const picked = e.target.files;", "K/файл"],
   ["scopeKindsOfLine", "const handles = showOpenFilePicker();", "K/файл"],
   ["scopeKindsOfLine", "navigator.clipboard.writeText(text);", "K/буфер обмена"],
+  ["scopeKindsOfLine", "const item = useLoaderData();", "K/данные маршрута"],
+  ["scopeKindsOfLine", "const root = useRouteLoaderData(\"root\");", "K/данные маршрута"],
+  ["scopeKindsOfLine", "const errors = useActionData();", "K/данные маршрута"],
+  ["scopeKindsOfLine", "const reviews = useAsyncValue();", "K/данные маршрута"],
+  ["scopeKindsOfLine", "const fetcher = useFetcher();", "K/данные маршрута"],
+  ["scopeKindsOfLine", "const loaderData = props.data;", ""],
+  ["scopeKindsOfLine", "window.addEventListener(\"message\", onMessage);", "K/подписка на сообщение"],
+  ["scopeKindsOfLine", "window.addEventListener('message', onMessage);", "K/подписка на сообщение"],
+  ["scopeKindsOfLine", "window.addEventListener(\"messageerror\", onBroken);", ""],
   ["scopeKindsOfLine", "promise.then(done);", "L/ожидание ответа"],
   ["scopeKindsOfLine", "setTimeout(tick, delayMs);", "L/таймеры и наблюдатели"],
   ["scopeKindsOfLine", "setInterval(tick, delayMs);", "L/таймеры и наблюдатели"],
