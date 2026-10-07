@@ -115,9 +115,10 @@ code its quality:
 
 The quality bar is the list every piece of work on code is checked against:
 new code, a fix, a refactor, a review. Each criterion is a question to the diff
-with a sign you can see, not a principle to agree with: "single
-responsibility" becomes *describing the file needs the word "and"*; "single
-source of truth" becomes *a value derived from another is stored next to it*.
+with a sign you can see, not a principle to agree with. The criteria come from
+three places: design principles translated into observable signs; a coverage
+map against ISO/IEC 25010 — a map, not a claim of compliance; and cases — a
+defect that slipped through adds the sign it should have been caught by.
 
 ### Flat and vertical
 
@@ -137,74 +138,10 @@ up. So the bar checks every edit in two directions:
   each resource, the data flow, the consumers beyond the edit and the test
   that reaches through each.
 
-```mermaid
-flowchart BT
-  subgraph F [Flat: line by line]
-    U["Unit — the lines of the diff<br>edge inputs, errors, types,<br>names, numbers, wasted work"]
-  end
-  subgraph V [Vertical: level by level]
-    direction BT
-    N["Node — a file or a component folder<br>one question, its surface,<br>its state and resources"]
-    L["Layer — modules of one role<br>import direction, cycles,<br>entry points bypassed"]
-    A["Application — the whole<br>sources of truth, writers, data flow,<br>consumers beyond the edit"]
-    N --> L --> A
-  end
-  U --> N
-```
-
-A pass at one level does not make up for a failure at another. Every
-criterion carries its level, every node and layer the edit touched gets its
-own row, and every shift the edit made at any level — a new name in the
-surface, a new edge, a new state, a new cycle — must get an answer. Around
-that, the edit is compared with its neighbours in the graph, and anything new
-— a new state, a new file — with the whole project: a second source of truth
-usually appears without importing the first one.
-
-### What the bar asks
-
-**The core applies to any code:**
-
-| Section | What it asks, for example |
-| --- | --- |
-| A. Boundaries | does a module answer one question; is a decision made where the knowledge is; do imports follow the layer direction on the real import graph; are there cycles |
-| B. Contracts | a boolean argument is almost always a defect; a module takes only what it needs; internals do not leak; an implementation honours the whole contract |
-| C. State, time and render | impossible states cannot be expressed; one source of truth and one writer; derived values are computed, not stored; render is pure; a stale result never overwrites a fresh one |
-| D. Types | strict mode; no casts to silence the compiler; `unknown`, not `any`, at the boundary; values that mean different things have different types |
-| E. Failures and edge inputs | no swallowed error; guards hold on `NaN`, zero and empty; a partial failure is its own case; every exit cleans up |
-| F. Resources | every listener, timer and subscription has one owner and is released on every exit |
-| G. Performance | wasted work is a defect like a wrong result; hot paths are measured, not guessed; budgets are named in numbers |
-| H. Line by line | no magic numbers; values carry units; a name says what and when; no dead code; an abstraction reduces complexity instead of moving it |
-| I. Evolution | a new capability has a natural place; an implementation can be replaced without touching its consumers |
-| J. Testability | a test can fail; mutation testing; behaviour is tested, not internals; the expected value does not come from the code under test |
-
-**Sections by applicability** — external data, async and concurrency, the
-framework's render model, animation, styles, accessibility, security,
-dependencies and delivery, observability, internationalisation, the CI
-pipeline — are read only where the project has their subject. Each is declared
-live or not applicable with a reason, and a section declared not applicable
-while the tool finds its subject on disk fails the run.
-
-### How the bar is held
-
-- **An answer per criterion, with evidence.** `bar` prints a row for every
-  live criterion. The answer is "clean", "no subject" with a reason, or
-  "found" with an address and what happens to it. A "clean" on an
-  architectural criterion names the fact it rests on; a judgement — one
-  responsibility, the right boundary, an honest name — is answered part by
-  part, not with one word. The seal is set only when every row is answered, on
-  the final form of the work.
-- **Doubt counts as a defect.** Having to explain why a violation is fine here
-  means the criterion is not met. A deliberate departure is a decision record
-  with its price and what was done instead.
-- **Found means fixed.** On a task that changes code, everything the bar finds
-  in the area read — a bug, a weak type, a swallowed error, a race, a leak,
-  dead code, a second source of truth, wasted work — is fixed in the same
-  pass, as a class, however much there is. On a review it is named and
-  proposed instead.
-- **Where the criteria come from.** Design principles translated into
-  observable signs; a coverage map against ISO/IEC 25010 — a map, not a claim
-  of compliance; and cases: a defect that slipped through adds the sign it
-  should have been caught by.
+A good result at one level does not cover a bad one at another: every level
+gets its own answer. And anything new is compared not only with its
+neighbours but with the whole project: a second source of truth usually
+appears where nobody knew about the first one.
 
 Line-level criteria bring the work towards what is called senior-level
 implementation, architectural ones towards enterprise-level architecture.
@@ -217,19 +154,6 @@ Every obligation in the harness names what holds it: a check, a gate, a hook
 or a test. Where no machine support exists, that is written down plainly, and
 a separate summary collects such places: they stay visible instead of being
 forgotten.
-
-| What is guaranteed | What holds it |
-| --- | --- |
-| code is checked against the quality bar | `bar`: a protocol with an answer for every live criterion, line by line and on every level — node, layer, application — and a seal; an edit after the seal removes it |
-| unchecked code does not enter history | a pre-commit git hook, the quality gate: code without a seal is refused; bypassing the gate is caught by a guard and a history audit |
-| the agent does not drop work halfway | a Claude Code end-of-turn hook: an edit to code without a seal keeps the turn from ending |
-| every edit brings its tests | `tested`: each changed code file against the tests that run it; `mutated`: files never measured by mutation testing, or changed since |
-| the linters are not quietly weakened | strict TypeScript and strict lint rule sets arrive with seating; a rule switched off in the lint config without a record fails the run |
-| a promised behaviour stays held | the guarantees table: each promise has a source, the nodes that carry it and a named test; a guarantee whose test is gone fails the run |
-| the knowledge base matches the code | `verify`: a file without a record, a record of a missing file, a shifted anchor, a renamed identifier — the run exits non-zero |
-| the docs follow the code | `verify`: a dead anchor, a decision nobody references, a path that does not exist, a setting without its explanation; `tested` names the documents of every touched file |
-| the checks really catch | `falsify`: every check has a recipe that breaks its subject, or a test that does; a check that stays green is itself broken |
-| the rulebook does not sprawl | a size budget for the rules: a new rule names what it displaces |
 
 ```mermaid
 flowchart TD
