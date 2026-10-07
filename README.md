@@ -143,11 +143,6 @@ gets its own answer. And anything new is compared not only with its
 neighbours but with the whole project: a second source of truth usually
 appears where nobody knew about the first one.
 
-Line-level criteria bring the work towards what is called senior-level
-implementation, architectural ones towards enterprise-level architecture.
-Neither term is a measure — the list is, and a report says "passed the bar"
-with the seal's fingerprint, not "senior code".
-
 ## How it works
 
 Every obligation in the harness names what holds it: a check, a gate, a hook
@@ -301,14 +296,13 @@ rm -rf tmp
 
 Then, in Claude Code, inside the project:
 
-- **«посади обвязку»** ("seat the harness") — the assistant lays out the
-  configs, the knowledge base, the gates and the checks, and runs them,
-  following `.claude/seat/seat.md`;
-- **«делаем переход»** ("let's transition") — in a project that already has
-  code, after seating: the assistant reads all of the code, builds the
-  knowledge base and the docs, and records everything where the project
-  departs from the rules and the quality bar as debt with a plan. The code
-  itself is not changed.
+- **"Seat the harness"** — the assistant lays out the configs, the knowledge
+  base, the gates and the checks, and runs them, following
+  `.claude/seat/seat.md`;
+- **"Run the transition"** — in a project that already has code, after
+  seating: the assistant reads all of the code, builds the knowledge base and
+  the docs, and records everything where the project departs from the rules
+  and the quality bar as debt with a plan. The code itself is not changed.
 
 If the project already has a `.claude` folder, copying does not wipe it: the
 harness appends its permissions to your settings file. Check other matching
