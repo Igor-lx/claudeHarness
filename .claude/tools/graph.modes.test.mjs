@@ -7319,12 +7319,14 @@ describe("вид поля настройки — у чисел, строк и с
       const seed = fs.readFileSync(at, "utf8");
       const run = () => {
         try {
-          execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
-            cwd: box,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          return { code: 0, out: "" };
+          return {
+            code: 0,
+            out: execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            }),
+          };
         } catch (e) {
           return { code: e.status, out: String(e.stdout ?? "") };
         }
@@ -7340,6 +7342,21 @@ describe("вид поля настройки — у чисел, строк и с
       expect(unknown.code).toBe(2);
       expect(unknown.out).toContain("=== ВИД ПОЛЯ НАСТРОЙКИ НЕ ОБЪЯВЛЕН ===");
       expect(unknown.out).toContain("поле:  zzUnknown");
+      // Поле, которое инструмент читает в двух видах, принимает оба: деревьев
+      // исходников несколько — список, и прогон доходит до сверки деревьев.
+      expect(seed).toMatch(/^ {2}src: "\.\.\/src",$/m);
+      for (const rel of ["zzLib/zzLib.ts", "zzSide/zzSide.ts"]) {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), "export const zz = 1;\n");
+      }
+      fs.writeFileSync(at, seed.replace(/^( {2}src: )"\.\.\/src",$/m, '$1["../src", "../zzLib"],'));
+      const trees = run();
+      expect(trees.out).not.toContain("НАСТРОЙКА ЗАДАНА НЕВЕРНО");
+      expect(trees.out).toContain("zzSide/zzSide.ts — код вне объявленных деревьев");
+      fs.writeFileSync(at, seed.replace(/^( {2}src: )"\.\.\/src",$/m, '$1["../src", 3],'));
+      const mixed = run();
+      expect(mixed.code).toBe(2);
+      expect(mixed.out).toContain("поле:    src");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
