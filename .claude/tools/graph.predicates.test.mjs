@@ -306,6 +306,33 @@ describe("держатель «линт» и семя конфига линта"
   }, 180000);
 });
 
+/**
+ * Обращение к имени, которого нет, роняет ветку только у того, кто в неё
+ * попал: правка, снявшая местное выражение, оставила второе обращение к нему,
+ * и режимы `levels` и `bar` падали на любом проекте с единицей переноса.
+ * Модули инструмента читаются линтом посадки одним правилом.
+ */
+describe("код инструмента", () => {
+  it("каждое имя, на которое ссылается модуль инструмента, объявлено", async () => {
+    const { ESLint } = await import("eslint");
+    const { default: globals } = await import("globals");
+    const lint = new ESLint({
+      cwd: path.dirname(fileURLToPath(import.meta.url)),
+      overrideConfigFile: true,
+      overrideConfig: {
+        languageOptions: { ecmaVersion: "latest", sourceType: "module", globals: globals.node },
+        rules: { "no-undef": "error" },
+      },
+    });
+    const results = await lint.lintFiles(["*.mjs"]);
+    expect(results.map((r) => path.basename(r.filePath))).toContain("graph.mjs");
+    const undeclared = results.flatMap((r) =>
+      r.messages.map((m) => path.basename(r.filePath) + ":" + m.line + ": " + m.message),
+    );
+    expect(undeclared).toEqual([]);
+  }, 180000);
+});
+
 describe("inComment", () => {
   // Своя группа: предикат берёт не путь, а строку и позицию, и таблицей путей
   // его не выразить.

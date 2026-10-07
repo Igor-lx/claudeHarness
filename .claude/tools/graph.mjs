@@ -9612,7 +9612,7 @@ const foreignInside = (from, to) => {
       nodeFile &&
       !files.some((f) => {
         const r = rel(f);
-        return r.startsWith(unit) && entry.test(r.slice(unit.length));
+        return r.startsWith(unit) && INDEX_FILE.test(r.slice(unit.length));
       })
     );
   }
