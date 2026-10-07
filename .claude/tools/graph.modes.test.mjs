@@ -1319,9 +1319,10 @@ describe("применимость разделов видит пакеты в �
   it("подарок полки в коде, переход по адресу страницы и конфиг площадки включают свои разделы", () => {
     const box = seatEmpty("primen-");
     try {
+      const said = () =>
+        (verifyIn(box).get("Применимость разделов планки") ?? []).join("\n");
       const drift = () =>
-        (verifyIn(box).get("Применимость разделов планки") ?? [])
-          .join("\n")
+        said()
           .match(/предмет на диске есть: [K-U]/g)
           ?.map((one) => one.slice(-1))
           .sort()
@@ -1335,34 +1336,62 @@ describe("применимость разделов видит пакеты в �
         "src/shared/zzApi/zzApi.ts",
         'import axios from "axios";\n\nexport const zzApi = (id: string) => axios.get("/zz/" + id);\n',
       );
-      expect(drift()).toBe("K");
+      // Запрос асинхронен по определению: сеть оживляет и раздел асинхронности.
+      expect(drift()).toBe("KL");
+      expect(said()).toContain("L — следует из K (сеть): импорт `axios`");
       // Переход на постоянный адрес рядом с чтением адреса — не адрес снаружи.
       plant(
         "src/app/zzHome.tsx",
         'export const zzHome = (navigate: (to: string) => void) => {\n  const tab = new URLSearchParams(window.location.search).get("tab");\n  navigate("/home");\n  return tab;\n};\n',
       );
-      expect(drift()).toBe("K");
+      expect(drift()).toBe("KL");
       plant(
         "src/app/zzHello.tsx",
         'import { useTranslation } from "react-i18next";\n\nexport const ZzHello = () => {\n  const { t } = useTranslation();\n  return <p>{t("hello")}</p>;\n};\n',
       );
-      expect(drift()).toBe("KT");
+      expect(drift()).toBe("KLT");
       plant(
         "src/app/zzLogin.tsx",
         'export const zzLogin = () => {\n  const next = new URLSearchParams(window.location.search).get("next") ?? "/";\n  window.location.assign(next);\n};\n',
       );
-      expect(drift()).toBe("KQT");
+      expect(drift()).toBe("KLQT");
       plant("vercel.json", "{}\n");
-      expect(drift()).toBe("KQST");
+      expect(drift()).toBe("KLQST");
       plant(
         "src/app/zzDrag.tsx",
         "export const ZzDrag = ({ on }: { on: () => void }) => <div onPointerMove={on} style={{ width: 4 }} />;\n",
       );
-      expect(drift()).toBe("KNOQST");
+      expect(drift()).toBe("KLNOQST");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  it("адрес маршрута и обещание без async оживляют разделы, а расхождение называет свидетеля", () => {
+    const box = seatEmpty("primen-svid-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Применимость разделов планки") ?? []).join("\n");
+      const plant = (at, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, at)), { recursive: true });
+        fs.writeFileSync(path.join(box, at), text);
+      };
+      expect(said()).not.toContain("предмет на диске есть");
+      plant(
+        "src/app/zzItem.tsx",
+        'import { useParams } from "react-router";\n\nexport const ZzItem = () => {\n  const { id } = useParams();\n  return <p>{id}</p>;\n};\n',
+      );
+      expect(said()).toContain("предмет на диске есть: K — адрес: `useParams(`");
+      expect(said()).not.toContain("предмет на диске есть: L");
+      plant(
+        "src/shared/zzWait/zzWait.ts",
+        "export const zzWait = (next: { then: (f: (n: number) => number) => number }) =>\n  next.then((n) => n + 1);\n",
+      );
+      expect(said()).toContain("предмет на диске есть: L — ожидание ответа: `.then(`");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
 
 describe("ревизия сводов по истории", () => {

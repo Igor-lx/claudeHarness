@@ -88,6 +88,11 @@ import {
   firstCellOf,
   namesAddress,
   printedIsRed,
+  SCOPE_LINE_KINDS,
+  SCOPE_MODULE_KINDS,
+  SCOPE_PAIRED,
+  SCOPE_STYLE_KINDS,
+  scopesImplied,
   sectionsOf,
   selfCheck,
   touchesRuntime,
@@ -18628,15 +18633,6 @@ if (mode === "verify") {
       // адрес пространства имён в разметке значка предметом не являются, и на
       // них сверка кричала бы — а крикливой проверке перестают верить (J4).
       const code = files.filter((f) => !isMachinery(f) && !isTest(f));
-      const hasCode = (re) =>
-        code.some((f) =>
-          readFileSync(f, "utf8")
-            .split(NEWLINE)
-            .some((line) => {
-              const m = re.exec(line);
-              return m !== null && !inComment(line, m.index);
-            }),
-        );
       const manifest = path.join(BASE, "..", "package.json");
       const pkg = existsSync(manifest)
         ? JSON.parse(readFileSync(manifest, "utf8"))
@@ -18671,31 +18667,6 @@ if (mode === "verify") {
         ...(pkg.dependencies ?? {}),
         ...(pkg.devDependencies ?? {}),
       }).filter((d) => !shelfDeps.has(d));
-      const dep = (re) => deps.some((d) => re.test(d));
-      // Пакет, который код ВЗЯЛ, — предмет раздела, чей бы ни был пакет:
-      // подарок полки вычитается из манифеста, а не из кода. Прежде сеть по
-      // коду знала одни вызовы платформы, и запросы через `axios`, а строки
-      // через `i18next` — оба подарены полкой — разделов внешних данных и
-      // локализации не включали: замерено на стенде, разделы выпадали из
-      // протокола свода целиком, печать стояла.
-      const imports = (names) =>
-        new RegExp(
-          "(?:\\bfrom\\s+|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|^\\s*import\\s+)[\"'](?:" +
-            names +
-            ")[\"'/]",
-        );
-      // Два признака в одном файле: переход по значению и чтение адреса
-      // страницы — значение пришло снаружи.
-      const hasFileWith = (...res) =>
-        code.some((f) => {
-          const lines = readFileSync(f, "utf8").split(NEWLINE);
-          return res.every((re) =>
-            lines.some((line) => {
-              const m = re.exec(line);
-              return m !== null && !inComment(line, m.index);
-            }),
-          );
-        });
       // Выкладка видна не только скриптом: конфигом площадки, контейнером
       // и шагом конвейера. Скрипта `start` у семени на сборщике нет вовсе.
       const ciTexts = () => {
@@ -18719,8 +18690,8 @@ if (mode === "verify") {
         }
         return out;
       };
-      const deployed = () =>
-        [
+      const deployedBy = () => {
+        const at = [
           "vercel.json",
           "now.json",
           "netlify.toml",
@@ -18735,116 +18706,109 @@ if (mode === "verify") {
           "wrangler.toml",
           "firebase.json",
           "amplify.yml",
-        ].some((p) => existsSync(path.join(BASE, "..", p))) ||
-        ciTexts().some((t) =>
+        ].find((p) => existsSync(path.join(BASE, "..", p)));
+        if (at !== undefined) return `конфиг площадки \`${at}\``;
+        return ciTexts().some((text) =>
           /\b(?:deploy|gh-pages|vercel|netlify|wrangler|firebase deploy|s3 sync|azure\/webapps-deploy|cloudflare\/pages-action)\b/i.test(
-            t,
+            text,
           ),
+        )
+          ? "шаг выкладки в конвейере"
+          : null;
+      };
+      // Свидетель предмета — первый найденный на каждый раздел, по коду, по
+      // модулям, по листам стилей и по манифесту. Образцы — словарь области:
+      // внешнее и асинхронное там те же, по которым спрашивает модель свода.
+      // Свидетель печатается рядом с расхождением — без него неясно, что
+      // оживило раздел. Импорт в коде — свидетель, чей бы ни был пакет:
+      // подарок полки вычитается из манифеста, а не из кода. Замерено на
+      // стенде: запросы через `axios` и строки через `i18next`, оба подарены
+      // полкой, разделов внешних данных и локализации не включали.
+      let witnesses = null;
+      const witnessOf = (id) => {
+        if (witnesses !== null) return witnesses.get(id);
+        witnesses = new Map();
+        const note = (to, what) => {
+          if (!witnesses.has(to)) witnesses.set(to, what);
+        };
+        const kind = (to, sort, where) => {
+          note(to, `${sort}: ${where}`);
+          for (const next of scopesImplied(to + "/" + sort).split(";"))
+            if (next !== "") note(next, `следует из ${to} (${sort}): ${where}`);
+        };
+        const paired = new Set(
+          SCOPE_PAIRED.flatMap(([to, one, two]) => [
+            to + "/" + one,
+            to + "/" + two,
+          ]),
         );
-      // Признак ищется двумя сетями: по коду и по зависимостям. Вторая нужна
-      // потому, что предмет чаще всего приезжает библиотекой, а её имя известно
-      // заранее там, где выбор невелик: клиент запросов, обёртка хранилища,
-      // движок движения, набор локализации. Список закрытый и назван поимённо —
-      // угадывать он не пытается, а известное закрывает.
-      const hasMarkup = () => code.some((f) => /\.(tsx|jsx)$/.test(f));
-      // Третья сеть: СТИЛИ. Два признака анимации — объявление перехода и
-      // ключевые кадры — по природе живут в файлах стилей, а корпус выше держит
-      // только исполняемый текст. То есть сработать они не могли никогда, и
-      // проект, у которого вся анимация сделана классами, проходил как «анимации
-      // нет». Найдено вторым полигоном посадки.
-      const hasStyle = (re) =>
-        styleFiles.some((f) => re.test(readFileSync(f, "utf8")));
-      const probe = {
-        K: () =>
-          hasCode(
-            /\bfetch\s*\(|XMLHttpRequest|localStorage|sessionStorage|indexedDB|document\.cookie|URLSearchParams|useSearchParams|location\.(search|hash)|import\.meta\.env\.(?!DEV\b|PROD\b|MODE\b)|process\.env|\bnew\s+(?:WebSocket|EventSource)\b|\bnavigator\.sendBeacon\b|\b(?:createApi|fetchBaseQuery)\s*\(/,
-          ) ||
-          hasCode(
-            imports(
-              "axios|ky|got|superagent|ofetch|wretch|graphql-request|@apollo\\/client|urql|@urql\\/[\\w-]+|swr|@tanstack\\/[\\w-]*query[\\w-]*|socket\\.io-client|firebase|@firebase\\/[\\w-]+|@supabase\\/[\\w-]+|idb|idb-keyval|dexie|localforage|js-cookie",
-            ),
-          ) ||
-          dep(
-            /^(axios|ky|got|superagent|node-fetch|swr|@tanstack\/|idb|dexie|localforage|js-cookie|dotenv)/i,
-          ),
-        L: () =>
-          hasCode(
-            /\basync\s|\bawait\s|new Promise|setTimeout\(|setInterval\(|queueMicrotask\(|AbortController|requestAnimationFrame\(|requestIdleCallback\(/,
-          ),
-        M: hasMarkup,
-        N: () =>
-          hasCode(
-            new RegExp(
-              "\\brequestAnimationFrame\\s*\\(|\\.animate\\s*\\(|pointerdown|pointermove|touchstart|touchmove|mousemove|\\bon(?:Pointer|Mouse|Touch)Move\\b|\\bonWheel\\b|[\"']wheel[\"']",
-            ),
-          ) ||
-          hasStyle(new RegExp("@keyframes|transition\\s*:|animation\\s*:")) ||
-          dep(
-            /^(framer-motion|motion|gsap|react-spring|@react-spring|popmotion|anime|lottie|react-transition-group|react-transition-state)/i,
-          ),
-        O: () =>
-          styleFiles.length > 0 ||
-          hasCode(/\bstyle=\{\{/) ||
-          hasCode(
-            imports(
-              "styled-components|@emotion\\/[\\w-]+|@stitches\\/[\\w-]+|@vanilla-extract\\/[\\w-]+|@mui\\/[\\w-]+|@chakra-ui\\/[\\w-]+|goober|@linaria\\/[\\w-]+|styled-jsx|twin\\.macro",
-            ),
-          ) ||
-          dep(
-            /^(styled-components|@emotion|tailwindcss|stitches|vanilla-extract)/i,
-          ),
-        P: hasMarkup,
-        // Адрес пространства имён — не внешний адрес: он не загружается и никуда
-        // не ведёт. Исключение общее, а не про этот проект.
-        // Права и секреты — тот же раздел: удостоверение, роль, токен,
-        // переменная окружения с именем секрета.
-        Q: () =>
-          hasCode(
-            /dangerouslySetInnerHTML|\.innerHTML|\.outerHTML|insertAdjacentHTML|\beval\(|new Function\(|document\.write|https?:\/\/(?!www\.w3\.org)|\bAuthorization\b|\bBearer\s|\b(?:accessToken|refreshToken|idToken)\b|\b(?:isAdmin|hasRole|hasPermission|checkPermission)\b|\brole\s*[!=]==?\s*["'`]|\b(?:signIn|signOut|logIn|logOut|getSession)\s*\(|env\s*\.\s*\w*(?:SECRET|TOKEN|API_KEY|PASSWORD)/,
-          ) ||
-          dep(
-            /^(dompurify|sanitize-html|xss|marked|markdown-it|helmet|next-auth|@auth\/|firebase|@supabase\/|oidc-client|keycloak|passport|jsonwebtoken|jose|@clerk\/|auth0|@auth0\/|@okta\/|@azure\/msal)/i,
-          ) ||
-          // Переход по значению, прочитанному из адреса страницы, — тот
-          // самый адрес снаружи, о котором `Q2`: `?next=` уводит куда угодно.
-          hasFileWith(
-            /\b(?:location\.(?:assign|replace)|window\.open|navigate|router\.(?:push|replace)|redirect)\s*\(\s*(?!["'`\d-])[^\s)]|\blocation\.href\s*=\s*(?!["'`])[^\s=]/,
-            /\bURLSearchParams\b|\buseSearchParams\b|\buseParams\b|\blocation\.(?:search|hash)\b|\bdocument\.referrer\b/,
-          ),
-        R: () =>
-          script("build") ||
-          dep(/^(vite|webpack|rollup|esbuild|parcel|@rsbuild|turbopack)/i),
-        S: () =>
-          script("deploy") ||
-          script("start") ||
-          deployed() ||
-          hasCode(
-            imports(
-              "express|fastify|koa|hono|@nestjs\\/core|@remix-run\\/[\\w-]+|next|nuxt|astro",
-            ),
-          ) ||
-          dep(
-            /^(@sentry|@opentelemetry|pino|winston|loglevel|bugsnag|rollbar|web-vitals)/i,
-          ),
-        T: () =>
-          hasCode(/\bIntl\.[A-Z]/) ||
-          hasCode(
-            imports(
-              "i18next|react-i18next|react-intl|@lingui\\/[\\w-]+|next-intl|i18n-js|vue-i18n|@formatjs\\/[\\w-]+|node-polyglot|typesafe-i18n|rosetta",
-            ),
-          ) ||
-          dep(/(i18n|intl|locale|globalize|lingui|polyglot)/i),
-        U: () =>
-          [
-            ".github/workflows",
-            ".gitlab-ci.yml",
-            ".circleci",
-            ".drone.yml",
-            "azure-pipelines.yml",
-            "Jenkinsfile",
-            "bitbucket-pipelines.yml",
-            ".woodpecker.yml",
-          ].some((p) => existsSync(path.join(BASE, "..", p))),
+        const importOf =
+          /(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"']+)["']/;
+        for (const f of code) {
+          if (/\.(?:tsx|jsx)$/.test(f)) {
+            note("M", `разметка: ${rel(f)}`);
+            note("P", `разметка: ${rel(f)}`);
+          }
+          const seen = new Map();
+          readFileSync(f, "utf8")
+            .split(NEWLINE)
+            .forEach((line, i) => {
+              const where = `${rel(f)}:${i + 1}`;
+              for (const [to, sort, re] of SCOPE_LINE_KINDS) {
+                const m = re.exec(line);
+                const key = to + "/" + sort;
+                if (m !== null && !inComment(line, m.index) && !seen.has(key))
+                  seen.set(key, `\`${m[0].trim()}\` в ${where}`);
+              }
+              const taken = importOf.exec(line);
+              if (taken === null || inComment(line, taken.index)) return;
+              for (const [to, sort, re] of SCOPE_MODULE_KINDS) {
+                const key = to + "/" + sort;
+                if (re.test(taken[1]) && !seen.has(key))
+                  seen.set(key, `импорт \`${taken[1]}\` в ${where}`);
+              }
+            });
+          for (const [key, where] of seen) {
+            if (paired.has(key)) continue;
+            const cut = key.indexOf("/");
+            kind(key.slice(0, cut), key.slice(cut + 1), where);
+          }
+          for (const [to, one, two] of SCOPE_PAIRED) {
+            const first = seen.get(to + "/" + one);
+            const second = seen.get(to + "/" + two);
+            if (first !== undefined && second !== undefined)
+              kind(to, one, `${first} при ${second}`);
+          }
+        }
+        for (const f of styleFiles) {
+          note("O", `лист стилей: ${rel(f)}`);
+          readFileSync(f, "utf8")
+            .split(NEWLINE)
+            .forEach((line, i) => {
+              for (const [to, sort, re] of SCOPE_STYLE_KINDS)
+                if (re.test(line)) kind(to, sort, `${rel(f)}:${i + 1}`);
+            });
+        }
+        for (const d of deps)
+          for (const [to, sort, re] of SCOPE_MODULE_KINDS)
+            if (re.test(d)) kind(to, sort, `зависимость \`${d}\` в манифесте`);
+        if (script("build")) note("R", "скрипт `build` в манифесте");
+        for (const s of ["deploy", "start"])
+          if (script(s)) note("S", `скрипт \`${s}\` в манифесте`);
+        const deploy = deployedBy();
+        if (deploy !== null) note("S", deploy);
+        const ci = [
+          ".github/workflows",
+          ".gitlab-ci.yml",
+          ".circleci",
+          ".drone.yml",
+          "azure-pipelines.yml",
+          "Jenkinsfile",
+          "bitbucket-pipelines.yml",
+          ".woodpecker.yml",
+        ].find((p) => existsSync(path.join(BASE, "..", p)));
+        if (ci !== undefined) note("U", `описание конвейера \`${ci}\``);
+        return witnesses.get(id);
       };
       const declared = qualityScopeDeclared();
       if (declared === null) scopeDrift.push("таблицу применимости не нашли");
@@ -18862,9 +18826,10 @@ if (mode === "verify") {
             continue;
           }
           if (d.why === "") scopeDrift.push(`неприменим без причины: ${id}`);
-          if (probe[id] !== undefined && probe[id]())
+          const seen = witnessOf(id);
+          if (seen !== undefined)
             scopeDrift.push(
-              `объявлен неприменимым, а предмет на диске есть: ${id}`,
+              `объявлен неприменимым, а предмет на диске есть: ${id} — ${seen}`,
             );
         }
       }

@@ -1233,11 +1233,11 @@ const UNSEEN = {
   dynamic:
     "ребро через `import()` и `require` с адресом-значением либо шаблоном, чьё начало не путь, — граф видит адрес строкой и шаблон с постоянным путём в начале, а не значение переменной; такие места `dead`, `blast` и `brief` называют оговоркой",
   outside:
-    "внешнее, которого нет в образце: клиенты сети кроме `fetch` и `axios`, `navigator`, `matchMedia`, буфер обмена, чтение файла, ответ стороннего пакета — образец перечисляет вызовы, а не род",
+    "внешнее, которого нет в образце: клиенты сети кроме `fetch` и `axios`, `navigator` помимо буфера обмена, `matchMedia`, ответ стороннего пакета — образец перечисляет вызовы, а не род",
   wrapper:
     "внешнее через обёртку проекта, взятую импортом (`api.get`, `storage.read`), — обращение видно в обёртке, а в логике, которая её зовёт, его нет",
   network:
-    "сеть через клиент, которого нет в образце, — образец знает `fetch`, `axios`, `XMLHttpRequest`, `WebSocket`, `EventSource` и `sendBeacon`",
+    "сеть через клиент, которого нет в образце, — образец знает `fetch`, `axios`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` и `createApi`",
   resource:
     "ресурс, которого нет в образце: медиапоток, адрес объекта `URL.createObjectURL`, `BroadcastChannel`, соединение базы — образец перечисляет пары «захват — снятие»",
   // Те же пятна у критериев, которые держит и линт: его правила судят уборку
@@ -2727,23 +2727,36 @@ export const STATE_FORMS = [
 export const stateFormOf = (text) =>
   STATE_FORMS.find(([, re]) => re.test(text))?.[0] ?? "";
 
-/** Обращения наружу: пометка — род внешнего. */
+/** Обращения наружу: пометка — род внешнего. Флаги сборки (`DEV`, `PROD`,
+ * `MODE`, `SSR`, `BASE_URL`, `NODE_ENV`) — не вход снаружи: сборщик вшивает
+ * их постоянными. */
 const OUTSIDE_KINDS = [
   [
     "сеть",
-    /\bfetch\s*\(|\baxios\b(?:\s*\.\s*[a-z]+)?\s*\(|\bnew\s+(?:XMLHttpRequest|WebSocket|EventSource)\s*\(|\bnavigator\s*\.\s*sendBeacon\s*\(/g,
+    /\bfetch\s*\(|\baxios\b(?:\s*\.\s*[a-z]+)?\s*\(|\bnew\s+(?:XMLHttpRequest|WebSocket|EventSource)\s*\(|\bnavigator\s*\.\s*sendBeacon\s*\(|\b(?:createApi|fetchBaseQuery)\s*\(/g,
   ],
   [
     "хранилище",
-    /\b(?:localStorage|sessionStorage|indexedDB)\b|\bdocument\s*\.\s*cookie\b|\bcaches\s*\.\s*(?:open|match|keys|delete)\s*\(/g,
+    /\b(?:localStorage|sessionStorage|indexedDB)\b|\bdocument\s*\.\s*cookie\b|\bcaches\s*\.\s*(?:open|match|keys|delete)\s*\(|\bpersist\s*\(\s*\(|\b(?:persistReducer|createJSONStorage)\s*\(/g,
   ],
   [
     "адрес",
-    /\blocation\s*\.\s*(?:search|hash|href|pathname)\b|\bnew\s+URLSearchParams\s*\(|\buse(?:SearchParams|Params|Location)\s*\(/g,
+    /\blocation\s*\.\s*(?:search|hash|href|pathname)\b|\bnew\s+URLSearchParams\s*\(|\buse(?:SearchParams|Params|Location)\s*\(|\bdocument\s*\.\s*referrer\b/g,
   ],
-  ["окружение", /\bprocess\s*\.\s*env\b|\bimport\s*\.\s*meta\s*\.\s*env\b/g],
+  [
+    "окружение",
+    /\bprocess\s*\.\s*env\b(?!\s*\.\s*NODE_ENV\b)|\bimport\s*\.\s*meta\s*\.\s*env\b(?!\s*\.\s*(?:DEV|PROD|MODE|SSR|BASE_URL)\b)/g,
+  ],
   ["разбор", /\bJSON\s*\.\s*parse\s*\(/g],
-  ["сообщение", /\bpostMessage\s*\(|\.\s*onmessage\b/g],
+  [
+    "сообщение",
+    /\bpostMessage\s*\(|\.\s*onmessage\b|\bnew\s+(?:BroadcastChannel|MessageChannel)\s*\(/g,
+  ],
+  [
+    "файл",
+    /\bnew\s+FileReader\s*\(|\.\s*dataTransfer\b|\btarget\s*\.\s*files\b|\bshowOpenFilePicker\s*\(/g,
+  ],
+  ["буфер обмена", /\bnavigator\s*\.\s*clipboard\b/g],
 ];
 /** Запись наружу: повтор её удваивает, а многошаговая — расходится. */
 const WRITE_KINDS = [
@@ -2768,6 +2781,128 @@ const SECRET_SHIPPED =
  * закрытый ключ. */
 const SECRET_LITERAL =
   /["'`](?:sk_live_|sk_test_|rk_live_|ghp_|gho_|github_pat_|xox[bap]-|AKIA[0-9A-Z]{16})[^"'`]*["'`]|-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+/** Предмет разделов планки по применимости — в строке кода, в имени модуля
+ * и в листе стилей. Раздел по применимости оживает, когда его предмет найден
+ * на диске; первый найденный свидетель печатается рядом с расхождением.
+ *
+ * Внешнее и асинхронное здесь — те же образцы, по которым модель свода
+ * задаёт свои вопросы. Прежде у распознавания применимости была своя,
+ * более узкая редакция тех же предметов: раздел не оживал на коде, который
+ * модель уже числила внешним или асинхронным, — `fetch(...).then(...)` без
+ * `async`, `useParams`. Строка — раздел, вид предмета, образец. */
+const SCOPE_TIMERS =
+  /\bset(?:Timeout|Interval|Immediate)\s*\(|\brequestAnimationFrame\s*\(|\bnew\s+(?:Resize|Intersection|Mutation)Observer\b/;
+/** Переход по значению, а не по постоянному адресу. */
+const NAV_BY_VALUE =
+  /\b(?:location\.(?:assign|replace)|window\.open|navigate|router\.(?:push|replace)|redirect)\s*\(\s*(?!["'`\d-])[^\s)]|\blocation\.href\s*=\s*(?!["'`])[^\s=]/;
+/** Чтение адреса страницы — откуда значение перехода пришло снаружи. */
+const NAV_SOURCE =
+  /\bURLSearchParams\b|\buseSearchParams\b|\buseParams\b|\blocation\.(?:search|hash)\b|\bdocument\.referrer\b/;
+const once = (re) => new RegExp(re.source, re.flags.replace("g", ""));
+export const SCOPE_LINE_KINDS = [
+  ...OUTSIDE_KINDS.filter(([kind]) => kind !== "разбор").map(([kind, re]) => [
+    "K",
+    kind,
+    once(re),
+  ]),
+  ["L", "ожидание ответа", SUBJECT_ASYNC],
+  ["L", "таймеры и наблюдатели", SCOPE_TIMERS],
+  [
+    "N",
+    "кадры и указатель",
+    /\brequestAnimationFrame\s*\(|\.animate\s*\(|pointerdown|pointermove|touchstart|touchmove|mousemove|\bon(?:Pointer|Mouse|Touch)Move\b|\bonWheel\b|["']wheel["']/,
+  ],
+  ["O", "стиль в разметке", /\bstyle=\{/],
+  [
+    "Q",
+    "вставка разметки",
+    /dangerouslySetInnerHTML|\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write/,
+  ],
+  ["Q", "исполнение строки", /\beval\(|new Function\(/],
+  ["Q", "внешний адрес", /https?:\/\/(?!www\.w3\.org)/],
+  [
+    "Q",
+    "права и удостоверение",
+    /\bAuthorization\b|\bBearer\s|\b(?:accessToken|refreshToken|idToken)\b|\b(?:isAdmin|hasRole|hasPermission|checkPermission)\b|\brole\s*[!=]==?\s*["'`]|\b(?:signIn|signOut|logIn|logOut|getSession)\s*\(/,
+  ],
+  ["Q", "секрет в окружении", /env\s*\.\s*\w*(?:SECRET|TOKEN|API_KEY|PASSWORD)/],
+  ["Q", "переход по значению", NAV_BY_VALUE],
+  ["Q", "адрес перехода", NAV_SOURCE],
+  ["T", "форматирование по региону", /\bIntl\.[A-Z]/],
+];
+/** Виды, которые считаются свидетелем только вдвоём в одном файле: переход
+ * по значению — адрес снаружи, когда тот же файл читает адрес страницы. */
+export const SCOPE_PAIRED = [["Q", "переход по значению", "адрес перехода"]];
+/** Модуль — импортом в коде или зависимостью, которую проект дописал сам. */
+export const SCOPE_MODULE_KINDS = [
+  [
+    "K",
+    "сеть",
+    /^(?:axios|ky|got|superagent|ofetch|wretch|node-fetch|graphql-request|urql|swr|socket\.io-client|firebase)(?:\/|$)|^@(?:apollo\/client|urql|firebase|supabase)\b|^@tanstack\/[\w-]*query|^@reduxjs\/toolkit\/query/,
+  ],
+  [
+    "K",
+    "хранилище",
+    /^(?:idb|idb-keyval|dexie|localforage|js-cookie|redux-persist)(?:\/|$)/,
+  ],
+  ["K", "окружение", /^dotenv(?:\/|$)/],
+  [
+    "N",
+    "движок движения",
+    /^(?:framer-motion|motion|gsap|react-spring|@react-spring|popmotion|anime|lottie|react-transition-group|react-transition-state)/i,
+  ],
+  [
+    "O",
+    "стили в коде",
+    /^(?:styled-components|goober|styled-jsx|twin\.macro|tailwindcss)(?:\/|$)|^@(?:emotion|stitches|vanilla-extract|mui|chakra-ui|linaria|tailwindcss)\//,
+  ],
+  [
+    "Q",
+    "защита и вход",
+    /^(?:dompurify|sanitize-html|xss|marked|markdown-it|helmet|next-auth|firebase|keycloak-js|jsonwebtoken|jose|auth0)(?:\/|$)|^(?:oidc-client|passport)|^@(?:auth|supabase|clerk|auth0|okta)\/|^@azure\/msal/,
+  ],
+  [
+    "R",
+    "сборщик",
+    /^(?:vite|webpack|rollup|esbuild|parcel|turbopack)(?:\/|$)|^@rsbuild\//,
+  ],
+  [
+    "S",
+    "сервер и наблюдение",
+    /^(?:express|fastify|koa|hono|next|nuxt|astro|pino|winston|loglevel|bugsnag|rollbar|web-vitals)(?:\/|$)|^@nestjs\/core(?:\/|$)|^@(?:remix-run|sentry|opentelemetry)\//,
+  ],
+  [
+    "T",
+    "локализация",
+    /i18n|intl|locale|globalize|lingui|polyglot|rosetta|^@formatjs\//i,
+  ],
+];
+/** Лист стилей: движение, объявленное стилем, — предмет раздела анимации. */
+export const SCOPE_STYLE_KINDS = [
+  ["N", "анимация в стилях", /@keyframes|transition\s*:|animation\s*:/],
+];
+/** Раздел, который следует из найденного вида: запрос по определению
+ * асинхронен, и раздел асинхронности оживает вместе с сетью — импорт
+ * клиента запросов `async` в строке не несёт. */
+export const SCOPE_IMPLIES = [["K", "сеть", "L"]];
+const scopeKinds = (table, text) =>
+  table
+    .filter(([, , re]) => re.test(text))
+    .map(([id, kind]) => id + "/" + kind)
+    .join(";");
+/** Виды предмета в строке кода: `K/сеть;L/ожидание ответа`, ни одного —
+ * пустая строка. */
+export const scopeKindsOfLine = (line) => scopeKinds(SCOPE_LINE_KINDS, line);
+/** Виды предмета в имени модуля. */
+export const scopeKindsOfModule = (name) =>
+  scopeKinds(SCOPE_MODULE_KINDS, name);
+/** Виды предмета в строке листа стилей. */
+export const scopeKindsOfStyle = (line) => scopeKinds(SCOPE_STYLE_KINDS, line);
+/** Разделы, которые следуют из вида `K/сеть`. */
+export const scopesImplied = (key) =>
+  SCOPE_IMPLIES.filter(([id, kind]) => id + "/" + kind === key)
+    .map(([, , to]) => to)
+    .join(";");
 const CLOCK =
   /\bDate\s*\.\s*now\s*\(|\bnew\s+Date\s*\(\s*\)|\bperformance\s*\.\s*now\s*\(|\bMath\s*\.\s*random\s*\(|\bcrypto\s*\.\s*(?:randomUUID|getRandomValues)\s*\(/g;
 /** Имя булева — утверждение; заглавные — константа, имя ей дано. */
@@ -4864,6 +4999,203 @@ export const PREDICATE_CASES = [
   ["gitHookBypass", "bash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
   ["gitHookBypass", "zsh -c \"git commit --no-verify -m x\"", "commit --no-verify"],
   ["gitHookBypass", "/bin/dash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
+  // --- применимость разделов планки: свидетели предмета -------------------
+  ["scopeKindsOfLine", "const x = 1;", ""],
+  ["scopeKindsOfLine", "fetch(url).then((r) => r.json());", "K/сеть;L/ожидание ответа"],
+  ["scopeKindsOfLine", "export const api = createApi({ reducerPath: \"api\" });", "K/сеть"],
+  ["scopeKindsOfLine", "baseQuery: fetchBaseQuery({ baseUrl: \"/api\" }),", "K/сеть"],
+  ["scopeKindsOfLine", "const store = create(persist((set) => ({ n: 0 }), { name: \"n\" }));", "K/хранилище"],
+  ["scopeKindsOfLine", "const reducer = persistReducer(config, root);", "K/хранилище"],
+  ["scopeKindsOfLine", "storage: createJSONStorage(() => store),", "K/хранилище"],
+  ["scopeKindsOfLine", "const from = document.referrer;", "K/адрес;Q/адрес перехода"],
+  ["scopeKindsOfLine", "const url = process.env.API_URL;", "K/окружение"],
+  ["scopeKindsOfLine", "if (process.env.NODE_ENV === \"test\") skip();", ""],
+  ["scopeKindsOfLine", "const url = import.meta.env.VITE_API_URL;", "K/окружение"],
+  ["scopeKindsOfLine", "if (import.meta.env.DEV) log();", ""],
+  ["scopeKindsOfLine", "if (import.meta.env.PROD) send();", ""],
+  ["scopeKindsOfLine", "const mode = import.meta.env.MODE;", ""],
+  ["scopeKindsOfLine", "const ssr = import.meta.env.SSR;", ""],
+  ["scopeKindsOfLine", "const base = import.meta.env.BASE_URL;", ""],
+  ["scopeKindsOfLine", "const bus = new BroadcastChannel(\"sync\");", "K/сообщение"],
+  ["scopeKindsOfLine", "const { port1 } = new MessageChannel();", "K/сообщение"],
+  ["scopeKindsOfLine", "const reader = new FileReader();", "K/файл;L/ожидание ответа"],
+  ["scopeKindsOfLine", "const text = e.dataTransfer.getData(\"text\");", "K/файл"],
+  ["scopeKindsOfLine", "const picked = e.target.files;", "K/файл"],
+  ["scopeKindsOfLine", "const handles = showOpenFilePicker();", "K/файл"],
+  ["scopeKindsOfLine", "navigator.clipboard.writeText(text);", "K/буфер обмена"],
+  ["scopeKindsOfLine", "promise.then(done);", "L/ожидание ответа"],
+  ["scopeKindsOfLine", "setTimeout(tick, delayMs);", "L/таймеры и наблюдатели"],
+  ["scopeKindsOfLine", "setInterval(tick, delayMs);", "L/таймеры и наблюдатели"],
+  ["scopeKindsOfLine", "setImmediate(tick);", "L/таймеры и наблюдатели"],
+  ["scopeKindsOfLine", "requestAnimationFrame(step);", "L/таймеры и наблюдатели;N/кадры и указатель"],
+  ["scopeKindsOfLine", "const seen = new ResizeObserver(fit);", "L/таймеры и наблюдатели"],
+  ["scopeKindsOfLine", "const seen = new IntersectionObserver(show);", "L/таймеры и наблюдатели"],
+  ["scopeKindsOfLine", "const seen = new MutationObserver(sync);", "L/таймеры и наблюдатели"],
+  ["scopeKindsOfLine", "el.animate(frames, timing);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "el.addEventListener(\"pointerdown\", grab);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "el.addEventListener(\"pointermove\", drag);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "el.addEventListener(\"touchstart\", grab);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "el.addEventListener(\"touchmove\", drag);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "el.addEventListener(\"mousemove\", drag);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "<div onPointerMove={drag} />", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "<div onMouseMove={drag} />", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "<div onTouchMove={drag} />", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "<div onWheel={zoom} />", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "el.addEventListener('wheel', zoom);", "N/кадры и указатель"],
+  ["scopeKindsOfLine", "<div style={box} />", "O/стиль в разметке"],
+  ["scopeKindsOfLine", "<div dangerouslySetInnerHTML={{ __html: html }} />", "Q/вставка разметки"],
+  ["scopeKindsOfLine", "el.innerHTML = html;", "Q/вставка разметки"],
+  ["scopeKindsOfLine", "el.outerHTML = html;", "Q/вставка разметки"],
+  ["scopeKindsOfLine", "el.insertAdjacentHTML(\"beforeend\", html);", "Q/вставка разметки"],
+  ["scopeKindsOfLine", "document.write(html);", "Q/вставка разметки"],
+  ["scopeKindsOfLine", "eval(code);", "Q/исполнение строки"],
+  ["scopeKindsOfLine", "const run = new Function(code);", "Q/исполнение строки"],
+  ["scopeKindsOfLine", "const home = \"https://example.com\";", "Q/внешний адрес"],
+  ["scopeKindsOfLine", "const ns = \"http://www.w3.org/2000/svg\";", ""],
+  ["scopeKindsOfLine", "headers.Authorization = header;", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "const header = `Bearer ${key}`;", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "const key = accessToken;", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "const key = refreshToken;", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "const key = idToken;", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "if (isAdmin) open();", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "if (hasRole(user)) open();", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "if (hasPermission(user)) open();", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "if (checkPermission(user)) open();", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "if (role === \"admin\") open();", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "signIn(user);", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "signOut(user);", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "logIn(user);", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "logOut(user);", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "const who = getSession(req);", "Q/права и удостоверение"],
+  ["scopeKindsOfLine", "const key = cfg.env.STRIPE_SECRET;", "Q/секрет в окружении"],
+  ["scopeKindsOfLine", "const key = cfg.env.GITHUB_TOKEN;", "Q/секрет в окружении"],
+  ["scopeKindsOfLine", "const key = cfg.env.MAPS_API_KEY;", "Q/секрет в окружении"],
+  ["scopeKindsOfLine", "const key = cfg.env.DB_PASSWORD;", "Q/секрет в окружении"],
+  ["scopeKindsOfLine", "location.assign(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "location.replace(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "window.open(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "navigate(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "navigate(\"/home\");", ""],
+  ["scopeKindsOfLine", "router.push(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "router.replace(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "return redirect(next);", "Q/переход по значению"],
+  ["scopeKindsOfLine", "location.href = next;", "K/адрес;Q/переход по значению"],
+  ["scopeKindsOfLine", "type Query = URLSearchParams;", "Q/адрес перехода"],
+  ["scopeKindsOfLine", "const [query] = useSearchParams();", "K/адрес;Q/адрес перехода"],
+  ["scopeKindsOfLine", "const { id } = useParams();", "K/адрес;Q/адрес перехода"],
+  ["scopeKindsOfLine", "const where = useLocation();", "K/адрес"],
+  ["scopeKindsOfLine", "const raw = location.search;", "K/адрес;Q/адрес перехода"],
+  ["scopeKindsOfLine", "const raw = location.hash;", "K/адрес;Q/адрес перехода"],
+  ["scopeKindsOfLine", "const price = new Intl.NumberFormat(locale);", "T/форматирование по региону"],
+  ["scopeKindsOfModule", "react", ""],
+  ["scopeKindsOfModule", "axios", "K/сеть"],
+  ["scopeKindsOfModule", "ky", "K/сеть"],
+  ["scopeKindsOfModule", "kysely", ""],
+  ["scopeKindsOfModule", "got", "K/сеть"],
+  ["scopeKindsOfModule", "superagent", "K/сеть"],
+  ["scopeKindsOfModule", "ofetch", "K/сеть"],
+  ["scopeKindsOfModule", "wretch", "K/сеть"],
+  ["scopeKindsOfModule", "node-fetch", "K/сеть"],
+  ["scopeKindsOfModule", "graphql-request", "K/сеть"],
+  ["scopeKindsOfModule", "urql", "K/сеть"],
+  ["scopeKindsOfModule", "swr/infinite", "K/сеть"],
+  ["scopeKindsOfModule", "socket.io-client", "K/сеть"],
+  ["scopeKindsOfModule", "firebase", "K/сеть;Q/защита и вход"],
+  ["scopeKindsOfModule", "@apollo/client", "K/сеть"],
+  ["scopeKindsOfModule", "@urql/core", "K/сеть"],
+  ["scopeKindsOfModule", "@firebase/app", "K/сеть"],
+  ["scopeKindsOfModule", "@supabase/supabase-js", "K/сеть;Q/защита и вход"],
+  ["scopeKindsOfModule", "@tanstack/react-query", "K/сеть"],
+  ["scopeKindsOfModule", "@tanstack/react-table", ""],
+  ["scopeKindsOfModule", "@reduxjs/toolkit/query/react", "K/сеть"],
+  ["scopeKindsOfModule", "@reduxjs/toolkit", ""],
+  ["scopeKindsOfModule", "idb", "K/хранилище"],
+  ["scopeKindsOfModule", "idb-keyval", "K/хранилище"],
+  ["scopeKindsOfModule", "dexie", "K/хранилище"],
+  ["scopeKindsOfModule", "localforage", "K/хранилище"],
+  ["scopeKindsOfModule", "js-cookie", "K/хранилище"],
+  ["scopeKindsOfModule", "redux-persist/integration/react", "K/хранилище"],
+  ["scopeKindsOfModule", "dotenv/config", "K/окружение"],
+  ["scopeKindsOfModule", "dotenv", "K/окружение"],
+  ["scopeKindsOfModule", "framer-motion", "N/движок движения"],
+  ["scopeKindsOfModule", "motion", "N/движок движения"],
+  ["scopeKindsOfModule", "gsap", "N/движок движения"],
+  ["scopeKindsOfModule", "react-spring", "N/движок движения"],
+  ["scopeKindsOfModule", "@react-spring/web", "N/движок движения"],
+  ["scopeKindsOfModule", "popmotion", "N/движок движения"],
+  ["scopeKindsOfModule", "animejs", "N/движок движения"],
+  ["scopeKindsOfModule", "lottie-react", "N/движок движения"],
+  ["scopeKindsOfModule", "react-transition-group", "N/движок движения"],
+  ["scopeKindsOfModule", "react-transition-state", "N/движок движения"],
+  ["scopeKindsOfModule", "styled-components", "O/стили в коде"],
+  ["scopeKindsOfModule", "goober", "O/стили в коде"],
+  ["scopeKindsOfModule", "styled-jsx/css", "O/стили в коде"],
+  ["scopeKindsOfModule", "twin.macro", "O/стили в коде"],
+  ["scopeKindsOfModule", "tailwindcss", "O/стили в коде"],
+  ["scopeKindsOfModule", "@emotion/react", "O/стили в коде"],
+  ["scopeKindsOfModule", "@stitches/react", "O/стили в коде"],
+  ["scopeKindsOfModule", "@vanilla-extract/css", "O/стили в коде"],
+  ["scopeKindsOfModule", "@mui/material", "O/стили в коде"],
+  ["scopeKindsOfModule", "@chakra-ui/react", "O/стили в коде"],
+  ["scopeKindsOfModule", "@linaria/core", "O/стили в коде"],
+  ["scopeKindsOfModule", "@tailwindcss/vite", "O/стили в коде"],
+  ["scopeKindsOfModule", "dompurify", "Q/защита и вход"],
+  ["scopeKindsOfModule", "sanitize-html", "Q/защита и вход"],
+  ["scopeKindsOfModule", "xss", "Q/защита и вход"],
+  ["scopeKindsOfModule", "marked", "Q/защита и вход"],
+  ["scopeKindsOfModule", "markdown-it", "Q/защита и вход"],
+  ["scopeKindsOfModule", "helmet", "Q/защита и вход"],
+  ["scopeKindsOfModule", "next-auth/react", "Q/защита и вход"],
+  ["scopeKindsOfModule", "keycloak-js", "Q/защита и вход"],
+  ["scopeKindsOfModule", "jsonwebtoken", "Q/защита и вход"],
+  ["scopeKindsOfModule", "jose", "Q/защита и вход"],
+  ["scopeKindsOfModule", "auth0", "Q/защита и вход"],
+  ["scopeKindsOfModule", "oidc-client-ts", "Q/защита и вход"],
+  ["scopeKindsOfModule", "passport-local", "Q/защита и вход"],
+  ["scopeKindsOfModule", "@auth/core", "Q/защита и вход"],
+  ["scopeKindsOfModule", "@clerk/clerk-react", "Q/защита и вход"],
+  ["scopeKindsOfModule", "@auth0/auth0-react", "Q/защита и вход"],
+  ["scopeKindsOfModule", "@okta/okta-auth-js", "Q/защита и вход"],
+  ["scopeKindsOfModule", "@azure/msal-browser", "Q/защита и вход"],
+  ["scopeKindsOfModule", "vite/client", "R/сборщик"],
+  ["scopeKindsOfModule", "webpack", "R/сборщик"],
+  ["scopeKindsOfModule", "rollup", "R/сборщик"],
+  ["scopeKindsOfModule", "esbuild", "R/сборщик"],
+  ["scopeKindsOfModule", "parcel", "R/сборщик"],
+  ["scopeKindsOfModule", "turbopack", "R/сборщик"],
+  ["scopeKindsOfModule", "@rsbuild/core", "R/сборщик"],
+  ["scopeKindsOfModule", "express", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "fastify", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "koa", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "hono", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "next/router", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "nuxt", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "astro", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "pino", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "winston", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "loglevel", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "bugsnag", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "rollbar", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "web-vitals", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "@nestjs/core", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "@nestjs/core/injector", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "@remix-run/react", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "@sentry/react", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "@opentelemetry/api", "S/сервер и наблюдение"],
+  ["scopeKindsOfModule", "i18next", "T/локализация"],
+  ["scopeKindsOfModule", "react-intl", "T/локализация"],
+  ["scopeKindsOfModule", "locale-codes", "T/локализация"],
+  ["scopeKindsOfModule", "globalize", "T/локализация"],
+  ["scopeKindsOfModule", "@lingui/core", "T/локализация"],
+  ["scopeKindsOfModule", "node-polyglot", "T/локализация"],
+  ["scopeKindsOfModule", "rosetta", "T/локализация"],
+  ["scopeKindsOfModule", "@formatjs/icu-messageformat-parser", "T/локализация"],
+  ["scopeKindsOfStyle", "  color: red;", ""],
+  ["scopeKindsOfStyle", "@keyframes spin {", "N/анимация в стилях"],
+  ["scopeKindsOfStyle", "  transition: opacity 0.2s;", "N/анимация в стилях"],
+  ["scopeKindsOfStyle", "  animation: spin 1s linear;", "N/анимация в стилях"],
+  ["scopesImplied", "K/сеть", "L"],
+  ["scopesImplied", "K/хранилище", ""],
 ];
 
 /**
