@@ -2746,11 +2746,16 @@ const docRefsIn = (body) => {
   const out = [];
   for (const line of body.split(String.fromCharCode(10))) {
     if (!/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
-    for (const t of line.match(/[\w./-]+\.md/g) ?? [])
+    // Адрес в сети — не документ репозитория. Ссылка на README чужого
+    // хранилища кончается на `.md`, и её хвост читался мёртвым якорем:
+    // замерено, `//github.com/…/README.md` из комментария модуля. Конфиги
+    // корня несут такие ссылки чаще модулей, а сверка якорей читает и их.
+    const local = line.replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, " ");
+    for (const t of local.match(/[\w./-]+\.md/g) ?? [])
       if (t.includes("/")) out.push(t);
     ADR_REF.lastIndex = 0;
     let hit;
-    while ((hit = ADR_REF.exec(line)) !== null) {
+    while ((hit = ADR_REF.exec(local)) !== null) {
       const file = adrByNumber.get(Number(hit[1]));
       if (file !== undefined) out.push(file);
     }
