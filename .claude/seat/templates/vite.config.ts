@@ -1,4 +1,4 @@
-// Почему настройки сборщика и раннера такие —
+// Why these bundler and runner settings:
 // `.claude/seat/vite.config-why.md`.
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
@@ -6,16 +6,16 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   test: {
-    // Корень прогона назван: сборщик с `root` поддерева сдвигает поиск тестов.
+    // Named test root: a subtree bundler `root` moves the test search.
     root: ".",
     environment: "jsdom",
     globals: false,
-    // Модули стилей настоящие: под заглушкой слияние карт классов теряет
-    // свои классы.
+    // Real CSS modules: under the stub, merging class maps loses the
+    // component's own classes.
     css: { include: [/.module./] },
-    // При `globals: false` уборку после теста регистрирует только этот файл.
+    // With `globals: false`, only this file registers cleanup after a test.
     setupFiles: ["./src/tests/setup.ts"],
-    // Тесты обвязки идут своей командой: умолчание раннера зашло бы в её папку.
+    // Harness tests have their own command: the default would collect them.
     include: ["src/**/*.test.{ts,tsx}"],
   },
 });

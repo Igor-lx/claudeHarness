@@ -1803,6 +1803,25 @@ describe("конфиг в корне — под правилом о коммен
   }, 180000);
 });
 
+describe("конфиг в корне — под границей языка", () => {
+  it("семена конфигов на языке кода, русский комментарий своего конфига назван", () => {
+    const box = seatEmpty("konfig-yazyk-");
+    try {
+      const SECTION = "Язык внутри корня исходников";
+      expect(verifyIn(box).get(SECTION) ?? []).toEqual([]);
+      fs.writeFileSync(
+        path.join(box, "zz.config.mjs"),
+        "// комментарий конфига корня не на языке кода\nexport default {};\n",
+      );
+      expect(verifyIn(box).get(SECTION) ?? []).toEqual([
+        "zz.config.mjs:1 — комментарий на русском, а код проекта пишут по-английски",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 /**
  * Звенья цепочки проект вправе держать под своими именами — `types`, `fmt`, —
  * и базовая линия пишет их теми же именами. Сверка «Красное звено названо

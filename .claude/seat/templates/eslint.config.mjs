@@ -1,4 +1,4 @@
-// Почему настройки линта такие — `.claude/seat/eslint.config-why.md`.
+// Why these lint settings: `.claude/seat/eslint.config-why.md`.
 import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
@@ -9,14 +9,14 @@ import jsxA11y from "eslint-plugin-jsx-a11y-x";
 import sonarjs from "eslint-plugin-sonarjs";
 import prettier from "eslint-config-prettier/flat";
 
-// Пороги меняют решением с записью, а не выключением правила.
+// Thresholds change by a recorded decision, not by switching a rule off.
 const OWN = {
   complexity: ["error", 10],
   "max-depth": ["error", 3],
   "max-params": ["error", 4],
   "max-nested-callbacks": ["error", 3],
   "no-param-reassign": "error",
-  // Чётность и половина — законные числа; остальное получает имя (`H7`).
+  // Parity and halves are legitimate numbers; any other gets a name (`H7`).
   "@typescript-eslint/no-magic-numbers": [
     "error",
     {
@@ -47,9 +47,9 @@ const OWN = {
 export default tseslint.config(
   {
     ignores: [
-      // Обвязка — не код проекта: в её заготовках линт находит второй корень.
+      // The harness: not project code, and its seeds give lint a second root.
       ".claude",
-      // Образцы с `**/`: голое имя ловит лишь папку верхнего уровня.
+      // Patterns with `**/`: a bare name matches only a top-level folder.
       "**/dist/**",
       "**/coverage/**",
       "**/node_modules/**",
@@ -62,7 +62,7 @@ export default tseslint.config(
 
   {
     files: ["**/*.{ts,tsx,mts,cts}"],
-    // Конфиги корня вне проекта компилятора: их разбирает блок оснастки ниже.
+    // Root configs are not in the compiler project; the block below reads them.
     ignores: ["*.config.{ts,mts,cts}"],
     extends: [
       js.configs.recommended,
@@ -121,13 +121,13 @@ export default tseslint.config(
     },
   },
 
-  // Эти правила держит другой держатель: одно нарушение не печатается дважды.
+  // Another holder covers these rules: one violation is not reported twice.
   {
     rules: {
-      // Маркеры держит сверка «Найденное — исправлено, а не отложено».
+      // Deferred-work markers are caught by `graph.mjs verify`.
       "sonarjs/todo-tag": "off",
       "sonarjs/fixme-tag": "off",
-      // Правила компилятора React держит официальная `react-hooks`.
+      // React Compiler rules are held by the official `react-hooks`.
       "@eslint-react/rules-of-hooks": "off",
       "@eslint-react/exhaustive-deps": "off",
       "@eslint-react/purity": "off",
@@ -138,8 +138,8 @@ export default tseslint.config(
       "@eslint-react/use-memo": "off",
       "@eslint-react/error-boundaries": "off",
       "@eslint-react/unsupported-syntax": "off",
-      // Копии sonar: то же держат ядро, `typescript-eslint`, `react-hooks`
-      // либо `@eslint-react`.
+      // Sonar copies: the core, `typescript-eslint`, `react-hooks` or
+      // `@eslint-react` already hold the same.
       "sonarjs/no-unused-vars": "off",
       "sonarjs/unused-import": "off",
       "sonarjs/no-dead-store": "off",
@@ -157,8 +157,8 @@ export default tseslint.config(
     },
   },
 
-  // Без типов: файл вне проекта компилятора; набор `typescript-eslint`
-  // подключает разборщик `.ts`.
+  // No types: outside the compiler project; the `typescript-eslint` set
+  // brings the `.ts` parser.
   {
     files: [
       "*.config.{js,mjs,cjs}",
@@ -173,13 +173,13 @@ export default tseslint.config(
     },
   },
 
-  // `act` отдаёт thenable лишь в async: помощники теста — `async` без `await`.
+  // `act` gives a thenable only in async: helpers are `async` without `await`.
   {
     files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     rules: { "@typescript-eslint/require-await": "off" },
   },
 
-  // Оба правила — о коде компонентов; фикстуры и ref тест меняет по праву.
+  // Both rules are about component code; a test may change fixtures and refs.
   {
     files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     rules: {
@@ -188,14 +188,14 @@ export default tseslint.config(
     },
   },
 
-  // Ожидаемое в тесте — литералом (`J13`): имя константы тянуло бы его из кода.
+  // Test expectations stay literal (`J13`): a constant pulls them from code.
   {
     files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },
   },
 
-  // Своё послабление — блоком с причиной рядом и парой в поле `lintConfigOff`.
+  // Own relaxation: a block with its reason, paired in `lintConfigOff`.
 
-  // Гасит всё, что пересекается с форматтером. Обязан быть последним.
+  // Turns off everything that overlaps the formatter. Must stay last.
   prettier,
 );
