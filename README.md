@@ -59,11 +59,11 @@ each one is broken on purpose, regularly, to see whether it notices.
 ## Contents
 
 - [Why](#why)
+- [What makes it different](#what-makes-it-different)
 - [The quality bar](#the-quality-bar)
 - [How it works](#how-it-works)
 - [Where the knowledge about the code comes from](#where-the-knowledge-about-the-code-comes-from)
 - [What every edit includes](#what-every-edit-includes)
-- [What makes it different](#what-makes-it-different)
 - [Stack: built for frontend](#stack-built-for-frontend)
 - [Quick start](#quick-start)
 - [What's inside](#whats-inside)
@@ -91,6 +91,20 @@ code its quality:
   claims, not results.
 - **Records drift from the code with no sign.** Notes and docs describe code
   that is no longer there, and read as truth.
+
+## What makes it different
+
+| A typical agent setup | claudeHarness |
+| --- | --- |
+| quality is "looks good to me" | quality is an answer per criterion, on four levels, with evidence, sealed |
+| a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, as a class |
+| a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
+| the agent learns the code by searching and guessing | the import graph is computed from the code by the compiler; the knowledge base is reconciled with it |
+| tests and docs are written when someone asks | tests, records and docs are part of every edit, and a command names what is missing |
+| "done" because the agent said so | "done" is the full check suite at exit 0 plus a sealed protocol |
+| project notes go stale unnoticed | the knowledge base is reconciled with the code on every run, both ways |
+| checks are taken on trust | every check is broken on purpose to see whether it turns red |
+| more rules make every request more expensive | the rules stay within a budget; history and rationale live apart and are not loaded into every session |
 
 ## The quality bar
 
@@ -273,20 +287,6 @@ The main commands — all through `node .claude/tools/graph.mjs`:
 | `tested` | an edit against its tests, the knowledge base and the docs |
 | `mutated` | the mutation-testing debt of an edit |
 | `verify` | every knowledge-base check against the code at once |
-
-## What makes it different
-
-| A typical agent setup | claudeHarness |
-| --- | --- |
-| quality is "looks good to me" | quality is an answer per criterion, on four levels, with evidence, sealed |
-| a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, as a class |
-| a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
-| the agent learns the code by searching and guessing | the import graph is computed from the code by the compiler; the knowledge base is reconciled with it |
-| tests and docs are written when someone asks | tests, records and docs are part of every edit, and a command names what is missing |
-| "done" because the agent said so | "done" is the full check suite at exit 0 plus a sealed protocol |
-| project notes go stale unnoticed | the knowledge base is reconciled with the code on every run, both ways |
-| checks are taken on trust | every check is broken on purpose to see whether it turns red |
-| more rules make every request more expensive | the rules stay within a budget; history and rationale live apart and are not loaded into every session |
 
 ## Stack: built for frontend
 
