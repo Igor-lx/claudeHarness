@@ -34,14 +34,18 @@ costs.
 system for code quality**: it turns rules into machine checks, takes its
 knowledge of the code from the code itself, and lets nothing into history that
 has not been proven. Every edit brings its own tests and documentation, is
-checked against the quality bar criterion by criterion and is sealed. A commit
+checked against the quality bar criterion by criterion — line by line and
+level by level, up to the whole application — and is sealed. A commit
 without the seal is refused, and the agent cannot end its turn while an edit
 is not covered by a seal. Even the checks themselves are not taken on trust:
 each one is broken on purpose, regularly, to see whether it notices.
 
 - **Quality as a checklist, not an impression.** Every edit is checked against
-  a named list of criteria — from a single line to the architecture of the
-  whole app — with an answer for each one, and sealed.
+  a named list of criteria, with an answer for each one, and sealed.
+- **Checked flat and vertical.** Line by line — and up through the file, the
+  layer and the whole application, on facts the tool computes for each level.
+  An edit flawless in every line can still break the whole; here that is
+  caught.
 - **Rules → checks.** Over a hundred machine checks instead of hoping for
   diligence.
 - **Found means fixed.** A defect noticed along the way is fixed in the same
@@ -96,7 +100,8 @@ code its quality:
 
 | A typical agent setup | claudeHarness |
 | --- | --- |
-| quality is "looks good to me" | quality is an answer per criterion, on four levels, with evidence, sealed |
+| quality is "looks good to me" | quality is an answer per criterion, with evidence, sealed |
+| a review reads the lines of the diff | the edit is checked line by line and up through the file, the layer and the whole app — against its neighbours and, for anything new, against the whole project |
 | a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, as a class |
 | a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
 | the agent learns the code by searching and guessing | the import graph is computed from the code by the compiler; the knowledge base is reconciled with it |
@@ -113,6 +118,49 @@ new code, a fix, a refactor, a review. Each criterion is a question to the diff
 with a sign you can see, not a principle to agree with: "single
 responsibility" becomes *describing the file needs the word "and"*; "single
 source of truth" becomes *a value derived from another is stored next to it*.
+
+### Flat and vertical
+
+Most reviews are flat: they read the lines of the diff. But an edit can be
+flawless in every line and still break the whole — add a second source of
+truth, give a module a second responsibility, let an internal leak out, import
+against the layer direction. None of that shows in the lines; it shows a level
+up. So the bar checks every edit in two directions:
+
+- **flat** — every changed line against the line-level criteria: edge inputs,
+  errors, types, names, numbers, wasted work;
+- **vertical** — up through the levels those lines belong to: the **node** (a
+  file, or a component folder), the **layer**, the **whole application**. Each
+  level is judged on facts the tool computes for it: the node's surface and
+  what the edit changed in it, its state and resources; the edges between
+  layers, cycles, entry points bypassed; the sources of truth, the writers of
+  each resource, the data flow, the consumers beyond the edit and the test
+  that reaches through each.
+
+```mermaid
+flowchart BT
+  subgraph F [Flat: line by line]
+    U["Unit — the lines of the diff<br>edge inputs, errors, types,<br>names, numbers, wasted work"]
+  end
+  subgraph V [Vertical: level by level]
+    direction BT
+    N["Node — a file or a component folder<br>one question, its surface,<br>its state and resources"]
+    L["Layer — modules of one role<br>import direction, cycles,<br>entry points bypassed"]
+    A["Application — the whole<br>sources of truth, writers, data flow,<br>consumers beyond the edit"]
+    N --> L --> A
+  end
+  U --> N
+```
+
+A pass at one level does not make up for a failure at another. Every
+criterion carries its level, every node and layer the edit touched gets its
+own row, and every shift the edit made at any level — a new name in the
+surface, a new edge, a new state, a new cycle — must get an answer. Around
+that, the edit is compared with its neighbours in the graph, and anything new
+— a new state, a new file — with the whole project: a second source of truth
+usually appears without importing the first one.
+
+### What the bar asks
 
 **The core applies to any code:**
 
@@ -136,13 +184,8 @@ pipeline — are read only where the project has their subject. Each is declared
 live or not applicable with a reason, and a section declared not applicable
 while the tool finds its subject on disk fails the run.
 
-How the bar is held:
+### How the bar is held
 
-- **Four levels.** A criterion is judged at its level — a unit (what is in
-  the lines), a node (a file, or a component folder), a layer, the whole
-  application — on facts the tool computes for that level. An edit can be
-  flawless line by line and still add a second source of truth or an import
-  against the layer direction; that is seen only a level up.
 - **An answer per criterion, with evidence.** `bar` prints a row for every
   live criterion. The answer is "clean", "no subject" with a reason, or
   "found" with an address and what happens to it. A "clean" on an
@@ -177,7 +220,7 @@ forgotten.
 
 | What is guaranteed | What holds it |
 | --- | --- |
-| code is checked against the quality bar | `bar`: a protocol with an answer for every live criterion, and a seal; an edit after the seal removes it |
+| code is checked against the quality bar | `bar`: a protocol with an answer for every live criterion, line by line and on every level — node, layer, application — and a seal; an edit after the seal removes it |
 | unchecked code does not enter history | a pre-commit git hook, the quality gate: code without a seal is refused; bypassing the gate is caught by a guard and a history audit |
 | the agent does not drop work halfway | a Claude Code end-of-turn hook: an edit to code without a seal keeps the turn from ending |
 | every edit brings its tests | `tested`: each changed code file against the tests that run it; `mutated`: files never measured by mutation testing, or changed since |
@@ -197,7 +240,7 @@ flowchart TD
     C --> R["Knowledge base records<br>and documentation"]
     T --> M["Mutation testing<br>of the changed files"]
   end
-  M --> P["Quality bar:<br>an answer per criterion,<br>findings fixed"]
+  M --> P["Quality bar:<br>line by line and level by level,<br>findings fixed"]
   R --> P
   P --> S[Seal]
   S --> K["Checks: types, lint, format,<br>tests, knowledge base"]
@@ -269,8 +312,8 @@ flowchart LR
   checked.
 - **A behaviour guarantee** for a new capability: what the product promises,
   where the promise comes from, and the test that holds it.
-- **A quality-bar pass and a seal**: an answer for every live criterion, and
-  every finding in the area fixed.
+- **A quality-bar pass and a seal**: an answer for every live criterion, line
+  by line and on every level, and every finding in the area fixed.
 - **A report in numbers**: which checks ran and with what exit code; the
   knowledge base and the docs are confirmed separately.
 
