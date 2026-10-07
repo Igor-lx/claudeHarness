@@ -388,9 +388,25 @@ export const compilerAt = (repoRoot) => {
   // пакеты проекта, молча разбирала код регулярными выражениями. Найдено
   // прогоном проб.
   for (let dir = path.resolve(repoRoot); ; dir = path.dirname(dir)) {
-    const at = path.join(dir, "node_modules", "typescript", "package.json");
-    if (existsSync(at)) return createRequire(at)("typescript");
+    const ts = compilerOf(
+      path.join(dir, "node_modules", "typescript", "package.json"),
+    );
+    if (ts !== null) return ts;
     if (path.dirname(dir) === dir) return null;
+  }
+};
+
+/** Компилятор пакета, чей манифест `manifest`; манифеста нет либо кода при
+ * нём нет — `null`. Манифест без кода пакетом не является: песочница
+ * фальсификации держит одни манифесты и лежит внутри проекта, и поиск идёт
+ * выше — к его пакетам. */
+const compilerOf = (manifest) => {
+  if (!existsSync(manifest)) return null;
+  try {
+    return createRequire(manifest)("typescript");
+  } catch (e) {
+    if (e?.code === "MODULE_NOT_FOUND") return null;
+    throw e;
   }
 };
 

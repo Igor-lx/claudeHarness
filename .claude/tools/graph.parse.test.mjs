@@ -53,6 +53,30 @@ it("пакеты проекта, поставленные ссылкой, — т
   }
 });
 
+it("манифест без кода — не пакет: поиск идёт выше, к пакетам проекта", () => {
+  // Так лежит песочница фальсификации: внутри проекта, с одними манифестами.
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "razbor-"));
+  const inner = path.join(box, "inner");
+  const link = path.join(box, "node_modules");
+  try {
+    const pkg = path.join(inner, "node_modules", "typescript");
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.copyFileSync(
+      path.join(ROOT, "node_modules", "typescript", "package.json"),
+      path.join(pkg, "package.json"),
+    );
+    fs.writeFileSync(path.join(inner, "package.json"), "{}");
+    expect(compilerAt(inner)).toBe(null);
+    expect(parserFor(inner).name).toBe("регулярные выражения");
+    fs.symlinkSync(path.join(ROOT, "node_modules"), link, "junction");
+    expect(compilerAt(inner)).not.toBe(null);
+    expect(parserFor(inner).name).toContain("компилятор TypeScript");
+  } finally {
+    fs.rmSync(link, { force: true });
+    fs.rmSync(box, { recursive: true, force: true });
+  }
+});
+
 const PARSERS = [
   ["регулярные выражения", (src) => parseModuleRegex(src)],
   ["компилятор", (src, file = "m.tsx") => parseModuleTs(src, ts, file)],
