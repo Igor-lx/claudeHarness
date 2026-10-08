@@ -59,10 +59,9 @@ each one is broken on purpose, regularly, to see whether it notices.
   disagrees with the code.
 - **"Done" means "proven".** Exit code 0, a sealed protocol and a commit
   through the quality gate — instead of "should work".
-- **What is needed is read, and no more.** The area of an edit is computed
-  from the graph instead of reading the whole project; the rules are split by
-  the moment they are needed; the bar asks only the criteria that apply to the
-  project.
+- **Token economy by design.** Quality is not bought by rereading the whole
+  project on every task: only the area the graph computes is read, the rules
+  load when they are needed, and the bar asks only what applies.
 - **Made for frontend.** Tuned to React, TypeScript and Vite, on a set of
   package versions it was verified with.
 
@@ -73,6 +72,7 @@ each one is broken on purpose, regularly, to see whether it notices.
 - [The quality bar](#the-quality-bar)
 - [How it works](#how-it-works)
 - [Where the knowledge about the code comes from](#where-the-knowledge-about-the-code-comes-from)
+- [What it costs in tokens](#what-it-costs-in-tokens)
 - [What every edit includes](#what-every-edit-includes)
 - [Stack: built for frontend](#stack-built-for-frontend)
 - [Quick start](#quick-start)
@@ -193,9 +193,7 @@ included — exports and constants; resolves the path aliases declared in
 that takes everything from a package entry still shows its real dependencies.
 From this it answers what a file uses and who uses it, the blast radius of an
 edit, which tests reach a file, cycles, exports nobody uses and imports that
-go against the declared layer direction. The same graph bounds the reading:
-the area of an edit — the file, what it uses, who uses it, its tests — is read
-in full and word for word, and code beyond it is not read.
+go against the declared layer direction.
 
 **The knowledge base — written, then reconciled.** What cannot be read from a
 file itself lives in `.context/`: why something was done this way and what
@@ -218,6 +216,26 @@ flowchart LR
   G --> Q["brief · plan · tested · bar"]
   K --> Q
 ```
+
+## What it costs in tokens
+
+Quality through reading everything, every time, is easy and expensive. Here
+every read has a reason, and the cost of a task follows its size, not the
+size of the project:
+
+- **Reading is bounded by the graph.** The area of an edit — the file, what it
+  uses, who uses it, its tests — is read in full; the rest of the code is not
+  read. A question about where something lives or what was decided is answered
+  by the knowledge base without opening code.
+- **Rules arrive when they are needed.** Rules about code load when code is
+  opened; the tool reference and the table of checks — on demand; history and
+  rationale — only when a rule itself is changed. The size of the rules that
+  load is held by a budget in characters, and raising it is a visible change.
+- **The bar asks what applies.** Sections without a subject in the project are
+  declared not applicable and are not asked.
+- **The machine fills what it can.** Lint, code cuts and checks answer their
+  rows of the protocol themselves; the session spends its effort only where
+  judgement is needed.
 
 ## What every edit includes
 
@@ -263,12 +281,15 @@ The main commands — all through `node .claude/tools/graph.mjs`:
 
 ## Stack: built for frontend
 
-claudeHarness is not a universal kit for any project. It was built for
-practical work on concrete projects, not as one more do-everything library:
-universality was never the goal, and the effort went into depth instead — how
-fully the code is analysed, how well the checks are made, how reliably the
-result reaches its goal. It is built for frontend applications on
-**React + TypeScript + Vite**, and seating is tuned to that stack:
+The harness was developed for practical work in a specific environment:
+frontend applications on **React + TypeScript + Vite**. Its guarantee of
+quality rests on that concreteness. A skill that says "write good code" fits
+Python, React and Angular alike — because it checks nothing. A rule a machine
+checks has to know what it checks: which compiler builds the graph, which
+lint rules back each criterion, where a component keeps its styles. So the
+effort went into depth rather than breadth: how fully the code is analysed,
+how strictly every criterion is checked, how reliably the result reaches its
+goal. Seating is tuned to the stack:
 
 - the configs of the compiler, linter, formatter, test runner and mutation
   testing arrive as templates already wired into one check chain,
