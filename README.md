@@ -59,7 +59,7 @@ each one is broken on purpose, regularly, to see whether it notices.
   disagrees with the code.
 - **"Done" means "proven".** Exit code 0, a sealed protocol and a commit
   through the quality gate — instead of "should work".
-- **Token economy by design.** Quality is not bought by rereading the whole
+- **Economy by design.** Quality is not bought by rereading the whole
   project on every task: only the area the graph computes is read, the rules
   load when they are needed, and the bar asks only what applies.
 - **Made for frontend.** Tuned to React, TypeScript and Vite, on a set of
@@ -72,7 +72,7 @@ each one is broken on purpose, regularly, to see whether it notices.
 - [The quality bar](#the-quality-bar)
 - [How it works](#how-it-works)
 - [Where the knowledge about the code comes from](#where-the-knowledge-about-the-code-comes-from)
-- [What it costs in tokens](#what-it-costs-in-tokens)
+- [Economy](#economy)
 - [What every edit includes](#what-every-edit-includes)
 - [Stack: built for frontend](#stack-built-for-frontend)
 - [Quick start](#quick-start)
@@ -217,7 +217,7 @@ flowchart LR
   K --> Q
 ```
 
-## What it costs in tokens
+## Economy
 
 Quality through reading everything, every time, is easy and expensive. Here
 every read has a reason, and the cost of a task follows its size, not the
