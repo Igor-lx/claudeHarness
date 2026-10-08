@@ -2806,6 +2806,10 @@ describe("свод по планке от модели предмета", () => 
       expect(unnamed).toContain("zzTall.ts");
       fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzTall.ts`.\n");
       expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
+      // Найденное по одному критерию — находка в каждом, чьё тело его
+      // называет: «чисто» со ссылкой на чужую находку не принимается.
+      fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя названо находкой B5 | " } });
+      expect(tool("bar", "app/zzWide.ts")).toContain("H6: чисто со ссылкой на находку другого критерия");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
