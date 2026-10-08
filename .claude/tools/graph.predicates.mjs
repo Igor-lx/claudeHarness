@@ -51,7 +51,8 @@ const STYLE_FILE = new RegExp("\\.(?:" + STYLE_ALT + ")$");
 export const CODE_FILE = new RegExp("\\.(?:" + CODE_ALT + ")$");
 /** Файл TypeScript: его разбирает компилятор и линт с типами. */
 export const TS_FILE = new RegExp("\\.(?:" + TS_EXTENSIONS.join("|") + ")$");
-const TEST_SUFFIX = new RegExp("\\.(?:test|spec)\\.(?:" + CODE_ALT + ")$");
+/** Имя тестового файла: суффикс `.test` либо `.spec` перед расширением кода. */
+export const TEST_SUFFIX = new RegExp("\\.(?:test|spec)\\.(?:" + CODE_ALT + ")$");
 /** Расширение кода или листа стилей — одним образцом на весь инструмент.
  *
  * Заведён после того, как восемь мест спрашивали его порознь и каждое называло

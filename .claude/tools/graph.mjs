@@ -84,6 +84,7 @@ import {
   CODE_STYLE_ALT,
   isStylePath,
   isTestPath,
+  TEST_SUFFIX,
   commentRunsOf,
   firstCellOf,
   namesAddress,
@@ -7666,6 +7667,69 @@ if (mode === "bar-probe") {
     sayLooked("живых критериев планки", all === null ? 0 : all.all.length);
   }
   const NEWLINE = String.fromCharCode(10);
+  // Стенд проб — проект, где у каждого критерия планки есть предмет: живы
+  // все разделы по применимости. Лежит данными рядом с книгой посадок, а не
+  // папкой в мастерской: тесты обвязки собирают его на любой посадке
+  // обвязки. Собирается посадкой обвязки в пустую папку и своими файлами
+  // поверх; пробы идут внутри собранной папки обычным порядком.
+  if (process.argv.includes("--stand-build")) {
+    const dest = process.argv[process.argv.indexOf("--stand-build") + 1];
+    const standAt = path.join(TOOL_DIR, "bar-stand.json");
+    if (dest === undefined || dest.startsWith("--")) {
+      console.log("=== Стенд не собран ===");
+      console.log("  Куда собирать, не сказано: bar-probe --stand-build <папка>.");
+      process.exit(1);
+    }
+    if (!existsSync(standAt)) {
+      console.log("=== Стенд не собран ===");
+      console.log("  Ожидался файл: " + norm(standAt));
+      process.exit(1);
+    }
+    const target = path.resolve(dest);
+    if (existsSync(target) && readdirSync(target).length > 0) {
+      console.log("=== Стенд не собран ===");
+      console.log("  Папка не пуста: " + norm(target));
+      process.exit(1);
+    }
+    const shelf = path.join(TOOL_DIR, "..");
+    const seatMap = JSON.parse(
+      readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
+    );
+    mkdirSync(target, { recursive: true });
+    for (const d of seatMap.dirs ?? [])
+      mkdirSync(path.join(target, d), { recursive: true });
+    sandboxTree(shelf, path.join(target, ".claude"));
+    for (const own of seatMap.projectOwnedInsideHarness ?? [])
+      rmSync(path.join(target, ".claude", own), { recursive: true, force: true });
+    for (const one of seatMap.copy ?? []) {
+      if (one.notAtSeating !== undefined) continue;
+      const to = path.join(target, one.to);
+      mkdirSync(path.dirname(to), { recursive: true });
+      writeFileSync(to, readFileSync(path.join(shelf, one.from)));
+    }
+    const stand = JSON.parse(readFileSync(standAt, "utf8"));
+    for (const [p, text] of Object.entries(stand.files ?? {})) {
+      const to = path.join(target, p);
+      mkdirSync(path.dirname(to), { recursive: true });
+      writeFileSync(to, text.split("\n").join(NEWLINE));
+    }
+    for (const p of stand.remove ?? [])
+      rmSync(path.join(target, p), { recursive: true, force: true });
+    sandboxPackages(
+      path.join(BASE, "..", "node_modules"),
+      path.join(target, "node_modules"),
+    );
+    console.log("=== Стенд проб собран ===");
+    console.log("  папка: " + norm(target));
+    console.log("  своих файлов стенда: " + Object.keys(stand.files ?? {}).length);
+    console.log("");
+    console.log("  Пробы — внутри папки стенда:");
+    console.log("    cd " + norm(target));
+    console.log(
+      "    node .claude/tools/graph.mjs bar-probe --criterion=<критерий> | --batch=<критерии через запятую>",
+    );
+    process.exit(0);
+  }
   const at = path.join(TOOL_DIR, "bar-probes.json");
   if (!existsSync(at)) {
     console.log("=== Сажаемых нарушений нет ===");
@@ -7696,14 +7760,30 @@ if (mode === "bar-probe") {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  const plants = probeBook.plants.filter(
-    (p) => only === null || kindOf(p) === only,
-  );
+  // Номер посадки — её место в книге, с единицы. Выбор сужают номер,
+  // критерий и пачка: прогон по всей книге иначе зависел бы от того, что
+  // выпало.
+  const valueOf = (name) =>
+    process.argv
+      .find((a) => a.startsWith("--" + name + "="))
+      ?.slice(name.length + 3) ?? null;
+  const wantNumber = valueOf("plant");
+  const wantCriterion = valueOf("criterion");
+  const wantBatch = valueOf("batch");
+  const plants = probeBook.plants
+    .map((p, i) => ({ ...p, number: i + 1 }))
+    .filter(
+      (p) =>
+        (only === null || kindOf(p) === only) &&
+        (wantNumber === null || p.number === Number(wantNumber)) &&
+        (wantCriterion === null || p.criterion === wantCriterion),
+    );
   const ledgerAt =
     CONFIG.barProbeLedger == null
       ? null
       : path.join(BASE, CONFIG.barProbeLedger);
   const judged = process.argv.slice(3).find((a) => !a.startsWith("--"));
+  const projectRoot = path.join(BASE, "..");
 
   if (judged === undefined) {
     // Посадка. Песочница живёт ВНЕ репозитория: свод на задаче изменения
@@ -7711,7 +7791,11 @@ if (mode === "bar-probe") {
     // попадала бы в предмет свода самого проекта.
     if (plants.length === 0) {
       console.log("=== Сажать нечего ===");
-      console.log("  Посадок рода «" + only + "» в списке нет.");
+      console.log(
+        only !== null
+          ? "  Посадок рода «" + only + "» в списке нет."
+          : "  Посадок с таким выбором в книге нет.",
+      );
       process.exit(1);
     }
     const notPlanted = (why) => {
@@ -7719,23 +7803,69 @@ if (mode === "bar-probe") {
       console.log("  " + why);
       process.exit(1);
     };
+    // Порядок до перемешивания — по пути: тот же у любой машины, и зерно
+    // повторяет посадку.
+    const byPath = (x, y) => (rel(x) < rel(y) ? -1 : 1);
+    const shuffle = (xs) => {
+      for (let k = xs.length - 1; k > 0; k -= 1) {
+        const j = Math.floor(random() * (k + 1));
+        [xs[k], xs[j]] = [xs[j], xs[k]];
+      }
+      return xs;
+    };
     // Файлы посадки в существующий код считаются ДО выбора, и выбор идёт из
     // посадок, которые проект вмещает: роль на файл и ещё файл под
     // прикрытие. Прежде выбор шёл по всему списку, и в малом проекте зерно
     // выпадало на посадку, которой файлов не хватало. Найдено прогоном проб.
-    const pool = files
-      .filter(
-        (f) =>
-          !isTest(f) &&
-          !f.endsWith(".d.ts") &&
-          !isBarrel(f) &&
-          CODE_FILE.test(f),
-      )
-      .sort((x, y) => (rel(x) < rel(y) ? -1 : 1));
-    for (let k = pool.length - 1; k > 0; k -= 1) {
-      const j = Math.floor(random() * (k + 1));
-      [pool[k], pool[j]] = [pool[j], pool[k]];
-    }
+    const pool = shuffle(
+      files
+        .filter(
+          (f) =>
+            !isTest(f) &&
+            !f.endsWith(".d.ts") &&
+            !isBarrel(f) &&
+            CODE_FILE.test(f),
+        )
+        .sort(byPath),
+    );
+    // Роль называет вид файла, когда нарушение живёт только в нём: ключ
+    // списка — в разметке, каскад — в листе стилей, утверждение — в тесте.
+    // Тест — файл с именем теста: подготовка сети лежит в папке тестов, но
+    // утверждений не держит.
+    // Пулы видов перемешиваются по первому спросу: посадка без вида тратит
+    // случай так же, как до них, и повторимость зерна не меняется.
+    const MARKUP = /\.(?:tsx|jsx)$/;
+    const kindPools = new Map();
+    const poolOf = (kind) => {
+      if (kind === undefined) return pool;
+      if (!kindPools.has(kind)) {
+        const some =
+          kind === "модуль"
+            ? pool.filter((f) => !MARKUP.test(f))
+            : kind === "разметка"
+              ? pool.filter((f) => MARKUP.test(f))
+              : kind === "стиль"
+                ? shuffle([...styleFiles].sort(byPath))
+                : kind === "тест"
+                  ? shuffle(
+                      files
+                        .filter(
+                          (f) =>
+                            isTest(f) && TEST_SUFFIX.test(f),
+                        )
+                        .sort(byPath),
+                    )
+                  : null;
+        if (some === null)
+          notPlanted(
+            "Вид файла у роли посадки не знаком: «" +
+              kind +
+              "». Знакомы: модуль, разметка, стиль, тест.",
+          );
+        kindPools.set(kind, some);
+      }
+      return kindPools.get(kind);
+    };
     // Файл, где имя посадки уже есть, не выбирается — иначе посадка ломала
     // бы его объявлением-двойником, и находкой стала бы поломка, а не
     // посаженное.
@@ -7767,19 +7897,15 @@ if (mode === "bar-probe") {
     // находилось исключением. Найдено пробой планки. Прикрытий одно либо
     // два, из пула, случайно: знание одного прикрытия посаженного не выдаёт.
     // Словом «маска» в обвязке зовут шаблон путей, и сюда оно не идёт.
-    const covers = [...(probeBook.covers ?? [])];
+    const covers = shuffle([...(probeBook.covers ?? [])]);
     if (covers.length === 0 && plants.some((p) => p.into !== undefined))
       notPlanted(
         "В книге посадок нет прикрытий (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
       );
-    for (let k = covers.length - 1; k > 0; k -= 1) {
-      const j = Math.floor(random() * (k + 1));
-      [covers[k], covers[j]] = [covers[j], covers[k]];
-    }
     const freeFor = (one, taken) =>
-      pool.find((x) => !taken.has(x) && !clashes(x, one));
-    const rolesOf = (p) => {
-      const taken = new Set();
+      poolOf(one.file).find((x) => !taken.has(x) && !clashes(x, one));
+    const rolesOf = (p, busy) => {
+      const taken = new Set(busy);
       const roleFile = new Map();
       for (const one of p.into) {
         const f = freeFor(one, taken);
@@ -7789,45 +7915,103 @@ if (mode === "bar-probe") {
       }
       return { taken, roleFile };
     };
-    const fits = (p) => {
-      if (p.into === undefined) return true;
-      const roles = rolesOf(p);
-      return (
-        roles !== null &&
-        covers.some((one) => freeFor(one, roles.taken) !== undefined)
-      );
+    // Правка конфига или записи базы (`patch`): фрагмент обязан стоять в
+    // файле проекта ровно там, где посадка его ищет, — иначе она легла бы
+    // мимо и судить было бы не о чем.
+    const patchFits = (p) =>
+      (p.patch ?? []).every((one) => {
+        const f = path.join(projectRoot, one.path);
+        return (
+          existsSync(f) &&
+          readFileSync(f, "utf8").includes(one.find.split("\n").join(NEWLINE))
+        );
+      });
+    const createsOf = (p) =>
+      p.create === undefined
+        ? []
+        : Array.isArray(p.create)
+          ? p.create
+          : [p.create];
+    const fits = (p, busy, made) => {
+      if (!patchFits(p)) return null;
+      if (createsOf(p).some((one) => made.has(one.path))) return null;
+      if (p.into === undefined) return { taken: new Set(busy), roleFile: new Map() };
+      const roles = rolesOf(p, busy);
+      if (roles === null) return null;
+      return covers.some((one) => freeFor(one, roles.taken) !== undefined)
+        ? roles
+        : null;
     };
-    const fitting = plants.filter(fits);
-    if (fitting.length === 0)
-      notPlanted(
-        "Проект не вмещает ни одной посадки: посадке в существующий код нужно файлов кода без её имён не меньше " +
-          Math.min(...plants.map((p) => p.into.length + 1)) +
-          ", а файлов кода в проекте " +
-          pool.length +
-          ".",
-      );
-    const plant = fitting[Math.floor(random() * fitting.length)];
+    const chosen = [];
+    const unfit = [];
+    let busy = new Set();
+    let skipped = 0;
+    if (wantBatch === null) {
+      const fitting = plants.filter((p) => fits(p, busy, new Set()) !== null);
+      if (fitting.length === 0) {
+        const into = plants.filter((p) => p.into !== undefined);
+        notPlanted(
+          into.length === plants.length
+            ? "Проект не вмещает ни одной посадки: посадке в существующий код нужно файлов кода без её имён не меньше " +
+                Math.min(...into.map((p) => p.into.length + 1)) +
+                ", а файлов кода в проекте " +
+                pool.length +
+                "."
+            : "Проект не вмещает ни одной посадки: файлов нужного вида не хватает либо фрагмента, который посадка правит, в проекте нет.",
+        );
+      }
+      skipped = plants.length - fitting.length;
+      const plant = fitting[Math.floor(random() * fitting.length)];
+      const roles = fits(plant, busy, new Set());
+      busy = roles.taken;
+      chosen.push({ plant, roleFile: roles.roleFile });
+    } else {
+      // Пачка — по посадке на каждый названный критерий, в одной песочнице и
+      // под один свод: постоянная часть свода — тела критериев и строка на
+      // каждый — оплачивается раз. Критерий в пачке не повторяется: у
+      // критерия приложения одна строка на работу. Файлы посадок не
+      // пересекаются.
+      const made = new Set();
+      const asked = [
+        ...new Set(
+          wantBatch
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        ),
+      ];
+      for (const c of asked) {
+        const options = plants.filter(
+          (p) => p.criterion === c && fits(p, busy, made) !== null,
+        );
+        if (options.length === 0) {
+          unfit.push(c);
+          continue;
+        }
+        const plant = options[Math.floor(random() * options.length)];
+        const roles = fits(plant, busy, made);
+        busy = roles.taken;
+        for (const one of createsOf(plant)) made.add(one.path);
+        chosen.push({ plant, roleFile: roles.roleFile });
+      }
+      if (chosen.length === 0)
+        notPlanted("Ни один критерий пачки не вместился: " + unfit.join(", ") + ".");
+    }
     const id = String(Date.now()).slice(-8);
     const box = path.join(tmpdir(), "bar-probe-" + id);
     const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
     rmSync(box, { recursive: true, force: true });
-    sandboxTree(path.join(BASE, ".."), box);
+    sandboxTree(projectRoot, box);
     sandboxPackages(
-      path.join(BASE, "..", "node_modules"),
+      path.join(projectRoot, "node_modules"),
       path.join(box, "node_modules"),
     );
     // Протокол прошлой работы в песочницу не едет: свод обязан начаться с
     // чистого листа, иначе проба мерит вчерашний проход.
     if (CONFIG.barProtocol != null)
       rmSync(
-        path.join(
-          box,
-          path.relative(path.join(BASE, ".."), BASE),
-          CONFIG.barProtocol,
-        ),
-        {
-          force: true,
-        },
+        path.join(box, path.relative(projectRoot, BASE), CONFIG.barProtocol),
+        { force: true },
       );
     try {
       execFileSync("git", ["init", "-q"], { cwd: box, stdio: "ignore" });
@@ -7855,123 +8039,162 @@ if (mode === "bar-probe") {
       process.exit(1);
     }
     // Адрес посадки считается от корня ИСХОДНИКОВ: у чужого проекта он зовётся
-    // не `src`, и адрес, записанный от корня репозитория, лёг бы мимо.
+    // не `src`, и адрес, записанный от корня репозитория, лёг бы мимо. Правка
+    // конфига или записи базы адресуется от корня репозитория.
     //
     // Нарушение формы целого одним файлом не посадить: второй писатель,
     // цикл, общий слой, берущий из приложения, — это связь двух узлов, и в
     // каждом из них по отдельности строки безупречны. Поэтому посадка бывает
     // из нескольких файлов, и виновники названы: адрес находки обязан назвать
     // хотя бы одного.
-    const at = (p) =>
-      path.join(box, path.relative(path.join(BASE, ".."), ROOT), p);
-    let culprits;
-    if (plant.into !== undefined) {
-      // В существующий код: нарушение дописывается в конец случайных файлов
-      // проекта, а в ещё один ложится обычная правка — нарушение не одно в
-      // правленом и не в файле, заведённом ради пробы. Файлы — разные: роль
-      // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`.
-      //
-      // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
-      // вариант с типами, импорт встаёт к импортам файла.
-      const typed = (f) => TS_FILE.test(f);
-      const bodyFor = (one, f) =>
-        (typed(f) && one.ts !== undefined ? one.ts : one.text)
-          .split("\n")
-          .join(NEWLINE);
-      // Посадка вмещается: роли встают теми же файлами, что при проверке.
-      const { taken, roleFile } = rolesOf(plant);
-      const wanted = Math.min(covers.length, 1 + Math.floor(random() * 2));
-      const coverFiles = [];
-      for (const one of covers) {
-        if (coverFiles.length === wanted) break;
-        const f = freeFor(one, taken);
-        if (f === undefined) continue;
-        taken.add(f);
-        coverFiles.push([one, f]);
-      }
-      const inBox = (f) => path.join(box, path.relative(path.join(BASE, ".."), f));
-      const specFrom = (from, to) => {
-        let r = norm(path.relative(path.dirname(from), to)).replace(
-          CODE_FILE,
-          "",
-        );
-        if (!r.startsWith(".")) r = "./" + r;
-        return r;
-      };
-      // Импорт встаёт за последним импортом файла, тело — в конец. Файл без
-      // импортов получает импорт вместе с телом: модуль это допускает.
-      const place = (f, text) => {
-        const lines = text.split(NEWLINE);
-        const imports = lines.filter((l) => /^import\b/.test(l));
-        const body = lines
-          .filter((l) => !/^import\b/.test(l))
-          .join(NEWLINE)
-          .replace(/^\n+/, "");
-        let was = readFileSync(inBox(f), "utf8");
-        let last = -1;
-        const parsed = parseModule(was, f);
-        for (const s of parsed.froms)
-          if (s.keyword === "import") last = Math.max(last, s.end);
-        for (const one of parsed.bare) last = Math.max(last, one.end);
-        if (imports.length > 0 && last >= 0) {
-          const cut = was.indexOf(NEWLINE, last);
-          const at = cut < 0 ? was.length : cut;
-          was = was.slice(0, at) + NEWLINE + imports.join(NEWLINE) + was.slice(at);
-        }
-        const tail =
-          imports.length > 0 && last < 0
-            ? imports.join(NEWLINE) + NEWLINE + NEWLINE + body
-            : body;
+    const at = (p) => path.join(box, path.relative(projectRoot, ROOT), p);
+    const inBox = (f) => path.join(box, path.relative(projectRoot, f));
+    // В существующий код: нарушение дописывается в конец случайных файлов
+    // проекта, а в ещё один ложится обычная правка — нарушение не одно в
+    // правленом и не в файле, заведённом ради пробы. Файлы — разные: роль
+    // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`.
+    //
+    // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
+    // вариант с типами, импорт встаёт к импортам файла.
+    const typed = (f) => TS_FILE.test(f);
+    const bodyFor = (one, f) =>
+      (typed(f) && one.ts !== undefined ? one.ts : one.text)
+        .split("\n")
+        .join(NEWLINE);
+    const specFrom = (from, to) => {
+      let r = norm(path.relative(path.dirname(from), to)).replace(
+        CODE_FILE,
+        "",
+      );
+      if (!r.startsWith(".")) r = "./" + r;
+      return r;
+    };
+    // Импорт встаёт за последним импортом файла, тело — в конец. Файл без
+    // импортов получает импорт вместе с телом: модуль это допускает. Лист
+    // стилей импортов не разбирает: правило ложится в конец.
+    const place = (f, text) => {
+      let was = readFileSync(inBox(f), "utf8");
+      if (!CODE_FILE.test(f)) {
         writeFileSync(
           inBox(f),
-          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + tail + NEWLINE,
+          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + text + NEWLINE,
         );
-      };
-      for (const one of plant.into) {
-        const f = roleFile.get(one.role ?? "виновник");
-        place(
-          f,
-          bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
-            specFrom(f, roleFile.get(role)),
-          ),
-        );
+        return;
       }
-      for (const [one, f] of coverFiles) place(f, bodyFor(one, f));
-      culprits = (plant.culprits ?? plant.into.map((one) => one.role ?? "виновник")).map(
-        (role) => norm(inBox(roleFile.get(role))),
+      const lines = text.split(NEWLINE);
+      const imports = lines.filter((l) => /^import\b/.test(l));
+      const body = lines
+        .filter((l) => !/^import\b/.test(l))
+        .join(NEWLINE)
+        .replace(/^\n+/, "");
+      let last = -1;
+      const parsed = parseModule(was, f);
+      for (const s of parsed.froms)
+        if (s.keyword === "import") last = Math.max(last, s.end);
+      for (const one of parsed.bare) last = Math.max(last, one.end);
+      if (imports.length > 0 && last >= 0) {
+        const cut = was.indexOf(NEWLINE, last);
+        const at = cut < 0 ? was.length : cut;
+        was = was.slice(0, at) + NEWLINE + imports.join(NEWLINE) + was.slice(at);
+      }
+      const tail =
+        imports.length > 0 && last < 0
+          ? imports.join(NEWLINE) + NEWLINE + NEWLINE + body
+          : body;
+      writeFileSync(
+        inBox(f),
+        was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + tail + NEWLINE,
       );
-    } else {
-      const creates = Array.isArray(plant.create) ? plant.create : [plant.create];
+    };
+    const placed = [];
+    let anyInto = false;
+    for (const { plant, roleFile } of chosen) {
+      const creates = createsOf(plant);
+      if (plant.into !== undefined) {
+        anyInto = true;
+        for (const one of plant.into) {
+          const f = roleFile.get(one.role ?? "виновник");
+          place(
+            f,
+            bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
+              specFrom(f, roleFile.get(role)),
+            ),
+          );
+        }
+      }
       for (const one of creates) {
         const where = at(one.path);
         mkdirSync(path.dirname(where), { recursive: true });
         writeFileSync(where, one.text.split("\n").join(NEWLINE));
       }
-      culprits = (plant.culprits ?? [creates[0].path]).map((p) =>
-        norm(at(p)),
-      );
+      for (const one of plant.patch ?? []) {
+        const where = path.join(box, one.path);
+        writeFileSync(
+          where,
+          readFileSync(where, "utf8").replace(
+            one.find.split("\n").join(NEWLINE),
+            one.replace.split("\n").join(NEWLINE),
+          ),
+        );
+      }
+      // Виновник — роль посадки, путь созданного файла от корня исходников
+      // либо путь правленого конфига от корня репозитория.
+      const own = (c) =>
+        (plant.patch ?? []).some((one) => one.path === c)
+          ? path.join(box, c)
+          : roleFile.has(c)
+            ? inBox(roleFile.get(c))
+            : at(c);
+      const named =
+        plant.culprits ??
+        (plant.into !== undefined
+          ? plant.into.map((one) => one.role ?? "виновник")
+          : creates.length > 0
+            ? [creates[0].path]
+            : [plant.patch[0].path]);
+      const culprits = named.map((c) => norm(own(c)));
+      placed.push({
+        criterion: plant.criterion,
+        why: plant.why,
+        kind: kindOf(plant),
+        number: plant.number,
+        file: culprits[0],
+        files: culprits,
+      });
+    }
+    // Прикрытия — раз на песочницу, когда посажено в существующий код.
+    if (anyInto) {
+      const wanted = Math.min(covers.length, 1 + Math.floor(random() * 2));
+      const coverFiles = [];
+      for (const one of covers) {
+        if (coverFiles.length === wanted) break;
+        const f = freeFor(one, busy);
+        if (f === undefined) continue;
+        busy.add(f);
+        coverFiles.push([one, f]);
+      }
+      for (const [one, f] of coverFiles) place(f, bodyFor(one, f));
     }
     writeFileSync(
       mark,
       JSON.stringify(
-        {
-          criterion: plant.criterion,
-          why: plant.why,
-          kind: kindOf(plant),
-          file: culprits[0],
-          files: culprits,
-          box,
-        },
+        wantBatch === null ? { ...placed[0], box } : { plants: placed, box },
         null,
         2,
       ) + NEWLINE,
     );
     console.log("=== Проба планки посажена ===");
     console.log("  песочница: " + norm(box));
-    if (fitting.length < plants.length)
+    if (wantBatch !== null)
+      console.log(
+        "  пачка: посадок " +
+          placed.length +
+          (unfit.length > 0 ? "; не вместились критерии: " + unfit.join(", ") : ""),
+      );
+    if (skipped > 0)
       console.log(
         "  проект не вместил посадок: " +
-          (plants.length - fitting.length) +
+          skipped +
           " из " +
           plants.length +
           " — выбор шёл из остальных",
@@ -8002,91 +8225,115 @@ if (mode === "bar-probe") {
     console.log("  Ожидалась запись: " + norm(mark));
     process.exit(1);
   }
-  const plant = JSON.parse(readFileSync(mark, "utf8"));
+  const record = JSON.parse(readFileSync(mark, "utf8"));
+  const entries = record.plants ?? [record];
+  // Суд одной машины — без печати и без следа: посадку критерия, который
+  // решает машина, проверяет не сессия, а скелет свода, и его строку машина
+  // заполняет сама. Песочницу такой суд не снимает — её снимает зовущий.
+  const machineOnly = process.argv.includes("--machine");
   const protocolAt =
     CONFIG.barProtocol == null
       ? null
       : path.join(
-          plant.box,
-          path.relative(path.join(BASE, ".."), BASE),
+          record.box,
+          path.relative(projectRoot, BASE),
           CONFIG.barProtocol,
         );
   const was = barHeader(protocolAt);
   console.log("=== Суд по пробе планки ===");
-  console.log("  посажено: " + plant.criterion + " — " + plant.why);
-  const culprits = plant.files ?? [plant.file];
-  console.log(
-    "  где: " +
-      culprits.map((f) => norm(path.relative(plant.box, f))).join(", "),
-  );
-  let verdict;
   // Суд мерит полноту: лишняя находка не штрафуется, и свод, назвавший у
   // посаженного каждый критерий, поймает всегда. Поэтому рядом с исходом стоит,
   // сколько находок дал свод и сколько критериев названо по адресу посадки:
   // доля читается вместе с этим числом. Найдено пробой планки.
-  let found = null;
-  let atPlant = null;
-  if (was === null) verdict = "свода нет";
-  else if (was.seal === null || was.seal === "нет") verdict = "свод без печати";
-  else if (was.seal !== barSealOf(was.body))
-    verdict = "печать не сходится: протокол правлен после неё";
-  else {
-    // Разбор протокола общий с режимом. Строк у критерия бывает несколько —
-    // ядро узла и слоя разложено по предметам, — и засчитывается любая.
-    const rows = barRowsOf(was.body).outcomes;
-    // Виновник — путём от корня исходников песочницы, а не голым именем: в
-    // существующем коде одноимённых файлов много.
-    const boxRoot = path.join(
-      plant.box,
-      path.relative(path.join(BASE, ".."), ROOT),
-    );
-    const planted = culprits.map((f) => norm(path.relative(boxRoot, f)));
-    const hitsPlanted = (one) =>
-      one.outcome === "нашлось" && planted.some((p) => one.addr.includes(p));
-    found = rows.filter((one) => one.outcome === "нашлось").length;
-    atPlant = new Set(rows.filter(hitsPlanted).map((one) => one.id)).size;
-    const mine = rows.filter((one) => one.id === plant.criterion);
-    const mineFound = mine.filter((one) => one.outcome === "нашлось");
-    if (mine.some(hitsPlanted)) verdict = "поймано";
-    else if (mineFound.length > 0)
-      verdict =
-        "критерий назван, адрес другой: " +
-        mineFound.map((one) => one.addr).join(", ");
-    else {
-      const byOther = [
-        ...new Set(rows.filter(hitsPlanted).map((one) => one.id)),
-      ];
-      verdict =
-        byOther.length > 0
-          ? "названо другим критерием: " + byOther.join(", ")
-          : "мимо";
-    }
-  }
-  console.log("  исход: " + verdict);
-  if (found !== null)
+  let rows = null;
+  let refused = null;
+  if (was === null) refused = "свода нет";
+  else if (!machineOnly && (was.seal === null || was.seal === "нет"))
+    refused = "свод без печати";
+  else if (!machineOnly && was.seal !== barSealOf(was.body))
+    refused = "печать не сходится: протокол правлен после неё";
+  // Разбор протокола общий с режимом. Строк у критерия бывает несколько —
+  // ядро узла и слоя разложено по предметам, — и засчитывается любая.
+  else rows = barRowsOf(was.body).outcomes;
+  const found =
+    rows === null ? null : rows.filter((one) => one.outcome === "нашлось").length;
+  // Виновник — путём от корня исходников песочницы, а не голым именем: в
+  // существующем коде одноимённых файлов много. Конфиг и запись базы лежат
+  // вне исходников и сличаются путём от корня песочницы.
+  const boxRoot = path.join(record.box, path.relative(projectRoot, ROOT));
+  const plantedName = (f) => {
+    const r = norm(path.relative(boxRoot, f));
+    return r.startsWith("../") ? norm(path.relative(record.box, f)) : r;
+  };
+  const verdicts = [];
+  for (const plant of entries) {
+    console.log("  посажено: " + plant.criterion + " — " + plant.why);
+    const culprits = plant.files ?? [plant.file];
     console.log(
-      "  находок в своде: " +
-        found +
-        ", критериев по адресу посадки: " +
-        atPlant,
+      "  где: " +
+        culprits.map((f) => norm(path.relative(record.box, f))).join(", "),
     );
+    let verdict = refused;
+    let atPlant = null;
+    if (rows !== null) {
+      const planted = culprits.map(plantedName);
+      const hitsPlanted = (one) =>
+        one.outcome === "нашлось" && planted.some((p) => one.addr.includes(p));
+      atPlant = new Set(rows.filter(hitsPlanted).map((one) => one.id)).size;
+      const mine = rows.filter((one) => one.id === plant.criterion);
+      const mineFound = mine.filter((one) => one.outcome === "нашлось");
+      if (mine.some(hitsPlanted)) verdict = "поймано";
+      else if (mineFound.length > 0)
+        verdict =
+          "критерий назван, адрес другой: " +
+          mineFound.map((one) => one.addr).join(", ");
+      else {
+        const byOther = [
+          ...new Set(rows.filter(hitsPlanted).map((one) => one.id)),
+        ];
+        verdict =
+          byOther.length > 0
+            ? "названо другим критерием: " + byOther.join(", ")
+            : "мимо";
+      }
+    }
+    console.log("  исход: " + verdict);
+    if (found !== null)
+      console.log(
+        "  находок в своде: " +
+          found +
+          ", критериев по адресу посадки: " +
+          atPlant,
+      );
+    verdicts.push({ plant, verdict, atPlant });
+  }
 
-  if (ledgerAt !== null) {
+  if (ledgerAt !== null && !machineOnly) {
     const book = existsSync(ledgerAt) ? readJson(ledgerAt, {}) : { runs: [] };
-    book.runs.push({
-      criterion: plant.criterion,
-      verdict,
-      kind: plant.kind ?? "новым файлом",
-      when: new Date().toISOString().slice(0, 10),
-      ...(found === null ? {} : { found, atPlant }),
-    });
+    for (const { plant, verdict, atPlant } of verdicts)
+      book.runs.push({
+        criterion: plant.criterion,
+        verdict,
+        kind: plant.kind ?? "новым файлом",
+        when: new Date().toISOString().slice(0, 10),
+        ...(entries.length > 1 ? { batch: entries.length } : {}),
+        ...(found === null ? {} : { found, atPlant }),
+      });
     writeFileSync(ledgerAt, JSON.stringify(book, null, 2) + NEWLINE);
     const median = (xs) =>
       xs.length === 0
         ? null
         : [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
-    for (const kind of ["новым файлом", "в существующем коде"]) {
-      const mine = book.runs.filter((r) => (r.kind ?? "новым файлом") === kind);
+    // Посаженное пачкой — другой замер: правка с десятком дефектов стоит
+    // иначе, чем с одним, и доли не смешиваются.
+    const groups = [
+      ["новым файлом", (r) => r.batch === undefined && (r.kind ?? "новым файлом") === "новым файлом"],
+      ["в существующем коде", (r) => r.batch === undefined && r.kind === "в существующем коде"],
+      ["пачкой", (r) => r.batch !== undefined],
+    ];
+    for (const [kind, takes] of groups) {
+      const mine = book.runs.filter(takes);
+      if (kind === "пачкой" && mine.length === 0) continue;
       const wide = median(
         mine.filter((r) => typeof r.atPlant === "number").map((r) => r.atPlant),
       );
@@ -8113,9 +8360,11 @@ if (mode === "bar-probe") {
     );
     console.log("  дёшево — медиану читают рядом с долей.");
   }
-  rmSync(plant.box, { recursive: true, force: true });
-  rmSync(mark, { force: true });
-  process.exit(verdict === "поймано" ? 0 : 1);
+  if (!machineOnly) {
+    rmSync(record.box, { recursive: true, force: true });
+    rmSync(mark, { force: true });
+  }
+  process.exit(verdicts.every((v) => v.verdict === "поймано") ? 0 : 1);
 }
 
 // Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу

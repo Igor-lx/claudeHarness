@@ -7360,6 +7360,183 @@ describe("проба планки: посадка по вместимости", 
   }, 240000);
 });
 
+/**
+ * Прогон по всей книге требует выбирать посадку, а не ждать, что выпадет, и
+ * платить постоянную часть свода раз на пачку. Нарушение бывает только в
+ * своём виде файла — в листе стилей, в тесте — и в конфиге. Посадки свои, а
+ * не из книги: тест, пересказывающий книгу, выдаёт посаженное.
+ */
+describe("проба планки: выбор, пачка, вид файла и правка конфига", () => {
+  const runIn = (cwd, ...args) => {
+    try {
+      return execFileSync(process.execPath, [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args], {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      return String(e.stdout ?? "");
+    }
+  };
+  const marked = (out) => {
+    const id = /bar-probe (\d+)/.exec(out)?.[1] ?? null;
+    return id === null ? null : path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
+  };
+
+  it("пачка сажает по посадке на критерий в разные файлы своего вида, суд судит каждую", () => {
+    const box = seatEmpty("probabatch-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      fs.writeFileSync(path.join(box, "src", "app", "zzLook.module.scss"), ".zzLook {\n  color: red;\n}\n");
+      const book = {
+        plants: [
+          {
+            criterion: "H7",
+            why: "число без имени",
+            create: { path: "shared/zzNum/zzNum.ts", text: "export const zzNum = (n: number): number => n * 427;\n" },
+          },
+          {
+            criterion: "B1",
+            why: "булев довод",
+            into: [
+              {
+                file: "модуль",
+                text: "export const zzFlagged = (on) => (on ? 1 : 0);",
+                ts: "export const zzFlagged = (on: boolean): number => (on ? 1 : 0);",
+              },
+            ],
+          },
+          {
+            criterion: "D1",
+            why: "строгость снята",
+            patch: [{ path: "tsconfig.json", find: '"strict": true', replace: '"strict": false' }],
+            create: { path: "shared/zzLoose/zzLoose.ts", text: "export const zzLoose = 1;\n" },
+            culprits: ["tsconfig.json"],
+          },
+          { criterion: "H1", why: "правило без причины", into: [{ role: "лист", file: "стиль", text: ".zzExtra {\n  color: blue;\n}" }] },
+          { criterion: "J1", why: "тест без утверждения", into: [{ role: "проверка", file: "тест", text: 'it("zz", () => {});' }] },
+        ],
+        covers: [{ text: "export const zzShield = () => 1;", ts: "export const zzShield = (): number => 1;" }],
+      };
+      fs.writeFileSync(path.join(box, ".claude", "tools", "bar-probes.json"), JSON.stringify(book));
+      const out = runIn(box, "bar-probe", "--batch=H7,B1,D1,H1,J1,Q9", "--seed=7");
+      sandbox = /песочница: (.+)/.exec(out)?.[1]?.trim() ?? null;
+      markAt = marked(out);
+      expect(sandbox, out).not.toBeNull();
+      expect(out).toContain("пачка: посадок 5; не вместились критерии: Q9");
+      const record = JSON.parse(fs.readFileSync(markAt, "utf8"));
+      expect(record.plants.map((p) => p.criterion)).toEqual(["H7", "B1", "D1", "H1", "J1"]);
+      const fileOf = (c) => record.plants.find((p) => p.criterion === c).files[0];
+      expect(fileOf("H7")).toMatch(/\/src\/shared\/zzNum\/zzNum\.ts$/);
+      expect(fileOf("B1")).toMatch(/\/src\/shared\/styles\/mergeStyleMaps\.ts$/);
+      expect(fileOf("D1")).toBe(path.join(sandbox, "tsconfig.json").split(path.sep).join("/"));
+      expect(fileOf("H1")).toMatch(/\/src\/app\/zzLook\.module\.scss$/);
+      expect(fileOf("J1")).toMatch(/\/tests\/[^/]+\.test\.tsx?$/);
+      expect(new Set(record.plants.map((p) => p.files[0])).size).toBe(5);
+      expect(fs.readFileSync(fileOf("B1"), "utf8")).toContain("zzFlagged = (on: boolean)");
+      expect(fs.readFileSync(fileOf("H1"), "utf8")).toContain(".zzExtra {");
+      expect(fs.readFileSync(fileOf("J1"), "utf8")).toContain('it("zz", () => {});');
+      expect(fs.readFileSync(fileOf("D1"), "utf8")).toContain('"strict": false');
+      expect(fs.readFileSync(path.join(box, "tsconfig.json"), "utf8")).toContain('"strict": true');
+
+      runIn(sandbox, "bar");
+      const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
+      const said = { H7: "src/shared/zzNum/zzNum.ts:1", D1: "tsconfig.json:14", H1: "src/app/App.tsx:1" };
+      fs.writeFileSync(
+        protoAt,
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .map((line) => {
+            const c = line.split("|");
+            if (c.length !== 9 || said[c[1].trim()] === undefined) return line;
+            c[4] = " нашлось ";
+            c[5] = " " + said[c[1].trim()] + " ";
+            return c.join("|");
+          })
+          .join("\n"),
+      );
+      // Суд одной машины печати не требует, следа не пишет и песочницу
+      // оставляет зовущему.
+      const machine = runIn(box, "bar-probe", path.basename(markAt).replace(/^bar-probe-|\.plant\.json$/g, ""), "--machine");
+      expect(machine.match(/исход: поймано/g)?.length, machine).toBe(2);
+      expect(machine).toContain("исход: критерий назван, адрес другой");
+      expect(machine.match(/исход: мимо/g)?.length).toBe(2);
+      expect(fs.existsSync(markAt)).toBe(true);
+      expect(fs.existsSync(path.join(box, ".context", "bar-probe-ledger.json"))).toBe(false);
+      // Обычный суд требует печати, пишет в след каждую посадку и считает
+      // пачку отдельной долей.
+      const judged = runIn(box, "bar-probe", path.basename(markAt).replace(/^bar-probe-|\.plant\.json$/g, ""));
+      expect(judged.match(/исход: свод без печати/g)?.length).toBe(5);
+      expect(judged).toContain("пачкой: проб 5, поймано 0");
+      const runs = JSON.parse(fs.readFileSync(path.join(box, ".context", "bar-probe-ledger.json"), "utf8")).runs;
+      expect(runs.map((r) => r.batch)).toEqual([5, 5, 5, 5, 5]);
+      expect(fs.existsSync(markAt)).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 300000);
+
+  it("номер и критерий выбирают посадку; посадки с таким выбором нет — так и сказано", () => {
+    const box = seatEmpty("probapick-");
+    const leftovers = [];
+    try {
+      const make = (criterion, name) => ({
+        criterion,
+        why: "проба выбора",
+        create: { path: "shared/" + name + "/" + name + ".ts", text: "export const " + name + " = 1;\n" },
+      });
+      fs.writeFileSync(
+        path.join(box, ".claude", "tools", "bar-probes.json"),
+        JSON.stringify({ plants: [make("H7", "zzOne"), make("H7", "zzTwo"), make("B1", "zzThree")], covers: [] }),
+      );
+      const pick = (...args) => {
+        const out = runIn(box, "bar-probe", ...args);
+        const sandbox = /песочница: (.+)/.exec(out)?.[1]?.trim();
+        const at = marked(out);
+        expect(sandbox, out).toBeDefined();
+        leftovers.push(sandbox, at);
+        return JSON.parse(fs.readFileSync(at, "utf8"));
+      };
+      expect(pick("--plant=2").file).toMatch(/\/zzTwo\/zzTwo\.ts$/);
+      expect(pick("--criterion=B1", "--seed=4").file).toMatch(/\/zzThree\/zzThree\.ts$/);
+      const none = runIn(box, "bar-probe", "--criterion=Q9");
+      expect(none).toContain("=== Сажать нечего ===");
+      expect(none).toContain("Посадок с таким выбором в книге нет.");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      for (const one of leftovers) if (one) fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("стенд собирается посадкой обвязки и своими файлами в пустую папку", () => {
+    const box = seatEmpty("probastand-");
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "probastand-dest-"));
+    try {
+      fs.writeFileSync(
+        path.join(box, ".claude", "tools", "bar-stand.json"),
+        JSON.stringify({
+          files: { "src/app/zzStand.ts": "export const zzStand = 1;\n" },
+          remove: ["docs/FEATURES.md"],
+        }),
+      );
+      expect(runIn(box, "bar-probe", "--stand-build")).toContain("Куда собирать, не сказано");
+      const out = runIn(box, "bar-probe", "--stand-build", dest);
+      expect(out).toContain("=== Стенд проб собран ===");
+      for (const one of [".claude/tools/graph.mjs", "CLAUDE.md", "src/app/App.tsx", "src/app/zzStand.ts"])
+        expect(fs.existsSync(path.join(dest, one)), one).toBe(true);
+      expect(fs.existsSync(path.join(dest, "docs", "FEATURES.md"))).toBe(false);
+      expect(runIn(box, "bar-probe", "--stand-build", dest)).toContain("Папка не пуста");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 describe("импорт с адресом-выражением в графе", () => {
   it("файл под постоянным путём шаблона не мёртв и не ничей, адрес без пути назван оговоркой", () => {
     const box = seatEmpty("shablon-");
