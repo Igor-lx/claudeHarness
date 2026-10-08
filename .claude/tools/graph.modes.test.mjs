@@ -6545,6 +6545,59 @@ describe("свод: строки держателя «линт» ставит м
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 120000);
+
+  // Строка на работу одна, а мест нарушения бывает несколько, и сообщение
+  // правила бывает в несколько строк. Найдено стендом проб: правила
+  // компилятора React рвали строку протокола переводом строки, а вторая
+  // посадка того же правила пропадала за первой.
+  it("сообщение линта — одной строкой; строка линта и среза перечисляет все места", () => {
+    const box = seatEmpty("lint-many-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.engines.node = ">=" + process.versions.node;
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const bar = (env) =>
+        spawnSync(process.execPath, [graph, "bar", "src/app/zzMany"], { cwd: box, encoding: "utf8", env }).stdout;
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const rowOf = (id) =>
+        new RegExp("^\\| " + id + " \\| [^|]+ \\| [^|]+ \\| ([^|]*) \\| ([^|]*) \\| ([^|]*) \\| ([^|]*) \\|$", "m").exec(
+          fs.readFileSync(protoAt, "utf8"),
+        );
+      // Правило с сообщением в две строки — под именем правила, которое
+      // держит C11: так оно попадает в строку протокола.
+      fs.writeFileSync(
+        path.join(box, "eslint.config.mjs"),
+        "const twoLines = { create: (context) => ({ Program: (node) => context.report({ node, message: \"first line\\nsecond line\" }) }) };\n" +
+          'export default [{ files: ["**/*.js"], plugins: { "react-hooks": { rules: { purity: twoLines } } }, rules: { "no-empty": "error", "react-hooks/purity": "error" } }];\n',
+      );
+      const dir = path.join(box, "src", "app", "zzMany");
+      fs.mkdirSync(dir, { recursive: true });
+      for (const name of ["zzOne", "zzTwo"])
+        fs.writeFileSync(
+          path.join(dir, name + ".js"),
+          "export function " + name + "(x) {\n  try {\n    JSON.parse(x);\n  } catch {}\n  return x;\n}\n",
+        );
+      const withLint = { ...process.env, NODE_PATH: path.join(process.cwd(), "node_modules") };
+      bar(withLint);
+      const purity = rowOf("C11");
+      expect(purity, "строка C11 разорвана либо пуста").not.toBeNull();
+      expect(purity?.[3]).toContain("first line second line");
+      const empty = rowOf("E1");
+      expect(empty?.[1].trim()).toBe("нашлось");
+      expect(empty?.[2].trim()).toBe("app/zzMany/zzOne.js:4");
+      expect(empty?.[3]).toContain("ещё нарушений `1`: app/zzMany/zzTwo.js:4");
+      // Без линта строку ставит срез — и тоже называет оба места.
+      fs.rmSync(protoAt);
+      bar({ ...process.env, NODE_PATH: "" });
+      const cut = rowOf("E1");
+      expect(cut?.[3]).toContain("срез: пустой перехват");
+      expect(cut?.[3]).toMatch(/ещё мест `1`: app\/zzMany\/zz(?:One|Two)\.js:4/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
 });
 
 /**

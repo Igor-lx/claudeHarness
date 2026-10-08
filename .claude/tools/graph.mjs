@@ -8277,8 +8277,15 @@ if (mode === "bar-probe") {
     let atPlant = null;
     if (rows !== null) {
       const planted = culprits.map(plantedName);
+      // Строку линта и среза ставит машина: её адрес — первое нарушение,
+      // прочие перечислены в графе «что», и посаженное среди них тоже названо.
       const hitsPlanted = (one) =>
-        one.outcome === "нашлось" && planted.some((p) => one.addr.includes(p));
+        one.outcome === "нашлось" &&
+        planted.some(
+          (p) =>
+            one.addr.includes(p) ||
+            (/^(?:линт|срез):/.test(one.what) && one.what.includes(p)),
+        );
       atPlant = new Set(rows.filter(hitsPlanted).map((one) => one.id)).size;
       const mine = rows.filter((one) => one.id === plant.criterion);
       const mineFound = mine.filter((one) => one.outcome === "нашлось");
@@ -12206,9 +12213,15 @@ const barLintOf = (repoRoot, list) => {
   const hits = new Map();
   for (const one of report.results) {
     linted.add(norm(one.filePath));
+    // Сообщение — одной строкой: правила компилятора React пишут его в
+    // несколько, и перевод строки рвал строку протокола, куда оно ложится.
     const found = (one.messages ?? [])
       .filter((m) => m.severity === 2 && typeof m.ruleId === "string")
-      .map((m) => ({ rule: m.ruleId, line: m.line, words: m.message }));
+      .map((m) => ({
+        rule: m.ruleId,
+        line: m.line,
+        words: String(m.message).replace(/\s+/g, " ").trim(),
+      }));
     if (found.length > 0) hits.set(norm(one.filePath), found);
   }
   const enabled = new Map(
@@ -12282,12 +12295,23 @@ const barLintRowOf = ({ lint, c, files, asked }) => {
     return {
       outcome: "нашлось",
       addr: rel(first.file) + ":" + first.line,
+      // Строка на работу одна, а нарушений бывает несколько в разных
+      // файлах: адрес — первое, прочие перечислены, иначе сессия видит одно
+      // место, а суд пробы не находит посаженное вторым.
       what: (
         "линт: " +
         first.rule +
         " — " +
         first.words +
-        (hits.length > 1 ? "; ещё нарушений `" + (hits.length - 1) + "`" : "")
+        (hits.length > 1
+          ? "; ещё нарушений `" +
+            (hits.length - 1) +
+            "`: " +
+            hits
+              .slice(1)
+              .map((h) => rel(h.file) + ":" + h.line)
+              .join(", ")
+          : "")
       )
         .split("|")
         .join("/"),
@@ -12406,17 +12430,32 @@ const barCutRowOf = (c, model) => {
   for (const cut of BAR_CUTS) {
     if (!cut.ids.includes(c.id) || cut.held === true || cut.scope !== undefined)
       continue;
-    const row = model.find(
-      (m) => m.sort === cut.sort && [cut.mark].flat().includes(m.mark),
-    );
-    const spot = row === undefined ? null : /^`?(.+?:[0-9]+)`?$/.exec(row.where);
-    if (spot !== null)
+    // Строка на работу одна, а мест среза бывает несколько: адрес — первое,
+    // прочие перечислены, как у строки линта.
+    const spots = model
+      .filter((m) => m.sort === cut.sort && [cut.mark].flat().includes(m.mark))
+      .map((m) => ({ m, spot: /^`?(.+?:[0-9]+)`?$/.exec(m.where) }))
+      .filter((x) => x.spot !== null);
+    if (spots.length > 0) {
+      const [first, ...rest] = spots;
       return {
         outcome: "нашлось",
-        addr: spot[1],
-        what: ("срез: " + row.what).split("|").join("/"),
+        addr: first.spot[1],
+        what: (
+          "срез: " +
+          first.m.what +
+          (rest.length > 0
+            ? "; ещё мест `" +
+              rest.length +
+              "`: " +
+              rest.map((x) => x.spot[1]).join(", ")
+            : "")
+        )
+          .split("|")
+          .join("/"),
         by: "срез",
       };
+    }
   }
   return null;
 };
