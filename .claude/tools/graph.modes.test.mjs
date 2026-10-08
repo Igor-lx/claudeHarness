@@ -7478,6 +7478,41 @@ describe("стенд проб", () => {
     }
   }, 300000);
 
+  // Песочница без ворот краснела их сверками, и свод видел поломку, к
+  // посаженному не относящуюся.
+  it("песочница пробы стоит за воротами и с основанием ревизии, как посаженный проект", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stand-box-"));
+    let box = null;
+    try {
+      execFileSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "--stand-build", dest], {
+        cwd: path.join(TOOL_DIR, "..", ".."),
+        encoding: "utf8",
+      });
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const run = (cwd, ...args) =>
+        spawnSync(process.execPath, [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd,
+          encoding: "utf8",
+          env,
+        }).stdout;
+      const planted = run(dest, "bar-probe", "--criterion=A3", "--seed=1");
+      box = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
+      expect(box, planted).not.toBeNull();
+      const verify = run(box, "verify");
+      const section = (title) => verify.split("=== " + title + " ===")[1]?.split("\n=== ")[0] ?? "";
+      expect(section("Ворота перед коммитом установлены")).toContain("не на месте: 0");
+      expect(section("Сверки, выключенные при живом предмете")).not.toContain("barSince");
+      expect(section("Коммит с кодом накрыт сводом")).not.toContain("не объявлено");
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      if (box !== null) {
+        fs.rmSync(box, { recursive: true, force: true });
+        fs.rmSync(box + ".plant.json", { force: true });
+      }
+    }
+  }, 300000);
+
   // Посадка-суждение, которая роняет ворота проекта, показывает своду чужую
   // поломку вместо посаженного: проба мерила бы не то.
   it("ворота стенда называют посадку-суждение, не прошедшую компилятор, линт, формат или тесты", () => {

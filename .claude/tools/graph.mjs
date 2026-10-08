@@ -8223,6 +8223,51 @@ if (mode === "bar-probe") {
         ],
         { cwd: box, stdio: "ignore" },
       );
+      // Ворота и основание ревизии — как у посаженного проекта: без них
+      // песочница краснела сверками ворот, к посаженному не относящимися.
+      // Основание — первый коммит песочницы: её история с него начинается.
+      const gates = path.join(box, ".claude", "hooks", "git");
+      const configAt = path.join(
+        box,
+        path.relative(projectRoot, BASE),
+        "graph.config.mjs",
+      );
+      if (
+        CONFIG.barProtocol != null &&
+        existsSync(gates) &&
+        existsSync(configAt)
+      ) {
+        const first = execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: box,
+          encoding: "utf8",
+        }).trim();
+        const text = readFileSync(configAt, "utf8");
+        const declared = text.replace(
+          /barSince:\s*(?:null|"[^"]*")/,
+          "barSince: " + JSON.stringify(first),
+        );
+        if (declared !== text) {
+          writeFileSync(configAt, declared);
+          execFileSync(
+            "git",
+            [
+              "-c",
+              "user.name=probe",
+              "-c",
+              "user.email=probe@local",
+              "commit",
+              "-qam",
+              "gates",
+            ],
+            { cwd: box, stdio: "ignore" },
+          );
+          execFileSync(
+            "git",
+            ["config", "core.hooksPath", ".claude/hooks/git"],
+            { cwd: box, stdio: "ignore" },
+          );
+        }
+      }
     } catch {
       console.log("=== Проба не посажена ===");
       console.log(
