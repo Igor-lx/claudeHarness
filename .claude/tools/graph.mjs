@@ -27,6 +27,7 @@ import {
   gitHookBypass,
   sandboxEscape,
   barRowFault,
+  barMorePlacesOf,
   barNoSubject,
   barReleaseLine,
   RESOURCE_KINDS,
@@ -8516,14 +8517,14 @@ if (mode === "bar-probe") {
     let atPlant = null;
     if (rows !== null) {
       const planted = culprits.map(plantedName);
-      // Строку линта и среза ставит машина: её адрес — первое нарушение,
-      // прочие перечислены в графе «что», и посаженное среди них тоже названо.
+      // Адрес строки — первое нарушение, прочие места перечислены в графе
+      // «что», и посаженное среди них тоже названо.
       const hitsPlanted = (one) =>
         one.outcome === "нашлось" &&
-        planted.some(
-          (p) =>
-            one.addr.includes(p) ||
-            (/^(?:линт|срез):/.test(one.what) && one.what.includes(p)),
+        planted.some((p) =>
+          [one.addr, ...barMorePlacesOf(one.what).split(",")].some(
+            (place) => place !== "" && place.includes(p),
+          ),
         );
       atPlant = new Set(rows.filter(hitsPlanted).map((one) => one.id)).size;
       const mine = rows.filter((one) => one.id === plant.criterion);
@@ -12986,6 +12987,8 @@ const barSkeletonOf = ({
     "в колонке «что»; " +
       barQuoted("нашлось") +
       " — с адресом «путь:строка», словами и судьбой.",
+    "Нарушений критерия несколько, а строка одна — адрес у первого, прочие",
+    "в конце колонки «что»: «ещё мест: `путь:строка`, `путь:строка`».",
     ...(transition
       ? [
           "Судьба: " +
@@ -13354,72 +13357,84 @@ const barHolesOf = ({
             : ": это находка — называется и предлагается"),
       );
     if (one.outcome !== "нашлось") continue;
-    const spot = spotOf(one.addr);
-    if (spot === null) continue;
-    const abs = spotFile(spot[1]);
-    if (abs === null) {
-      holes.push(who + ": файла " + barQuoted(spot[1]) + " нет");
-      continue;
-    }
-    const mine = known.find(({ file }) => file === abs);
-    if (mine !== undefined && kind === "на изменение") {
-      if (one.fate === "отложено")
+    // Прочие места находки — в конце графы «что» после «ещё мест:», и
+    // каждое сверяется, как адрес: строка на работу одна, а нарушений
+    // одного критерия бывает несколько.
+    const more = barMorePlacesOf(one.what);
+    for (const place of [one.addr, ...(more === "" ? [] : more.split(","))]) {
+      const spot = spotOf(place);
+      if (spot === null) {
+        if (place !== one.addr)
+          holes.push(
+            who + ": место в графе «что» не вида путь:строка: «" + place + "»",
+          );
+        continue;
+      }
+      const abs = spotFile(spot[1]);
+      if (abs === null) {
+        holes.push(who + ": файла " + barQuoted(spot[1]) + " нет");
+        continue;
+      }
+      const mine = known.find(({ file }) => file === abs);
+      if (mine !== undefined && kind === "на изменение") {
+        if (one.fate === "отложено")
+          holes.push(
+            who +
+              ": «отложено», а находка — пункт " +
+              mine.row.no +
+              " долга перехода: работа с диффом кода чинит её тем же заходом, развилка — «вопрос»",
+          );
+        if (one.fate === "починено" && headPlan.has(mine.row.line))
+          holes.push(
+            who +
+              ": «починено», а пункт " +
+              mine.row.no +
+              " долга перехода не правлен: пункт правится той же правкой — число меньше либо строка удалена",
+          );
+      }
+      const lines = readFileSync(abs, "utf8").split(/\r?\n/).length;
+      if (Number(spot[2]) < 1 || Number(spot[2]) > lines)
         holes.push(
           who +
-            ": «отложено», а находка — пункт " +
-            mine.row.no +
-            " долга перехода: работа с диффом кода чинит её тем же заходом, развилка — «вопрос»",
+            ": строки " +
+            spot[2] +
+            " в " +
+            barQuoted(spot[1]) +
+            " нет, всего " +
+            lines,
         );
-      if (one.fate === "починено" && headPlan.has(mine.row.line))
+      // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
+      // одну единицу переноса закрывал бы вопрос о другой.
+      if (subject !== "" && !barInsideOf(c.level, subject, abs, neighbours))
+        holes.push(
+          who + ": находка называет " + barQuoted(spot[1]) + " — вне этого предмета",
+        );
+      if (one.fate === "починено" && !changedNow.has(abs))
         holes.push(
           who +
-            ": «починено», а пункт " +
-            mine.row.no +
-            " долга перехода не правлен: пункт правится той же правкой — число меньше либо строка удалена",
+            ": «починено», а " +
+            barQuoted(spot[1]) +
+            " в правленом не числится",
         );
-    }
-    const lines = readFileSync(abs, "utf8").split(/\r?\n/).length;
-    if (Number(spot[2]) < 1 || Number(spot[2]) > lines)
-      holes.push(
-        who +
-          ": строки " +
-          spot[2] +
-          " в " +
-          barQuoted(spot[1]) +
-          " нет, всего " +
-          lines,
-      );
-    // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
-    // одну единицу переноса закрывал бы вопрос о другой.
-    if (subject !== "" && !barInsideOf(c.level, subject, abs, neighbours))
-      holes.push(
-        who + ": находка называет " + barQuoted(spot[1]) + " — вне этого предмета",
-      );
-    if (one.fate === "починено" && !changedNow.has(abs))
-      holes.push(
-        who +
-          ": «починено», а " +
-          barQuoted(spot[1]) +
-          " в правленом не числится",
-      );
-    // «Вопрос» — развилка разработчика: список вопросов называет файл
-    // находки, иначе вопрос живёт только в протоколе и исчезнет с ним.
-    // «Отложено» — после ответа разработчика, и запись уходит в отложенное:
-    // прежде судьба принималась голой, и отложенная находка исчезала со
-    // следующим проходом. «Долг» — находка перехода: план называет её файл.
-    for (const [fate, field, what, own] of [
-      ["вопрос", "questions", "список вопросов", false],
-      ["отложено", "todo", "отложенное", false],
-      // Откладывают по ответу разработчика, и ответ записан решением:
-      // строка отложенного, которую сессия дописала себе сама, судьбы не
-      // держит — замерено на стенде, находка линта ушла под печать так.
-      // Решение — о самой находке: его запись называет и её критерий.
-      ["отложено", "decisions", "реестр решений", true],
-      ["долг", "transition", "файл перехода", false],
-    ]) {
-      if (one.fate !== fate) continue;
-      const loose = namedIn(field, what, spot, abs, own ? c.id : null);
-      if (loose !== "") holes.push(who + ": «" + fate + "», а " + loose);
+      // «Вопрос» — развилка разработчика: список вопросов называет файл
+      // находки, иначе вопрос живёт только в протоколе и исчезнет с ним.
+      // «Отложено» — после ответа разработчика, и запись уходит в отложенное:
+      // прежде судьба принималась голой, и отложенная находка исчезала со
+      // следующим проходом. «Долг» — находка перехода: план называет её файл.
+      for (const [fate, field, what, own] of [
+        ["вопрос", "questions", "список вопросов", false],
+        ["отложено", "todo", "отложенное", false],
+        // Откладывают по ответу разработчика, и ответ записан решением:
+        // строка отложенного, которую сессия дописала себе сама, судьбы не
+        // держит — замерено на стенде, находка линта ушла под печать так.
+        // Решение — о самой находке: его запись называет и её критерий.
+        ["отложено", "decisions", "реестр решений", true],
+        ["долг", "transition", "файл перехода", false],
+      ]) {
+        if (one.fate !== fate) continue;
+        const loose = namedIn(field, what, spot, abs, own ? c.id : null);
+        if (loose !== "") holes.push(who + ": «" + fate + "», а " + loose);
+      }
     }
   }
   // Модель предмета: снятие у каждого ресурса названо, и вердикты с моделью

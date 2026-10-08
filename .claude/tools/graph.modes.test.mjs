@@ -2771,6 +2771,46 @@ describe("свод по планке от модели предмета", () => 
     }
   }, 240000);
 
+  // Строка критерия единицы одна на работу; второе нарушение в другом файле
+  // называют в графе «что» после «ещё мест:», и сверяется оно, как адрес.
+  it("прочие места находки в графе «что» сверяются, как адрес", () => {
+    const box = seatEmpty("more-places-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), "export const zzWide = (width: number): boolean => width > 0;\n");
+      fs.writeFileSync(path.join(box, "src", "app", "zzTall.ts"), "export const zzTall = (height: number): boolean => height > 0;\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      const found = (more) => ({
+        release: "не нужно: проба",
+        pick: { B5: "нашлось | src/app/zzWide.ts:1 | имя не говорит, что считают; ещё мест: " + more + " | вопрос" },
+      });
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzWide.ts`.\n");
+      fillBar(protoAt, found("`src/app/zzNope.ts:1`"));
+      expect(tool("bar", "app/zzWide.ts")).toContain("B5: файла `src/app/zzNope.ts` нет");
+      fillBar(protoAt, found("`zzTall`"));
+      expect(tool("bar", "app/zzWide.ts")).toContain("B5: место в графе «что» не вида путь:строка: «zzTall»");
+      fillBar(protoAt, found("`src/app/zzTall.ts:1`"));
+      const unnamed = tool("bar", "app/zzWide.ts");
+      expect(unnamed).toContain("B5: «вопрос», а список вопросов");
+      expect(unnamed).toContain("zzTall.ts");
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzTall.ts`.\n");
+      expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   // Суть строки модели обрезается по длине, а разбор протокола снимает
   // пробелы с краёв клетки: обрезок с пробелом на конце давал «модель
   // другая» на каждом зове, и печать не вставала никогда. Найдено пробой.
@@ -4671,6 +4711,26 @@ describe("проба планки в существующем коде", () => {
       );
       expect(run(box, "bar-probe", id + "9")).toContain("исход: критерий назван, адрес другой");
       fs.rmSync(twin, { recursive: true, force: true });
+      // Место, названное в графе «что» после «ещё мест:», суд засчитывает:
+      // строка на работу одна, а нарушений одного критерия бывает несколько.
+      const twinMore = sandbox + "-ещё";
+      fs.cpSync(sandbox, twinMore, { recursive: true });
+      const moreAt = path.join(twinMore, ".context", "bar-protocol.md");
+      const moreWhere = path.join(twinMore, "src", "zzElsewhere", path.basename(culprit));
+      fs.writeFileSync(
+        moreAt,
+        fs
+          .readFileSync(moreAt, "utf8")
+          .replace(
+            "меняет чужой реестр, взятый импортом |",
+            "меняет чужой реестр, взятый импортом; ещё мест: `src/zzElsewhere/" + path.basename(culprit) + ":1` |",
+          ),
+      );
+      const moreMark = path.join(os.tmpdir(), "bar-probe-" + id + "8.plant.json");
+      fs.writeFileSync(moreMark, JSON.stringify({ ...mark, box: twinMore, file: moreWhere, files: [moreWhere] }));
+      expect(run(box, "bar-probe", id + "8", "--machine")).toContain("исход: поймано");
+      fs.rmSync(twinMore, { recursive: true, force: true });
+      fs.rmSync(moreMark, { force: true });
       const judged = run(box, "bar-probe", id);
       expect(judged).toContain("исход: поймано");
       expect(judged).toContain("в существующем коде: проб 2, поймано 1");
