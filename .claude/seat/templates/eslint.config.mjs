@@ -154,6 +154,8 @@ export default tseslint.config(
       "sonarjs/no-useless-catch": "off",
       "sonarjs/no-hook-setter-in-body": "off",
       "sonarjs/jsx-no-leaked-render": "off",
+      // `!(x > 0)` stops NaN; the suggested `x <= 0` lets it through (E2).
+      "sonarjs/no-inverted-boolean-check": "off",
     },
   },
 

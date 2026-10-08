@@ -919,6 +919,7 @@ export const CONFIG = {
       ["**", "sonarjs/no-useless-catch"],
       ["**", "sonarjs/no-hook-setter-in-body"],
       ["**", "sonarjs/jsx-no-leaked-render"],
+      ["**", "sonarjs/no-inverted-boolean-check"],
     ],
   },
   /** Раздел, куда складывают обещания обвязки без машинной опоры. Сводка

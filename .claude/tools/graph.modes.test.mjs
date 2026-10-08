@@ -7455,6 +7455,28 @@ describe("стенд проб", () => {
       fs.rmSync(dest, { recursive: true, force: true });
     }
   }, 300000);
+
+  // Страж `!(x > 0)` отсекает NaN, а замена `x <= 0`, которую советовал
+  // линт семени, его пропускает: правило линта спорило с планкой (`E2`).
+  it("линт семени принимает страж, который требует планка", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stand-guard-"));
+    try {
+      execFileSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "--stand-build", dest], {
+        cwd: path.join(TOOL_DIR, "..", ".."),
+        encoding: "utf8",
+      });
+      const file = path.join(dest, "src", "shared", "notes", "half.ts");
+      fs.writeFileSync(file, "export const half = (value: number): number => {\n  if (!(value > 0)) return 0;\n  return value / 2;\n};\n");
+      const lint = spawnSync(path.join(dest, "node_modules", ".bin", "eslint"), ["-f", "json", file], {
+        cwd: dest,
+        encoding: "utf8",
+      });
+      const messages = JSON.parse(lint.stdout).flatMap((one) => one.messages);
+      expect(messages.map((m) => m.ruleId + ": " + m.message)).toEqual([]);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 describe("проба планки: выбор, пачка, вид файла и правка конфига", () => {
