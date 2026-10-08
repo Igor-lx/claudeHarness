@@ -22,13 +22,14 @@ Rules are not asked to be followed — a machine checks that they are.
 </div>
 
 An AI agent writes code faster than a person. It forgets agreements just as
-fast: prompts, instructions, dozens of skills — all of it is text the model
-may read, may interpret its own way, and may not carry out. The longer the
-rulebook, the more of it rests on attention alone — and the more surely that
-attention will one day slip. What slips first is quality: a test that cannot
-fail, a second source of truth, a boundary crossed "just this once", an error
-swallowed in silence. The code works, and nothing shows the defect until it
-costs.
+fast: prompts, instructions, hundreds of skills — all of it is only text, and
+text guarantees nothing. The model may read only part of it, forget what it
+read, shift the emphasis, interpret it in its own way — or not carry it out at
+all. The longer the rulebook, the more of it rests on attention alone — and
+the more surely that attention will one day slip. What slips first is quality:
+a test that cannot fail, a second source of truth, a boundary crossed "just
+this once", an error swallowed in silence. The code works, and nothing shows
+the defect until it costs.
 
 **claudeHarness is not one more set of skills and rules. It is an engineering
 system for code quality**: it turns rules into machine checks, takes its
@@ -46,7 +47,8 @@ each one is broken on purpose, regularly, to see whether it notices.
   layer and the whole application, on facts the tool computes for each level.
   An edit flawless in every line can still break the whole; here that is
   caught.
-- **Rules → checks.** Over a hundred machine checks instead of hoping for
+- **Rules → checks.** Whatever a machine can check, a machine checks; where
+  it cannot, the place is recorded and listed in a summary — not left to
   diligence.
 - **Found means fixed.** A defect noticed along the way is fixed in the same
   pass, as a class — not filed for later.
@@ -57,6 +59,10 @@ each one is broken on purpose, regularly, to see whether it notices.
   disagrees with the code.
 - **"Done" means "proven".** Exit code 0, a sealed protocol and a commit
   through the quality gate — instead of "should work".
+- **What is needed is read, and no more.** The area of an edit is computed
+  from the graph instead of reading the whole project; the rules are split by
+  the moment they are needed; the bar asks only the criteria that apply to the
+  project.
 - **Made for frontend.** Tuned to React, TypeScript and Vite, on a set of
   package versions it was verified with.
 
@@ -105,6 +111,7 @@ code its quality:
 | a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, as a class |
 | a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
 | the agent learns the code by searching and guessing | the import graph is computed from the code by the compiler; the knowledge base is reconciled with it |
+| the agent reads the whole project to be safe — or a few files and guesses | the area of an edit is computed from the graph and read in full; code outside it is not read |
 | tests and docs are written when someone asks | tests, records and docs are part of every edit, and a command names what is missing |
 | "done" because the agent said so | "done" is the full check suite at exit 0 plus a sealed protocol |
 | project notes go stale unnoticed | the knowledge base is reconciled with the code on every run, both ways |
@@ -119,6 +126,8 @@ with a sign you can see, not a principle to agree with. The criteria come from
 three places: design principles translated into observable signs; a coverage
 map against ISO/IEC 25010 — a map, not a claim of compliance; and cases — a
 defect that slipped through adds the sign it should have been caught by.
+Sections whose subject a project lacks — network, locales, a CI pipeline —
+are declared not applicable, and the bar does not ask them.
 
 ### Flat and vertical
 
@@ -172,8 +181,8 @@ flowchart TD
 
 A quality judgement is only as good as the facts under it. An agent without
 memory learns code by guesswork: it searches, reads a few files and fills in
-the rest. claudeHarness gives it two sources, and neither of them is the
-model's memory.
+the rest — or reads everything and pays for it on every task. claudeHarness
+gives it two sources, and neither of them is the model's memory.
 
 **The graph — computed, never stored.** `graph.mjs` parses every module of
 the project on every run, with the project's own TypeScript compiler, or with
@@ -184,7 +193,9 @@ included — exports and constants; resolves the path aliases declared in
 that takes everything from a package entry still shows its real dependencies.
 From this it answers what a file uses and who uses it, the blast radius of an
 edit, which tests reach a file, cycles, exports nobody uses and imports that
-go against the declared layer direction.
+go against the declared layer direction. The same graph bounds the reading:
+the area of an edit — the file, what it uses, who uses it, its tests — is read
+in full and word for word, and code beyond it is not read.
 
 **The knowledge base — written, then reconciled.** What cannot be read from a
 file itself lives in `.context/`: why something was done this way and what
@@ -252,9 +263,12 @@ The main commands — all through `node .claude/tools/graph.mjs`:
 
 ## Stack: built for frontend
 
-claudeHarness is not a universal kit for any project. It is built for
-frontend applications on **React + TypeScript + Vite**, and seating is tuned
-to that stack:
+claudeHarness is not a universal kit for any project. It was built for
+practical work on concrete projects, not as one more do-everything library:
+universality was never the goal, and the effort went into depth instead — how
+fully the code is analysed, how well the checks are made, how reliably the
+result reaches its goal. It is built for frontend applications on
+**React + TypeScript + Vite**, and seating is tuned to that stack:
 
 - the configs of the compiler, linter, formatter, test runner and mutation
   testing arrive as templates already wired into one check chain,
@@ -283,8 +297,11 @@ missing, and packages below the set are named by the run — a notice, not a
 failure; whether to upgrade is your call.
 
 **Other stacks.** The graph, the knowledge base, the quality bar and most
-checks work on any TypeScript or JavaScript code. The templates and the
-stack-specific checks assume React and Vite.
+checks work on any TypeScript or JavaScript code; the templates and the
+stack-specific checks assume React and Vite. Moving the harness to another
+stack is not hard: the principles stay the same, only the templates and the
+stack-specific checks change. Take the ideas and the tools — an agent will adapt
+the rest, seat it and finish it.
 
 ## Quick start
 
@@ -355,8 +372,14 @@ stack is described in [Stack: built for frontend](#stack-built-for-frontend).
 
 ## Status
 
-Under active development. No releases yet; the design and the rules change
-from version to version.
+**Functionally complete; in the tuning phase.** Everything described here is
+in place and working: the quality bar and the seal, the graph and the
+knowledge base, the gates, seating and the transition, the self-checks. The
+architecture and the concept are settled and will not change. Current work is
+on how well it all works: tuning, fixing defects and testing — every
+criterion of the bar has a planted defect, and probes measure whether the bar
+pass catches it. Details of the rules, the checks and the tool's output may
+still change between versions.
 
 ## License
 
