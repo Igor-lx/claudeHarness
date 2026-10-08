@@ -8607,11 +8607,20 @@ if (mode === "bar-probe") {
     );
     console.log("  дёшево — медиану читают рядом с долей.");
   }
-  if (!machineOnly) {
+  // Промах разбирают по протоколу: какого признака не хватило своду. Снятая
+  // песочница уносила его с собой, и разбирать было нечего. Найдено пробой.
+  const allCaught = verdicts.every((v) => v.verdict === "поймано");
+  if (!machineOnly && allCaught) {
     rmSync(record.box, { recursive: true, force: true });
     rmSync(mark, { force: true });
-  }
-  process.exit(verdicts.every((v) => v.verdict === "поймано") ? 0 : 1);
+  } else if (!machineOnly)
+    console.log(
+      "  песочница оставлена для разбора промаха: " +
+        norm(record.box) +
+        " — удалить после разбора вместе с " +
+        norm(mark),
+    );
+  process.exit(allCaught ? 0 : 1);
 }
 
 // Пути в базе сокращены и лежат на разной глубине: разрешаются по префиксу

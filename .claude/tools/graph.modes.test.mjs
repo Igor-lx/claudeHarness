@@ -4709,8 +4709,13 @@ describe("проба планки в существующем коде", () => {
         twinMark,
         JSON.stringify({ ...mark, box: twin, file: elsewhere, files: [elsewhere] }),
       );
-      expect(run(box, "bar-probe", id + "9")).toContain("исход: критерий назван, адрес другой");
+      const missed = run(box, "bar-probe", id + "9");
+      expect(missed).toContain("исход: критерий назван, адрес другой");
+      // Промах разбирают по протоколу: песочница остаётся.
+      expect(missed).toContain("песочница оставлена для разбора промаха");
+      expect(fs.existsSync(path.join(twin, ".context", "bar-protocol.md"))).toBe(true);
       fs.rmSync(twin, { recursive: true, force: true });
+      fs.rmSync(twinMark, { force: true });
       // Место, названное в графе «что» после «ещё мест:», суд засчитывает:
       // строка на работу одна, а нарушений одного критерия бывает несколько.
       const twinMore = sandbox + "-ещё";
@@ -4733,6 +4738,7 @@ describe("проба планки в существующем коде", () => {
       fs.rmSync(moreMark, { force: true });
       const judged = run(box, "bar-probe", id);
       expect(judged).toContain("исход: поймано");
+      expect(fs.existsSync(sandbox)).toBe(false);
       expect(judged).toContain("в существующем коде: проб 2, поймано 1");
       // Суд мерит и точность: сколько критериев свод назвал по адресу посадки.
       expect(judged).toContain("критериев по адресу посадки: 1");
@@ -7833,7 +7839,9 @@ describe("проба планки: выбор, пачка, вид файла и 
       expect(judged).toContain("пачкой: проб 5, поймано 0");
       const runs = JSON.parse(fs.readFileSync(path.join(box, ".context", "bar-probe-ledger.json"), "utf8")).runs;
       expect(runs.map((r) => r.batch)).toEqual([5, 5, 5, 5, 5]);
-      expect(fs.existsSync(markAt)).toBe(false);
+      // Не поймано ни одной: песочница и запись о посадке остаются для разбора.
+      expect(judged).toContain("песочница оставлена для разбора промаха");
+      expect(fs.existsSync(markAt)).toBe(true);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
       if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });

@@ -1404,7 +1404,9 @@
         }
       ],
       "culprits": [
-        "shared/api/fetchTags.ts"
+        "shared/api/fetchTags.ts",
+        "shared/tags/tagCount.ts",
+        "shared/tags/tagNames.ts"
       ]
     },
     {
