@@ -11068,7 +11068,10 @@ const barModelOf = (
       level: MODEL_LEVEL[sort],
       sort,
       where,
-      what: what.split(LF).join(" "),
+      // Клетка — в том виде, в каком её прочтёт разбор протокола: он
+      // обрезает пробелы, и обрезок с пробелом на конце давал «модель
+      // другая» на каждом зове — печать не вставала никогда.
+      what: what.split(LF).join(" ").trim(),
       delta,
       mark,
       release,

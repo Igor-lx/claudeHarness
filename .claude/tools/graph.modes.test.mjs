@@ -2771,6 +2771,43 @@ describe("свод по планке от модели предмета", () => 
     }
   }, 240000);
 
+  // Суть строки модели обрезается по длине, а разбор протокола снимает
+  // пробелы с краёв клетки: обрезок с пробелом на конце давал «модель
+  // другая» на каждом зове, и печать не вставала никогда. Найдено пробой.
+  it("строка модели, обрезанная на пробеле, не пересобирает протокол на каждом зове", () => {
+    const box = seatEmpty("model-trim-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzTitle.ts"),
+        [
+          'import { useState } from "react";',
+          "export const useZzTitle = () => {",
+          '  const [zzTitle, setZzTitle] = useState("' + "a".repeat(29) + ' bbbb");',
+          "  return { zzTitle, setZzTitle };",
+          "};",
+          "",
+        ].join("\n"),
+      );
+      expect(tool("bar", "app/zzTitle.ts")).toContain("протокол напечатан");
+      const again = tool("bar", "app/zzTitle.ts");
+      expect(again).not.toContain("исходы перенесены");
+      expect(again).not.toContain("пересобран");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("починено вне кода: адрес в правленом файле любого рода, а не только в предмете", () => {
     const box = seatEmpty("vnekoda-");
     try {

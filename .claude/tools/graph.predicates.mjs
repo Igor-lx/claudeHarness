@@ -3543,12 +3543,17 @@ const codeSignalsOf = (file, text, own) => {
     if (optional.length >= OPTIONAL_FROM) at("необязательные", m.index, m[1] + ": " + optional.length);
   });
   // Хвост после возврата: строка блока за `return` недостижима никогда.
+  // Строка с отступом меньше, чем у `return`, лежит вне его блока — конец
+  // блока, следующая ветка `case`, строка за `if` без скобок, — и достижима.
+  // Объявление функции поднимается и тоже достижимо.
+  const indentOf = (row) => /^\s*/.exec(row)[0].length;
   for (const [k, row] of bareLines.entries()) {
     if (!/^\s*return\b[^{}]*;\s*$/.test(row)) continue;
     const next = bareLines.slice(k + 1).findIndex((x) => x.trim() !== "");
     if (next < 0) continue;
     const after = bareLines[k + 1 + next].trim();
-    if (!/^(?:\}|case\b|default\b|function\b)/.test(after))
+    if (indentOf(bareLines[k + 1 + next]) < indentOf(row)) continue;
+    if (!/^function\b/.test(after))
       line("мёртвое", k + 2 + next, after, "после возврата");
   }
   for (const [k, row] of bareLines.entries()) {
@@ -4685,6 +4690,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\ntype P = { id: string; name: string };\nexport const greet = (profile: P): string =>\n  \"hi \" + profile.name;", "2:целое"],
   ["signalsSummary", "src/a.ts\ntype P = { id: string; name: string };\nexport const greet = (profile: P): string =>\n  \"hi \" + profile.name + profile.id;", ""],
   ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  return String(count);\n  const unit = count;\n  return unit;\n};", "3:мёртвое/после возврата"],
+  ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  if (count === 0)\n    return \"none\";\n  return String(count);\n};", ""],
   ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  if (count === 0) return \"none\";\n  return String(count);\n};", ""],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items;\n};", "1:целое"],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items.length + order.tax;\n};", ""],
