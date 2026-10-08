@@ -1,27 +1,27 @@
 {
-  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с адресом виновника. Вердикт машинный целиком. Посадка бывает из нескольких файлов: нарушение формы целого — второй писатель, цикл, общий слой, берущий из приложения, внутренность, отданная наружу, — это связь узлов, и каждый из них по отдельности безупречен в строках. Такие посадки проверяют уровневый проход, а не построчный; виновники названы полем `culprits`, и находка обязана назвать хотя бы одного. Посадка второго рода — поле `into` вместо `create` — дописывает нарушение в конец СУЩЕСТВУЮЩИХ файлов проекта, выбранных случайно, роль на файл, и кладёт обычную правку — прикрытие из пула `covers`, одно либо два, случайно, — в ещё один-два файла: нарушение стоит среди живого кода и не одно в правленом. Текст прикрытий лежит только здесь: записанный в коде инструмента, он был известен каждому, кто его читал, и посаженное находилось исключением. Имена у неё обычные, без пометки пробы; файл, где такое имя уже есть, не выбирается. В машинописный файл ложится вариант `ts` — с типами, как пишут вокруг; импорт встаёт к импортам файла, наверх. Путь между ролями посадка вычисляет сама — `{{from:роль}}`; виновники — роли в `culprits`. Чего замер НЕ доказывает: посаженное новым файлом заметнее настоящего — доля этого рода оптимистична и читается как верхняя граница; посаженное в существующий код ближе к жизни, но и его сажал тот, кто знает список, — доля, замеренная автором посадок, к ловчести на чужом коде не приравнивается. Какие критерии-суждения сажаются, называет справочник инструмента, раздел о режиме `bar-probe`: там, где нарушение однозначно.",
+  "_": "Сажаемые нарушения планки: чем проверить, что проход по ней ещё ЛОВИТ. Печать протокола говорит, что по каждому критерию дан ответ, — о верности ответа она не говорит ничего, и это не изображается. Здесь замеряется именно верность: режим `bar-probe` сажает в песочную копию известное нарушение известного критерия, свод делается там, и режим смотрит, назван ли этот критерий с адресом виновника. Вердикт машинный целиком. Посадка бывает из нескольких файлов: нарушение формы целого — второй писатель, цикл, общий слой, берущий из приложения, внутренность, отданная наружу, — это связь узлов, и каждый из них по отдельности безупречен в строках. Такие посадки проверяют уровневый проход, а не построчный; виновники названы полем `culprits`, и находка обязана назвать хотя бы одного. Посадка второго рода — поле `into` вместо `create` — дописывает нарушение в конец СУЩЕСТВУЮЩИХ файлов проекта, выбранных случайно, роль на файл, и кладёт обычную правку — прикрытие из пула `covers`, одно либо два, случайно, — в ещё один-два файла: нарушение стоит среди живого кода и не одно в правленом. Текст прикрытий лежит только здесь: записанный в коде инструмента, он был известен каждому, кто его читал, и посаженное находилось исключением. Имена у неё обычные, без пометки пробы; файл, где такое имя уже есть, не выбирается. В машинописный файл ложится вариант `ts` — с типами, как пишут вокруг; импорт встаёт к импортам файла, наверх. Путь между ролями посадка вычисляет сама — `{{from:роль}}`; виновники — роли в `culprits`. Чего замер НЕ доказывает: посаженное новым файлом заметнее настоящего — доля этого рода оптимистична и читается как верхняя граница; посаженное в существующий код ближе к жизни, но и его сажал тот, кто знает список, — доля, замеренная автором посадок, к ловчести на чужом коде не приравнивается. Роль вправе назвать вид файла полем `file` — `модуль`, `разметка`, `стиль`, `тест`. Поле `patch` правит конфиг или запись базы — путь от корня репозитория, фрагмент и замена — и идёт в паре с файлом кода: свод берёт предметом только код и стили. Посадка есть на каждый критерий планки, кроме лозунгов; предмет каждому даёт стенд проб, `bar-stand.json`. Посадку критерия, который решает машина, обязана ловить сама машина — это держит тест обвязки. Какие критерии-суждения сажаются, называет справочник инструмента, раздел о режиме `bar-probe`: там, где нарушение однозначно.",
   "plants": [
     {
       "criterion": "B1",
       "why": "булев аргумент, и он же делит тело функции пополам",
       "create": {
-        "path": "zzPlantRow.ts",
-        "text": "/** Строка списка: заголовок или обычная. */\nexport const listRow = (text: string, asTitle: boolean): string =>\n  asTitle ? text.toUpperCase() : text;\n\nexport const rowsOf = (items: string[]): string[] =>\n  items.map((one, at) => listRow(one, at === 0));\n"
+        "path": "shared/list/listRow.ts",
+        "text": "/** A list row: a title or a plain one. */\nexport const listRow = (text: string, asTitle: boolean): string =>\n  asTitle ? text.toUpperCase() : text;\n\nexport const rowsOf = (items: string[]): string[] =>\n  items.map((one, at) => listRow(one, at === 0));\n"
       }
     },
     {
       "criterion": "H4",
-      "why": "хвост после возврата не достижим никогда",
+      "why": "закомментированный код оставлен «на память»",
       "create": {
-        "path": "zzPlantLabel.ts",
-        "text": "/** Подпись к числу. */\nexport const pickLabel = (count: number): string => {\n  if (count === 0) return \"пусто\";\n  return String(count);\n  const suffix = count > 10 ? \"+\" : \"\";\n  return String(count) + suffix;\n};\n"
+        "path": "shared/list/countLabel.ts",
+        "text": "const MANY = 10;\n\nexport const countLabel = (count: number): string => {\n  if (count === 0) return \"empty\";\n  // const suffix = count > MANY ? \"+\" : \"\";\n  // if (suffix !== \"\") console.log(suffix);\n  // return String(count) + suffix;\n  return count > MANY ? \"many\" : String(count);\n};\n"
       }
     },
     {
       "criterion": "H7",
       "why": "величины стоят голыми числами прямо в выражении",
       "create": {
-        "path": "zzPlantWidth.ts",
+        "path": "shared/layout/breakpoints.ts",
         "text": "export const isWide = (width: number): boolean => width > 768;\n\nexport const delayed = (run: () => void): void => {\n  setTimeout(run, 400);\n};\n"
       }
     },
@@ -29,72 +29,82 @@
       "criterion": "E1",
       "why": "отказ проглочен: ни обработан, ни виден",
       "create": {
-        "path": "zzPlantStore.ts",
-        "text": "/** Запомнить значение между заходами. */\nexport const store = (key: string, value: string): void => {\n  try {\n    window.localStorage.setItem(key, value);\n  } catch {\n    // ничего\n  }\n};\n"
+        "path": "shared/storage/rememberValue.ts",
+        "text": "/** Keep a value between visits. */\nexport const rememberValue = (key: string, value: string): void => {\n  try {\n    window.localStorage.setItem(key, value);\n  } catch {\n    // nothing\n  }\n};\n"
       }
     },
     {
       "criterion": "D2",
       "why": "приведение к «любому» глушит компилятор на границе",
       "create": {
-        "path": "zzPlantMeasure.ts",
-        "text": "/** Ширина узла разметки. */\nexport const widthOf = (node: unknown): number =>\n  (node as any).offsetWidth;\n"
+        "path": "shared/layout/widthOf.ts",
+        "text": "/** Width of a markup node. */\nexport const widthOf = (node: unknown): number => (node as any).offsetWidth;\n"
       }
     },
     {
       "criterion": "A6",
       "why": "число колонок живёт в двух местах и разойдётся",
-      "create": {
-        "path": "zzPlantGrid.ts",
-        "text": "export const columns = 12;\n\nexport const columnWidth = (total: number): number => total / 12;\n"
-      }
+      "create": [
+        {
+          "path": "shared/layout/columns.ts",
+          "text": "export const COLUMN_COUNT = 12;\n"
+        },
+        {
+          "path": "shared/layout/columnWidth.ts",
+          "text": "const GRID_COLUMNS = 12;\n\nexport const columnWidth = (total: number): number => total / GRID_COLUMNS;\n"
+        }
+      ],
+      "culprits": [
+        "shared/layout/columns.ts",
+        "shared/layout/columnWidth.ts"
+      ]
     },
     {
       "criterion": "H6-тер",
       "why": "имена сокращены до нечитаемого",
       "create": {
-        "path": "zzPlantShort.ts",
-        "text": "export const btnLbl = (cnt: number): string => \"Показать \" + cnt;\n\nexport const chkVis = (cnt: number): boolean => cnt > 0;\n"
+        "path": "shared/list/shortLabels.ts",
+        "text": "export const btnLbl = (cnt: number): string => \"Show \" + String(cnt);\n\nexport const chkVis = (cnt: number): boolean => cnt > 0;\n"
       }
     },
     {
       "criterion": "B4",
       "why": "возвращается кортеж из трёх значений на всякий случай",
       "create": {
-        "path": "zzPlantSize.ts",
-        "text": "/** Разбор записи размера. */\nexport const parseSize = (raw: string): [number, string, boolean] => {\n  const value = Number.parseFloat(raw);\n  const unit = raw.replace(String(value), \"\");\n  return [value, unit, Number.isNaN(value)];\n};\n"
+        "path": "shared/layout/parseSize.ts",
+        "text": "/** Parse a size record. */\nexport const parseSize = (raw: string): [number, string, boolean] => {\n  const value = Number.parseFloat(raw);\n  const unit = raw.replace(String(value), \"\");\n  return [value, unit, Number.isNaN(value)];\n};\n"
       }
     },
     {
       "criterion": "B3",
       "why": "на вход идёт целая запись, а нужно одно её поле",
       "create": {
-        "path": "zzPlantGreeting.ts",
-        "text": "type Profile = {\n  id: string;\n  name: string;\n  email: string;\n  avatar: string;\n};\n\nexport const greeting = (profile: Profile): string =>\n  \"Привет, \" + profile.name;\n"
+        "path": "components/NoteList/parts/Greeting.tsx",
+        "text": "type Props = {\n  readonly name: string;\n  readonly email: string;\n  readonly avatar: string;\n};\n\nexport function Greeting({ name }: Props) {\n  return <p>Hello, {name}</p>;\n}\n"
       }
     },
     {
       "criterion": "H1",
-      "why": "первая половина условия истинна всегда и не объяснима",
+      "why": "копия списка снимается на всякий случай: функция его только читает",
       "create": {
-        "path": "zzPlantVisible.ts",
-        "text": "export const visible = (items: string[]): boolean =>\n  items.length >= 0 && items.length > 0;\n"
+        "path": "shared/list/firstTitle.ts",
+        "text": "export const firstTitle = (titles: readonly string[]): string => {\n  const copy = [...titles];\n  return copy.length > 0 ? (copy[0] ?? \"\") : \"\";\n};\n"
       }
     },
     {
       "criterion": "A5",
       "why": "общий слой берёт имя из слоя приложения: направление перевёрнуто",
       "culprits": [
-        "shared/zzPlantLabel/zzPlantLabel.ts"
+        "shared/label/labelOf.ts"
       ],
       "create": [
         {
-          "path": "app/zzPlantBrand.ts",
-          "text": "export const BRAND_NAME = \"zz\";\n"
+          "path": "app/brandName.ts",
+          "text": "export const BRAND_NAME = \"Notes\";\n"
         },
         {
-          "path": "shared/zzPlantLabel/zzPlantLabel.ts",
-          "text": "import { BRAND_NAME } from \"../../app/zzPlantBrand\";\n\nexport const labelOf = (item: string): string => BRAND_NAME + \": \" + item;\n"
+          "path": "shared/label/labelOf.ts",
+          "text": "import { BRAND_NAME } from \"../../app/brandName\";\n\nexport const labelOf = (item: string): string => BRAND_NAME + \": \" + item;\n"
         }
       ]
     },
@@ -102,17 +112,17 @@
       "criterion": "A9-бис",
       "why": "два узла берут друг у друга: порядок инициализации стал значим",
       "culprits": [
-        "shared/zzPlantUnits/zzPlantUnits.ts",
-        "shared/zzPlantFormat/zzPlantFormat.ts"
+        "shared/units/units.ts",
+        "shared/weight/weight.ts"
       ],
       "create": [
         {
-          "path": "shared/zzPlantUnits/zzPlantUnits.ts",
-          "text": "import { formatAmount } from \"../zzPlantFormat/zzPlantFormat\";\n\nexport const UNIT = \"kg\";\n\nexport const withUnit = (n: number): string => formatAmount(n) + \" \" + UNIT;\n"
+          "path": "shared/units/units.ts",
+          "text": "import { formatWeight } from \"../weight/weight\";\n\nexport const UNIT = \"kg\";\n\nexport const withUnit = (n: number): string => formatWeight(n) + \" \" + UNIT;\n"
         },
         {
-          "path": "shared/zzPlantFormat/zzPlantFormat.ts",
-          "text": "import { UNIT } from \"../zzPlantUnits/zzPlantUnits\";\n\nexport const formatAmount = (n: number): string => n.toFixed(1);\n\nexport const unitLabel = (): string => \"(\" + UNIT + \")\";\n"
+          "path": "shared/weight/weight.ts",
+          "text": "import { UNIT } from \"../units/units\";\n\nexport const formatWeight = (n: number): string => n.toFixed(1);\n\nexport const unitLabel = (): string => \"(\" + UNIT + \")\";\n"
         }
       ]
     },
@@ -120,42 +130,42 @@
       "criterion": "C6-бис",
       "why": "ключ хранилища пишут двое: узел-владелец и тот, кто обошёл его",
       "culprits": [
-        "app/zzPlantReset.ts"
+        "app/resetPrefs.ts"
       ],
       "create": [
         {
-          "path": "shared/zzPlantPrefs/zzPlantPrefs.ts",
-          "text": "const PREFS_KEY = \"zz.plant.prefs\";\n\nexport const savePrefs = (value: string): void => {\n  window.localStorage.setItem(PREFS_KEY, value);\n};\n\nexport const readPrefs = (): string =>\n  window.localStorage.getItem(PREFS_KEY) ?? \"\";\n"
+          "path": "shared/prefs/prefs.ts",
+          "text": "const PREFS_KEY = \"notes.prefs\";\n\nexport const savePrefs = (value: string): void => {\n  window.localStorage.setItem(PREFS_KEY, value);\n};\n\nexport const readPrefs = (): string =>\n  window.localStorage.getItem(PREFS_KEY) ?? \"\";\n"
         },
         {
-          "path": "app/zzPlantReset.ts",
-          "text": "import { readPrefs } from \"../shared/zzPlantPrefs/zzPlantPrefs\";\n\nexport const resetPrefs = (): string => {\n  const before = readPrefs();\n  window.localStorage.setItem(\"zz.plant.prefs\", \"\");\n  return before;\n};\n"
+          "path": "app/resetPrefs.ts",
+          "text": "import { readPrefs } from \"../shared/prefs/prefs\";\n\nexport const resetPrefs = (): string => {\n  const before = readPrefs();\n  window.localStorage.setItem(\"notes.prefs\", \"\");\n  return before;\n};\n"
         }
       ]
     },
     {
       "criterion": "C7",
-      "why": "длина списка хранится состоянием и догоняется эффектом",
+      "why": "длина списка хранится вторым состоянием рядом со списком и догоняется в обработчике",
       "create": {
-        "path": "app/zzPlantCount.tsx",
-        "text": "import { useEffect, useState } from \"react\";\n\nexport function ZzPlantCount({ items }: { items: string[] }) {\n  const [count, setCount] = useState(0);\n  useEffect(() => {\n    setCount(items.length);\n  }, [items]);\n  return <span>{count}</span>;\n}\n"
+        "path": "app/ItemCount.tsx",
+        "text": "import { useState } from \"react\";\n\nexport function ItemCount({\n  initial,\n}: {\n  readonly initial: readonly string[];\n}) {\n  const [items, setItems] = useState<readonly string[]>(initial);\n  const [count, setCount] = useState(initial.length);\n  const dropFirst = () => {\n    const next = items.slice(1);\n    setItems(next);\n    setCount(next.length);\n  };\n  return (\n    <button type=\"button\" onClick={dropFirst}>\n      {count}\n    </button>\n  );\n}\n"
       }
     },
     {
       "criterion": "C4",
       "why": "изменяемое хранилище узла отдано наружу, и чужой узел пишет в него сам",
       "culprits": [
-        "shared/zzPlantCache/zzPlantCache.ts",
-        "app/zzPlantWarm.ts"
+        "shared/cache/cacheStore.ts",
+        "app/warmCache.ts"
       ],
       "create": [
         {
-          "path": "shared/zzPlantCache/zzPlantCache.ts",
-          "text": "export const cacheStore = new Map<string, number>();\n\nexport const cachedValue = (key: string): number | undefined =>\n  cacheStore.get(key);\n"
+          "path": "shared/cache/cacheStore.ts",
+          "text": "export const cacheStore = new Map<string, number>();\n\nexport const rememberValue = (key: string, value: number): void => {\n  cacheStore.set(key, value);\n};\n\nexport const cachedValue = (key: string): number | undefined =>\n  cacheStore.get(key);\n"
         },
         {
-          "path": "app/zzPlantWarm.ts",
-          "text": "import { cacheStore } from \"../shared/zzPlantCache/zzPlantCache\";\n\nexport const warmCache = (at: number): void => {\n  cacheStore.set(\"start\", at);\n};\n"
+          "path": "app/warmCache.ts",
+          "text": "import { cacheStore } from \"../shared/cache/cacheStore\";\n\nexport const warmCache = (at: number): void => {\n  cacheStore.set(\"start\", at);\n};\n"
         }
       ]
     },
@@ -163,8 +173,8 @@
       "criterion": "A1",
       "why": "узел форматирования цены ещё и копит просмотры в хранилище",
       "create": {
-        "path": "shared/zzPlantPrice/zzPlantPrice.ts",
-        "text": "const CENTS_IN_UNIT = 100;\n\nexport const formatPrice = (cents: number): string =>\n  (cents / CENTS_IN_UNIT).toFixed(2);\n\nexport const countPriceView = (): number => {\n  const seen = Number(window.localStorage.getItem(\"zz.views\") ?? \"0\") + 1;\n  window.localStorage.setItem(\"zz.views\", String(seen));\n  return seen;\n};\n"
+        "path": "shared/price/formatPrice.ts",
+        "text": "const CENTS_IN_UNIT = 100;\n\nexport const formatPrice = (cents: number): string =>\n  (cents / CENTS_IN_UNIT).toFixed(2);\n\nexport const countPriceView = (): number => {\n  const seen = Number(window.localStorage.getItem(\"notes.views\") ?? \"0\") + 1;\n  window.localStorage.setItem(\"notes.views\", String(seen));\n  return seen;\n};\n"
       }
     },
     {
@@ -174,12 +184,14 @@
         {
           "role": "владелец",
           "text": "export const visitLog = { count: 0, names: [] };",
-          "ts": "export const visitLog = { count: 0, names: [] as string[] };"
+          "ts": "export const visitLog = { count: 0, names: [] as string[] };",
+          "file": "модуль"
         },
         {
           "role": "виновник",
           "text": "import { visitLog } from \"{{from:владелец}}\";\n\nexport const recordVisit = (name) => {\n  visitLog.names.push(name);\n  visitLog.count += 1;\n};",
-          "ts": "import { visitLog } from \"{{from:владелец}}\";\n\nexport const recordVisit = (name: string): void => {\n  visitLog.names.push(name);\n  visitLog.count += 1;\n};"
+          "ts": "import { visitLog } from \"{{from:владелец}}\";\n\nexport const recordVisit = (name: string): void => {\n  visitLog.names.push(name);\n  visitLog.count += 1;\n};",
+          "file": "модуль"
         }
       ],
       "culprits": [
@@ -193,7 +205,8 @@
         {
           "role": "виновник",
           "text": "export const forgetKey = (key) => {\n  try {\n    window.localStorage.removeItem(key);\n  } catch {\n    // storage may be unavailable\n  }\n};",
-          "ts": "export const forgetKey = (key: string): void => {\n  try {\n    window.localStorage.removeItem(key);\n  } catch {\n    // storage may be unavailable\n  }\n};"
+          "ts": "export const forgetKey = (key: string): void => {\n  try {\n    window.localStorage.removeItem(key);\n  } catch {\n    // storage may be unavailable\n  }\n};",
+          "file": "модуль"
         }
       ]
     },
@@ -204,7 +217,8 @@
         {
           "role": "виновник",
           "text": "export const isLongText = (text) => String(text).length > 37;",
-          "ts": "export const isLongText = (text: string): boolean => text.length > 37;"
+          "ts": "export const isLongText = (text: string): boolean => text.length > 37;",
+          "file": "модуль"
         }
       ]
     },
@@ -215,7 +229,8 @@
         {
           "role": "виновник",
           "text": "export const formatValue = (value, compact = false) =>\n  compact ? String(value) : \"value: \" + String(value);\n\nexport const formatShortValue = (value) => formatValue(value, true);",
-          "ts": "export const formatValue = (value: unknown, compact = false): string =>\n  compact ? String(value) : \"value: \" + String(value);\n\nexport const formatShortValue = (value: unknown): string => formatValue(value, true);"
+          "ts": "export const formatValue = (value: unknown, compact = false): string =>\n  compact ? String(value) : \"value: \" + String(value);\n\nexport const formatShortValue = (value: unknown): string =>\n  formatValue(value, true);",
+          "file": "модуль"
         }
       ]
     },
@@ -226,7 +241,8 @@
         {
           "role": "виновник",
           "text": "export const splitEdges = (text) => {\n  const head = text.slice(0, 1);\n  const body = text.slice(1, -1);\n  const tail = text.slice(-1);\n  return [head, body, tail];\n};",
-          "ts": "export const splitEdges = (text: string): [string, string, string] => {\n  const head = text.slice(0, 1);\n  const body = text.slice(1, -1);\n  const tail = text.slice(-1);\n  return [head, body, tail];\n};"
+          "ts": "export const splitEdges = (text: string): [string, string, string] => {\n  const head = text.slice(0, 1);\n  const body = text.slice(1, -1);\n  const tail = text.slice(-1);\n  return [head, body, tail];\n};",
+          "file": "модуль"
         }
       ]
     },
@@ -236,8 +252,9 @@
       "into": [
         {
           "role": "виновник",
-          "text": "let issued = 0;\n\nexport const nextId = (prefix) => {\n  issued += 1;\n  return prefix + issued;\n};",
-          "ts": "let issued = 0;\n\nexport const nextId = (prefix: string): string => {\n  issued += 1;\n  return prefix + issued;\n};"
+          "text": "let issued = 0;\n\nexport const nextId = (prefix) => {\n  issued += 1;\n  return prefix + String(issued);\n};",
+          "ts": "let issued = 0;\n\nexport const nextId = (prefix: string): string => {\n  issued += 1;\n  return prefix + String(issued);\n};",
+          "file": "модуль"
         }
       ]
     },
@@ -248,7 +265,8 @@
         {
           "role": "виновник",
           "text": "export const logAction = (action, payload) => {\n  console.info(\"[audit]\", action, JSON.stringify(payload));\n};",
-          "ts": "export const logAction = (action: string, payload: unknown): void => {\n  console.info(\"[audit]\", action, JSON.stringify(payload));\n};"
+          "ts": "export const logAction = (action: string, payload: unknown): void => {\n  console.info(\"[audit]\", action, JSON.stringify(payload));\n};",
+          "file": "модуль"
         }
       ]
     },
@@ -259,7 +277,8 @@
         {
           "role": "виновник",
           "text": "export const readVal = (cfg) => {\n  const tmp = cfg.val;\n  return tmp;\n};",
-          "ts": "export const readVal = (cfg: { val: number }): number => {\n  const tmp = cfg.val;\n  return tmp;\n};"
+          "ts": "export const readVal = (cfg: { val: number }): number => {\n  const tmp = cfg.val;\n  return tmp;\n};",
+          "file": "модуль"
         }
       ]
     },
@@ -267,7 +286,7 @@
       "criterion": "A6",
       "why": "номер страницы живёт в адресе страницы и в модульной переменной — два источника одного факта",
       "create": {
-        "path": "zzPlantPager.ts",
+        "path": "shared/pager/pager.ts",
         "text": "let page = 1;\n\nexport const setPage = (next: number): void => {\n  page = next;\n};\n\nexport const pageNow = (): number =>\n  Number(new URLSearchParams(window.location.search).get(\"page\") ?? page);\n"
       }
     },
@@ -275,16 +294,16 @@
       "criterion": "A6",
       "why": "тема живёт во внешнем хранилище и в состоянии компонента — два источника одного факта",
       "culprits": [
-        "zzPlantThemeStore.ts"
+        "shared/theme/themeSlice.ts"
       ],
       "create": [
         {
-          "path": "zzPlantThemeStore.ts",
-          "text": "import { create } from \"zustand\";\n\nexport const usePlantTheme = create(() => ({ dark: false }));\n"
+          "path": "shared/theme/themeSlice.ts",
+          "text": "import { createSlice } from \"@reduxjs/toolkit\";\n\nexport const themeSlice = createSlice({\n  name: \"theme\",\n  initialState: { dark: false },\n  reducers: {\n    toggle: (state) => {\n      state.dark = !state.dark;\n    },\n  },\n});\n"
         },
         {
-          "path": "zzPlantThemeView.tsx",
-          "text": "import { useState } from \"react\";\n\nexport const PlantThemeView = () => {\n  const [dark] = useState(false);\n  return <p>{dark ? \"dark\" : \"light\"}</p>;\n};\n"
+          "path": "components/NoteList/parts/ThemeView.tsx",
+          "text": "import { useState } from \"react\";\n\nexport function ThemeView() {\n  const [dark] = useState(false);\n  return <p>{dark ? \"dark\" : \"light\"}</p>;\n}\n"
         }
       ]
     },
@@ -292,16 +311,16 @@
       "criterion": "A6",
       "why": "язык читается из cookie, а рядом лежит в состоянии — два источника одного факта",
       "create": {
-        "path": "zzPlantLocale.ts",
-        "text": "export const plantLocale = (): string =>\n  /(?:^|; )locale=([^;]*)/.exec(document.cookie)?.[1] ?? \"en\";\n"
+        "path": "shared/locale/cookieLocale.ts",
+        "text": "export const cookieLocale = (): string =>\n  /(?:^|; )locale=([^;]*)/.exec(document.cookie)?.[1] ?? \"en\";\n"
       }
     },
     {
       "criterion": "A6",
       "why": "пользователь лежит в кэше запроса и копией в памяти — два источника одного факта",
       "create": {
-        "path": "zzPlantUser.ts",
-        "text": "import { useQuery } from \"@tanstack/react-query\";\n\nexport const usePlantUser = () =>\n  useQuery({ queryKey: [\"user\"], queryFn: () => fetch(\"/api/user\").then((r) => r.json()) });\n"
+        "path": "shared/user/userApi.ts",
+        "text": "import { createApi, fetchBaseQuery } from \"@reduxjs/toolkit/query/react\";\n\nexport const userApi = createApi({\n  reducerPath: \"userApi\",\n  baseQuery: fetchBaseQuery({ baseUrl: \"/api\" }),\n  endpoints: (build) => ({\n    user: build.query<{ name: string }, string>({\n      query: (id) => \"user/\" + id,\n    }),\n  }),\n});\n\nlet userCopy: { name: string } | null = null;\n\nexport const rememberUser = (user: { name: string }): void => {\n  userCopy = user;\n};\n\nexport const currentUser = (): { name: string } | null => userCopy;\n"
       }
     },
     {
@@ -310,7 +329,8 @@
       "into": [
         {
           "text": "export function renderSaveLabel(isVisible, isDisabled, label) {\n  const active = isVisible && !isDisabled;\n  return active ? label : \"\";\n}",
-          "ts": "export function renderSaveLabel(isVisible: boolean, isDisabled: boolean, label: string): string {\n  const active = isVisible && !isDisabled;\n  return active ? label : \"\";\n}"
+          "ts": "export function renderSaveLabel(\n  isVisible: boolean,\n  isDisabled: boolean,\n  label: string,\n): string {\n  const active = isVisible && !isDisabled;\n  return active ? label : \"\";\n}",
+          "file": "модуль"
         }
       ]
     },
@@ -321,17 +341,20 @@
         {
           "role": "низ",
           "text": "export function formatAmount(amount, currency) {\n  return currency + \" \" + amount.toFixed(2);\n}",
-          "ts": "export function formatAmount(amount: number, currency: string): string {\n  return currency + \" \" + amount.toFixed(2);\n}"
+          "ts": "export function formatAmount(amount: number, currency: string): string {\n  return currency + \" \" + amount.toFixed(2);\n}",
+          "file": "модуль"
         },
         {
           "role": "середина",
           "text": "import { formatAmount } from \"{{from:низ}}\";\nexport function receiptLine(item, currency) {\n  return item.title + \" \" + formatAmount(item.price, currency);\n}",
-          "ts": "import { formatAmount } from \"{{from:низ}}\";\nexport function receiptLine(item: { title: string; price: number }, currency: string): string {\n  return item.title + \" \" + formatAmount(item.price, currency);\n}"
+          "ts": "import { formatAmount } from \"{{from:низ}}\";\nexport function receiptLine(\n  item: { title: string; price: number },\n  currency: string,\n): string {\n  return item.title + \" \" + formatAmount(item.price, currency);\n}",
+          "file": "модуль"
         },
         {
           "role": "верх",
           "text": "import { receiptLine } from \"{{from:середина}}\";\nexport function receiptText(items, currency) {\n  return items.map((item) => receiptLine(item, currency)).join(\"\\n\");\n}",
-          "ts": "import { receiptLine } from \"{{from:середина}}\";\nexport function receiptText(items: { title: string; price: number }[], currency: string): string {\n  return items.map((item) => receiptLine(item, currency)).join(\"\\n\");\n}"
+          "ts": "import { receiptLine } from \"{{from:середина}}\";\nexport function receiptText(\n  items: { title: string; price: number }[],\n  currency: string,\n): string {\n  return items.map((item) => receiptLine(item, currency)).join(\"\\n\");\n}",
+          "file": "модуль"
         }
       ],
       "culprits": [
@@ -345,7 +368,8 @@
       "into": [
         {
           "text": "export function isValidEmail(value) {\n  return value.trim().toLowerCase();\n}",
-          "ts": "export function isValidEmail(value: string): string {\n  return value.trim().toLowerCase();\n}"
+          "ts": "export function isValidEmail(value: string): string {\n  return value.trim().toLowerCase();\n}",
+          "file": "модуль"
         }
       ]
     },
@@ -355,7 +379,8 @@
       "into": [
         {
           "text": "export function createRequestState() {\n  return { isIdle: true, isLoading: false, isSuccess: false, isError: false };\n}",
-          "ts": "export type RequestState = {\n  isIdle: boolean;\n  isLoading: boolean;\n  isSuccess: boolean;\n  isError: boolean;\n};\nexport function createRequestState(): RequestState {\n  return { isIdle: true, isLoading: false, isSuccess: false, isError: false };\n}"
+          "ts": "export type RequestState = {\n  isIdle: boolean;\n  isLoading: boolean;\n  isSuccess: boolean;\n  isError: boolean;\n};\nexport function createRequestState(): RequestState {\n  return { isIdle: true, isLoading: false, isSuccess: false, isError: false };\n}",
+          "file": "модуль"
         }
       ]
     },
@@ -365,7 +390,1871 @@
       "into": [
         {
           "text": "export function createFormatter(options) {\n  const strategies = { plain: (value) => String(value) };\n  const pick = strategies[options.kind] ?? strategies.plain;\n  return { format: (value) => pick(value) };\n}",
-          "ts": "export function createFormatter(options: { kind: string }): { format: (value: unknown) => string } {\n  const strategies: Record<string, (value: unknown) => string> = { plain: (value) => String(value) };\n  const pick = strategies[options.kind] ?? strategies.plain;\n  return { format: (value) => pick(value) };\n}"
+          "ts": "export function createFormatter(options: { kind: string }): {\n  format: (value: unknown) => string;\n} {\n  const plain = (value: unknown): string => String(value);\n  const strategies: Record<string, (value: unknown) => string> = { plain };\n  const pick = strategies[options.kind] ?? plain;\n  return { format: (value) => pick(value) };\n}",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "A4",
+      "why": "булев параметр выбирает одну из двух веток тела",
+      "create": {
+        "path": "shared/price/priceLabel.ts",
+        "text": "const TAX_RATE = 1.2;\n\nexport const priceLabel = (amount: number, withTax: boolean): string => {\n  if (withTax) {\n    return String(amount * TAX_RATE) + \" incl. tax\";\n  } else {\n    return String(amount) + \" net\";\n  }\n};\n"
+      }
+    },
+    {
+      "criterion": "A13",
+      "why": "имя переменной стилей переименовано в обоих концах, таблица связей описывает прежнее",
+      "patch": [
+        {
+          "path": "src/app/global.css",
+          "find": "--accent: #3366ff;",
+          "replace": "--brand: #3366ff;"
+        },
+        {
+          "path": "src/components/Pulse/Pulse.module.scss",
+          "find": "background: var(--accent);",
+          "replace": "background: var(--brand);"
+        }
+      ],
+      "culprits": [
+        "src/app/global.css",
+        "src/components/Pulse/Pulse.module.scss"
+      ]
+    },
+    {
+      "criterion": "A16",
+      "why": "общий помощник положен мимо слоёв",
+      "create": {
+        "path": "utils/formatCount.ts",
+        "text": "export const formatCount = (count: number): string =>\n  count.toLocaleString(\"en-US\");\n"
+      }
+    },
+    {
+      "criterion": "B7",
+      "why": "приложение берёт внутренний хук пульса мимо входа компонента",
+      "create": {
+        "path": "app/loadingPulse.ts",
+        "text": "import type { RefObject } from \"react\";\n\nimport { usePulse } from \"../components/Pulse/usePulse\";\n\nexport const useLoadingPulse = (\n  target: RefObject<HTMLElement | null>,\n  loading: boolean,\n): void => {\n  usePulse(target, loading);\n};\n"
+      }
+    },
+    {
+      "criterion": "C6",
+      "why": "кэш заметок — изменяемое модуля, о котором запись о состоянии молчит",
+      "create": {
+        "path": "shared/recent/recentNotes.ts",
+        "text": "import type { Note } from \"../notes/notes\";\n\nconst recent: Note[] = [];\n\nexport const rememberNote = (note: Note): void => {\n  recent.unshift(note);\n};\n\nexport const recentNotes = (): readonly Note[] => recent;\n"
+      }
+    },
+    {
+      "criterion": "C7-бис",
+      "why": "код читает класс, которого в листе нет",
+      "patch": [
+        {
+          "path": "src/components/NoteList/NoteList.tsx",
+          "find": "<li key={note.id} className={css.item}>",
+          "replace": "<li key={note.id} className={css.row}>"
+        }
+      ]
+    },
+    {
+      "criterion": "C9",
+      "why": "запрос в эффекте без отмены: ответ ушедшего компонента пишет в состояние",
+      "create": {
+        "path": "components/NoteList/hooks/useNoteCount.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const useNoteCount = (url: string): number => {\n  const [count, setCount] = useState(0);\n  useEffect(() => {\n    void fetch(url)\n      .then((response) => response.json())\n      .then((body: { count: number }) => {\n        setCount(body.count);\n      });\n  }, [url]);\n  return count;\n};\n"
+      }
+    },
+    {
+      "criterion": "C11",
+      "why": "время берётся во время отрисовки",
+      "create": {
+        "path": "components/NoteList/parts/Stamp.tsx",
+        "text": "export function Stamp() {\n  return <time>{new Date(Date.now()).toISOString()}</time>;\n}\n"
+      }
+    },
+    {
+      "criterion": "C12",
+      "why": "эффект только переписывает одно состояние в другое",
+      "create": {
+        "path": "components/NoteForm/parts/TitleCounter.tsx",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport function TitleCounter({ title }: { readonly title: string }) {\n  const [length, setLength] = useState(0);\n  useEffect(() => {\n    setLength(title.length);\n  }, [title]);\n  return <span>{length}</span>;\n}\n"
+      }
+    },
+    {
+      "criterion": "C15",
+      "why": "запомненное значение не ключуется запросом, из которого выводится",
+      "create": {
+        "path": "components/NoteList/hooks/useMatchingNotes.ts",
+        "text": "import { useMemo } from \"react\";\n\nimport { matching, type Note } from \"../../../shared/notes/notes\";\n\nexport const useMatchingNotes = (\n  notes: readonly Note[],\n  query: string,\n): Note[] => useMemo(() => matching(notes, query), [notes]);\n"
+      }
+    },
+    {
+      "criterion": "D1",
+      "why": "строгость компилятора снята",
+      "patch": [
+        {
+          "path": "tsconfig.json",
+          "find": "\"strict\": true",
+          "replace": "\"strict\": false"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/noteTitle.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const noteTitle = (note: Note): string => note.title.trim();\n"
+      },
+      "culprits": [
+        "tsconfig.json"
+      ]
+    },
+    {
+      "criterion": "D3",
+      "why": "разобранный ответ используется без проверки типа",
+      "create": {
+        "path": "shared/api/readCount.ts",
+        "text": "export const readCount = (text: string): number => {\n  const body = JSON.parse(text);\n  return body.count;\n};\n"
+      }
+    },
+    {
+      "criterion": "D5",
+      "why": "ветвление по союзу без одного варианта и без умолчания",
+      "create": {
+        "path": "shared/notes/noteBadge.ts",
+        "text": "type NoteKind = \"draft\" | \"saved\" | \"archived\";\n\nexport const noteBadge = (kind: NoteKind): string => {\n  let badge = \"\";\n  switch (kind) {\n    case \"draft\":\n      badge = \"Draft\";\n      break;\n    case \"saved\":\n      badge = \"Saved\";\n      break;\n  }\n  return badge;\n};\n"
+      }
+    },
+    {
+      "criterion": "E2",
+      "why": "сравнение с NaN, которое ложно всегда",
+      "create": {
+        "path": "shared/notes/clampPage.ts",
+        "text": "export const clampPage = (page: number): number => {\n  if (page === Number.NaN || page < 1) return 1;\n  return Math.floor(page);\n};\n"
+      }
+    },
+    {
+      "criterion": "E4",
+      "why": "таймер эффекта не снимается на выходе",
+      "create": {
+        "path": "components/Pulse/hooks/useBlink.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nconst BLINK_AFTER_MS = 500;\n\nexport const useBlink = (): boolean => {\n  const [on, setOn] = useState(false);\n  useEffect(() => {\n    setTimeout(() => {\n      setOn(true);\n    }, BLINK_AFTER_MS);\n  }, []);\n  return on;\n};\n"
+      }
+    },
+    {
+      "criterion": "E8",
+      "why": "брошена строка без контекста",
+      "create": {
+        "path": "shared/notes/requireTitle.ts",
+        "text": "export const requireTitle = (title: string): string => {\n  if (title.trim() === \"\") throw \"failed\";\n  return title;\n};\n"
+      }
+    },
+    {
+      "criterion": "F2",
+      "why": "слушатель окна вешается и не снимается",
+      "create": {
+        "path": "components/NoteList/hooks/useWindowWidth.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const useWindowWidth = (): number => {\n  const [width, setWidth] = useState(window.innerWidth);\n  useEffect(() => {\n    window.addEventListener(\"resize\", () => {\n      setWidth(window.innerWidth);\n    });\n  }, []);\n  return width;\n};\n"
+      }
+    },
+    {
+      "criterion": "G4-бис",
+      "why": "поставщик раздаёт новый объект на каждой отрисовке",
+      "create": {
+        "path": "components/NoteList/parts/ListContext.tsx",
+        "text": "import { createContext, type ReactNode } from \"react\";\n\nexport const ListContext = createContext({ dense: false, sorted: true });\n\nexport function ListSettings({\n  dense,\n  children,\n}: {\n  readonly dense: boolean;\n  readonly children: ReactNode;\n}) {\n  return (\n    <ListContext.Provider value={{ dense, sorted: true }}>\n      {children}\n    </ListContext.Provider>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "H3",
+      "why": "комментарий пересказывает учебник длиннее потолка",
+      "create": {
+        "path": "shared/notes/noteAge.ts",
+        "text": "const DAY_MS = 86400000;\n\n// The age is counted in whole days because a day is the unit people use when they talk about how old a note is, and partial days would only confuse the reader of the list.\nexport const noteAge = (createdAt: number, now: number): number =>\n  Math.floor((now - createdAt) / DAY_MS);\n"
+      }
+    },
+    {
+      "criterion": "J1",
+      "why": "тест без утверждения: проходит всегда",
+      "into": [
+        {
+          "role": "проверка",
+          "file": "тест",
+          "text": "it(\"handles an empty input\", () => {\n  [].sort();\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "J10",
+      "why": "пакет мутационного прогона снят, а прогон объявлен",
+      "patch": [
+        {
+          "path": "package.json",
+          "find": "\"@stryker-mutator/core\": \"^10.0.0\",\n    \"@stryker-mutator/vitest-runner\": \"^10.0.0\",\n    ",
+          "replace": ""
+        }
+      ],
+      "create": {
+        "path": "shared/notes/noteSlug.ts",
+        "text": "export const noteSlug = (title: string): string =>\n  title.trim().toLowerCase().replace(/\\s+/g, \"-\");\n"
+      },
+      "culprits": [
+        "package.json"
+      ]
+    },
+    {
+      "criterion": "J11",
+      "why": "тест, который держит гарантию, переименован, а таблица гарантий называет прежнее имя",
+      "patch": [
+        {
+          "path": "src/components/NoteForm/tests/NoteForm.test.tsx",
+          "find": "it(\"deletes only on the second press\"",
+          "replace": "it(\"asks before deleting\""
+        }
+      ]
+    },
+    {
+      "criterion": "J12",
+      "why": "возможность видна снаружи, а гарантии и теста у неё нет",
+      "patch": [
+        {
+          "path": "docs/FEATURES.md",
+          "find": "- Deleting a note takes a second press. (REQ-3)",
+          "replace": "- Deleting a note takes a second press. (REQ-3)\n- Notes can be searched by title."
+        }
+      ],
+      "create": {
+        "path": "shared/notes/searchTitles.ts",
+        "text": "import { matching, type Note } from \"./notes\";\n\nexport const searchTitles = (notes: readonly Note[], query: string): string[] =>\n  matching(notes, query).map((note) => note.title);\n"
+      },
+      "culprits": [
+        "docs/FEATURES.md"
+      ]
+    },
+    {
+      "criterion": "K6",
+      "why": "ключ темы записан в базе, а конец его жизни не назван",
+      "create": {
+        "path": "shared/storage/themeStorage.ts",
+        "text": "const THEME_KEY = \"notes-theme\";\n\nexport const saveTheme = (theme: \"light\" | \"dark\"): void => {\n  localStorage.setItem(THEME_KEY, theme);\n};\n"
+      },
+      "patch": [
+        {
+          "path": ".context/04-state.md",
+          "find": "| экземпляр переводов `i18n`",
+          "replace": "| ключ `notes-theme` в `localStorage` | `src/shared/storage/themeStorage.ts` | `src/shared/storage/themeStorage.ts` | никто |  |\n| экземпляр переводов `i18n`"
+        }
+      ],
+      "culprits": [
+        ".context/04-state.md"
+      ]
+    },
+    {
+      "criterion": "L2",
+      "why": "запрос в эффекте не отменяется при уходе",
+      "create": {
+        "path": "components/NoteForm/hooks/useServerTitle.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const useServerTitle = (url: string): string => {\n  const [title, setTitle] = useState(\"\");\n  useEffect(() => {\n    void fetch(url)\n      .then((response) => response.text())\n      .then(setTitle);\n  }, [url]);\n  return title;\n};\n"
+      }
+    },
+    {
+      "criterion": "M3",
+      "why": "интервал заводится при монтаже и не снимается",
+      "create": {
+        "path": "components/Pulse/hooks/useTicker.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nconst TICK_MS = 1000;\n\nexport const useTicker = (): number => {\n  const [ticks, setTicks] = useState(0);\n  useEffect(() => {\n    setInterval(() => {\n      setTicks((n) => n + 1);\n    }, TICK_MS);\n  }, []);\n  return ticks;\n};\n"
+      }
+    },
+    {
+      "criterion": "M4",
+      "why": "элементы списка без ключа",
+      "create": {
+        "path": "components/NoteList/parts/TitleList.tsx",
+        "text": "export function TitleList({ titles }: { readonly titles: readonly string[] }) {\n  return (\n    <ul>\n      {titles.map((title) => (\n        <li>{title}</li>\n      ))}\n    </ul>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "M5",
+      "why": "обработчик эффекта захватил значение, которого нет среди его ключей",
+      "create": {
+        "path": "components/NoteForm/hooks/useTitleLog.ts",
+        "text": "import { useEffect } from \"react\";\n\nexport const useTitleLog = (\n  title: string,\n  log: (text: string) => void,\n): void => {\n  useEffect(() => {\n    log(title);\n  }, [log]);\n};\n"
+      }
+    },
+    {
+      "criterion": "O1-бис",
+      "why": "в листе правило, которого не спрашивает ни один код",
+      "patch": [
+        {
+          "path": "src/components/NoteForm/NoteForm.module.scss",
+          "find": "  .actions {",
+          "replace": "  .hint {\n    color: var(--text-muted);\n  }\n\n  .actions {"
+        }
+      ]
+    },
+    {
+      "criterion": "P1",
+      "why": "щелчок по элементу без клавиатурного пути",
+      "create": {
+        "path": "components/NoteList/parts/NoteChip.tsx",
+        "text": "export function NoteChip({\n  title,\n  onPick,\n}: {\n  readonly title: string;\n  readonly onPick: () => void;\n}) {\n  return <div onClick={onPick}>{title}</div>;\n}\n"
+      }
+    },
+    {
+      "criterion": "P2",
+      "why": "фокус уводится в поле само при монтаже",
+      "create": {
+        "path": "components/NoteForm/parts/QuickTitle.tsx",
+        "text": "export function QuickTitle({ label }: { readonly label: string }) {\n  return <input aria-label={label} autoFocus />;\n}\n"
+      }
+    },
+    {
+      "criterion": "P3",
+      "why": "кнопке дана роль, которая у неё и так есть",
+      "create": {
+        "path": "components/NoteForm/parts/ClearButton.tsx",
+        "text": "export function ClearButton({ onClear }: { readonly onClear: () => void }) {\n  return (\n    <button type=\"button\" role=\"button\" onClick={onClear}>\n      Clear\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "P4",
+      "why": "картинка без текстовой замены",
+      "create": {
+        "path": "components/NoteList/parts/NoteIcon.tsx",
+        "text": "export function NoteIcon({ src }: { readonly src: string }) {\n  return <img src={src} />;\n}\n"
+      }
+    },
+    {
+      "criterion": "Q1",
+      "why": "текст заметки вставляется разметкой без очистки",
+      "create": {
+        "path": "components/NoteList/parts/NoteBody.tsx",
+        "text": "export function NoteBody({ body }: { readonly body: string }) {\n  return <div dangerouslySetInnerHTML={{ __html: body }} />;\n}\n"
+      }
+    },
+    {
+      "criterion": "Q2",
+      "why": "ссылка открывает чужую страницу в новой вкладке без отрыва",
+      "create": {
+        "path": "components/NoteList/parts/SourceLink.tsx",
+        "text": "export function SourceLink() {\n  return (\n    <a href=\"https://example.org/notes\" target=\"_blank\">\n      Source\n    </a>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "Q4",
+      "why": "чужая страница встроена без песочницы",
+      "create": {
+        "path": "components/NoteList/parts/Preview.tsx",
+        "text": "export function Preview({ src }: { readonly src: string }) {\n  return <iframe src={src} title=\"Preview\" />;\n}\n"
+      }
+    },
+    {
+      "criterion": "R2",
+      "why": "одноранговая зависимость стоит и обычной",
+      "patch": [
+        {
+          "path": "package.json",
+          "find": "\"devDependencies\": {",
+          "replace": "\"peerDependencies\": {\n    \"react\": \"^19.3.0\"\n  },\n  \"devDependencies\": {"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/noteCount.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const noteCount = (notes: readonly Note[]): number => notes.length;\n"
+      },
+      "culprits": [
+        "package.json"
+      ]
+    },
+    {
+      "criterion": "R6",
+      "why": "диапазон среды снят из манифеста",
+      "patch": [
+        {
+          "path": "package.json",
+          "find": "\"engines\": {\n    \"node\": \">=22.23.2\",\n    \"npm\": \">=11.0.0\"\n  },\n  ",
+          "replace": ""
+        }
+      ],
+      "create": {
+        "path": "shared/notes/oldest.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const oldest = (notes: readonly Note[]): Note | undefined =>\n  notes.reduce<Note | undefined>(\n    (first, note) =>\n      first === undefined || note.createdAt < first.createdAt ? note : first,\n    undefined,\n  );\n"
+      },
+      "culprits": [
+        "package.json"
+      ]
+    },
+    {
+      "criterion": "U1",
+      "why": "конвейер собирает, но не проверяет",
+      "patch": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "find": "      - run: npm run check",
+          "replace": "      - run: npm run build"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/titles.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const titles = (notes: readonly Note[]): string[] =>\n  notes.map((note) => note.title);\n"
+      },
+      "culprits": [
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "criterion": "U2",
+      "why": "правило линта выключено в конфиге без объявления",
+      "patch": [
+        {
+          "path": "eslint.config.mjs",
+          "find": "\"no-param-reassign\": \"error\",",
+          "replace": "\"no-param-reassign\": \"off\","
+        }
+      ],
+      "create": {
+        "path": "shared/notes/renameNote.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const renameNote = (note: Note, title: string): Note => ({\n  ...note,\n  title,\n});\n"
+      },
+      "culprits": [
+        "eslint.config.mjs"
+      ]
+    },
+    {
+      "criterion": "U3",
+      "why": "тест выключен, и прогон остаётся зелёным",
+      "into": [
+        {
+          "role": "проверка",
+          "file": "тест",
+          "text": "it.skip(\"keeps notes after a reload\", () => {\n  expect(true).toBe(false);\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "A1-тер",
+      "why": "одна функция считает итог, пишет его в хранилище и оформляет строку",
+      "create": {
+        "path": "shared/report/saveReport.ts",
+        "text": "const TOTAL_KEY = \"notes-report-total\";\n\nexport const saveReport = (values: readonly number[]): string => {\n  const total = values.reduce((sum, value) => sum + value, 0);\n  localStorage.setItem(TOTAL_KEY, String(total));\n  return \"Total: \" + total.toFixed(2);\n};\n"
+      }
+    },
+    {
+      "criterion": "A3",
+      "why": "разделитель приходит параметром, а зовут всегда с одним и тем же",
+      "create": {
+        "path": "shared/list/joinTitles.ts",
+        "text": "export const joinTitles = (\n  titles: readonly string[],\n  separator: string,\n): string => titles.join(separator);\n\nexport const titleLine = (titles: readonly string[]): string =>\n  joinTitles(titles, \", \");\n\nexport const titleSummary = (titles: readonly string[]): string =>\n  \"Notes: \" + joinTitles(titles, \", \");\n"
+      }
+    },
+    {
+      "criterion": "A5-бис",
+      "why": "в одной копии пары ноль отсечён, в другой — нет: баг починен в одной",
+      "create": [
+        {
+          "path": "shared/dates/dayLabel.ts",
+          "text": "export const dayLabel = (days: number): string => {\n  if (!(days > 0)) return \"today\";\n  return String(days) + \" days ago\";\n};\n"
+        },
+        {
+          "path": "shared/datesLite/dayLabel.ts",
+          "text": "export const dayLabel = (days: number): string => String(days) + \" days ago\";\n"
+        }
+      ],
+      "patch": [
+        {
+          "path": ".context/graph.config.mjs",
+          "find": "  forks: [],",
+          "replace": "  forks: [{ from: \"shared/dates\", to: \"shared/datesLite\" }],"
+        }
+      ],
+      "culprits": [
+        "shared/datesLite/dayLabel.ts"
+      ]
+    },
+    {
+      "criterion": "A5-тер",
+      "why": "разметка сама ходит в хранилище за ключом",
+      "create": {
+        "path": "components/NoteList/parts/DraftBadge.tsx",
+        "text": "export function DraftBadge() {\n  const hasDraft = localStorage.getItem(\"notes-draft\") !== null;\n  return hasDraft ? <span>Draft</span> : null;\n}\n"
+      }
+    },
+    {
+      "criterion": "A9",
+      "why": "общий модуль: две несвязанные половины для двух разных потребителей",
+      "create": [
+        {
+          "path": "shared/misc/misc.ts",
+          "text": "export const PERCENT_MAX = 100;\n\nexport const clampPercent = (value: number): number =>\n  Math.min(Math.max(value, 0), PERCENT_MAX);\n\nexport const initials = (name: string): string =>\n  name\n    .split(\" \")\n    .map((part) => part.charAt(0))\n    .join(\"\");\n"
+        },
+        {
+          "path": "components/NoteList/parts/Progress.tsx",
+          "text": "import { clampPercent, PERCENT_MAX } from \"../../../shared/misc/misc\";\n\nexport function Progress({ value }: { readonly value: number }) {\n  return <progress max={PERCENT_MAX} value={clampPercent(value)} />;\n}\n"
+        },
+        {
+          "path": "components/NoteForm/parts/Author.tsx",
+          "text": "import { initials } from \"../../../shared/misc/misc\";\n\nexport function Author({ name }: { readonly name: string }) {\n  return <abbr title={name}>{initials(name)}</abbr>;\n}\n"
+        }
+      ],
+      "culprits": [
+        "shared/misc/misc.ts"
+      ]
+    },
+    {
+      "criterion": "A6-бис",
+      "why": "та же нормализация заголовка написана второй раз рядом с поиском",
+      "create": {
+        "path": "shared/notes/titleKey.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const byTitleKey = (notes: readonly Note[], query: string): Note[] => {\n  const wanted = query.trim().toLowerCase();\n  return wanted === \"\"\n    ? [...notes]\n    : notes.filter((note) => note.title.toLowerCase().includes(wanted));\n};\n"
+      }
+    },
+    {
+      "criterion": "A9-тер",
+      "why": "правило «заголовок обязателен» продублировано вне формы",
+      "create": {
+        "path": "app/canSave.ts",
+        "text": "export const canSave = (title: string): boolean => title.trim() !== \"\";\n"
+      }
+    },
+    {
+      "criterion": "A9-кватер",
+      "why": "подсчёт зависит от часов, взятых внутри, хотя мог прийти входом",
+      "create": {
+        "path": "shared/notes/isFresh.ts",
+        "text": "import type { Note } from \"./notes\";\n\nconst FRESH_MS = 3600000;\n\nexport const isFresh = (note: Note): boolean =>\n  Date.now() - note.createdAt < FRESH_MS;\n"
+      }
+    },
+    {
+      "criterion": "A11",
+      "why": "правило списка зовёт клиент запроса напрямую",
+      "create": {
+        "path": "shared/notes/refreshNotes.ts",
+        "text": "import { fetchNotes } from \"../api/notesApi\";\nimport type { Note } from \"./notes\";\n\nexport const refreshNotes = async (\n  current: readonly Note[],\n): Promise<Note[]> => {\n  const loaded = await fetchNotes(\n    \"https://api.example.test\",\n    new AbortController().signal,\n  );\n  return loaded.state === \"ready\" ? loaded.data : [...current];\n};\n"
+      }
+    },
+    {
+      "criterion": "A12",
+      "why": "общий узел, которым пользуются все, берёт у одной возможности",
+      "create": [
+        {
+          "path": "shared/notes/noteTone.ts",
+          "text": "import type { SaveOutcome } from \"../../components/NoteForm/types\";\n\nexport const noteTone = (outcome: SaveOutcome): string =>\n  outcome === \"saved\" ? \"calm\" : \"alert\";\n"
+        }
+      ],
+      "culprits": [
+        "shared/notes/noteTone.ts"
+      ]
+    },
+    {
+      "criterion": "A14",
+      "why": "логика сама обращается к часам и к хранилищу, порта нет",
+      "create": {
+        "path": "shared/notes/lastVisit.ts",
+        "text": "const VISIT_KEY = \"notes-last-visit\";\nconst DAY_MS = 86400000;\n\nexport const daysSinceVisit = (): number => {\n  const last = Number(localStorage.getItem(VISIT_KEY) ?? Date.now());\n  return Math.floor((Date.now() - last) / DAY_MS);\n};\n"
+      }
+    },
+    {
+      "criterion": "A15",
+      "why": "узел сам создаёт себе соисполнителя внутри",
+      "create": {
+        "path": "shared/notes/noteExporter.ts",
+        "text": "import { createLogger, consoleSink } from \"../log/logger\";\nimport type { Note } from \"./notes\";\n\nexport const exportNotes = (notes: readonly Note[]): string => {\n  const log = createLogger(\"export\", consoleSink);\n  log.info(\"notes.exported\", { count: notes.length });\n  return JSON.stringify(notes);\n};\n"
+      }
+    },
+    {
+      "criterion": "B2",
+      "why": "узел требует от вызывающего звать его только после монтирования",
+      "create": {
+        "path": "shared/layout/measureList.ts",
+        "text": "/** Call only after the list has mounted, otherwise the height is zero. */\nexport const listHeight = (): number =>\n  document.querySelector(\"ul\")?.getBoundingClientRect().height ?? 0;\n"
+      }
+    },
+    {
+      "criterion": "B6-бис",
+      "why": "валюта помечена необязательной, а без неё узел молча отдаёт сумму без единицы",
+      "create": {
+        "path": "shared/notes/priceLabel.ts",
+        "text": "export const priceLabel = (amount: number, currency?: string): string =>\n  amount.toFixed(2) + \" \" + (currency ?? \"\");\n"
+      }
+    },
+    {
+      "criterion": "B8",
+      "why": "россыпь булевых входов вместо одного состояния",
+      "create": {
+        "path": "components/NoteList/parts/NoteRow.tsx",
+        "text": "type Props = {\n  readonly title: string;\n  readonly isPinned: boolean;\n  readonly isArchived: boolean;\n  readonly isDraft: boolean;\n  readonly isShared: boolean;\n};\n\nexport function NoteRow({\n  title,\n  isPinned,\n  isArchived,\n  isDraft,\n  isShared,\n}: Props) {\n  return (\n    <span\n      data-pinned={isPinned}\n      data-archived={isArchived}\n      data-draft={isDraft}\n      data-shared={isShared}\n    >\n      {title}\n    </span>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "B9",
+      "why": "умолчание входа сменено, все прежние потребители получают другое поведение",
+      "patch": [
+        {
+          "path": "src/shared/notes/notes.ts",
+          "find": "export const matching = (notes: readonly Note[], query: string): Note[] => {",
+          "replace": "const MATCH_LIMIT = 10;\n\nexport const matching = (\n  notes: readonly Note[],\n  query: string,\n  limit = MATCH_LIMIT,\n): Note[] => {"
+        },
+        {
+          "path": "src/shared/notes/notes.ts",
+          "find": "  return wanted === \"\"\n    ? [...notes]\n    : notes.filter((note) => note.title.toLowerCase().includes(wanted));",
+          "replace": "  return (\n    wanted === \"\"\n      ? [...notes]\n      : notes.filter((note) => note.title.toLowerCase().includes(wanted))\n  ).slice(0, limit);"
+        }
+      ]
+    },
+    {
+      "criterion": "B10",
+      "why": "параметр типа без ограничения: подойти обещано всё",
+      "create": {
+        "path": "shared/list/sortByTitle.ts",
+        "text": "export const sortByTitle = <T>(items: readonly T[]): T[] =>\n  [...items].sort((a, b) =>\n    (a as { title: string }).title.localeCompare(\n      (b as { title: string }).title,\n    ),\n  );\n"
+      }
+    },
+    {
+      "criterion": "B11",
+      "why": "умолчание срока задано числом по месту, второй раз",
+      "create": {
+        "path": "shared/api/fetchOne.ts",
+        "text": "const FETCH_TIMEOUT_MS = 8000;\n\nexport const fetchOne = (url: string): Promise<Response> =>\n  fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });\n"
+      }
+    },
+    {
+      "criterion": "B12",
+      "why": "функция и отвечает, и меняет: второй вызов отвечает иначе",
+      "create": {
+        "path": "shared/notes/nextId.ts",
+        "text": "let counter = 0;\n\nexport const peekNextId = (): string => {\n  counter += 1;\n  return \"note-\" + String(counter);\n};\n"
+      }
+    },
+    {
+      "criterion": "B13",
+      "why": "подстановка требует проверки вида у потребителя",
+      "create": {
+        "path": "shared/notes/noteSource.ts",
+        "text": "export interface NoteSource {\n  readonly load: () => Promise<string[]>;\n}\n\nexport class CachedSource implements NoteSource {\n  readonly cached: string[] = [];\n  load = (): Promise<string[]> => Promise.resolve(this.cached);\n}\n\nexport const titlesFrom = async (source: NoteSource): Promise<string[]> =>\n  source instanceof CachedSource ? source.cached : source.load();\n"
+      }
+    },
+    {
+      "criterion": "B14",
+      "why": "узел ходит сквозь соседа в его внутренности",
+      "create": {
+        "path": "shared/notes/authorCity.ts",
+        "text": "type Author = {\n  readonly profile: { readonly address: { readonly city: string } };\n};\n\nexport const authorCity = (note: { readonly author: Author }): string =>\n  note.author.profile.address.city;\n"
+      }
+    },
+    {
+      "criterion": "C3",
+      "why": "кэш растёт и никто его не чистит",
+      "create": {
+        "path": "shared/notes/titleCache.ts",
+        "text": "const cache = new Map<string, string>();\n\nexport const normalizedTitle = (title: string): string => {\n  const known = cache.get(title);\n  if (known !== undefined) return known;\n  const done = title.trim().toLowerCase();\n  cache.set(title, done);\n  return done;\n};\n"
+      }
+    },
+    {
+      "criterion": "C5",
+      "why": "работает потому, что эффекты сегодня выполняются в этом порядке",
+      "create": {
+        "path": "components/NoteForm/hooks/useFocusFirst.ts",
+        "text": "import { useEffect } from \"react\";\n\nexport const useFocusFirst = (): void => {\n  useEffect(() => {\n    document.querySelector<HTMLInputElement>(\"form input\")?.focus();\n  }, []);\n};\n"
+      }
+    },
+    {
+      "criterion": "C8",
+      "why": "жизненный цикл россыпью флагов в состоянии",
+      "create": {
+        "path": "components/NoteForm/hooks/useSaveFlags.ts",
+        "text": "import { useState } from \"react\";\n\nexport const useSaveFlags = () => {\n  const [isSaving, setIsSaving] = useState(false);\n  const [isSaved, setIsSaved] = useState(false);\n  const [isFailed, setIsFailed] = useState(false);\n  return { isSaving, isSaved, isFailed, setIsSaving, setIsSaved, setIsFailed };\n};\n"
+      }
+    },
+    {
+      "criterion": "C8-бис",
+      "why": "обработчик и решает, и хранит, и исполняет: событие смешано с командой",
+      "create": {
+        "path": "components/NoteForm/hooks/useTitleEvents.ts",
+        "text": "import { useState } from \"react\";\n\nexport const useTitleEvents = () => {\n  const [title, setTitle] = useState(\"\");\n  const onTitleChanged = (next: string) => {\n    if (next.length > title.length) localStorage.setItem(\"notes-title\", next);\n    setTitle(next.trim() === \"\" ? title : next);\n  };\n  return { title, onTitleChanged };\n};\n"
+      }
+    },
+    {
+      "criterion": "C8-тер",
+      "why": "переходы состояния разбросаны по обработчикам",
+      "create": {
+        "path": "components/NoteForm/hooks/useDraftPhase.ts",
+        "text": "import { useState } from \"react\";\n\ntype Phase = \"idle\" | \"editing\" | \"saving\" | \"saved\";\n\nexport const useDraftPhase = () => {\n  const [phase, setPhase] = useState<Phase>(\"idle\");\n  const markTyping = () => {\n    if (phase !== \"saving\") setPhase(\"editing\");\n  };\n  const markSending = () => {\n    if (phase === \"editing\") setPhase(\"saving\");\n  };\n  const markFinished = () => {\n    setPhase(phase === \"saving\" ? \"saved\" : \"idle\");\n  };\n  return { phase, markTyping, markSending, markFinished };\n};\n"
+      }
+    },
+    {
+      "criterion": "C13",
+      "why": "повторное нажатие отправляет заметку дважды",
+      "create": {
+        "path": "shared/api/postNote.ts",
+        "text": "export const postNote = (baseUrl: string, title: string): Promise<Response> =>\n  fetch(baseUrl + \"/notes\", {\n    method: \"POST\",\n    body: JSON.stringify({ title }),\n  });\n"
+      }
+    },
+    {
+      "criterion": "D4",
+      "why": "идентификатор заметки и автора — оба голые строки, перепутать их можно молча",
+      "create": {
+        "path": "shared/notes/shareNote.ts",
+        "text": "export type Share = { readonly noteId: string; readonly authorId: string };\n\nexport const share = (authorId: string, noteId: string): Share => ({\n  noteId: authorId,\n  authorId: noteId,\n});\n"
+      }
+    },
+    {
+      "criterion": "E3",
+      "why": "вход снаружи тихо исправляется вместо проверки",
+      "create": {
+        "path": "shared/notes/pageSize.ts",
+        "text": "const DEFAULT_SIZE = 20;\nconst MAX_SIZE = 100;\n\nexport const pageSize = (raw: string | null): number => {\n  const size = Number(raw);\n  return size > 0 && size <= MAX_SIZE ? size : DEFAULT_SIZE;\n};\n"
+      }
+    },
+    {
+      "criterion": "E5",
+      "why": "ответ на пустой запрос сменён «для единообразия»: раньше всё, теперь ничего",
+      "patch": [
+        {
+          "path": "src/shared/notes/notes.ts",
+          "find": "  return wanted === \"\"\n    ? [...notes]\n    :",
+          "replace": "  return wanted === \"\"\n    ? []\n    :"
+        },
+        {
+          "path": "src/shared/notes/tests/notes.test.ts",
+          "find": "returns everything for a blank query",
+          "replace": "returns nothing for a blank query"
+        },
+        {
+          "path": "src/shared/notes/tests/notes.test.ts",
+          "find": "expect(matching(notes, \"   \")).toHaveLength(2);",
+          "replace": "expect(matching(notes, \"   \")).toHaveLength(0);"
+        }
+      ]
+    },
+    {
+      "criterion": "E6",
+      "why": "пустой результат поиска брошен ошибкой наравне с отказом сети",
+      "create": {
+        "path": "shared/notes/findNote.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const findNote = (notes: readonly Note[], id: string): Note => {\n  const found = notes.find((note) => note.id === id);\n  if (found === undefined) throw new Error(\"note lookup failed\");\n  return found;\n};\n"
+      }
+    },
+    {
+      "criterion": "E7",
+      "why": "отказ запроса не обработан никак: ни повтора, ни остановки, ни сообщения",
+      "create": {
+        "path": "shared/api/syncNotes.ts",
+        "text": "export const syncNotes = async (url: string): Promise<void> => {\n  await fetch(url, { method: \"PUT\" });\n};\n"
+      }
+    },
+    {
+      "criterion": "E9",
+      "why": "двойное нажатие запускает удаление дважды",
+      "create": {
+        "path": "components/NoteList/parts/RemoveButton.tsx",
+        "text": "export function RemoveButton({\n  onRemove,\n}: {\n  readonly onRemove: () => Promise<void>;\n}) {\n  return (\n    <button type=\"button\" onClick={() => void onRemove()}>\n      Remove\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "E10",
+      "why": "одна упавшая операция пакета выбрасывает и добытое остальными",
+      "create": {
+        "path": "shared/api/loadMany.ts",
+        "text": "export const loadMany = async (urls: readonly string[]): Promise<string[]> =>\n  Promise.all(urls.map(async (url) => (await fetch(url)).text()));\n"
+      }
+    },
+    {
+      "criterion": "E11",
+      "why": "пустой список рисуется пустым местом без слова",
+      "create": {
+        "path": "components/NoteList/parts/TagList.tsx",
+        "text": "export function TagList({ tags }: { readonly tags: readonly string[] }) {\n  return (\n    <ul>\n      {tags.map((tag) => (\n        <li key={tag}>{tag}</li>\n      ))}\n    </ul>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "E12",
+      "why": "запись в два места: сбой второй оставляет первую записанной",
+      "create": {
+        "path": "shared/storage/moveDraft.ts",
+        "text": "export const moveDraft = async (url: string, text: string): Promise<void> => {\n  localStorage.removeItem(\"notes-draft\");\n  await fetch(url, { method: \"POST\", body: text });\n};\n"
+      }
+    },
+    {
+      "criterion": "F1",
+      "why": "у наблюдателя два владельца: создаёт один, снимать некому",
+      "create": {
+        "path": "components/Pulse/hooks/useSeen.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const watcher = { current: null as IntersectionObserver | null };\n\nexport const useSeen = (target: Element | null): boolean => {\n  const [seen, setSeen] = useState(false);\n  useEffect(() => {\n    if (target === null) return;\n    watcher.current = new IntersectionObserver(([entry]) => {\n      setSeen(entry?.isIntersecting ?? false);\n    });\n    watcher.current.observe(target);\n  }, [target]);\n  return seen;\n};\n"
+      }
+    },
+    {
+      "criterion": "G1",
+      "why": "список сортируется заново на каждой отрисовке ради одного первого элемента",
+      "create": {
+        "path": "components/NoteList/parts/Newest.tsx",
+        "text": "import { newestFirst, type Note } from \"../../../shared/notes/notes\";\n\nexport function Newest({ notes }: { readonly notes: readonly Note[] }) {\n  return <strong>{newestFirst(notes).map((note) => note.title)[0]}</strong>;\n}\n"
+      }
+    },
+    {
+      "criterion": "G2",
+      "why": "на каждом движении указателя ищется по всему списку",
+      "create": {
+        "path": "components/NoteList/parts/HoverHint.tsx",
+        "text": "import { useState } from \"react\";\n\nimport type { Note } from \"../../../shared/notes/notes\";\n\nexport function HoverHint({ notes }: { readonly notes: readonly Note[] }) {\n  const [hint, setHint] = useState(\"\");\n  return (\n    <div\n      role=\"presentation\"\n      onPointerMove={(event) => {\n        setHint(\n          notes.find((note) => note.title.length === event.clientX)?.title ??\n            \"\",\n        );\n      }}\n    >\n      {hint}\n    </div>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "G4",
+      "why": "значение каждого кадра гоняется через состояние и перерисовку",
+      "create": {
+        "path": "components/Pulse/hooks/useFramePhase.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const useFramePhase = (): number => {\n  const [phase, setPhase] = useState(0);\n  useEffect(() => {\n    let frame = requestAnimationFrame(function step(time) {\n      setPhase(time);\n      frame = requestAnimationFrame(step);\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  }, []);\n  return phase;\n};\n"
+      }
+    },
+    {
+      "criterion": "G5-бис",
+      "why": "движение задано свойствами раскладки, а не сдвигом",
+      "create": {
+        "path": "components/Pulse/helpers/slide.ts",
+        "text": "const SLIDE_PX = 100;\nconst GROW_PX = 10;\n\nexport const slide = (element: HTMLElement, progress: number): void => {\n  element.style.left = String(progress * SLIDE_PX) + \"px\";\n  element.style.width = String(GROW_PX + progress * GROW_PX) + \"px\";\n};\n"
+      }
+    },
+    {
+      "criterion": "G5",
+      "why": "чтение размера чередуется с записью стиля в обходе",
+      "create": {
+        "path": "components/NoteList/hooks/fitRows.ts",
+        "text": "export const fitRows = (rows: readonly HTMLElement[]): void => {\n  for (const row of rows) {\n    const height = row.offsetHeight;\n    row.style.minHeight = String(height + 2) + \"px\";\n  }\n};\n"
+      }
+    },
+    {
+      "criterion": "G6",
+      "why": "на каждом кадре заводится новый объект",
+      "create": {
+        "path": "components/Pulse/hooks/useTrail.ts",
+        "text": "export const trailPoint = (time: number): { x: number; y: number } => ({\n  x: Math.sin(time),\n  y: Math.cos(time),\n});\n"
+      }
+    },
+    {
+      "criterion": "G6-бис",
+      "why": "длинный список рисуется целиком без порога",
+      "create": {
+        "path": "components/NoteList/parts/AllNotes.tsx",
+        "text": "import type { Note } from \"../../../shared/notes/notes\";\n\nexport function AllNotes({ notes }: { readonly notes: readonly Note[] }) {\n  return (\n    <ol>\n      {notes.map((note) => (\n        <li key={note.id}>{note.body}</li>\n      ))}\n    </ol>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "G6-тер",
+      "why": "подсказка слоя композитора расставлена всем элементам",
+      "patch": [
+        {
+          "path": "src/components/NoteList/NoteList.module.scss",
+          "find": "  .item {",
+          "replace": "  .item {\n    will-change: transform;"
+        },
+        {
+          "path": "src/components/NoteForm/NoteForm.module.scss",
+          "find": "  .field {",
+          "replace": "  .field {\n    will-change: transform, opacity;"
+        }
+      ]
+    },
+    {
+      "criterion": "G6-кватер",
+      "why": "поиск по массиву на каждом элементе вместо словаря",
+      "create": {
+        "path": "shared/notes/linkTitles.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const linkTitles = (\n  ids: readonly string[],\n  notes: readonly Note[],\n): string[] =>\n  ids.map((id) => notes.find((note) => note.id === id)?.title ?? \"\");\n"
+      }
+    },
+    {
+      "criterion": "G8",
+      "why": "«оптимизация» без замера: ручной кэш вокруг дешёвой строки",
+      "create": {
+        "path": "shared/notes/titleUpper.ts",
+        "text": "const known = new Map<string, string>();\n\nexport const titleUpper = (title: string): string => {\n  if (!known.has(title)) known.set(title, title.toUpperCase());\n  return known.get(title) ?? title;\n};\n"
+      }
+    },
+    {
+      "criterion": "G9",
+      "why": "обход той же коллекции внутри её обхода, предела нет",
+      "create": {
+        "path": "shared/notes/duplicates.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const duplicates = (notes: readonly Note[]): Note[] =>\n  notes.filter(\n    (note) => notes.filter((other) => other.title === note.title).length > 1,\n  );\n"
+      }
+    },
+    {
+      "criterion": "H5",
+      "why": "шаткое место описано комментарием вместо переписывания",
+      "create": {
+        "path": "shared/notes/trimBody.ts",
+        "text": "// Fragile: breaks on emoji, callers must pass ASCII only.\nexport const trimBody = (body: string, size: number): string =>\n  body.substring(0, size);\n"
+      }
+    },
+    {
+      "criterion": "H6-бис",
+      "why": "булево названо существительным, функция — существительным",
+      "create": {
+        "path": "shared/notes/visibility.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const visibility = (note: Note): boolean => note.title !== \"\";\n\nexport const archive = (notes: readonly Note[]): number => notes.length;\n"
+      }
+    },
+    {
+      "criterion": "H7-бис",
+      "why": "величина без единицы: секунды это или миллисекунды",
+      "create": {
+        "path": "shared/notes/staleAfter.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const STALE_AFTER = 30;\n\nexport const isStale = (note: Note, now: number): boolean =>\n  now - note.createdAt > STALE_AFTER;\n"
+      }
+    },
+    {
+      "criterion": "I5",
+      "why": "повтор внутри одного узла выдан за цену переносимости",
+      "create": {
+        "path": "components/NoteList/parts/Counts.tsx",
+        "text": "export function Counts({\n  done,\n  open,\n}: {\n  readonly done: number;\n  readonly open: number;\n}) {\n  const finishedLabel = done === 1 ? \"1 item\" : String(done) + \" items\";\n  const pendingLabel = open === 1 ? \"1 item\" : String(open) + \" items\";\n  return (\n    <p>\n      {finishedLabel} / {pendingLabel}\n    </p>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "J3",
+      "why": "десяток тестов на одну ветку, ни одного на соседнюю",
+      "create": {
+        "path": "shared/notes/tests/titleLength.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { matching } from \"../notes\";\n\nconst note = { id: \"a\", title: \"Plan\", body: \"\", createdAt: 1 };\n\ndescribe(\"matching\", () => {\n  it(\"finds by the whole title\", () => {\n    expect(matching([note], \"plan\")).toHaveLength(1);\n  });\n  it(\"finds by the start\", () => {\n    expect(matching([note], \"pl\")).toHaveLength(1);\n  });\n  it(\"finds by the end\", () => {\n    expect(matching([note], \"an\")).toHaveLength(1);\n  });\n  it(\"finds in capitals\", () => {\n    expect(matching([note], \"PLAN\")).toHaveLength(1);\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J5",
+      "why": "тест различения на входах, которые различаются и без проверяемой конструкции",
+      "create": {
+        "path": "shared/notes/tests/pairKey.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nconst pairKey = (id: string, title: string): string => id + title;\n\ndescribe(\"pairKey\", () => {\n  it(\"tells two notes apart\", () => {\n    expect(pairKey(\"a\", \"One\")).not.toBe(pairKey(\"b\", \"Two\"));\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J6",
+      "why": "тест смотрит внутреннее поле, а не наблюдаемое",
+      "create": {
+        "path": "shared/log/tests/loggerShape.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { createLogger } from \"../logger\";\n\ndescribe(\"createLogger\", () => {\n  it(\"has two methods\", () => {\n    const log = createLogger(\"t\", () => undefined);\n    expect(Object.keys(log)).toEqual([\"info\", \"error\"]);\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J7",
+      "why": "подменено всё, что проверяется: тест доказывает заглушку",
+      "create": {
+        "path": "shared/api/tests/notesApiMocked.test.ts",
+        "text": "import { describe, expect, it, vi } from \"vitest\";\n\nvi.mock(\"../notesApi\", () => ({\n  fetchNotes: () => Promise.resolve({ state: \"ready\", data: [] }),\n}));\n\nimport { fetchNotes } from \"../notesApi\";\n\ndescribe(\"fetchNotes\", () => {\n  it(\"loads notes\", async () => {\n    expect(await fetchNotes(\"x\", new AbortController().signal)).toEqual({\n      state: \"ready\",\n      data: [],\n    });\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J9-бис",
+      "why": "инвариант «порядок не меняет вход» держится одной копией в конструкции, тест его не закрепляет",
+      "create": [
+        {
+          "path": "shared/notes/oldestFirst.ts",
+          "text": "import type { Note } from \"./notes\";\n\nexport const oldestFirst = (notes: Note[]): Note[] =>\n  [...notes].sort((a, b) => a.createdAt - b.createdAt);\n"
+        },
+        {
+          "path": "shared/notes/tests/oldestFirst.test.ts",
+          "text": "import { describe, expect, it } from \"vitest\";\n\nimport { oldestFirst } from \"../oldestFirst\";\n\ndescribe(\"oldestFirst\", () => {\n  it(\"puts the oldest note first\", () => {\n    const notes = [\n      { id: \"b\", title: \"B\", body: \"\", createdAt: 2 },\n      { id: \"a\", title: \"A\", body: \"\", createdAt: 1 },\n    ];\n    expect(oldestFirst(notes).map((note) => note.id)).toEqual([\"a\", \"b\"]);\n  });\n});\n"
+        }
+      ],
+      "culprits": [
+        "shared/notes/oldestFirst.ts",
+        "shared/notes/tests/oldestFirst.test.ts"
+      ]
+    },
+    {
+      "criterion": "J9-тер",
+      "why": "срок запроса у общего узла сокращён, потребители и их тесты не тронуты",
+      "patch": [
+        {
+          "path": "src/shared/api/notesApi.ts",
+          "find": "const REQUEST_TIMEOUT_MS = 8000;",
+          "replace": "const REQUEST_TIMEOUT_MS = 2000;"
+        }
+      ]
+    },
+    {
+      "criterion": "J13",
+      "why": "ожидаемое в тесте вычислено той же функцией, что проверяют",
+      "create": {
+        "path": "shared/notes/tests/newestOrder.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { newestFirst } from \"../notes\";\n\nconst notes = [\n  { id: \"a\", title: \"A\", body: \"\", createdAt: 1 },\n  { id: \"b\", title: \"B\", body: \"\", createdAt: 2 },\n];\n\ndescribe(\"newestFirst\", () => {\n  it(\"orders by time\", () => {\n    expect(newestFirst(notes)).toEqual(newestFirst([...notes]));\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "K1",
+      "why": "запись хранилища читается как доверенная, без проверки формы",
+      "create": {
+        "path": "shared/storage/readSettings.ts",
+        "text": "type Settings = { readonly fontSize: number; readonly dense: boolean };\n\nexport const readSettings = (): Settings =>\n  JSON.parse(localStorage.getItem(\"notes-settings\") ?? \"{}\") as Settings;\n"
+      }
+    },
+    {
+      "criterion": "K2",
+      "why": "ответ не проверен на входе: каждый потребитель проверяет свою половину",
+      "create": [
+        {
+          "path": "shared/api/fetchTags.ts",
+          "text": "export const fetchTags = async (url: string): Promise<unknown> => {\n  const response = await fetch(url);\n  return response.json();\n};\n"
+        },
+        {
+          "path": "shared/tags/tagCount.ts",
+          "text": "export const tagCount = (raw: unknown): number =>\n  Array.isArray(raw) ? raw.length : 0;\n"
+        },
+        {
+          "path": "shared/tags/tagNames.ts",
+          "text": "export const tagNames = (raw: unknown): string[] =>\n  Array.isArray(raw)\n    ? raw.filter((one): one is string => typeof one === \"string\")\n    : [];\n"
+        }
+      ],
+      "culprits": [
+        "shared/api/fetchTags.ts"
+      ]
+    },
+    {
+      "criterion": "K3",
+      "why": "форма передачи сервера доехала до разметки",
+      "create": {
+        "path": "components/NoteList/parts/RawNote.tsx",
+        "text": "type RawNoteShape = {\n  readonly note_id: string;\n  readonly created_at: string;\n  readonly title: string;\n};\n\nexport function RawNote({ note }: { readonly note: RawNoteShape }) {\n  return (\n    <article data-id={note.note_id}>\n      {note.title} — {note.created_at}\n    </article>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "K4",
+      "why": "«ещё не пришло», «пусто» и «отказ» сведены в один пустой список",
+      "create": {
+        "path": "shared/api/loadTitles.ts",
+        "text": "export const loadTitles = async (url: string): Promise<string[]> => {\n  try {\n    const response = await fetch(url);\n    return response.ok ? ((await response.json()) as string[]) : [];\n  } catch {\n    return [];\n  }\n};\n"
+      }
+    },
+    {
+      "criterion": "K5",
+      "why": "форма записи сменилась: черновик первой версии теперь отбрасывается молча",
+      "patch": [
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "  const first = DraftV1.safeParse(raw);\n  return first.success ? { title: \"\", body: first.data.text } : null;",
+          "replace": "  return null;"
+        },
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "const DraftV1 = z.object({ version: z.literal(1), text: z.string() });\n",
+          "replace": ""
+        },
+        {
+          "path": "src/shared/storage/tests/draftStorage.test.ts",
+          "find": "  it(\"reads a draft stored by the first version as body text\", () => {\n    localStorage.setItem(\n      \"notes-draft\",\n      JSON.stringify({ version: 1, text: \"old\" }),\n    );\n    expect(readDraft()).toEqual({ title: \"\", body: \"old\" });\n  });\n\n",
+          "replace": ""
+        }
+      ]
+    },
+    {
+      "criterion": "L1",
+      "why": "второе событие во время первого: ответа нет — ни отмены, ни очереди",
+      "create": {
+        "path": "components/NoteForm/helpers/autosaver.ts",
+        "text": "export const autosaver =\n  (save: (text: string) => Promise<void>) => (text: string) => {\n    void save(text);\n  };\n"
+      }
+    },
+    {
+      "criterion": "L3",
+      "why": "повторное нажатие запускает вторую такую же загрузку",
+      "create": {
+        "path": "components/NoteList/hooks/useRefresh.ts",
+        "text": "import { useState } from \"react\";\n\nexport const useRefresh = (load: () => Promise<void>) => {\n  const [loading, setLoading] = useState(false);\n  const refresh = async () => {\n    setLoading(true);\n    await load();\n    setLoading(false);\n  };\n  return { loading, refresh };\n};\n"
+      }
+    },
+    {
+      "criterion": "L4",
+      "why": "повтор без предела и без паузы: молчаливое бесконечное ожидание",
+      "create": {
+        "path": "shared/api/fetchWithRetry.ts",
+        "text": "export const fetchWithRetry = async (url: string): Promise<Response> => {\n  for (;;) {\n    try {\n      return await fetch(url);\n    } catch {\n      continue;\n    }\n  }\n};\n"
+      }
+    },
+    {
+      "criterion": "L5",
+      "why": "ответ старого запроса может победить ответ нового",
+      "create": {
+        "path": "components/NoteList/hooks/useSearch.ts",
+        "text": "import { useState } from \"react\";\n\nexport const useSearch = (search: (query: string) => Promise<string[]>) => {\n  const [results, setResults] = useState<string[]>([]);\n  const onQuery = (query: string) => {\n    void search(query).then(setResults);\n  };\n  return { results, onQuery };\n};\n"
+      }
+    },
+    {
+      "criterion": "L6",
+      "why": "две незавершённые операции читают и пишут один ключ без согласования",
+      "create": {
+        "path": "shared/storage/addTag.ts",
+        "text": "const TAGS_KEY = \"notes-tags\";\n\nexport const addTag = async (\n  tag: string,\n  approve: () => Promise<boolean>,\n): Promise<void> => {\n  const tags = JSON.parse(localStorage.getItem(TAGS_KEY) ?? \"[]\") as string[];\n  if (await approve())\n    localStorage.setItem(TAGS_KEY, JSON.stringify([...tags, tag]));\n};\n"
+      }
+    },
+    {
+      "criterion": "M1",
+      "why": "эффект регистрирует обработчик без снятия: второй монтаж удваивает",
+      "create": {
+        "path": "components/NoteList/hooks/useRegister.ts",
+        "text": "import { useEffect } from \"react\";\n\nconst registered: (() => void)[] = [];\n\nexport const useRegister = (onChange: () => void): void => {\n  useEffect(() => {\n    registered.push(onChange);\n  }, [onChange]);\n};\n\nexport const notifyAll = (): void => {\n  for (const one of registered) one();\n};\n"
+      }
+    },
+    {
+      "criterion": "M2",
+      "why": "«это выполнится один раз»: флаг модуля вместо определённого жизненного цикла",
+      "create": {
+        "path": "components/NoteList/hooks/useInitOnce.ts",
+        "text": "import { useEffect } from \"react\";\n\nlet initialized = false;\n\nexport const useInitOnce = (init: () => void): void => {\n  useEffect(() => {\n    if (!initialized) {\n      initialized = true;\n      init();\n    }\n  }, [init]);\n};\n"
+      }
+    },
+    {
+      "criterion": "M6",
+      "why": "мемоизация расставлена механически вокруг дешёвого",
+      "create": {
+        "path": "components/NoteList/parts/Label.tsx",
+        "text": "import { useCallback, useMemo } from \"react\";\n\nexport function Label({\n  text,\n  onPick,\n}: {\n  readonly text: string;\n  readonly onPick: (text: string) => void;\n}) {\n  const upper = useMemo(() => text.toUpperCase(), [text]);\n  const pick = useCallback(() => {\n    onPick(text);\n  }, [onPick, text]);\n  return (\n    <button type=\"button\" onClick={pick}>\n      {upper}\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "N1",
+      "why": "у движения нет состояний: запуск поверх запуска, отмены нет",
+      "create": {
+        "path": "components/Pulse/hooks/flash.ts",
+        "text": "const FLASH_MS = 300;\n\nexport const flash = (element: HTMLElement): void => {\n  element.animate([{ opacity: 0 }, { opacity: 1 }], FLASH_MS);\n};\n"
+      }
+    },
+    {
+      "criterion": "N2",
+      "why": "новая команда во время движения — скачок в начало",
+      "create": {
+        "path": "components/Pulse/hooks/moveTo.ts",
+        "text": "const MOVE_MS = 400;\n\nexport const moveTo = (element: HTMLElement, x: number): void => {\n  element.animate(\n    [\n      { transform: \"translateX(0px)\" },\n      { transform: \"translateX(\" + String(x) + \"px)\" },\n    ],\n    MOVE_MS,\n  );\n};\n"
+      }
+    },
+    {
+      "criterion": "N3",
+      "why": "кадровый цикл перезапускается каждой отрисовкой",
+      "create": {
+        "path": "components/Pulse/hooks/useOrbit.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const useOrbit = (): number => {\n  const [angle, setAngle] = useState(0);\n  useEffect(() => {\n    const frame = requestAnimationFrame(() => {\n      setAngle(angle + 1);\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  }, [angle]);\n  return angle;\n};\n"
+      }
+    },
+    {
+      "criterion": "N4",
+      "why": "положение движения хранится дважды: в ссылке и копией в состоянии",
+      "create": {
+        "path": "components/Pulse/hooks/useDrift.ts",
+        "text": "import { useRef, useState } from \"react\";\n\nexport const useDrift = () => {\n  const positionRef = useRef(0);\n  const [shown, setShown] = useState(0);\n  const step = (delta: number) => {\n    positionRef.current += delta;\n    setShown(shown + delta);\n  };\n  return { positionRef, shown, step };\n};\n"
+      }
+    },
+    {
+      "criterion": "N5",
+      "why": "движение на интервале продолжается в скрытой вкладке",
+      "create": {
+        "path": "components/Pulse/hooks/useBlinker.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nconst BLINK_MS = 500;\n\nexport const useBlinker = (): boolean => {\n  const [on, setOn] = useState(false);\n  useEffect(() => {\n    const id = setInterval(() => {\n      setOn((was) => !was);\n    }, BLINK_MS);\n    return () => {\n      clearInterval(id);\n    };\n  }, []);\n  return on;\n};\n"
+      }
+    },
+    {
+      "criterion": "N6",
+      "why": "вращение в листе без уважения к просьбе о меньшем движении",
+      "patch": [
+        {
+          "path": "src/components/Pulse/Pulse.module.scss",
+          "find": "    background: var(--accent);\n  }\n}",
+          "replace": "    background: var(--accent);\n    animation: spin 1s linear infinite;\n  }\n\n  @keyframes spin {\n    to {\n      transform: rotate(360deg);\n    }\n  }\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "O2",
+      "why": "правило выигрывает «важнее всех», а не местом в каскаде",
+      "patch": [
+        {
+          "path": "src/components/NoteList/NoteList.module.scss",
+          "find": "  .open {\n    font: inherit;",
+          "replace": "  .open {\n    font: inherit !important;"
+        }
+      ]
+    },
+    {
+      "criterion": "O2-бис",
+      "why": "лист стилей вне слоя: побеждает по порядку загрузки",
+      "create": [
+        {
+          "path": "components/NoteList/parts/Banner.module.scss",
+          "text": ".banner {\n  padding: var(--gap-small);\n  color: var(--text-muted);\n}\n"
+        },
+        {
+          "path": "components/NoteList/parts/Banner.tsx",
+          "text": "import css from \"./Banner.module.scss\";\n\nexport function Banner({ text }: { readonly text: string }) {\n  return <p className={css.banner}>{text}</p>;\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteList/parts/Banner.module.scss"
+      ]
+    },
+    {
+      "criterion": "O3",
+      "why": "высота строки в коде совпадает с листом числом, связи не видно",
+      "create": {
+        "path": "components/NoteList/hooks/visibleRows.ts",
+        "text": "const ROW_HEIGHT_PX = 32;\n\nexport const visibleRows = (listHeight: number): number =>\n  Math.floor(listHeight / ROW_HEIGHT_PX);\n"
+      }
+    },
+    {
+      "criterion": "O4",
+      "why": "точка перелома — голое число без смысла",
+      "patch": [
+        {
+          "path": "src/components/NoteList/NoteList.module.scss",
+          "find": "  .empty {",
+          "replace": "  @media (max-width: 613px) {\n    .item {\n      padding: 0;\n    }\n  }\n\n  .empty {"
+        }
+      ]
+    },
+    {
+      "criterion": "O4-бис",
+      "why": "цвет вписан по месту, хотя есть переменная",
+      "patch": [
+        {
+          "path": "src/components/NoteForm/NoteForm.module.scss",
+          "find": "    color: var(--text-alert);",
+          "replace": "    color: #b00020;"
+        }
+      ]
+    },
+    {
+      "criterion": "O4-тер",
+      "why": "высота контейнера берётся у окна",
+      "create": {
+        "path": "components/NoteList/hooks/listHeight.ts",
+        "text": "const HEADER_PX = 64;\n\nexport const listHeight = (): number => window.innerHeight - HEADER_PX;\n"
+      }
+    },
+    {
+      "criterion": "O4-кватер",
+      "why": "имена классов вразнобой с принятыми",
+      "patch": [
+        {
+          "path": "src/components/NoteList/NoteList.module.scss",
+          "find": "  .empty {",
+          "replace": "  .Note_Meta-text {\n    color: var(--text-muted);\n  }\n\n  .empty {"
+        }
+      ]
+    },
+    {
+      "criterion": "O5",
+      "why": "ширина перелома в коде расходится с листом",
+      "create": {
+        "path": "components/NoteList/hooks/useCompact.ts",
+        "text": "const COMPACT_BELOW_PX = 600;\n\nexport const isCompact = (width: number): boolean => width < COMPACT_BELOW_PX;\n"
+      }
+    },
+    {
+      "criterion": "P3-бис",
+      "why": "указатель и клавиатура делают разное",
+      "create": {
+        "path": "components/NoteList/parts/PinButton.tsx",
+        "text": "export function PinButton({\n  onPin,\n  onOpen,\n}: {\n  readonly onPin: () => void;\n  readonly onOpen: () => void;\n}) {\n  return (\n    <button\n      type=\"button\"\n      onClick={onPin}\n      onKeyDown={(event) => {\n        if (event.key === \"Enter\") onOpen();\n      }}\n    >\n      Pin\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "P4-бис",
+      "why": "выключенное видно только цветом: вспомогательная технология о нём не знает",
+      "create": {
+        "path": "components/NoteForm/parts/SaveLink.tsx",
+        "text": "export function SaveLink({\n  busy,\n  onSave,\n}: {\n  readonly busy: boolean;\n  readonly onSave: () => void;\n}) {\n  return (\n    <button\n      type=\"button\"\n      style={busy ? { opacity: \"40%\" } : undefined}\n      onClick={onSave}\n    >\n      Save\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "P5",
+      "why": "сообщение появляется молча для вспомогательной технологии",
+      "create": {
+        "path": "components/NoteForm/parts/SavedNote.tsx",
+        "text": "export function SavedNote({ saved }: { readonly saved: boolean }) {\n  return saved ? <p>Saved</p> : null;\n}\n"
+      }
+    },
+    {
+      "criterion": "P6",
+      "why": "контраст текста ниже читаемого",
+      "patch": [
+        {
+          "path": "src/app/global.css",
+          "find": "--text-muted: #666;",
+          "replace": "--text-muted: #d0d0d0;"
+        }
+      ]
+    },
+    {
+      "criterion": "Q3",
+      "why": "ключ доступа кладётся в хранилище браузера и в журнал",
+      "create": {
+        "path": "shared/storage/saveSession.ts",
+        "text": "export const saveSession = (token: string, email: string): void => {\n  localStorage.setItem(\"notes-token\", token);\n  console.info(\"session\", email, token);\n};\n"
+      }
+    },
+    {
+      "criterion": "Q7",
+      "why": "право «администратор» проверяется в двух местах по-своему",
+      "create": [
+        {
+          "path": "components/NoteList/parts/AdminTools.tsx",
+          "text": "export function AdminTools({ role }: { readonly role: string }) {\n  return role === \"admin\" ? <button type=\"button\">Purge</button> : null;\n}\n"
+        },
+        {
+          "path": "components/NoteForm/parts/LockToggle.tsx",
+          "text": "export function LockToggle({ roles }: { readonly roles: readonly string[] }) {\n  return roles.includes(\"admin\") || roles.includes(\"owner\") ? (\n    <button type=\"button\">Lock</button>\n  ) : null;\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteList/parts/AdminTools.tsx",
+        "components/NoteForm/parts/LockToggle.tsx"
+      ]
+    },
+    {
+      "criterion": "Q8",
+      "why": "право решает то, что клиент пишет сам",
+      "create": {
+        "path": "shared/storage/canDelete.ts",
+        "text": "export const canDelete = (): boolean =>\n  localStorage.getItem(\"role\") === \"admin\";\n"
+      }
+    },
+    {
+      "criterion": "Q9",
+      "why": "секрет едет в поставку переменной окружения сборщика",
+      "create": {
+        "path": "shared/api/authorized.ts",
+        "text": "export const authorized = (url: string): Promise<Response> =>\n  fetch(url, {\n    headers: {\n      Authorization:\n        \"Bearer \" + String(import.meta.env.VITE_NOTES_SECRET_TOKEN),\n    },\n  });\n"
+      }
+    },
+    {
+      "criterion": "R1",
+      "why": "зависимость добавлена без обоснования",
+      "patch": [
+        {
+          "path": "package.json",
+          "find": "\"clsx\": \"^2.1.1\",",
+          "replace": "\"clsx\": \"^2.1.1\",\n    \"left-pad\": \"^1.3.0\","
+        }
+      ],
+      "create": {
+        "path": "shared/notes/padTitle.ts",
+        "text": "export const padTitle = (title: string, width: number): string =>\n  title.padEnd(width);\n"
+      },
+      "culprits": [
+        "package.json"
+      ]
+    },
+    {
+      "criterion": "R1-бис",
+      "why": "версия зависимости не закреплена: любая последняя",
+      "patch": [
+        {
+          "path": "package.json",
+          "find": "\"zod\": \"^4.6.5\"",
+          "replace": "\"zod\": \"latest\""
+        }
+      ],
+      "create": {
+        "path": "shared/notes/isTitle.ts",
+        "text": "import { z } from \"zod\";\n\nexport const isTitle = (value: unknown): boolean =>\n  z.string().min(1).safeParse(value).success;\n"
+      },
+      "culprits": [
+        "package.json"
+      ]
+    },
+    {
+      "criterion": "R3",
+      "why": "тяжёлая библиотека в критическом пути ради одного помощника",
+      "create": {
+        "path": "app/makeNoteId.ts",
+        "text": "import { nanoid } from \"@reduxjs/toolkit\";\n\nexport const makeNoteId = (): string => nanoid();\n"
+      }
+    },
+    {
+      "criterion": "S2",
+      "why": "отладочный вывод в поставке без уровня и без контекста",
+      "create": {
+        "path": "shared/notes/debugNotes.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const debugNotes = (notes: readonly Note[]): void => {\n  console.log(\"notes here\", notes);\n};\n"
+      }
+    },
+    {
+      "criterion": "S3",
+      "why": "замер на каждом кадре пишет в хранилище — измерение создаёт нагрузку",
+      "create": {
+        "path": "components/Pulse/hooks/frameTimer.ts",
+        "text": "export const recordFrame = (started: number): void => {\n  localStorage.setItem(\"notes-frame\", String(performance.now() - started));\n};\n"
+      }
+    },
+    {
+      "criterion": "S4",
+      "why": "диагностика меняет поведение продукта",
+      "create": {
+        "path": "shared/log/errorBudget.ts",
+        "text": "const ERROR_LIMIT = 3;\n\nlet errors = 0;\n\nexport const noteError = (): void => {\n  errors += 1;\n};\n\nexport const autosaveEnabled = (): boolean => errors < ERROR_LIMIT;\n"
+      }
+    },
+    {
+      "criterion": "S5",
+      "why": "диагностика пишет и в поставке, выключить её нельзя",
+      "create": {
+        "path": "shared/log/verboseSink.ts",
+        "text": "import type { LogEntry } from \"./logger\";\n\nexport const verboseSink = (entry: LogEntry): void => {\n  console.info(JSON.stringify(entry));\n};\n"
+      }
+    },
+    {
+      "criterion": "S7",
+      "why": "полное хранилище не предусмотрено: исключение уходит наверх",
+      "create": {
+        "path": "shared/storage/saveHistory.ts",
+        "text": "export const saveHistory = (titles: readonly string[]): void => {\n  localStorage.setItem(\"notes-history\", JSON.stringify(titles));\n};\n"
+      }
+    },
+    {
+      "criterion": "T1",
+      "why": "текст для человека вшит в разметку",
+      "create": {
+        "path": "components/NoteList/parts/NoResults.tsx",
+        "text": "export function NoResults() {\n  return <p>Nothing matches your search</p>;\n}\n"
+      }
+    },
+    {
+      "criterion": "T2",
+      "why": "дата и сумма показаны не по региону",
+      "create": {
+        "path": "components/NoteList/parts/NoteMeta.tsx",
+        "text": "export function NoteMeta({\n  createdAt,\n  cost,\n}: {\n  readonly createdAt: number;\n  readonly cost: number;\n}) {\n  return (\n    <small>\n      {new Date(createdAt).toISOString().split(\"T\")[0]} · {cost.toFixed(2)} EUR\n    </small>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "T3",
+      "why": "множественное число «одно или много»",
+      "create": {
+        "path": "components/NoteList/parts/CountBadge.tsx",
+        "text": "import { useTranslation } from \"react-i18next\";\n\nexport function CountBadge({ count }: { readonly count: number }) {\n  const { t } = useTranslation();\n  return (\n    <span>\n      {String(count) + \" \" + (count === 1 ? t(\"badge.note\") : t(\"badge.notes\"))}\n    </span>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "T4",
+      "why": "подпись обрезана по ширине английского слова",
+      "patch": [
+        {
+          "path": "src/components/NoteForm/NoteForm.module.scss",
+          "find": "  .actions {\n    display: flex;",
+          "replace": "  .actions {\n    display: flex;\n    width: 160px;\n    white-space: nowrap;\n    overflow: hidden;"
+        }
+      ]
+    },
+    {
+      "criterion": "A1-бис",
+      "why": "правило приоритета заметки вычисляется прямо в разметке",
+      "create": {
+        "path": "components/NoteList/parts/PriorityBadge.tsx",
+        "text": "import type { Note } from \"../../../shared/notes/notes\";\n\nconst DAY_MS = 86400000;\nconst URGENT_DAYS = 3;\n\nexport function PriorityBadge({\n  note,\n  now,\n}: {\n  readonly note: Note;\n  readonly now: number;\n}) {\n  return (\n    <span>\n      {note.title.startsWith(\"!\") ||\n      (now - note.createdAt) / DAY_MS > URGENT_DAYS\n        ? \"urgent\"\n        : \"normal\"}\n    </span>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "A7-бис",
+      "why": "одна функция решает порядок шагов и сама исполняет каждый до байта",
+      "create": {
+        "path": "shared/notes/publishNote.ts",
+        "text": "export const publishNote = async (\n  baseUrl: string,\n  title: string,\n): Promise<void> => {\n  const checked = title.trim();\n  if (checked === \"\") return;\n  const response = await fetch(baseUrl + \"/notes\", {\n    method: \"POST\",\n    headers: { \"Content-Type\": \"application/json\" },\n    body: JSON.stringify({ title: checked }),\n  });\n  if (response.ok) localStorage.removeItem(\"notes-draft\");\n  await fetch(baseUrl + \"/notes/index\", { method: \"PUT\" });\n};\n"
+      }
+    },
+    {
+      "criterion": "C14",
+      "why": "две копии заголовка, и каждый обработчик пишет в обе — изменение течёт в обе стороны",
+      "create": {
+        "path": "components/NoteForm/hooks/useMirroredTitle.ts",
+        "text": "import { useState } from \"react\";\n\nexport const useMirroredTitle = (\n  outer: string,\n  setOuter: (next: string) => void,\n) => {\n  const [inner, setInner] = useState(outer);\n  const changeInner = (next: string) => {\n    setInner(next);\n    setOuter(next);\n  };\n  const changeOuter = (next: string) => {\n    setOuter(next);\n    setInner(next);\n  };\n  return { inner, changeInner, changeOuter };\n};\n"
+      }
+    },
+    {
+      "criterion": "C16",
+      "why": "заметки лежат в памяти и в хранилище, какая копия главная — не сказано",
+      "create": {
+        "path": "shared/storage/notesCache.ts",
+        "text": "import type { Note } from \"../notes/notes\";\n\nlet inMemory: Note[] = [];\n\nexport const keepNotes = (notes: Note[]): void => {\n  inMemory = notes;\n  localStorage.setItem(\"notes-cache\", JSON.stringify(notes));\n};\n\nexport const cachedNotes = (): Note[] =>\n  inMemory.length > 0\n    ? inMemory\n    : (JSON.parse(localStorage.getItem(\"notes-cache\") ?? \"[]\") as Note[]);\n"
+      }
+    },
+    {
+      "criterion": "I1",
+      "why": "новый вид заметки требует правки в трёх местах разных слоёв",
+      "create": [
+        {
+          "path": "shared/notes/kindLabel.ts",
+          "text": "export type NoteKind = \"plain\" | \"list\";\n\nexport const kindLabel = (kind: NoteKind): string =>\n  kind === \"plain\" ? \"Note\" : \"Checklist\";\n"
+        },
+        {
+          "path": "components/NoteList/parts/KindIcon.tsx",
+          "text": "import type { NoteKind } from \"../../../shared/notes/kindLabel\";\n\nexport function KindIcon({ kind }: { readonly kind: NoteKind }) {\n  return <span aria-hidden=\"true\">{kind === \"plain\" ? \"¶\" : \"☑\"}</span>;\n}\n"
+        },
+        {
+          "path": "app/kindRoute.ts",
+          "text": "import type { NoteKind } from \"../shared/notes/kindLabel\";\n\nexport const kindRoute = (kind: NoteKind): string =>\n  kind === \"plain\" ? \"/notes\" : \"/lists\";\n"
+        }
+      ],
+      "culprits": [
+        "shared/notes/kindLabel.ts",
+        "components/NoteList/parts/KindIcon.tsx",
+        "app/kindRoute.ts"
+      ]
+    },
+    {
+      "criterion": "I2",
+      "why": "потребитель знает, где и под каким ключом узел хранит своё",
+      "create": [
+        {
+          "path": "shared/storage/draftHandle.ts",
+          "text": "export const draftHandle = { store: localStorage, key: \"notes-draft\" };\n"
+        },
+        {
+          "path": "app/draftPeek.ts",
+          "text": "import { draftHandle } from \"../shared/storage/draftHandle\";\n\nexport const draftPeek = (): string =>\n  draftHandle.store.getItem(draftHandle.key) ?? \"\";\n"
+        }
+      ],
+      "culprits": [
+        "shared/storage/draftHandle.ts",
+        "app/draftPeek.ts"
+      ]
+    },
+    {
+      "criterion": "I4",
+      "why": "общий помощник знает страницу, на которой его зовут",
+      "create": {
+        "path": "shared/notes/titleForPage.ts",
+        "text": "export const titleForPage = (title: string): string =>\n  window.location.pathname === \"/\" ? title.toUpperCase() : title;\n"
+      }
+    },
+    {
+      "criterion": "O1",
+      "why": "лист компонента правит чужие элементы всего документа",
+      "patch": [
+        {
+          "path": "src/components/NoteList/NoteList.module.scss",
+          "find": "  .empty {",
+          "replace": "  :global(button) {\n    border-radius: 0;\n  }\n\n  .empty {"
+        }
+      ]
+    },
+    {
+      "criterion": "A7",
+      "why": "правило «заметка устарела» живёт только внутри хука",
+      "create": {
+        "path": "components/NoteList/hooks/useStaleness.ts",
+        "text": "import { useMemo } from \"react\";\n\nimport type { Note } from \"../../../shared/notes/notes\";\n\nconst MONTH_MS = 2592000000;\n\nexport const useStaleness = (note: Note, now: number): boolean =>\n  useMemo(\n    () => now - note.createdAt > MONTH_MS && note.body.length === 0,\n    [note, now],\n  );\n"
+      }
+    },
+    {
+      "criterion": "A8-бис",
+      "why": "оплата легла в область заметок, граница не названа",
+      "create": {
+        "path": "shared/notes/billing.ts",
+        "text": "const PRICE_PER_NOTE_CENTS = 5;\n\nexport const invoiceTotal = (noteCount: number): number =>\n  noteCount * PRICE_PER_NOTE_CENTS;\n"
+      }
+    },
+    {
+      "criterion": "B2-бис",
+      "why": "один и тот же вход назван по-разному у соседей",
+      "create": [
+        {
+          "path": "components/NoteList/parts/PickList.tsx",
+          "text": "export function PickList({\n  items,\n  whenChosen,\n}: {\n  readonly items: readonly string[];\n  readonly whenChosen: (item: string) => void;\n}) {\n  return (\n    <ul>\n      {items.map((item) => (\n        <li key={item}>\n          <button\n            type=\"button\"\n            onClick={() => {\n              whenChosen(item);\n            }}\n          >\n            {item}\n          </button>\n        </li>\n      ))}\n    </ul>\n  );\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteList/parts/PickList.tsx"
+      ]
+    },
+    {
+      "criterion": "B6",
+      "why": "без данных о праве умолчание — разрешить",
+      "create": {
+        "path": "shared/notes/mayEdit.ts",
+        "text": "type User = { readonly canEdit?: boolean };\n\nexport const mayEdit = (user: User | undefined): boolean =>\n  user?.canEdit ?? true;\n"
+      }
+    },
+    {
+      "criterion": "C2",
+      "why": "«окно только растёт» держится сравнением на каждом месте вызова",
+      "create": {
+        "path": "components/NoteList/hooks/visibleWindow.ts",
+        "text": "export const visibleWindow = { size: 0 };\n\nexport const onScrollGrow = (seen: number): void => {\n  if (seen > visibleWindow.size) visibleWindow.size = seen;\n};\n\nexport const onResizeGrow = (seen: number): void => {\n  visibleWindow.size = seen;\n};\n"
+      }
+    },
+    {
+      "criterion": "E13",
+      "why": "одна битая заметка роняет весь список",
+      "create": {
+        "path": "components/NoteList/parts/RichList.tsx",
+        "text": "import type { Note } from \"../../../shared/notes/notes\";\n\nexport function RichList({ notes }: { readonly notes: readonly Note[] }) {\n  return (\n    <ul>\n      {notes.map((note) => (\n        <li key={note.id}>\n          {(JSON.parse(note.body) as { summary: string }).summary}\n        </li>\n      ))}\n    </ul>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "E14",
+      "why": "удаление без подтверждения и без отмены; при отказе форма стирает введённое",
+      "create": {
+        "path": "components/NoteForm/parts/QuickNote.tsx",
+        "text": "import { useState } from \"react\";\n\nexport function QuickNote({\n  onSave,\n  onDelete,\n}: {\n  readonly onSave: (text: string) => Promise<boolean>;\n  readonly onDelete: () => void;\n}) {\n  const [text, setText] = useState(\"\");\n  const [failed, setFailed] = useState(false);\n  return (\n    <div>\n      <input\n        aria-label=\"Quick note\"\n        value={text}\n        onChange={(event) => {\n          setText(event.target.value);\n        }}\n      />\n      <button\n        type=\"button\"\n        onClick={() => {\n          void onSave(text).then((ok) => {\n            setFailed(!ok);\n            setText(\"\");\n          });\n        }}\n      >\n        Save\n      </button>\n      <button type=\"button\" onClick={onDelete}>\n        Delete\n      </button>\n      {failed && <p role=\"alert\">Something went wrong</p>}\n    </div>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "F3",
+      "why": "долгоживущий обработчик держит весь список, хотя ему нужна длина",
+      "create": {
+        "path": "components/NoteList/hooks/useCountOnKey.ts",
+        "text": "import { useEffect } from \"react\";\n\nimport type { Note } from \"../../../shared/notes/notes\";\n\nexport const useCountOnKey = (\n  notes: readonly Note[],\n  report: (count: number) => void,\n): void => {\n  useEffect(() => {\n    const onKey = () => {\n      report(notes.length);\n    };\n    window.addEventListener(\"keydown\", onKey);\n    return () => {\n      window.removeEventListener(\"keydown\", onKey);\n    };\n  }, [notes, report]);\n};\n"
+      }
+    },
+    {
+      "criterion": "F4",
+      "why": "удалённые узлы разметки копятся в списке модуля",
+      "create": {
+        "path": "components/NoteList/hooks/rowRegistry.ts",
+        "text": "const rows: HTMLElement[] = [];\n\nexport const trackRow = (row: HTMLElement): void => {\n  rows.push(row);\n};\n\nexport const tallestRow = (): number =>\n  Math.max(0, ...rows.map((row) => row.offsetHeight));\n"
+      }
+    },
+    {
+      "criterion": "G7",
+      "why": "бюджет кадра снят из фактов, а горячий путь растёт",
+      "patch": [
+        {
+          "path": ".context/01-facts.md",
+          "find": "| кадр пульса |",
+          "replace": "| кадр пульса (снят) |"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/withBody.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const withBody = (notes: readonly Note[]): Note[] =>\n  notes.filter((note) => note.body !== \"\");\n"
+      },
+      "culprits": [
+        ".context/01-facts.md"
+      ]
+    },
+    {
+      "criterion": "H2",
+      "why": "второй способ слить карты классов рядом с принятым",
+      "create": {
+        "path": "components/NoteForm/parts/Hint.tsx",
+        "text": "import own from \"../NoteForm.module.scss\";\n\nexport function Hint({\n  extra,\n  text,\n}: {\n  readonly extra?: string;\n  readonly text: string;\n}) {\n  return <p className={[own.error, extra].filter(Boolean).join(\" \")}>{text}</p>;\n}\n"
+      }
+    },
+    {
+      "criterion": "H6",
+      "why": "«черновик» здесь значит неотправленный запрос, а в проекте — сохранённый текст",
+      "create": {
+        "path": "shared/api/draftRequest.ts",
+        "text": "export type Draft = { readonly url: string; readonly body: string };\n\nexport const sendDraft = (draft: Draft): Promise<Response> =>\n  fetch(draft.url, { method: \"POST\", body: draft.body });\n"
+      }
+    },
+    {
+      "criterion": "H8-бис",
+      "why": "одна функция обслуживает два разных понятия через флаг «чтобы подошло»",
+      "create": {
+        "path": "shared/notes/formatThing.ts",
+        "text": "export const formatThing = (value: number, asMoney: boolean): string =>\n  asMoney ? value.toFixed(2) + \" EUR\" : String(Math.round(value)) + \" notes\";\n"
+      }
+    },
+    {
+      "criterion": "H8-тер",
+      "why": "свой маленький стор поверх React повторяет его состояние и подписку",
+      "create": {
+        "path": "shared/store/miniStore.ts",
+        "text": "type Listener = () => void;\n\nexport const createMiniStore = <T>(initial: T) => {\n  let state = initial;\n  const listeners = new Set<Listener>();\n  return {\n    get: () => state,\n    set: (next: T) => {\n      state = next;\n      for (const one of listeners) one();\n    },\n    subscribe: (listener: Listener) => {\n      listeners.add(listener);\n      return () => listeners.delete(listener);\n    },\n  };\n};\n"
+      }
+    },
+    {
+      "criterion": "J2",
+      "why": "правило, которое проверяется машиной, держит одна фраза в соглашениях",
+      "patch": [
+        {
+          "path": "docs/CONVENTIONS.md",
+          "find": "## What goes where",
+          "replace": "## Storage keys\n\nEvery storage key starts with `notes-`. Keep it that way by hand.\n\n## What goes where"
+        }
+      ],
+      "create": {
+        "path": "shared/storage/themeKey.ts",
+        "text": "export const THEME_KEY = \"theme\";\n"
+      },
+      "culprits": [
+        "shared/storage/themeKey.ts"
+      ]
+    },
+    {
+      "criterion": "J4",
+      "why": "помощник тестов, на выводе которого строят вывод, не сверен на известном примере",
+      "create": {
+        "path": "shared/notes/tests/isSorted.ts",
+        "text": "export const isSorted = (values: readonly number[]): boolean =>\n  values.every(\n    (value, at) =>\n      at === 0 || (values[at - 1] ?? value) <= value || values.length > 0,\n  );\n"
+      }
+    },
+    {
+      "criterion": "J8",
+      "why": "оснастка теста сложнее проверяемой строки",
+      "create": {
+        "path": "shared/notes/tests/excerptLong.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nconst build = (count: number, seed: number) =>\n  Array.from({ length: count }, (_, at) => ({\n    id: String(seed + at),\n    title: \"Title \" + String(at),\n    body: \"x\".repeat((seed * at) % 7),\n    createdAt: seed * 1000 + at,\n  }))\n    .map((note) => ({ ...note, title: note.title.padEnd(12, \".\") }))\n    .reduce<Record<string, { id: string; title: string }>>(\n      (all, note) => ({ ...all, [note.id]: note }),\n      {},\n    );\n\ndescribe(\"titles\", () => {\n  it(\"are trimmed\", () => {\n    const notes = build(3, 7);\n    expect(Object.values(notes)[0]?.title.trim()).toBe(\"Title 0.....\".trim());\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J9",
+      "why": "правило порядка проверено только через отрисовку всего приложения",
+      "create": {
+        "path": "app/tests/OrderViaApp.test.tsx",
+        "text": "import { render, screen } from \"@testing-library/react\";\nimport { createMemoryRouter } from \"react-router\";\nimport { describe, expect, it, vi } from \"vitest\";\n\nimport { App } from \"../App\";\nimport { routes } from \"../routes\";\n\ndescribe(\"note order\", () => {\n  it(\"puts the newest first\", async () => {\n    vi.stubGlobal(\n      \"fetch\",\n      vi.fn(() =>\n        Promise.resolve(\n          new Response(\n            JSON.stringify([\n              {\n                note_id: \"a\",\n                title: \"A\",\n                body: \"\",\n                created_at: \"2026-01-01T00:00:00Z\",\n              },\n              {\n                note_id: \"b\",\n                title: \"B\",\n                body: \"\",\n                created_at: \"2026-01-02T00:00:00Z\",\n              },\n            ]),\n          ),\n        ),\n      ),\n    );\n    render(<App router={createMemoryRouter(routes)} />);\n    expect((await screen.findAllByRole(\"listitem\"))[0]?.textContent).toBe(\"B\");\n    vi.unstubAllGlobals();\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "O5-бис",
+      "why": "точка пульса стала квадратом: видимый контракт ничем не закреплён",
+      "patch": [
+        {
+          "path": "src/components/Pulse/Pulse.module.scss",
+          "find": "    border-radius: 50%;",
+          "replace": "    border-radius: 0;"
+        }
+      ]
+    },
+    {
+      "criterion": "Q6",
+      "why": "политика источников расширена до любого адреса",
+      "patch": [
+        {
+          "path": "index.html",
+          "find": "content=\"default-src 'self'; connect-src 'self' https://api.example.test\"",
+          "replace": "content=\"default-src * 'unsafe-inline' 'unsafe-eval'; connect-src *\""
+        }
+      ],
+      "create": {
+        "path": "shared/notes/withTitle.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const withTitle = (notes: readonly Note[]): Note[] =>\n  notes.filter((note) => note.body !== \"\");\n"
+      },
+      "culprits": [
+        "index.html"
+      ]
+    },
+    {
+      "criterion": "R1-тер",
+      "why": "проверка зависимостей на уязвимости убрана из конвейера",
+      "patch": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "find": "      - run: npm audit --audit-level=high\n",
+          "replace": ""
+        }
+      ],
+      "create": {
+        "path": "shared/notes/withoutBody.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const withoutBody = (notes: readonly Note[]): Note[] =>\n  notes.filter((note) => note.body !== \"\");\n"
+      },
+      "culprits": [
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "criterion": "R4",
+      "why": "редкая страница грузится вместе с первой",
+      "create": {
+        "path": "app/SettingsPage.tsx",
+        "text": "import { nanoid } from \"@reduxjs/toolkit\";\n\nexport function SettingsPage() {\n  return <main data-session={nanoid()}>Settings</main>;\n}\n"
+      },
+      "patch": [
+        {
+          "path": "src/app/routes.ts",
+          "find": "import { NotesPage } from \"./NotesPage\";",
+          "replace": "import { NotesPage } from \"./NotesPage\";\nimport { SettingsPage } from \"./SettingsPage\";"
+        },
+        {
+          "path": "src/app/routes.ts",
+          "find": "  { path: \"/\", Component: NotesPage, loader: notesLoader },",
+          "replace": "  { path: \"/\", Component: NotesPage, loader: notesLoader },\n  { path: \"/settings\", Component: SettingsPage },"
+        }
+      ],
+      "culprits": [
+        "src/app/routes.ts"
+      ]
+    },
+    {
+      "criterion": "R4-бис",
+      "why": "шрифт тянется с чужого адреса без стратегии кэширования",
+      "patch": [
+        {
+          "path": "src/app/global.css",
+          "find": "@layer base, components;",
+          "replace": "@import url(\"https://fonts.example.com/css2?family=Inter\");\n\n@layer base, components;"
+        }
+      ]
+    },
+    {
+      "criterion": "R5",
+      "why": "бюджет поставки снят из фактов",
+      "patch": [
+        {
+          "path": ".context/01-facts.md",
+          "find": "| поставка |",
+          "replace": "| поставка (снят) |"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/withLongTitle.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const withLongTitle = (notes: readonly Note[]): Note[] =>\n  notes.filter((note) => note.body !== \"\");\n"
+      },
+      "culprits": [
+        ".context/01-facts.md"
+      ]
+    },
+    {
+      "criterion": "S1",
+      "why": "сбор отказов в бою снят со входа приложения",
+      "patch": [
+        {
+          "path": "src/app/main.tsx",
+          "find": "reportErrors(ERRORS_URL, window);\n\n",
+          "replace": ""
+        },
+        {
+          "path": "src/app/main.tsx",
+          "find": "import { reportErrors } from \"../shared/log/reportErrors\";\n",
+          "replace": ""
+        },
+        {
+          "path": "src/app/main.tsx",
+          "find": "import { ERRORS_URL } from \"./config\";\n",
+          "replace": ""
+        }
+      ]
+    },
+    {
+      "criterion": "S2-бис",
+      "why": "у каждой записи журнала своя случайная метка — цепочку не собрать",
+      "create": {
+        "path": "shared/log/logEach.ts",
+        "text": "import { consoleSink, createLogger } from \"./logger\";\n\nexport const logEach = (event: string): void => {\n  createLogger(crypto.randomUUID(), consoleSink).info(event);\n};\n"
+      }
+    },
+    {
+      "criterion": "S6",
+      "why": "старт с пустой настройкой продолжается и падает позже, на первом запросе",
+      "create": {
+        "path": "app/apiBase.ts",
+        "text": "export const apiBase = (): string =>\n  String(import.meta.env.VITE_API_BASE ?? \"\");\n"
+      }
+    },
+    {
+      "criterion": "S8",
+      "why": "новая версия пишет черновик формой, которую прежняя прочесть не может",
+      "patch": [
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "const DraftV2 = z.object({",
+          "replace": "const DRAFT_VERSION = 3;\nconst DraftV3 = z.object({\n  version: z.literal(DRAFT_VERSION),\n  heading: z.string(),\n  text: z.string(),\n});\nconst DraftV2 = z.object({"
+        },
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "  const latest = DraftV2.safeParse(raw);",
+          "replace": "  const newest = DraftV3.safeParse(raw);\n  if (newest.success)\n    return { title: newest.data.heading, body: newest.data.text };\n  const latest = DraftV2.safeParse(raw);"
+        },
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "    localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 2, ...draft }));",
+          "replace": "    localStorage.setItem(\n      DRAFT_KEY,\n      JSON.stringify({\n        version: DRAFT_VERSION,\n        heading: draft.title,\n        text: draft.body,\n      }),\n    );"
         }
       ]
     }
@@ -373,23 +2262,28 @@
   "covers": [
     {
       "text": "export const joinWords = (words) => words.filter(Boolean).join(\" \");",
-      "ts": "export const joinWords = (words: readonly string[]): string => words.filter(Boolean).join(\" \");"
+      "ts": "export const joinWords = (words: readonly string[]): string =>\n  words.filter(Boolean).join(\" \");",
+      "file": "модуль"
     },
     {
       "text": "export const isBlank = (text) => text.trim() === \"\";",
-      "ts": "export const isBlank = (text: string): boolean => text.trim() === \"\";"
+      "ts": "export const isBlank = (text: string): boolean => text.trim() === \"\";",
+      "file": "модуль"
     },
     {
-      "text": "export const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);",
-      "ts": "export const capitalize = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);"
+      "text": "export const capitalize = (text) =>\n  text.charAt(0).toUpperCase() + text.slice(1);",
+      "ts": "export const capitalize = (text: string): string =>\n  text.charAt(0).toUpperCase() + text.slice(1);",
+      "file": "модуль"
     },
     {
       "text": "export const countWords = (text) => text.split(/\\s+/).filter(Boolean).length;",
-      "ts": "export const countWords = (text: string): number => text.split(/\\s+/).filter(Boolean).length;"
+      "ts": "export const countWords = (text: string): number =>\n  text.split(/\\s+/).filter(Boolean).length;",
+      "file": "модуль"
     },
     {
-      "text": "export const uniqueSorted = (items) => [...new Set(items)].sort();",
-      "ts": "export const uniqueSorted = (items: readonly string[]): string[] => [...new Set(items)].sort();"
+      "text": "export const uniqueSorted = (items) =>\n  [...new Set(items)].sort((a, b) => a.localeCompare(b));",
+      "ts": "export const uniqueSorted = (items: readonly string[]): string[] =>\n  [...new Set(items)].sort((a, b) => a.localeCompare(b));",
+      "file": "модуль"
     }
   ]
 }

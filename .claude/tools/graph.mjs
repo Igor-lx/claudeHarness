@@ -7785,6 +7785,195 @@ if (mode === "bar-probe") {
   const judged = process.argv.slice(3).find((a) => !a.startsWith("--"));
   const projectRoot = path.join(BASE, "..");
 
+  // Ворота стенда. Посадка критерия-суждения обязана пройти ворота проекта —
+  // компилятор, линт, формат и тесты: иначе свод видит поломку, к критерию
+  // не относящуюся, и проба мерит не то. Посадки критериев, которые решает
+  // машина, ворота задевают нарочно, и их держит тест обвязки. Режим сажает
+  // сам себя пачками без общих файлов; посадка, не вместившаяся в пачку,
+  // сажается одна, и не вместившаяся одна — тоже находка.
+  if (process.argv.includes("--stand-check")) {
+    const env = { ...process.env };
+    delete env.CLAUDE_CODE_CHILD_SESSION;
+    const bin = (name) => path.join(projectRoot, "node_modules", ".bin", name);
+    const createdBy = (p) =>
+      p.create === undefined ? [] : [p.create].flat().map((one) => one.path);
+    const pending = probeBook.plants
+      .map((plant, i) => ({ plant, number: i + 1, alone: false }))
+      .filter(
+        ({ plant }) =>
+          !["сверка", "линт"].includes(barGripOf(plant.criterion + "|")),
+      );
+    const total = pending.length;
+    const failed = [];
+    let rounds = 0;
+    while (pending.length > 0) {
+      rounds += 1;
+      const batch = [];
+      const used = new Set();
+      for (const one of [...pending]) {
+        if (batch.length > 0 && (one.alone || batch[0].alone)) break;
+        const paths = [
+          ...(one.plant.patch ?? []).map((x) => x.path),
+          ...createdBy(one.plant).map((x) => "src:" + x),
+        ];
+        if (paths.some((x) => used.has(x))) continue;
+        for (const x of paths) used.add(x);
+        batch.push(one);
+        pending.splice(pending.indexOf(one), 1);
+      }
+      const name = (one) => "#" + one.number + " " + one.plant.criterion;
+      const planted = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(import.meta.url),
+          "bar-probe",
+          "--batch=" + batch.map((one) => one.number).join(","),
+          "--seed=1",
+        ],
+        { cwd: projectRoot, encoding: "utf8", env },
+      );
+      const id = /bar-probe ([0-9]+)/.exec(planted.stdout)?.[1];
+      if (id === undefined) {
+        for (const one of batch)
+          if (batch.length > 1) pending.push({ ...one, alone: true });
+          else
+            failed.push(
+              name(one) +
+                " — не встаёт на стенд: " +
+                planted.stdout.trim().split("\n").pop(),
+            );
+        continue;
+      }
+      const box = path.join(tmpdir(), "bar-probe-" + id);
+      const mark = box + ".plant.json";
+      const record = JSON.parse(readFileSync(mark, "utf8"));
+      const placed = new Set(record.plants.map((one) => one.number));
+      for (const one of batch)
+        if (!placed.has(one.number))
+          if (batch.length > 1) pending.push({ ...one, alone: true });
+          else failed.push(name(one) + " — не встаёт на стенд");
+      const owner = new Map();
+      for (const one of batch.filter((b) => placed.has(b.number))) {
+        const files = [
+          ...record.plants.find((r) => r.number === one.number).files,
+          ...createdBy(one.plant).map((x) =>
+            path.join(box, path.relative(projectRoot, ROOT), x),
+          ),
+          ...(one.plant.patch ?? []).map((x) => path.join(box, x.path)),
+        ];
+        for (const f of files) owner.set(path.resolve(f), name(one));
+      }
+      // Поломку в чужом файле — тест проекта, файл прикрытия — даёт обычно
+      // посадка, которая правит код проекта: их пачка и называет.
+      const suspects = batch.filter(
+        (b) => b.plant.patch !== undefined || b.plant.into !== undefined,
+      );
+      const theBatch =
+        "пачка из " +
+        batch.length +
+        (suspects.length > 0
+          ? ", код проекта правят " + suspects.map(name).join(", ")
+          : "");
+      const whose = (file) =>
+        owner.get(path.resolve(box, file)) ??
+        theBatch + ", файл " + norm(path.relative(box, path.resolve(box, file)));
+      const changed = spawnSync(
+        "git",
+        ["status", "--porcelain", "--untracked-files=all"],
+        { cwd: box, encoding: "utf8" },
+      )
+        .stdout.split("\n")
+        .filter((line) => line !== "" && !/^(?:D.|.D) /.test(line))
+        .map((line) => line.slice(3));
+      const tsc = spawnSync(bin("tsc"), ["--noEmit", "-p", "."], {
+        cwd: box,
+        encoding: "utf8",
+      });
+      for (const m of (tsc.stdout + tsc.stderr).matchAll(
+        /^(.+?)\([0-9]+,[0-9]+\): error (TS[0-9]+: .*)$/gm,
+      ))
+        failed.push(whose(m[1]) + " — компилятор: " + m[2]);
+      const lintable = changed.filter((f) => /\.[cm]?[jt]sx?$/.test(f));
+      if (lintable.length > 0) {
+        const lint = spawnSync(
+          bin("eslint"),
+          ["-f", "json", "--no-warn-ignored", ...lintable],
+          {
+            cwd: box,
+            encoding: "utf8",
+            maxBuffer: 1 << 26,
+          },
+        );
+        let report = null;
+        try {
+          report = JSON.parse(lint.stdout);
+        } catch {
+          failed.push(
+            theBatch + " — линт не отработал: " + lint.stderr.trim().split("\n")[0],
+          );
+        }
+        for (const one of report ?? [])
+          for (const m of one.messages ?? [])
+            failed.push(
+              whose(one.filePath) +
+                " — линт: " +
+                m.ruleId +
+                ":" +
+                m.line +
+                " " +
+                String(m.message).replace(/\s+/g, " ").trim(),
+            );
+      }
+      const pretty = spawnSync(
+        bin("prettier"),
+        ["--list-different", ...changed],
+        {
+          cwd: box,
+          encoding: "utf8",
+        },
+      );
+      for (const f of pretty.stdout.split("\n").filter(Boolean))
+        failed.push(whose(f) + " — формат");
+      const out = box + ".tests.json";
+      spawnSync(
+        bin("vitest"),
+        ["run", "--reporter=json", "--outputFile=" + out],
+        {
+          cwd: box,
+          encoding: "utf8",
+        },
+      );
+      const tests = existsSync(out)
+        ? JSON.parse(readFileSync(out, "utf8"))
+        : null;
+      if (tests === null)
+        failed.push(theBatch + " — тесты не отработали");
+      for (const file of tests?.testResults ?? []) {
+        if (
+          file.status === "failed" &&
+          (file.assertionResults ?? []).length === 0
+        )
+          failed.push(whose(file.name) + " — тестовый файл не загрузился");
+        for (const a of file.assertionResults ?? [])
+          if (a.status !== "passed")
+            failed.push(
+              whose(file.name) + " — тест «" + a.title + "»: " + a.status,
+            );
+      }
+      rmSync(box, { recursive: true, force: true });
+      rmSync(mark, { force: true });
+      rmSync(out, { force: true });
+    }
+    const named = [...new Set(failed)];
+    console.log("=== Ворота стенда ===");
+    console.log(
+      "  осмотрено посадок-суждений: " + total + ", пачек: " + rounds,
+    );
+    console.log("  не прошли ворота: " + named.length);
+    for (const one of named) console.log("    " + one);
+    process.exit(named.length === 0 ? 0 : 1);
+  }
+
   if (judged === undefined) {
     // Посадка. Песочница живёт ВНЕ репозитория: свод на задаче изменения
     // читает состояние репозитория, и песочница внутри рабочего дерева
@@ -7966,11 +8155,11 @@ if (mode === "bar-probe") {
       busy = roles.taken;
       chosen.push({ plant, roleFile: roles.roleFile });
     } else {
-      // Пачка — по посадке на каждый названный критерий, в одной песочнице и
-      // под один свод: постоянная часть свода — тела критериев и строка на
-      // каждый — оплачивается раз. Критерий в пачке не повторяется: у
-      // критерия приложения одна строка на работу. Файлы посадок не
-      // пересекаются.
+      // Пачка — по посадке на каждый названный критерий либо номер книги, в
+      // одной песочнице и под один свод: постоянная часть свода — тела
+      // критериев и строка на каждый — оплачивается раз. Критерий, названный
+      // словом, в пачке не повторяется: у критерия приложения одна строка на
+      // работу. Файлы посадок не пересекаются.
       const made = new Set();
       const asked = [
         ...new Set(
@@ -7980,9 +8169,14 @@ if (mode === "bar-probe") {
             .filter(Boolean),
         ),
       ];
+      // Номер в пачке — сама посадка книги: тест машинных посадок сажает
+      // каждую, а не одну случайную на критерий.
       for (const c of asked) {
+        const byNumber = /^[0-9]+$/.test(c);
         const options = plants.filter(
-          (p) => p.criterion === c && fits(p, busy, made) !== null,
+          (p) =>
+            (byNumber ? p.number === Number(c) : p.criterion === c) &&
+            fits(p, busy, made) !== null,
         );
         if (options.length === 0) {
           unfit.push(c);

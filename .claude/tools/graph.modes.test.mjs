@@ -7477,6 +7477,122 @@ describe("стенд проб", () => {
       fs.rmSync(dest, { recursive: true, force: true });
     }
   }, 300000);
+
+  // Посадка-суждение, которая роняет ворота проекта, показывает своду чужую
+  // поломку вместо посаженного: проба мерила бы не то.
+  it("ворота стенда называют посадку-суждение, не прошедшую компилятор, линт, формат или тесты", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stand-gates-"));
+    try {
+      execFileSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "--stand-build", dest], {
+        cwd: path.join(TOOL_DIR, "..", ".."),
+        encoding: "utf8",
+      });
+      const create = (criterion, file, text) => ({ criterion, why: "проба ворот", create: { path: file, text } });
+      const book = {
+        plants: [
+          create("A3", "shared/gates/clean.ts", "export const commaSeparated = (titles: readonly string[]): string =>\n  titles.join(\", \");\n"),
+          create("H7", "shared/gates/machine.ts", "export const beyondLimit = (width: number): boolean => width > 768;\n"),
+          create("A9-кватер", "shared/gates/compiler.ts", "export const total: number = \"none\";\n"),
+          create("A14", "shared/gates/lint.ts", "export const drop = (error: unknown): void => {\n  void error;\n};\n"),
+          create("B5", "shared/gates/format.ts", "export const shout = (text: string): string =>     text.toUpperCase();\n"),
+          create(
+            "J13",
+            "shared/gates/tests/shout.test.ts",
+            "import { expect, it } from \"vitest\";\n\nit(\"shouts\", () => {\n  expect(\"a\".toUpperCase()).toBe(\"a\");\n});\n",
+          ),
+        ],
+      };
+      fs.writeFileSync(path.join(dest, ".claude", "tools", "bar-probes.json"), JSON.stringify(book));
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const checked = spawnSync(process.execPath, [path.join(dest, ".claude", "tools", "graph.mjs"), "bar-probe", "--stand-check"], {
+        cwd: dest,
+        encoding: "utf8",
+        env,
+      });
+      expect(checked.status, checked.stdout).toBe(1);
+      expect(checked.stdout).toContain("осмотрено посадок-суждений: 5, пачек: 1");
+      expect(checked.stdout).toMatch(/#3 A9-кватер — компилятор: TS2322/);
+      expect(checked.stdout).toMatch(/#4 A14 — линт: \S*void/);
+      expect(checked.stdout).toContain("#5 B5 — формат");
+      expect(checked.stdout).toContain("#6 J13 — тест «shouts»: failed");
+      expect(checked.stdout).not.toMatch(/#1 A3|#2 H7/);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  // Критерий, который решает машина, проверяет не сессия: его посадку ловит
+  // скелет свода сам — строкой линта либо среза, красной сверкой-держателем
+  // либо фактом модели. Посадка, которую машина не ловит, держателя своего
+  // критерия не задевает, и проба по ней мерила бы не то. Одна пачка на всю
+  // книгу: строка линта и среза перечисляет все места, и посадки одного
+  // правила друг друга не прячут.
+  it("каждую посадку критерия, который решает машина, машина ловит сама", async () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stand-machine-"));
+    let box = null;
+    let markAt = null;
+    try {
+      execFileSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "--stand-build", dest], {
+        cwd: path.join(TOOL_DIR, "..", ".."),
+        encoding: "utf8",
+      });
+      const P = await import(path.join(TOOL_DIR, "graph.predicates.mjs"));
+      const book = JSON.parse(fs.readFileSync(path.join(dest, ".claude", "tools", "bar-probes.json"), "utf8"));
+      const machine = book.plants
+        .map((p, i) => ({ p, number: i + 1 }))
+        .filter(({ p }) => ["сверка", "линт"].includes(P.barGripOf(p.criterion + "|")));
+      expect(machine.length).toBeGreaterThan(0);
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const run = (cwd, ...args) =>
+        spawnSync(process.execPath, [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd,
+          encoding: "utf8",
+          env,
+        }).stdout;
+      const planted = run(dest, "bar-probe", "--batch=" + machine.map(({ number }) => number).join(","), "--seed=1");
+      box = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
+      const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
+      expect(box, planted).not.toBeNull();
+      expect(planted).not.toContain("не вместились");
+      markAt = path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
+      const skeleton = run(box, "bar");
+      const disputed = new Set(
+        [
+          ...(/красна сверка-держатель о предмете строки: (.+) — исход/.exec(skeleton)?.[1] ?? "").matchAll(
+            /([A-Z][0-9]*(?:-[а-я]+)?) \(/g,
+          ),
+        ].map((m) => m[1]),
+      );
+      const record = JSON.parse(fs.readFileSync(markAt, "utf8"));
+      const judged = run(dest, "bar-probe", id, "--machine").split("  посажено: ").slice(1);
+      const proto = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8").split("\n");
+      const missed = record.plants
+        .filter((p, k) => {
+          if (/исход: поймано\n/.test(judged[k] ?? "")) return false;
+          if (disputed.has(p.criterion)) return false;
+          const files = p.files.map((f) => path.relative(path.join(box, "src"), f).split(path.sep).join("/"));
+          return !Object.entries(P.BAR_FACT_CRITERIA)
+            .filter(([, ids]) => ids.includes(p.criterion))
+            .some(([sort]) =>
+              proto.some(
+                (line) =>
+                  line.includes("| " + sort + " |") &&
+                  files.some((f) => line.includes(f)) &&
+                  /мимо входа|входа нет|против правила|новое/.test(line),
+              ),
+            );
+        })
+        .map((p) => "#" + p.number + " " + p.criterion + " — " + p.why);
+      expect(record.plants).toHaveLength(machine.length);
+      expect(missed, missed.join("\n")).toEqual([]);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      if (box !== null) fs.rmSync(box, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 300000);
 });
 
 describe("проба планки: выбор, пачка, вид файла и правка конфига", () => {
