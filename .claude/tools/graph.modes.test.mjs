@@ -7366,6 +7366,44 @@ describe("проба планки: посадка по вместимости", 
  * своём виде файла — в листе стилей, в тесте — и в конфиге. Посадки свои, а
  * не из книги: тест, пересказывающий книгу, выдаёт посаженное.
  */
+/**
+ * Стенд проб — проект, где у каждого критерия есть предмет. Посадку некуда
+ * сажать, если раздел критерия объявлен мёртвым, а пробу нечем судить, если
+ * база стенда красная сама: находкой свода стала бы поломка стенда, а не
+ * посаженное. Стенд лежит данными и собирается поверх посадки обвязки,
+ * поэтому правка семян посадки может уронить его без правки его файлов.
+ */
+describe("стенд проб", () => {
+  it("собирается поверх посадки обвязки, живы все разделы, сверка базы на нём — код ноль", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stand-"));
+    try {
+      const built = execFileSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "--stand-build", dest], {
+        cwd: path.join(TOOL_DIR, "..", ".."),
+        encoding: "utf8",
+      });
+      expect(built).toContain("=== Стенд проб собран ===");
+      const facts = fs.readFileSync(path.join(dest, ".context", "01-facts.md"), "utf8");
+      for (const id of "KLMNOPQRSTU")
+        expect(facts, id).toMatch(new RegExp("^\\| " + id + "\\. [^|]+ \\| да \\|", "m"));
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const verify = spawnSync(process.execPath, [path.join(dest, ".claude", "tools", "graph.mjs"), "verify"], {
+        cwd: dest,
+        encoding: "utf8",
+        env,
+      });
+      const red = verify.stdout
+        .split("\n")
+        .filter((line) => line.startsWith("=== ") || line.startsWith("    "))
+        .filter((line, i, all) => line.startsWith("    ") || all[i + 1]?.startsWith("    "))
+        .join("\n");
+      expect(verify.status, red).toBe(0);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 describe("проба планки: выбор, пачка, вид файла и правка конфига", () => {
   const runIn = (cwd, ...args) => {
     try {
