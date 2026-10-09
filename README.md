@@ -177,9 +177,6 @@ $ git commit
   the bar pass covers the edit: commit goes through
 ```
 
-<sub>* The tool itself speaks Russian: the rules, the skills and every message
-are written in Russian.</sub>
-
 The agent recorded the double click as a finding under one criterion and
 marked `E9`, which names it outright, as clean — and got no seal. Ending the
 turn without the seal is not possible either: the end-of-turn hook stops the
@@ -462,6 +459,9 @@ still change between versions.
 notice is kept.
 
 ---
+
+<sub>* The tool itself speaks Russian: the rules, the skills and every message
+are written in Russian.</sub>
 
 <sub>**Keywords:** code quality, quality gates, Claude Code, AI coding agent,
 agentic coding, harness, guardrails, prompt engineering, context engineering,
