@@ -330,7 +330,7 @@ describe("ворота и приведение формата", () => {
       fs.writeFileSync(file, neat + "export const zzMeant = 1;\n");
       git("add", "-A");
       const meant = gate();
-      expect(meant.out).toContain("КОММИТ НЕ ПРОХОДИТ");
+      expect(meant.out).toContain("Коммит не проходит");
       expect(meant.code).toBe(1);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
@@ -2101,18 +2101,18 @@ describe("ошибка настройки звена долгом не гаси�
       // Ошибка настройки компилятора: одна строка при долге пять — красно.
       const setup = run("types", ["tsconfig.json(3,5): error TS5107: x"], 1);
       expect(setup.status).toBe(1);
-      expect(setup.out).toContain("ошибка НАСТРОЙКИ");
+      expect(setup.out).toContain("ошибка настройки");
       // Линт: итог линтера — счёт; столько же, сколько долг, — зелено.
       expect(run("lint", ["✖ 3 problems (2 errors, 1 warning)"], 1).status).toBe(0);
       expect(run("lint", ["✖ 4 problems (3 errors, 1 warning)"], 1).status).toBe(1);
       // Код возврата 2 у линтера — настройка, а не находки.
       const broken = run("lint", ["Oops! Something went wrong! :("], 2);
       expect(broken.status).toBe(1);
-      expect(broken.out).toContain("ошибка НАСТРОЙКИ");
+      expect(broken.out).toContain("ошибка настройки");
       // Долг линта держит пункт долга перехода, называющий звено линта.
       const said = () =>
         (verifyIn(box).get("Объявленный долг назван планом перехода") ?? []).join(" ");
-      expect(said()).toContain("lint — долг КОДА");
+      expect(said()).toContain("lint — долг кода");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5006,7 +5006,7 @@ describe("факты по уровням без протокола", () => {
       expect(one.out).toMatch(/цикл: app\/zzA\.ts → app\/zzB\.ts → app\/zzA\.ts/);
       const all = tool("levels");
       expect(all.code).toBe(1);
-      expect(all.out).toMatch(/цикл: [^\n]*— НЕ НАЗВАН/);
+      expect(all.out).toMatch(/цикл: [^\n]*— не назван/);
       // Запись, назвавшая один файл цикла, факта не называет: прежде её
       // хватало, и строка про что угодно в одном из концов держала цикл.
       const regAt = path.join(box, ".context", "16-findings.md");
@@ -5021,7 +5021,7 @@ describe("факты по уровням без протокола", () => {
         ),
       );
       const half = tool("levels");
-      expect(half.out).toMatch(/цикл: [^\n]*— НЕ НАЗВАН/);
+      expect(half.out).toMatch(/цикл: [^\n]*— не назван/);
       expect(half.code).toBe(1);
       // Названы оба файла одной строкой — факт принят, код ноль.
       fs.writeFileSync(
@@ -5074,7 +5074,7 @@ describe("факты по уровням без протокола", () => {
         );
       const two = tool("levels");
       expect(two.code).toBe(1);
-      expect(two.out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — НЕ НАЗВАН/);
+      expect(two.out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — не назван/);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
       // Решение, назвавшее все файлы факта, его держит.
@@ -5884,7 +5884,7 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(verifyIn(box).get("Правила направления")).toEqual([
         "shared/zzs/zzs.ts → components/zzA/zzA.tsx",
       ]);
-      expect(tool("levels").out).toMatch(/направление: [^\n]*— НЕ НАЗВАН/);
+      expect(tool("levels").out).toMatch(/направление: [^\n]*— не назван/);
       withTransitionDebt(box, [
         "| 2 | Ребро `src/shared/zzs/zzs.ts` → `src/components/zzA/zzA.tsx` | `1` | «Правила направления» | шаг — параметром | `1` импорт |",
       ]);
@@ -5902,7 +5902,7 @@ describe("находки мини-стенда: факты, долг, отлож
       withTransitionDebt(box, [
         "| 3 | Линт в `src/shared/zzs/zzr.ts` | `1` | «lint» | снять | `1` место |",
       ]);
-      expect(tool("levels").out).toMatch(/направление: shared\/zzs\/zzr\.ts → react[^\n]*— НЕ НАЗВАН/);
+      expect(tool("levels").out).toMatch(/направление: shared\/zzs\/zzr\.ts → react[^\n]*— не назван/);
       expect(verifyIn(box).get("Правила направления")).toEqual(["shared/zzs/zzr.ts → react"]);
       withTransitionDebt(box, [
         "| 4 | Общий слой зовёт `react`: `src/shared/zzs/zzr.ts` | `1` | «Правила направления» | убрать | `1` импорт |",
@@ -8055,7 +8055,7 @@ describe("ворота в проекте, вложенном в чужой ре�
       sh("git add -A");
       const commit = sh("git " + who + " commit -qm nested");
       expect(commit.code).not.toBe(0);
-      expect(commit.out).toContain("КОММИТ НЕ ПРОХОДИТ");
+      expect(commit.out).toContain("Коммит не проходит");
       expect(commit.out).toContain("app/zzNested.ts");
     } finally {
       fs.rmSync(outer, { recursive: true, force: true });

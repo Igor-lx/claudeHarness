@@ -160,13 +160,13 @@ ones the tool prints, translated*:
 ```
 $ git commit
 === Commit gate ===
-  COMMIT REFUSED: there is no bar pass at all
-  The bar pass is made BEFORE the commit: node .claude/tools/graph.mjs bar
+  Commit refused: there is no bar pass at all
+  The bar pass is made before the commit: node .claude/tools/graph.mjs bar
 
 $ node .claude/tools/graph.mjs bar          # an answer per criterion
   holes: 1
     E9: clean, citing another criterion's finding
-  No seal. A pass with holes is not a pass.
+  No seal while the protocol has holes.
 
 $ node .claude/tools/graph.mjs bar          # findings fixed, tests added
   seal set: 4df9ed3b9cd2
