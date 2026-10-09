@@ -1763,9 +1763,25 @@
       "criterion": "R3",
       "why": "тяжёлая библиотека в критическом пути ради одного помощника",
       "create": {
-        "path": "app/makeNoteId.ts",
-        "text": "import { nanoid } from \"@reduxjs/toolkit\";\n\nexport const makeNoteId = (): string => nanoid();\n"
-      }
+        "path": "app/apiUrl.ts",
+        "text": "import axios from \"axios\";\n\nexport const apiUrl = (base: string): string => axios.getUri({ baseURL: base });\n"
+      },
+      "patch": [
+        {
+          "path": "src/app/notesLoader.ts",
+          "find": "import { API_BASE_URL } from \"./config\";",
+          "replace": "import { apiUrl } from \"./apiUrl\";\nimport { API_BASE_URL } from \"./config\";"
+        },
+        {
+          "path": "src/app/notesLoader.ts",
+          "find": "  notes: await fetchNotes(API_BASE_URL, request.signal),",
+          "replace": "  notes: await fetchNotes(apiUrl(API_BASE_URL), request.signal),"
+        }
+      ],
+      "culprits": [
+        "app/apiUrl.ts",
+        "src/app/notesLoader.ts"
+      ]
     },
     {
       "criterion": "S2",
@@ -2076,7 +2092,8 @@
         "text": "export const THEME_KEY = \"theme\";\n"
       },
       "culprits": [
-        "shared/storage/themeKey.ts"
+        "shared/storage/themeKey.ts",
+        "docs/CONVENTIONS.md"
       ]
     },
     {
@@ -2155,7 +2172,7 @@
       "why": "редкая страница грузится вместе с первой",
       "create": {
         "path": "app/SettingsPage.tsx",
-        "text": "import { nanoid } from \"@reduxjs/toolkit\";\n\nexport function SettingsPage() {\n  return <main data-session={nanoid()}>Settings</main>;\n}\n"
+        "text": "import { configureStore } from \"@reduxjs/toolkit\";\nimport { useState } from \"react\";\n\ntype Settings = { readonly compact: boolean };\n\nexport function SettingsPage() {\n  const [store] = useState(() =>\n    configureStore({\n      reducer: (state: Settings = { compact: false }) => state,\n    }),\n  );\n  return <main data-compact={store.getState().compact}>Settings</main>;\n}\n"
       },
       "patch": [
         {
