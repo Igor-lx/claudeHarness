@@ -1057,6 +1057,8 @@ export const BAR_CHECKS_MODELLED = new Set([
 /** Сверка, держащая несколько критериев находками разного вида: строка
  * находки спорит с тем критерием, о чьём виде она. */
 export const BAR_CHECK_KINDS = {
+  // Пробел в файле порядка — не о владельце состояния.
+  "Предмет из кода назван в своём файле базы": { C6: /есть: state\b/ },
   "Запись о состоянии не спорит с кодом": {
     "C6-бис": /ни владельцем, ни писателем/,
     K6: /«Время жизни»/,
@@ -2034,6 +2036,8 @@ export const barGripOf = (row) => {
  * виды строк модели, которые есть у любого кода: зависимость, ресурс, связь
  * мимо импорта, выход наружу. Замерено разбором узла, где по каждому из
  * этих видов было ровно то, что сессия закрыла словом «чисто». */
+/** Сколько годных строк называет отказ «чисто без опоры на модель». */
+const FIT_SHOWN = 6;
 export const barModelFault = (row) => {
   const [id, outcome, what, kind, modelText, level, fate] = row.split("|");
   const model = modelRowsOf(modelText);
@@ -2202,16 +2206,24 @@ export const barModelFault = (row) => {
   }
   // «Чисто» ядра стоит на факте СВОЕГО уровня: вердикт об источнике истины —
   // на строке об источниках приложения, о направлении — на строке о слое.
-  // Прежде годилась строка любого уровня, а модель знала один узел.
+  // Прежде годилась строка любого уровня, а модель знала один узел. Модель
+  // сюда приходит уже по предмету строки — у строки соседей это строки о
+  // файлах соседей, — и отказ называет, какие строки годятся: без перечня
+  // ревьюер гадал, чем закрыть строку соседей.
   if (barCitesModel(id) && model.length > 0) {
     const same = model.filter((m) => m.level === level);
     const pool = same.length > 0 ? same : model;
+    const fit =
+      pool.length <= FIT_SHOWN
+        ? ids(pool)
+        : ids(pool.slice(0, FIT_SHOWN)) + " и ещё " + (pool.length - FIT_SHOWN);
     if (!pool.some((m) => cited.has(m.n)))
       return same.length > 0
         ? "чисто без опоры на модель своего уровня: назвать строку уровня «" +
             level +
-            "»"
-        : "чисто без опоры на модель: назвать её строку";
+            "» — годятся " +
+            fit
+        : "чисто без опоры на модель: назвать её строку — годятся " + fit;
   }
   return "";
 };
@@ -2279,9 +2291,14 @@ const witnessPlain = (x) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
+/** Перечень имён кода через «и» — `left` и `width` — делит перечень, а не
+ * фразу: союз встал бы на описании одной ответственности, назвавшем два
+ * поля. Найдено ревьюером пробы. */
+const NAMES_JOINED = /`[^`]+`(?:\s*,\s*`[^`]+`)*\s+и\s+`[^`]+`/g;
 /** Есть ли во фразе союз, делящий её надвое: «считает раскладку и публикует
  * переменные» — два вопроса. Один источник на свидетеля и на строку модели. */
-export const joinsTwo = (text) => WITNESS_JOIN.test(witnessPlain(text));
+export const joinsTwo = (text) =>
+  WITNESS_JOIN.test(witnessPlain((text ?? "").replace(NAMES_JOINED, "имена")));
 
 /** Форма свидетеля — чистая часть.
  *
@@ -2611,32 +2628,81 @@ export const commentRunsOf = (text) => {
 /** Комментарии и строки текста: `[от, до, род]`; у строки — без кавычек.
  * Кавычка не переходит через перевод строки: незакрытая — это апостроф в
  * тексте разметки, и гасить за ней весь файл значило бы ослепнуть. */
+// Подстановка шаблонной строки — код: `${PULSE_DEPTH * k}` читает имя, и
+// признаки обязаны его видеть. Прежде шаблон вычищался целиком, и
+// константа, взятая только в подстановке, вставала мёртвой.
 const spansOf = (text) => {
   const out = [];
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    const d = text[i + 1];
-    if (c === "/" && (d === "/" || d === "*")) {
-      const end =
-        d === "/" ? text.indexOf(NEWLINE, i) : text.indexOf("*/", i + 2);
-      const stop = end < 0 ? text.length : d === "/" ? end : end + 2;
-      out.push([i, stop, "comment"]);
-      i = stop;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      let k = i + 1;
-      while (k < text.length && text[k] !== c && (c === "`" || text[k] !== NEWLINE))
-        k += text[k] === "\\" ? 2 : 1;
-      if (k < text.length && text[k] === c) {
-        out.push([i + 1, k, "string"]);
-        i = k + 1;
+  // Код с позиции `i`: до конца текста либо, когда `inside`, до фигурной
+  // скобки, закрывающей подстановку. Возвращает позицию остановки.
+  const code = (i, inside) => {
+    let depth = 0;
+    while (i < text.length) {
+      const c = text[i];
+      const d = text[i + 1];
+      if (c === "/" && (d === "/" || d === "*")) {
+        const end =
+          d === "/" ? text.indexOf(NEWLINE, i) : text.indexOf("*/", i + 2);
+        const stop = end < 0 ? text.length : d === "/" ? end : end + 2;
+        out.push([i, stop, "comment"]);
+        i = stop;
         continue;
       }
+      if (c === '"' || c === "'") {
+        let k = i + 1;
+        while (k < text.length && text[k] !== c && text[k] !== NEWLINE)
+          k += text[k] === "\\" ? 2 : 1;
+        if (k < text.length && text[k] === c) {
+          out.push([i + 1, k, "string"]);
+          i = k + 1;
+          continue;
+        }
+      }
+      if (c === "`") {
+        const end = template(i);
+        if (end > i) {
+          i = end;
+          continue;
+        }
+      }
+      if (inside && c === "{") depth += 1;
+      if (inside && c === "}") {
+        if (depth === 0) return i;
+        depth -= 1;
+      }
+      i += 1;
     }
-    i += 1;
-  }
+    return i;
+  };
+  // Шаблон с открывающей кавычки: текст — строка, подстановка — код. Шаблон
+  // без закрытия — не строка, как и прежде: возврат `i`, и спаны откатываются.
+  const template = (i) => {
+    const mark = out.length;
+    let k = i + 1;
+    let from = k;
+    while (k < text.length) {
+      if (text[k] === "\\") {
+        k += 2;
+        continue;
+      }
+      if (text[k] === "`") {
+        out.push([from, k, "string"]);
+        return k + 1;
+      }
+      if (text[k] === "$" && text[k + 1] === "{") {
+        out.push([from, k, "string"]);
+        const end = code(k + 2, true);
+        if (end >= text.length) break;
+        k = end + 1;
+        from = k;
+        continue;
+      }
+      k += 1;
+    }
+    out.length = mark;
+    return i;
+  };
+  code(0, false);
   return out;
 };
 const blankSpans = (text, spans) => {
@@ -2749,9 +2815,12 @@ export const STATE_FORMS = [
     /\buse(?:SearchParams|Params|Location)\s*[(<]|\blocation\s*\.\s*(?:search|hash|pathname)\b|\bhistory\s*\.\s*(?:push|replace)State\s*\(/,
   ],
   ["cookie", /\bdocument\s*\.\s*cookie\b/],
+  // Redux узнаётся по созданию хранилища, а не по импорту: из того же пакета
+  // берут и помощников вроде `nanoid`, и импорт одного помощника вставал
+  // внешним хранилищем — замерено пробой планки.
   [
     "внешнее хранилище",
-    /\bfrom\s+["'](?:zustand|jotai|valtio|mobx|effector|nanostores|redux|@reduxjs\/toolkit|recoil|@xstate\/store)(?:\/[\w-]+)*["']/,
+    /\bfrom\s+["'](?:zustand|jotai|valtio|mobx|effector|nanostores|recoil|@xstate\/store)(?:\/[\w-]+)*["']|\b(?:configureStore|createSlice|createStore|combineReducers|createApi)\s*[(<]/,
   ],
   ["кэш серверных данных", /\buse(?:Query|SuspenseQuery|InfiniteQuery|SWR|SWRInfinite)\s*[(<]/],
   ["модульная переменная", /^(?:export\s+)?let\s+[A-Za-z_$]/m],
@@ -3484,8 +3553,10 @@ const codeSignalsOf = (file, text, own) => {
       const fields = new Set();
       let bare1 = true;
       for (const u of uses) {
-        const after = /^\s*\??\.\s*([A-Za-z_$][\w$]*)/.exec(body.slice(u.index + name.length));
-        if (after === null) bare1 = false;
+        const after = /^\s*\??\.\s*([A-Za-z_$][\w$]*)(\s*\()?/.exec(body.slice(u.index + name.length));
+        // Метод самого входа — `text.slice(…)`, `ids.map(…)` — работа со
+        // всем значением, а не поле: признак вставал на строках и массивах.
+        if (after === null || after[2] !== undefined) bare1 = false;
         else fields.add(after[1]);
       }
       // Ссылка отдаёт себя полем `current`, коллекция — длиной: это
@@ -3645,8 +3716,10 @@ const codeSignalsOf = (file, text, own) => {
     (m) => at("измерение", m.index, m[0]),
   );
   if (markup) {
+    // Позиция — первая буква текста, а не скобка перед ним: текст на своей
+    // строке под тегом вставал строкой выше.
     each(/(?<![=-])>([^<>{}]*\p{L}[^<>{}]*)<\/?[A-Za-z]/gu, bare, (m) =>
-      at("текст", m.index + 1, m[1].trim(), "в разметке"),
+      at("текст", m.index + 1 + m[1].length - m[1].trimStart().length, m[1].trim(), "в разметке"),
     );
     each(/\b(?:title|placeholder|alt|label)\s*=\s*["']([^"'\n]*\p{L}[^"'\n]*)["']/gu, plain, (m) =>
       at("текст", m.index, m[1], "в разметке"),
@@ -3878,8 +3951,13 @@ export const PREDICATE_CASES = [
   ["stateFormOf", "import { makeAutoObservable } from \"mobx\";", "внешнее хранилище"],
   ["stateFormOf", "import { createStore } from \"effector\";", "внешнее хранилище"],
   ["stateFormOf", "import { atom } from \"nanostores\";", "внешнее хранилище"],
-  ["stateFormOf", "import { createStore } from \"redux\";", "внешнее хранилище"],
-  ["stateFormOf", "import { configureStore } from \"@reduxjs/toolkit\";", "внешнее хранилище"],
+  ["stateFormOf", "const store = createStore(reduce);", "внешнее хранилище"],
+  ["stateFormOf", "const store = configureStore({ reducer });", "внешнее хранилище"],
+  ["stateFormOf", "const notes = createSlice({ name, initialState, reducers });", "внешнее хранилище"],
+  ["stateFormOf", "const reducer = combineReducers({ notes });", "внешнее хранилище"],
+  ["stateFormOf", "export const api = createApi({ baseQuery, endpoints });", "внешнее хранилище"],
+  ["stateFormOf", "import { nanoid } from \"@reduxjs/toolkit\";", ""],
+  ["stateFormOf", "const createStoreLike = 1;", ""],
   ["stateFormOf", "import { atom } from \"recoil\";", "внешнее хранилище"],
   ["stateFormOf", "import { createStore } from \"@xstate/store\";", "внешнее хранилище"],
   ["stateFormOf", "const { data } = useSuspenseQuery({ queryKey });", "кэш серверных данных"],
@@ -4308,7 +4386,7 @@ export const PREDICATE_CASES = [
   [
     "barModelFault",
     "A6|чисто|источник один, П1||П1:зависит::;П9:размах::|приложение",
-    "чисто без опоры на модель своего уровня: назвать строку уровня «приложение»",
+    "чисто без опоры на модель своего уровня: назвать строку уровня «приложение» — годятся П9",
   ],
   ["barModelFault", "A6|чисто|источник один, П9||П1:зависит::;П9:размах::|приложение", ""],
   ["barModelFault", "A1|чисто|П1–П3 про один вопрос||П2:ответственность:да:;П5:размах::|узел", ""],
@@ -4356,7 +4434,12 @@ export const PREDICATE_CASES = [
   [
     "barModelFault",
     "A1|чисто|узел отвечает на один вопрос||П1:зависит:",
-    "чисто без опоры на модель: назвать её строку",
+    "чисто без опоры на модель: назвать её строку — годятся П1",
+  ],
+  [
+    "barModelFault",
+    "A1|чисто|узел отвечает на один вопрос||П1:зависит:;П2:зависит:;П3:зависит:;П4:зависит:;П5:зависит:;П6:зависит:;П7:зависит:",
+    "чисто без опоры на модель: назвать её строку — годятся П1, П2, П3, П4, П5, П6 и ещё 1",
   ],
   ["barModelFault", "A1|чисто|один вопрос — П1||П1:зависит:", ""],
   // модель пуста — опереться не на что, спрашивать нечего
@@ -4722,6 +4805,9 @@ export const PREDICATE_CASES = [
   ["escapeRe", "ab", "ab"],
   ["joinsTwo", "считает раскладку и публикует переменные", true],
   ["joinsTwo", "считает раскладку", false],
+  ["joinsTwo", "держит `left` и `width` колонки", false],
+  ["joinsTwo", "держит `left`, `top` и `width` колонки", false],
+  ["joinsTwo", "читает `left` и пишет `width`", true],
   ["joinsTwo", "и считает раскладку", true],
   ["joinsTwo", "считает раскладку плюс публикует переменные", true],
   ["joinsTwo", "считает раскладку затем публикует переменные", true],
@@ -4734,6 +4820,8 @@ export const PREDICATE_CASES = [
   ["bareCodeOf", "a // b", "a     "],
   ["bareCodeOf", "a + b", "a + b"],
   ["bareCodeOf", "f(\"x;y\")", "f(\"   \")"],
+  ["bareCodeOf", "s = `a ${k * 2} b`", "s = `  ${k * 2}  `"],
+  ["bareCodeOf", "s = `a ${f(\"x\")} ${g({ y: 1 })} b`", "s = `  ${f(\" \")} ${g({ y: 1 })}  `"],
   // --- signalsSummary: признаки по всей планке ---
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / 8;", "2:дубль"],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / slots;", ""],
@@ -4745,6 +4833,8 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  if (count === 0)\n    return \"none\";\n  return String(count);\n};", ""],
   ["signalsSummary", "src/a.ts\nexport const label = (count: number) => {\n  if (count === 0) return \"none\";\n  return String(count);\n};", ""],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items;\n};", "1:целое"],
+  ["signalsSummary", "src/a.ts\nexport const head = (text) => text.slice(0, 3);", ""],
+  ["signalsSummary", "src/a.tsx\nexport const A = () => (\n  <p>\n    Settings\n  </p>\n);", "3:текст/в разметке"],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items.length + order.tax;\n};", ""],
   ["signalsSummary", "src/a.ts\nexport function first<T>(xs: T[]) {\n  return xs[0];\n}", "1:обобщение"],
   ["signalsSummary", "src/a.ts\nexport function first<T extends object>(xs: T[]) {\n  return xs[0];\n}", ""],

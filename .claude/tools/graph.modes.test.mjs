@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  BAR_CHECK_KINDS,
   BAR_CUTS,
   BAR_PRESENT,
   BAR_SIGNALS,
@@ -1532,7 +1533,7 @@ describe("ревизия сводов по истории", () => {
             return (
               "| `" +
               c[1].trim().replace(/`/g, "") +
-              "` | правлено | не требуется | `.context/00-map.md` — проба ревизии |"
+              "` | правлено | не требуется | `.context/10-idioms.md` — проба ревизии |"
             );
           // Итог по уровням: строка на предмет уровня, называет каждую
           // строку модели номером — и сдвиги в их числе.
@@ -1542,6 +1543,8 @@ describe("ревизия сводов по истории", () => {
         })
         .join("\n");
       fs.writeFileSync(protoAt, filled);
+      // «Правлено» называет правленый файл базы: проба правит запись идиом.
+      fs.appendFileSync(path.join(box, ".context", "10-idioms.md"), "\n");
       fillWords(protoAt);
       expect(tool("bar")).toContain("печать поставлена");
       git("add", "-A");
@@ -2465,6 +2468,24 @@ describe("база о своём: документы узла, сторона т
       expect(mute()).not.toContain("zzReader.ts");
       withRow("| счёт | `src/app/zzHolder.ts` | он же | он же | всегда |\n");
       expect(mute()).not.toContain("zzHolder.ts");
+      // Пробел в файле порядка держателем владельца состояния не служит: C6
+      // спорит только со строкой о записи состояния.
+      fs.writeFileSync(
+        path.join(app, "zzTick.ts"),
+        'import { useEffect } from "react";\nexport const useZzTick = (): void => {\n  useEffect(() => undefined, []);\n};\n',
+      );
+      fs.copyFileSync(
+        path.join(box, ".claude", "seat", "templates", "06-timing.md"),
+        path.join(box, ".context", "06-timing.md"),
+      );
+      withRow("| счёт | `src/app/App.tsx` | он же | `src/app/zzHolder.ts` | всегда |\n");
+      const lines = mute().split("\n");
+      const kind = BAR_CHECK_KINDS["Предмет из кода назван в своём файле базы"].C6;
+      const stateLine = lines.find((l) => l.includes("zzHolder.ts"));
+      const timingLine = lines.find((l) => l.includes("zzTick.ts"));
+      expect(stateLine).toMatch(kind);
+      expect(timingLine).toContain("не назван в графе «Что происходит»");
+      expect(timingLine).not.toMatch(kind);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -2615,6 +2636,10 @@ const fillWords = (protoAt) => {
 const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
   const words = pageWordsOf(protoAt);
   const before = fs.readFileSync(protoAt, "utf8");
+  // «Правлено» у базы называет файл, правленый работой: проба правит запись
+  // идиом — она модели не питает, и протокол от этого не пересобирается.
+  const idioms = path.join(protoAt.slice(0, protoAt.lastIndexOf(path.sep + ".context" + path.sep)), ".context", "10-idioms.md");
+  if (fs.existsSync(idioms)) fs.appendFileSync(idioms, "\n");
   const all = barRowsCited(before);
   fs.writeFileSync(
     protoAt,
@@ -2650,7 +2675,7 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
         if (c.length === 6 && /^\s*`[^`]+`\s*$/.test(c[1]))
           return c[2].trim() !== ""
             ? line
-            : "| " + c[1].trim() + " | правлено | не требуется | `.context/00-map.md` — проба |";
+            : "| " + c[1].trim() + " | правлено | не требуется | `.context/10-idioms.md` — проба |";
         // строка исхода: критерий, предмет, о чём, исход, адрес, что, судьба
         if (c.length !== 9 || /^\s*-+\s*$/.test(c[1])) return line;
         const id = c[1].trim();
@@ -2974,6 +2999,47 @@ describe("свод по планке от модели предмета", () => 
       const again = tool("bar", "app/zzTitle.ts");
       expect(again).not.toContain("исходы перенесены");
       expect(again).not.toContain("пересобран");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  // Черта в графе «что» без экранирования рвала строку исхода на лишние
+  // графы, и при пересборке исход пропадал — найдено ревьюером пробы.
+  it("черта в графе «что» не теряет исход при пересборке", () => {
+    const box = seatEmpty("pipe-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const code = path.join(box, "src", "app", "zzPipe.ts");
+      fs.writeFileSync(code, "export const zzPipe = (a: number): number => a + 1;\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzPipe.ts");
+      const h1 = /^\| H1 \|.*$/m;
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(h1);
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace(h1, (row) => {
+          const c = row.split("|");
+          c[4] = " чисто ";
+          c[6] = " ветка a | b объяснима ";
+          return c.join("|");
+        }),
+      );
+      fs.writeFileSync(code, "export const zzPipe = (a: number): number => a + 2;\n");
+      expect(tool("bar", "app/zzPipe.ts")).toContain("исходы перенесены");
+      const row = h1.exec(fs.readFileSync(protoAt, "utf8"))[0];
+      expect(row).toContain("| чисто |");
+      expect(row).toContain("ветка a \\| b объяснима");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3327,6 +3393,28 @@ describe("ядро по предметам уровня: правка, чтен�
       );
       // Повторный зов по нетронутому протоколу — не «правлен после печати».
       expect(tool("bar")).toContain("печать уже стоит");
+      // Находка открыта для каждой единицы, где лежит любое её место: второе
+      // место в панели делает панель «не держится», хотя адрес — в корзине.
+      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: .*$/m, "- печать: `нет`"));
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/components/zzCart/zzTotal.ts` и `src/components/zzBar/zzBar.tsx`.\n");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          H4: "нашлось | src/components/zzCart/zzTotal.ts:1 | имя не берут; ещё мест: `src/components/zzBar/zzBar.tsx:3` | вопрос",
+        },
+        holds: { "узел@components/zzCart": "нет" },
+      });
+      expect(tool("bar")).toContain("итог, узел `components/zzBar`: держится, а открытых находок уровня: 1");
+      // «Правлено» у базы называет правленый работой файл: нетронутый не годится.
+      const baseRow = /^\| `components\/zzBar\/zzBar\.tsx` \| правлено \|.*$/m;
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(baseRow);
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace(baseRow, "| `components/zzBar/zzBar.tsx` | правлено | не требуется | `.context/05-flows.md` — проба |"),
+      );
+      expect(tool("bar")).toContain(
+        "components/zzBar/zzBar.tsx, база: «правлено», а графа не называет файла базы, правленого этой работой",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5143,6 +5231,16 @@ describe("факты по уровням без протокола", () => {
       expect(two.out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — не назван/);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
+      // Вопрос — запись от заголовка до заголовка: файлы факта, названные в
+      // разных его графах, называют факт.
+      const questionsAt = path.join(box, ".context", "13-questions.md");
+      const questions0 = fs.readFileSync(questionsAt, "utf8");
+      fs.appendFileSync(
+        questionsAt,
+        "\n## Вопрос 1. Второй писатель в `src/components/ZzA/ZzA.tsx`\n\n**Задан:** проба.\n\n**Что решить.** Ключ пишет и `src/components/ZzB/ZzB.tsx`.\n\n**Последствие отсутствия ответа.** проба.\n",
+      );
+      expect(loose()).not.toMatch(/«zz\.count»/);
+      fs.writeFileSync(questionsAt, questions0);
       // Решение, назвавшее все файлы факта, его держит.
       fs.appendFileSync(
         path.join(box, ".context", "09-decisions.md"),
@@ -5827,7 +5925,32 @@ describe("конфиг звена под своим именем и линт п�
  * Номер записи в заголовке — «### Пункт 10. …», «## Вопрос 12. …» — нумерация,
  * а не счёт, и ссылка на такой раздел ёлочками тоже. Двузначный номер со
  * словом из списка счёта за ним краснел — замерено планом перехода стенда.
+ * Обозначение критерия — цифра за буквой — тоже имя: «G7 строкой выше»
+ * краснело в базе ревьюера пробы.
  */
+/**
+ * Протокол свода — не запись базы: строка его модели «мутационный замер: не
+ * мерено» требовала пункта долга под себя. Найдено ревьюером пробы.
+ */
+describe("незамеренное в протоколе свода записью не считается", () => {
+  it("протокол молчит, та же строка в фактах без записи краснеет", () => {
+    const box = seatEmpty("nemereno-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Незамеренное названо находкой") ?? []).join("\n");
+      fs.writeFileSync(
+        path.join(box, ".context", "bar-protocol.md"),
+        "# Свод\n\n| П1 | тесты | `app/zz.ts` | мутационный замер: не мерено |  |  |  | код |\n",
+      );
+      expect(said()).toBe("");
+      fs.appendFileSync(path.join(box, ".context", "01-facts.md"), "\nЦена прогона: не мерено.\n");
+      expect(said()).toContain("замер отложен");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("номер записи в заголовке не счёт", () => {
   it("заголовок и ссылка на него молчат, счёт в прозе краснеет", () => {
     const box = seatEmpty("nomer-");
@@ -5835,7 +5958,7 @@ describe("номер записи в заголовке не счёт", () => {
       const todo = path.join(box, ".context", "02-todo.md");
       fs.appendFileSync(
         todo,
-        "\n### Пункт 10. Файл узла\n\nПлан — раздел «Пункт 10. Файл узла».\n",
+        "\n### Пункт 10. Файл узла\n\nПлан — раздел «Пункт 10. Файл узла».\n\nНаходка G7 строкой выше.\n",
       );
       const said = () =>
         (verifyIn(box).get("Числа в прозе базы") ?? []).join("\n");

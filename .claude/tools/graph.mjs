@@ -1806,7 +1806,20 @@ const barRowsOf = (body) => {
       if (cells.length === 4) base.set(barUnTick(cells[0]), cells.slice(1));
       continue;
     }
-    if (cells.length === 7)
+    // Черта в графе «что» без экранирования рвала строку исхода на лишние
+    // графы, и исход пропадал при пересборке без признака: «что» — всё между
+    // адресом и судьбой, черта внутри возвращается экранированной.
+    if (cells.length > 7 && /^[A-ZА-Я][0-9]+(?:-[а-яё]+)?$/.test(cells[0]))
+      outcomes.push({
+        id: cells[0],
+        subject: barSubjectCell(cells[1]),
+        outcome: cells[3],
+        addr: cells[4],
+        // Края кусков — пробелы вокруг черты, они часть слов.
+        what: line.split(/(?<!\\)\|/).slice(6, -2).join("\\|").trim(),
+        fate: cells[cells.length - 1],
+      });
+    else if (cells.length === 7)
       outcomes.push({
         id: cells[0],
         subject: barSubjectCell(cells[1]),
@@ -10341,6 +10354,28 @@ const filesNamedIn = (text) =>
  * пунктом долга про находку линтера в одном из его концов — замерено
  * переходом стенда: четыре факта из пяти числились названными, не будучи
  * названы ни одной записью. */
+/** Записи файла, где запись — раздел от заголовка до заголовка: вопрос —
+ * заголовок и три графы, решение — так же. Строка таблицы — запись сама по
+ * себе. Прежде вопрос резался по пустым строкам, и факт, чьи файлы названы в
+ * разных графах одного вопроса, числился неназванным — замерено пробой. */
+const sectionRecords = (at) => {
+  const out = [];
+  let part = [];
+  const flush = () => {
+    if (part.some((line) => line.trim() !== ""))
+      out.push([rel0(at), part.join("\n")]);
+    part = [];
+  };
+  for (const line of readFileSync(at, "utf8").split(/\r?\n/)) {
+    if (line.startsWith("|")) out.push([rel0(at), line]);
+    else {
+      if (/^#{1,6}\s/.test(line)) flush();
+      part.push(line);
+    }
+  }
+  flush();
+  return out;
+};
 let HELD_RECORDS = null;
 const heldRecords = () => {
   if (HELD_RECORDS !== null) return HELD_RECORDS;
@@ -10353,6 +10388,10 @@ const heldRecords = () => {
     if (one == null) continue;
     const at = path.join(BASE, one);
     if (!existsSync(at)) continue;
+    if (one === CONFIG.decisions) {
+      HELD_RECORDS.push(...sectionRecords(at));
+      continue;
+    }
     let para = [];
     const flush = () => {
       if (para.length) HELD_RECORDS.push([rel0(at), para.join("\n")]);
@@ -10382,12 +10421,7 @@ const heldBy = (ends, names = []) =>
 const factNamedBy = (fact) => {
   const at =
     CONFIG.questions == null ? null : path.join(BASE, CONFIG.questions);
-  const asked =
-    at !== null && existsSync(at)
-      ? readFileSync(at, "utf8")
-          .split(/\r?\n\s*\r?\n/)
-          .map((text) => [rel0(at), text])
-      : [];
+  const asked = at !== null && existsSync(at) ? sectionRecords(at) : [];
   // Внутренность единицы без входа — вопрос к самой единице: её называют и
   // одной записью о папке, а не по записи на каждого, кто в неё ходит.
   const namesUnit = (text) =>
@@ -11182,7 +11216,8 @@ const barModelOf = (
     if (want("ответственность")) {
       const said = mapResponsibilityOf(f);
       // Союз в описании — два вопроса у одного узла: пометка спрашивает
-      // об этом критерий ответственности.
+      // об этом критерий ответственности. Сдвига у строки нет: она пересказ
+      // карты, а новое в файле несут строки поверхности, рёбер и состояния.
       add(
         "ответственность",
         where,
@@ -13203,6 +13238,7 @@ const barHolesOf = ({
   levelSubjects,
   repoRoot,
   changedNow,
+  changedKnown = false,
   withBase,
   marks,
   subjectAbs = [],
@@ -13682,10 +13718,15 @@ const barHolesOf = ({
       )
         return false;
       if (s === "") return true;
-      const spot = spotOf(one.addr);
-      const abs = spot === null ? null : spotFile(spot[1]);
-      if (abs === null) return subject === s;
-      return barInsideOf(level, s, abs, neighbours);
+      // Находка открыта для предмета, если в нём лежит любое её место, а не
+      // только адрес: прочие места перечислены в «ещё мест:».
+      const more = barMorePlacesOf(one.what);
+      const files = [one.addr, ...(more === "" ? [] : more.split(","))]
+        .map((place) => spotOf(place.trim()))
+        .map((spot) => (spot === null ? null : spotFile(spot[1])))
+        .filter((abs) => abs !== null);
+      if (files.length === 0) return subject === s;
+      return files.some((abs) => barInsideOf(level, s, abs, neighbours));
     }).length;
   for (const level of BAR_SUMMED)
     for (const s of levelSubjects[level] ?? []) {
@@ -13855,6 +13896,28 @@ const barHolesOf = ({
               one +
               (one === "правлено" ? " без адреса" : " без причины"),
           );
+        // «Правлено» называет правленый файл: базы — у графы базы,
+        // документа — у графы документации. Прежде годился любой адрес, и
+        // правку, которой не было, нечем было отличить. Переход пишет базу
+        // шагом знания, и правленым её здесь не видно: у него не спрашивается.
+        else if (one === "правлено" && kind !== "на переход" && changedKnown) {
+          const base = norm(BASE) + "/";
+          const named = quotedIn(c[2])
+            .map((q) => q.replace(/:[0-9]+$/, ""))
+            .flatMap((q) => [path.join(repoRoot, q), path.join(BASE, q)])
+            .map(norm)
+            .filter((abs) => changedNow.has(abs));
+          const inBase = (abs) => abs.startsWith(base);
+          if (!named.some((abs) => (i === 0 ? inBase(abs) : !inBase(abs))))
+            holes.push(
+              file +
+                ", " +
+                what +
+                ": «правлено», а графа не называет " +
+                (i === 0 ? "файла базы" : "документа") +
+                ", правленого этой работой",
+            );
+        }
       }
     }
   }
@@ -14006,6 +14069,7 @@ const barAcceptOf = ({
   withBase,
   repoRoot,
   changedNow,
+  changedKnown = false,
   subjectAbs = [],
   neighbours = null,
   baseFiles = null,
@@ -14040,6 +14104,7 @@ const barAcceptOf = ({
     levelSubjects,
     repoRoot,
     changedNow,
+    changedKnown,
     withBase,
     marks,
     subjectAbs,
@@ -14073,6 +14138,7 @@ const barProcess = ({
   noneOf,
   repoRoot,
   changedNow,
+  changedKnown = false,
   subjectAbs = [],
   neighbours = null,
   baseFiles = null,
@@ -14096,6 +14162,7 @@ const barProcess = ({
           withBase,
           repoRoot,
           changedNow,
+          changedKnown,
           subjectAbs,
           neighbours,
           baseFiles,
@@ -14618,11 +14685,15 @@ const barInputsOf = async ({
   // записать починенной нельзя, и остаются «вопрос» с «отложено» — неправда о
   // сделанном. Замерено на стенде: долг конвейера, починенный правкой его
   // описания.
+  const changedList = await changedPaths(repoRoot);
+  // Правленое известно только у репозитория: без git проверить «правлено»
+  // нечем, и база с документацией тогда держатся словом.
+  const changedKnown = changedList !== null;
   const changedNow = new Set([
     ...(kind === "на изменение"
       ? subject
       : ((await barChangedSubject(repoRoot)) ?? [])),
-    ...((await changedPaths(repoRoot)) ?? []).map((f) =>
+    ...(changedList ?? []).map((f) =>
       norm(path.join(repoRoot, f)),
     ),
   ]);
@@ -14636,6 +14707,7 @@ const barInputsOf = async ({
     noneOf,
     repoRoot,
     changedNow,
+    changedKnown,
     subjectAbs: area,
     neighbours,
     baseFiles: area.map(rel),
@@ -23584,7 +23656,9 @@ if (mode === "verify") {
     "|" +
     "ст(?:о|а)";
   const PROSE_NUM = new RegExp(
-    `(?:\\d[\\d.,]*|(?<![а-яёa-z])(?:${NUM_WORD})(?![а-яё]))\\s+(?:[а-яё]+\\s+)?[а-яё]*(?:${NUM_NOUN})[а-яё]*`,
+    // Цифра, перед которой буква либо дефис, — часть имени (`G7`, `A1-тер`,
+    // `v2`), а не счёт: обозначение критерия краснело как голое число.
+    `(?:(?<![A-Za-zА-Яа-яЁё\\d-])\\d[\\d.,]*|(?<![а-яёa-z])(?:${NUM_WORD})(?![а-яё]))\\s+(?:[а-яё]+\\s+)?[а-яё]*(?:${NUM_NOUN})[а-яё]*`,
     "gi",
   );
   const DECLARED_NUM = [
@@ -25622,7 +25696,7 @@ if (mode === "verify") {
   debtNote("subjects", baseMute.length);
   for (const g of debtList("subjects", baseMute))
     console.log(
-      "    " + g + ". Завести строку: владелец, кто пишет, кто читает",
+      "    " + g + ". Завести строку, называющую этот файл",
     );
 
   // Запись о ключе хранилища — не только то, что она есть, но и то, что она
@@ -28222,6 +28296,10 @@ if (mode === "verify") {
     for (const name of readdirSync(BASE)) {
       if (!name.endsWith(".md")) continue;
       if (name === skipBase) continue;
+      // Протокол свода — не запись базы: строка его модели «мутационный
+      // замер: не мерено» требовала пункта долга под себя, а форму протокола
+      // держит сам режим `bar`. Найдено ревьюером пробы.
+      if (name === CONFIG.barProtocol) continue;
       for (const line of readFileSync(path.join(BASE, name), "utf8").split(
         NEWLINE,
       ))
