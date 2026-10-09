@@ -4,7 +4,7 @@
 
 # claudeHarness
 
-**Frontend code quality for Claude Code, held by a machine, not by attention.**
+**Frontend code quality for Claude Code, held by machine checks, not by the AI agent's attention.**
 
 Give the agent a task - get code, tests and documentation proven by machine
 checks.<br>Without proof the agent cannot finish its work, and the commit does
@@ -33,26 +33,29 @@ own order, scope and direction of reasoning - and the same text gives
 different results under different conditions: the model may read only part of
 it, forget what it read, shift the emphasis, interpret it in its own way - or
 not carry it out at all. The longer the rulebook, the more of it rests on
-attention alone - and the more surely that attention will one day slip. What
+the model's attention alone - and the more surely that attention will one day slip. What
 slips first is quality: a test that cannot fail, a second source of truth, a
 boundary crossed "just this once", an error swallowed in silence. The code
 works, and nothing shows the defect until it costs.
 
-<h3 align="center">What is held by attention will one day be broken.<br>
-What is held by a machine is unbreakable by construction.</h3>
+<h3 align="center">What rests on the agent's attention will one day be broken.<br>
+What a machine check holds is unbreakable by construction.</h3>
 
 ## claudeHarness is not one more of hundreds of skill and rule sets
 
 It is an engineering system for code quality: it turns rules into machine
 checks, takes its knowledge of the code from the code itself, and lets nothing
-into history that has not been proven. Every edit brings its own tests and
-documentation, is checked against the quality bar criterion by criterion -
-line by line and level by level, up to the whole application - and is sealed.
-A commit without the seal is refused, and the agent cannot end its turn while
-an edit is not covered by a seal. So quality depends neither on luck nor on
-the history of the session: on every pass the same checks hold it -
-predictably and reproducibly. Even the checks themselves are not taken on
-trust: each one is broken on purpose, regularly, to see whether it notices.
+into the commit history that has not been proven. Every edit brings its own
+tests and documentation and is checked against the quality bar criterion by
+criterion - line by line and level by level, up to the whole application. The
+answers go into a protocol, and the tool seals it only when every criterion
+has an answer and none of them contradicts the facts or the other answers; a
+later change to the code lifts the seal. A commit without the seal is refused,
+and the agent cannot end its turn while an edit is not covered by a seal. So
+quality depends neither on luck nor on the history of the session: on every
+pass the same checks hold it - predictably and reproducibly. Even the checks
+themselves are not taken on trust: for each one, what it checks is broken on
+purpose, regularly, to see whether it notices.
 
 - **Quality as a checklist, not an impression.** Every edit is checked against
   a named list of criteria, with an answer for each one, and sealed.
@@ -64,10 +67,12 @@ trust: each one is broken on purpose, regularly, to see whether it notices.
   An edit flawless in every line can still break the whole; here that is
   caught.
 - **Found means fixed.** A defect noticed along the way is fixed in the same
-  pass, as a class - not filed for later.
+  pass, together with every other place of the same kind - not filed for
+  later.
 - **Tests and docs in every edit.** Nobody has to ask for them; each test is
-  proven able to fail, and mutation testing measures the rest.
-- **Knowledge from the code, not from memory.** A dependency graph rebuilt by
+  proven able to fail, and mutation testing measures how many breakages of
+  the code the tests actually catch.
+- **Knowledge from the code, not from the model's memory.** A dependency graph rebuilt by
   the compiler on every run, and a knowledge base that fails the run when it
   disagrees with the code.
 - **"Done" means "proven".** Exit code 0, a sealed protocol and a pass through
@@ -81,7 +86,7 @@ trust: each one is broken on purpose, regularly, to see whether it notices.
 ## How it looks
 
 Work usually ends with the agent saying "Done" - and checking the result is
-left to you. Here the last word belongs to the machine: the **commit gate**
+left to you. Here the last word belongs to machine checks: the **commit gate**
 lets nothing unproven into history, and the **quality bar** is the list of
 criteria every edit is checked against.
 
@@ -102,7 +107,8 @@ The same pass in the tool's own output - see
 
 1. Clone this repository.
 2. Copy the `.claude` folder into the root of your project.
-3. Open the project in Claude Code and say: **"seat the harness"**.
+3. Open the project in Claude Code and say: **"seat the harness"** - the
+   agent installs it and sets it up for the project.
 
 From then on - ordinary tasks in plain words. A project with existing code,
 the requirements and all the details - in
@@ -115,13 +121,13 @@ the requirements and all the details - in
 | quality is "looks good to me" | quality is an answer per criterion, with evidence, sealed |
 | a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
 | a review reads the lines of the diff | the edit is checked line by line and up through the file, the layer and the whole app - against its neighbours and, for anything new, against the whole project |
-| a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, as a class |
+| a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, together with every other place of the same kind |
 | the agent learns the code by guessing - or reads the whole project to be safe | the compiler builds the graph; the area of an edit is computed from it and read in full |
 | tests and docs are written when someone asks | tests, records and docs are part of every edit, and a command names what is missing |
 | "done" because the agent said so | "done" is the full check suite at exit 0 plus a sealed protocol |
 | project notes go stale unnoticed | the knowledge base is reconciled with the code on every run, both ways |
-| checks are taken on trust | every check is broken on purpose to see whether it turns red |
-| more rules make every request more expensive | the rules stay within a budget; history and rationale live apart and are not loaded into every session |
+| checks are taken on trust | for every check, what it checks is broken on purpose to see whether it turns red |
+| more rules make every request more expensive | the rules stay within a size budget; history and rationale live apart and are not loaded into every session |
 
 ## How it works
 
@@ -179,7 +185,7 @@ $ git commit
 ```
 
 The agent recorded the double click as a finding under one criterion and
-marked `E9`, which names it outright, as clean - and got no seal. Ending the
+marked criterion `E9`, which names it outright, as clean - and got no seal. Ending the
 turn without the seal is not possible either: the end-of-turn hook stops the
 agent and names what is missing.
 
@@ -260,17 +266,19 @@ flowchart LR
 
 - **tests, in the same pass**: new code is closed by a test at once, and every
   test that runs changed code proves it can still fail;
-- **mutation testing of the changed files**: Stryker breaks the code in every
-  place at once, and each surviving mutant gets one of three outcomes - a test
-  added, the code fixed, or declared unkillable with a concrete reason;
-- **knowledge-base records** in every file the edit concerns, and for the
-  neighbours whose description the edit changed;
+- **mutation testing of the changed files**: Stryker makes small breakages in
+  the changed code, one at a time, and checks that the tests catch each; every
+  breakage they miss (a surviving mutant) gets one of three outcomes - a test
+  added, the code fixed, or the mutant declared unkillable with a concrete
+  reason;
+- **knowledge-base records** in every file of the base the edit concerns, and
+  for the neighbours whose description the edit changed;
 - **documentation, when a "why" appeared**: a decision record with its options
   and price, the architecture of a layer, the meaning of a setting, the README
   of a component folder;
 - **a behaviour guarantee** for a new capability: what the product promises,
   where the promise comes from, and the test that holds it;
-- **a quality-bar pass and a seal**: an answer for every live criterion, line
+- **a quality-bar pass and a seal**: an answer for every applicable criterion, line
   by line and on every level, and every finding in the area fixed;
 - **a report in numbers**: which checks ran and with what exit code.
 
@@ -283,7 +291,7 @@ and then the report says so.
 | `brief <path>` | a file's dossier: what it uses, who uses it, what tests reach it, what is recorded about it |
 | `plan <path>` | what an edit will touch, before it is made: blast radius, tests, records |
 | `tested` | an edit against its tests, the knowledge base and the docs |
-| `mutated` | the mutation-testing debt of an edit |
+| `mutated` | which changed files have not been through mutation testing yet, or were measured on older code |
 | `verify` | every knowledge-base check against the code at once |
 
 ## Economy
@@ -300,9 +308,9 @@ size of the project:
   opened; the tool reference and the table of checks - on demand; history and
   rationale - only when a rule itself is changed. The size of the rules that
   load is held by a budget in characters, and raising it is a visible change.
-- **The machine fills what it can.** Lint, code cuts and checks answer their
-  rows of the protocol themselves; the session spends its effort only where
-  judgement is needed.
+- **The machine fills what it can.** Lint, the tool's own code analysis and
+  checks answer their rows of the protocol themselves; the agent spends its
+  effort only where judgement is needed.
 
 ## Stack: built for frontend
 
@@ -424,8 +432,8 @@ it, each with its own question:
 | What | Question |
 | --- | --- |
 | the `falsify` mode | does every check catch its own breakage |
-| the `probe` skill | does the harness handle a live task - and what held it |
-| the `bar-probe` skill | does the quality-bar pass find a defect planted in the code: every criterion has its own plant on the probe stand |
+| the `probe` skill | does the harness handle a task a developer could set - and what held it |
+| the `bar-probe` skill | does the quality-bar pass find a defect planted in the code: every criterion has its own planted defect in a test project |
 | the `audit` skill | do the rules themselves have gaps, contradictions, or places a machine could hold but prose holds instead |
 
 ## Limits
@@ -439,7 +447,8 @@ it, each with its own question:
   the product does what was intended; the coverage map against ISO/IEC 25010
   names which quality characteristics stay outside the bar;
 - judgement - is this the right boundary for a module, is it honestly named -
-  is held by reading; how well, `bar-probe` measures;
+  rests on the agent's reading, not on machine checks; how well it works,
+  `bar-probe` measures;
 - the last word is yours: the rules give way to your direct instruction, and
   the report names the bypass.
 
