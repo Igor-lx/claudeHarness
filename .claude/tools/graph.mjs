@@ -1722,12 +1722,19 @@ const barRowsOf = (body) => {
   const base = new Map();
   const witnesses = [];
   const reads = [];
+  const cross = [];
   for (const line of body.split(/\r?\n/)) {
     if (!line.startsWith("| ")) continue;
     const cells = barCellsOf(line);
     // Страница чтения: номер, описание, слово.
     if (cells.length === 3 && /^[0-9]+$/.test(cells[0])) {
       reads.push({ n: Number(cells[0]), spec: cells[1], word: cells[2] });
+      continue;
+    }
+    // Перекрёстная сверка: место находки, кто её записал, кого ещё она
+    // нарушает.
+    if (cells.length === 3 && cells[0].startsWith(BAR_TICK)) {
+      cross.push({ place: barUnTick(cells[0]), who: cells[1], also: cells[2] });
       continue;
     }
     if (cells.length < 4 || /^-+$/.test(cells[0])) continue;
@@ -1811,7 +1818,7 @@ const barRowsOf = (body) => {
         fate: cells[5],
       });
   }
-  return { outcomes, model, levels, base, witnesses, reads };
+  return { outcomes, model, levels, base, witnesses, reads, cross };
 };
 
 /** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
@@ -12032,6 +12039,14 @@ const barModelCode = (model) =>
  * первой же правке формы, и разошёлся бы молча: переход делают редко. */
 const BAR_HEAD = "| критерий | предмет | о чём | исход | адрес | что | судьба |";
 const BAR_BASE_HEAD = "| файл | база | документация | чем это объяснено |";
+/** Перекрёстная сверка находок: строка на место находки. Протокол устроен по
+ * критериям, и находка, записанная под одним, забывалась у другого, чьё тело
+ * называет то же нарушение: флаг, записанный под `B1`, а `H8-бис` — «чисто»
+ * без ссылки на него. Связи критериев заранее не перечислить, поэтому вопрос
+ * задаётся у находки: какие ещё критерии её называют. Найдено пробой планки. */
+const BAR_CROSS_TITLE = "## Перекрёстная сверка находок";
+const BAR_CROSS_HEAD = "| место | записано | также |";
+const BAR_CROSS_NONE = "никакие";
 const BAR_MODEL_HEAD =
   "| модель | вид | где | что | сдвиг | пометка | снятие | откуда |";
 /** Откуда строка модели: из кода — граф, признаки текста, распознаватели, —
@@ -12794,6 +12809,7 @@ const barSkeletonOf = ({
   const release0 = carried?.releases ?? new Map();
   const base0 = carried?.baseRows ?? new Map();
   const level0 = carried?.levelRows ?? new Map();
+  const cross0 = carried?.cross ?? [];
   const modelRow = (m) =>
     "| " +
     m.id +
@@ -13045,6 +13061,21 @@ const barSkeletonOf = ({
         ]),
     "",
     ...LEVEL_ORDER.flatMap(outcomesOf),
+    BAR_CROSS_TITLE,
+    "",
+    "Строка на место находки; её дописывает режим, когда исход дан. Графа",
+    "«также» — какие ещё критерии называют это же нарушение, через запятую,",
+    "либо " + barQuoted(BAR_CROSS_NONE) + ". Отвечают по каждой находке, прочитав тела всех",
+    "критериев: протокол идёт по критериям, и находка, записанная под одним,",
+    "забывается у другого. Каждый названный обязан стоять " + barQuoted("нашлось"),
+    "с этим местом — адресом либо в «ещё мест:».",
+    "",
+    BAR_CROSS_HEAD,
+    "| --- | --- | --- |",
+    ...cross0.map(
+      (r) => "| " + barQuoted(r.place) + " | " + r.who + " | " + r.also + " |",
+    ),
+    "",
     "## Итог по уровням",
     "",
     "Строка на предмет уровня: что работа изменила на нём (на задаче чтения",
@@ -13145,6 +13176,7 @@ const barCarryOf = (parsed, expected, levelSubjects) => {
     levelRows,
     witness: new Map(parsed.witnesses.map((w) => [w.key, w.answers])),
     reads: new Map(parsed.reads.map((r) => [r.spec, r.word])),
+    cross: parsed.cross,
   };
 };
 
@@ -13275,6 +13307,11 @@ const barHolesOf = ({
       (id === null ? "" : " в одной записи с " + barQuoted(id))
     );
   };
+  // Место находки — одним видом, от корня репозитория: адрес пишут и от
+  // корня исходников, и одно место не должно стать двумя строками сверки.
+  const placeKey = (abs, line) =>
+    norm(path.relative(repoRoot, abs)) + ":" + Number(line);
+  const placesFound = new Map();
   for (const { c, subject } of expected) {
     const who = barWho(c.id, subject);
     const one = said.get(barKey(c.id, subject)) ?? {
@@ -13414,6 +13451,10 @@ const barHolesOf = ({
             " нет, всего " +
             lines,
         );
+      else {
+        const key = placeKey(abs, spot[2]);
+        placesFound.set(key, (placesFound.get(key) ?? new Set()).add(c.id));
+      }
       // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
       // одну единицу переноса закрывал бы вопрос о другой.
       if (subject !== "" && !barInsideOf(c.level, subject, abs, neighbours))
@@ -13448,6 +13489,69 @@ const barHolesOf = ({
       }
     }
   }
+  // Перекрёстная сверка находок: у каждого места — ответ, какие ещё критерии
+  // называют это нарушение, и каждый названный стоит «нашлось» с этим местом.
+  // Связи критериев здесь не перечислены и не могут быть: их решает чтение по
+  // каждой находке, а машина держит, что ответ дан и с протоколом не спорит.
+  const crossBy = new Map();
+  let crossStale = 0;
+  for (const r of parsed.cross) {
+    const spot = spotOf(r.place);
+    const abs = spot === null ? null : spotFile(spot[1]);
+    const key = abs === null ? null : placeKey(abs, spot[2]);
+    if (key === null || !placesFound.has(key) || crossBy.has(key))
+      crossStale += 1;
+    else crossBy.set(key, r);
+  }
+  const criterionIds = new Set(expected.map((e) => e.c.id));
+  let crossOpen = 0;
+  let crossWho = 0;
+  const crossRows = [...placesFound.keys()].sort().map((key) => {
+    const who = [...placesFound.get(key)].sort().join(", ");
+    const row = crossBy.get(key);
+    const also = row?.also ?? "";
+    if (row !== undefined && row.who !== who) crossWho += 1;
+    if (also === "") crossOpen += 1;
+    else if (also !== BAR_CROSS_NONE)
+      for (const id of also.split(/\s*,\s*/).filter((x) => x !== "")) {
+        if (!criterionIds.has(id))
+          holes.push(
+            "перекрёстная сверка, " +
+              barQuoted(key) +
+              ": «" +
+              id +
+              "» — не критерий этого свода",
+          );
+        else if (!placesFound.get(key).has(id))
+          holes.push(
+            id +
+              ": назван у места " +
+              barQuoted(key) +
+              " перекрёстной сверкой, а «нашлось» с этим местом у него нет — адресом либо в «ещё мест:»",
+          );
+      }
+    return { place: key, who, also };
+  });
+  const crossMissing = placesFound.size - crossBy.size;
+  const crossDiffers = crossMissing > 0 || crossStale > 0 || crossWho > 0;
+  if (crossDiffers)
+    holes.push(
+      "перекрёстная сверка: таблица мест не сходится с находками — недостаёт " +
+        crossMissing +
+        ", лишних " +
+        crossStale +
+        ", с устаревшей графой «записано» " +
+        crossWho +
+        "; режим `bar` переписывает её сам",
+    );
+  if (crossOpen > 0)
+    holes.push(
+      "перекрёстная сверка: мест находок с пустой графой «также» — " +
+        crossOpen +
+        "; назвать критерии, чьё тело называет то же нарушение, либо «" +
+        BAR_CROSS_NONE +
+        "»",
+    );
   // Модель предмета: снятие у каждого ресурса названо, и вердикты с моделью
   // согласны. Правила — в словаре области (`barModelFault`): они про виды
   // строк, общие любому коду, и гоняются его самопроверкой.
@@ -13667,7 +13771,29 @@ const barHolesOf = ({
       }
     }
   }
-  return { holes, twice, extra, said, levelMap };
+  return { holes, twice, extra, said, levelMap, crossRows, crossDiffers };
+};
+
+/** Таблица перекрёстной сверки, переписанная по находкам: строки о местах
+ * без находки уходят, недостающие встают с пустой графой «также», ответ
+ * переносится по месту. Таблицы нет — раздел встаёт в конец протокола. */
+const barCrossWritten = (text, rows) => {
+  const table = [
+    BAR_CROSS_HEAD,
+    "| --- | --- | --- |",
+    ...rows.map(
+      (r) => "| " + barQuoted(r.place) + " | " + r.who + " | " + r.also + " |",
+    ),
+  ];
+  const lines = text.split(LF);
+  const head = lines.indexOf(BAR_CROSS_HEAD);
+  if (head === -1)
+    return [text.replace(/\n*$/, ""), "", BAR_CROSS_TITLE, "", ...table, ""].join(
+      LF,
+    );
+  let end = head + 1;
+  while (end < lines.length && lines[end].startsWith("|")) end += 1;
+  return [...lines.slice(0, head), ...table, ...lines.slice(end)].join(LF);
 };
 
 /** Протокол по месту: пересобрать, сверить, запечатать.
@@ -13994,6 +14120,13 @@ const barProcess = ({
   }
   const body = was.body;
   const { holes, twice, extra, said, levelMap } = accept;
+  // Строки перекрёстной сверки пишет режим: место и кто его записал известны
+  // из исходов, сессии остаётся графа «также». Протокол под действующей
+  // печатью не трогают: правка её гасит.
+  const sealHolds =
+    was.seal !== null && was.seal !== "нет" && was.seal === barSealOf(body);
+  if (accept.crossDiffers && !sealHolds)
+    writeFileSync(at, barCrossWritten(readFileSync(at, "utf8"), accept.crossRows));
   const found = expected
     .map(({ c, subject }) => ({
       who: barWho(c.id, subject),
@@ -14969,6 +15102,8 @@ if (mode === "bar") {
     );
     console.log("  Затем итог по уровням — по каждому предмету: что работа");
     console.log("  на нём изменила и держится ли он; каждый сдвиг модели назван.");
+    console.log("  Находки есть — режим впишет их места в перекрёстную сверку:");
+    console.log("  у каждого ответить, какие ещё критерии называют это нарушение.");
     console.log(
       "  Затем позвать режим снова — он сверит форму и поставит печать.",
     );

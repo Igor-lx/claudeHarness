@@ -2672,6 +2672,37 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
       })
       .join("\n"),
   );
+  fs.writeFileSync(protoAt, crossFilled(fs.readFileSync(protoAt, "utf8")));
+};
+
+// Перекрёстная сверка: строка на место находки, «также» — «никакие», если
+// ответа ещё нет. Так проба отвечает на неё, как отвечала бы сессия.
+const crossFilled = (text) => {
+  const lines = text.split("\n");
+  const head = lines.indexOf("| место | записано | также |");
+  if (head === -1) return text;
+  let end = head + 1;
+  while (end < lines.length && lines[end].startsWith("|")) end += 1;
+  const said = new Map(
+    lines
+      .slice(head + 2, end)
+      .map((line) => line.split("|").map((x) => x.trim()))
+      .map((c) => [c[1].replace(/`/g, ""), c[3]]),
+  );
+  const places = new Map();
+  for (const line of lines) {
+    const c = line.split("|").map((x) => x.trim());
+    if (c.length !== 9 || c[4] !== "нашлось") continue;
+    const more = /ещё (?:мест|нарушений)(?:\s*`[0-9]+`)?\s*:\s*(.+)$/.exec(c[6]);
+    for (const place of [c[5], ...(more === null ? [] : more[1].split(","))]) {
+      const key = place.trim().replace(/`/g, "");
+      places.set(key, (places.get(key) ?? new Set()).add(c[1]));
+    }
+  }
+  const rows = [...places.keys()]
+    .sort()
+    .map((key) => "| `" + key + "` | " + [...places.get(key)].sort().join(", ") + " | " + (said.get(key) || "никакие") + " |");
+  return [...lines.slice(0, head + 2), ...rows, ...lines.slice(end)].join("\n");
 };
 
 describe("свод по планке от модели предмета", () => {
@@ -2810,6 +2841,38 @@ describe("свод по планке от модели предмета", () => 
       // называет: «чисто» со ссылкой на чужую находку не принимается.
       fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя названо находкой B5 | " } });
       expect(tool("bar", "app/zzWide.ts")).toContain("H6: чисто со ссылкой на находку другого критерия");
+
+      // Без ссылки — та же находка, забытая у другого критерия. Её держит
+      // перекрёстная сверка: у места находки ответ, кого ещё она нарушает.
+      // Свод выше запечатан; работа продолжается — печать снимается.
+      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: .*$/m, "- печать: `нет`"));
+      const also = (value) =>
+        fs.writeFileSync(
+          protoAt,
+          fs
+            .readFileSync(protoAt, "utf8")
+            .replace(/^(\| `src\/app\/zzWide\.ts:1` \| [^|]+\|).*$/m, "$1 " + value + " |"),
+        );
+      fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя говорит, что считают | " } });
+      also("H6");
+      expect(tool("bar", "app/zzWide.ts")).toContain(
+        "H6: назван у места `src/app/zzWide.ts:1` перекрёстной сверкой, а «нашлось» с этим местом у него нет",
+      );
+      also("Z99");
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, `src/app/zzWide.ts:1`: «Z99» — не критерий этого свода");
+      also("");
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: мест находок с пустой графой «также» — 1");
+      // Строку о месте режим дописывает сам, ответ сессии переносится.
+      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^\| `src\/app\/zzWide\.ts:1` .*\n/m, ""));
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: таблица мест не сходится с находками — недостаёт 1");
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^\| `src\/app\/zzWide\.ts:1` \| B5 \|\s+\|$/m);
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { H6: "нашлось | src/app/zzWide.ts:1 | имя не говорит, что считают | вопрос" },
+        holds: { приложение: "нет" },
+      });
+      also("H6");
+      expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3966,15 +4029,17 @@ describe("признаки, видимые текстом, в модели св�
       const spot = "`src/components/ZzClock/ZzClock.tsx:19`";
       fs.writeFileSync(
         protoAt,
-        fs
-          .readFileSync(protoAt, "utf8")
-          .split("\n")
-          .map((line) =>
-            line.startsWith("| E1 |")
-              ? "| E1 | — | x | нашлось | " + spot + " | ошибка проглочена | предложено |"
-              : line,
-          )
-          .join("\n"),
+        crossFilled(
+          fs
+            .readFileSync(protoAt, "utf8")
+            .split("\n")
+            .map((line) =>
+              line.startsWith("| E1 |")
+                ? "| E1 | — | x | нашлось | " + spot + " | ошибка проглочена | предложено |"
+                : line,
+            )
+            .join("\n"),
+        ),
       );
       const sealed = tool("bar", "components/ZzClock");
       expect(sealed).toContain("печать поставлена");
@@ -4223,20 +4288,22 @@ describe("свидетели в своде по планке", () => {
       const audit = idOf("zzAudit");
       fs.writeFileSync(
         protoAt,
-        text
-          .split("\n")
-          .map((line) => {
-            if (line.startsWith("| " + audit + " |")) {
+        crossFilled(
+          text
+            .split("\n")
+            .map((line) => {
+              if (line.startsWith("| " + audit + " |")) {
+                const c = line.split("|");
+                c[5] = " нет ";
+                return c.join("|");
+              }
               const c = line.split("|");
-              c[5] = " нет ";
-              return c.join("|");
-            }
-            const c = line.split("|");
-            return c.length === 9 && c[1].trim() === "A1" && c[2].includes("components/ZzCard")
-              ? "| A1 | " + c[2].trim() + " | x | нашлось | `src/components/ZzCard/ZzCard.tsx:4` | журнал аудита — вторая ответственность | предложено |"
-              : line;
-          })
-          .join("\n"),
+              return c.length === 9 && c[1].trim() === "A1" && c[2].includes("components/ZzCard")
+                ? "| A1 | " + c[2].trim() + " | x | нашлось | `src/components/ZzCard/ZzCard.tsx:4` | журнал аудита — вторая ответственность | предложено |"
+                : line;
+            })
+            .join("\n"),
+        ),
       );
       const sealed = tool("bar", "components");
       expect(sealed).toContain("печать поставлена");
