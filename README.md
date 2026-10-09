@@ -4,14 +4,16 @@
 
 # claudeHarness
 
-<h3>What is held by attention will one day be broken.<br>
-What is held by a machine is unbreakable by construction.</h3>
+**Frontend code quality for Claude Code, held by a machine, not by attention.**
 
-**An engineering system for machine-enforced code quality in Claude Code.**<br>
-Rules are not asked to be followed — a machine checks that they are.
+Give the agent a task — get code, tests and documentation proven by machine
+checks.<br>Without proof the agent cannot finish its work, and the commit does
+not go through.
 
-![Code quality: machine-enforced](https://img.shields.io/badge/code_quality-machine--enforced-2EA44F)
+![Designed for: frontend](https://img.shields.io/badge/designed_for-frontend-7B61FF)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-harness-D97757)
+![Code quality: machine-enforced](https://img.shields.io/badge/code_quality-machine--enforced-2EA44F)
+
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
@@ -19,37 +21,47 @@ Rules are not asked to be followed — a machine checks that they are.
 ![Node](https://img.shields.io/badge/node-%E2%89%A522.23-339933)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
+[How it looks](#how-it-looks) · [Quick start](#quick-start) · [What makes it different](#what-makes-it-different) · [How it works](#how-it-works) · [Installation and setup](#installation-and-setup)
+
 </div>
 
 An AI agent writes code faster than a person. It forgets agreements just as
 fast: prompts, instructions, hundreds of skills — all of it is only text, and
-text guarantees nothing. The model may read only part of it, forget what it
-read, shift the emphasis, interpret it in its own way — or not carry it out at
-all. The longer the rulebook, the more of it rests on attention alone — and
-the more surely that attention will one day slip. What slips first is quality:
-a test that cannot fail, a second source of truth, a boundary crossed "just
-this once", an error swallowed in silence. The code works, and nothing shows
-the defect until it costs.
+text guarantees nothing. The model works in its own inscrutable context — its
+own order, scope and direction of reasoning — and the same text gives
+different results under different conditions: the model may read only part of
+it, forget what it read, shift the emphasis, interpret it in its own way — or
+not carry it out at all. The longer the rulebook, the more of it rests on
+attention alone — and the more surely that attention will one day slip. What
+slips first is quality: a test that cannot fail, a second source of truth, a
+boundary crossed "just this once", an error swallowed in silence. The code
+works, and nothing shows the defect until it costs.
 
-**claudeHarness is not one more set of skills and rules. It is an engineering
-system for code quality**: it turns rules into machine checks, takes its
-knowledge of the code from the code itself, and lets nothing into history that
-has not been proven. Every edit brings its own tests and documentation, is
-checked against the quality bar criterion by criterion — line by line and
-level by level, up to the whole application — and is sealed. A commit
-without the seal is refused, and the agent cannot end its turn while an edit
-is not covered by a seal. Even the checks themselves are not taken on trust:
-each one is broken on purpose, regularly, to see whether it notices.
+<h3 align="center">What is held by attention will one day be broken.<br>
+What is held by a machine is unbreakable by construction.</h3>
+
+## claudeHarness is not one more of hundreds of skill and rule sets
+
+It is an engineering system for code quality: it turns rules into machine
+checks, takes its knowledge of the code from the code itself, and lets nothing
+into history that has not been proven. Every edit brings its own tests and
+documentation, is checked against the quality bar criterion by criterion —
+line by line and level by level, up to the whole application — and is sealed.
+A commit without the seal is refused, and the agent cannot end its turn while
+an edit is not covered by a seal. So quality depends neither on luck nor on
+the history of the session: on every pass the same checks hold it —
+predictably and reproducibly. Even the checks themselves are not taken on
+trust: each one is broken on purpose, regularly, to see whether it notices.
 
 - **Quality as a checklist, not an impression.** Every edit is checked against
   a named list of criteria, with an answer for each one, and sealed.
+- **A rule becomes a check.** Whatever a machine can check, a machine checks;
+  where it cannot, the place is recorded and listed in a summary — not left to
+  diligence.
 - **Checked flat and vertical.** Line by line — and up through the file, the
   layer and the whole application, on facts the tool computes for each level.
   An edit flawless in every line can still break the whole; here that is
   caught.
-- **Rules → checks.** Whatever a machine can check, a machine checks; where
-  it cannot, the place is recorded and listed in a summary — not left to
-  diligence.
 - **Found means fixed.** A defect noticed along the way is fixed in the same
   pass, as a class — not filed for later.
 - **Tests and docs in every edit.** Nobody has to ask for them; each test is
@@ -57,68 +69,125 @@ each one is broken on purpose, regularly, to see whether it notices.
 - **Knowledge from the code, not from memory.** A dependency graph rebuilt by
   the compiler on every run, and a knowledge base that fails the run when it
   disagrees with the code.
-- **"Done" means "proven".** Exit code 0, a sealed protocol and a commit
-  through the quality gate — instead of "should work".
+- **"Done" means "proven".** Exit code 0, a sealed protocol and a pass through
+  the commit gate — instead of "should work".
 - **Economy by design.** Quality is not bought by rereading the whole
   project on every task: only the area the graph computes is read, the rules
   load when they are needed, and the bar asks only what applies.
 - **Made for frontend.** Tuned to React, TypeScript and Vite, on a set of
   package versions it was verified with.
 
-## Contents
+## How it looks
 
-- [Why](#why)
-- [What makes it different](#what-makes-it-different)
-- [The quality bar](#the-quality-bar)
-- [How it works](#how-it-works)
-- [Where the knowledge about the code comes from](#where-the-knowledge-about-the-code-comes-from)
-- [Economy](#economy)
-- [What every edit includes](#what-every-edit-includes)
-- [Stack: built for frontend](#stack-built-for-frontend)
-- [Quick start](#quick-start)
-- [What's inside](#whats-inside)
-- [How the harness checks itself](#how-the-harness-checks-itself)
-- [Requirements and limits](#requirements-and-limits)
-- [Status](#status)
-- [License](#license)
+Work usually ends with the agent saying "Done" — and checking the result is
+left to you. Here the last word belongs to the machine: the **commit gate**
+lets nothing unproven into history, and the **quality bar** is the list of
+criteria every edit is checked against.
 
-## Why
+> 🟠 **agent:** Done, the tests pass.
 
-Five things that trip up work with an AI agent — and each of them costs the
-code its quality:
+> 🔵 **commit gate:** The commit will not go through: the work has not been checked against the quality bar.<br>
+> 🟣 **quality bar:** I do not accept this pass: a criterion is marked clean, yet a violation of it has already been found.
 
-- **Quality is judged by impression.** "Looks good" is accepted without
-  objection, while an answer per criterion gets checked against the code. The
-  same agent writes noticeably different code depending on what it was told
-  to check.
-- **A rule in prose holds only while it is remembered.** The model decides
-  for itself whether to apply an instruction here and now — and one day it
-  does not.
-- **Every session starts from a blank page.** What was decided yesterday, and
-  why, leaves with the context, and the next session "fixes" what was done on
-  purpose.
-- **"Done" without proof.** "Tests should pass", "probably works" — these are
-  claims, not results.
-- **Records drift from the code with no sign.** Notes and docs describe code
-  that is no longer there, and read as truth.
+> 🟠 **agent:** Fixing what was found, adding tests, checking again.
+
+> 🟣 **quality bar:** Accepted: two found, two fixed — setting the seal.<br>
+> 🔵 **commit gate:** The seal is there — the commit goes through.
+
+The same pass in the tool's own output — see
+[Terminal example](#terminal-example).
+
+## Quick start
+
+1. Clone this repository.
+2. Copy the `.claude` folder into the root of your project.
+3. Open the project in Claude Code and say: **"seat the harness"**.
+
+From then on — ordinary tasks in plain words. A project with existing code,
+the requirements and all the details — in
+[Installation and setup](#installation-and-setup).
 
 ## What makes it different
 
 | A typical agent setup | claudeHarness |
 | --- | --- |
 | quality is "looks good to me" | quality is an answer per criterion, with evidence, sealed |
+| a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
 | a review reads the lines of the diff | the edit is checked line by line and up through the file, the layer and the whole app — against its neighbours and, for anything new, against the whole project |
 | a defect noticed along the way goes into a TODO | a defect noticed along the way is fixed in the same pass, as a class |
-| a rule is a paragraph in a prompt or skill; it holds if the model remembers | a rule is held by a machine; where it cannot be, that is written down and shown in a summary |
-| the agent learns the code by searching and guessing | the import graph is computed from the code by the compiler; the knowledge base is reconciled with it |
-| the agent reads the whole project to be safe — or a few files and guesses | the area of an edit is computed from the graph and read in full; code outside it is not read |
+| the agent learns the code by guessing — or reads the whole project to be safe | the compiler builds the graph; the area of an edit is computed from it and read in full |
 | tests and docs are written when someone asks | tests, records and docs are part of every edit, and a command names what is missing |
 | "done" because the agent said so | "done" is the full check suite at exit 0 plus a sealed protocol |
 | project notes go stale unnoticed | the knowledge base is reconciled with the code on every run, both ways |
 | checks are taken on trust | every check is broken on purpose to see whether it turns red |
 | more rules make every request more expensive | the rules stay within a budget; history and rationale live apart and are not loaded into every session |
 
-## The quality bar
+## How it works
+
+```
+RULE  →  CHECK  →  PROOF  →  SEAL  →  COMMIT
+```
+
+Every obligation in the harness names what holds it: a check, a gate, a hook
+or a test. Where no machine support exists, that is written down plainly, and
+a separate summary collects such places — they stay in sight and are not
+forgotten.
+
+```mermaid
+flowchart TD
+  A[Task] --> B["Graph and knowledge base:<br>what the edit touches,<br>its tests, its records"]
+  B --> C[Code]
+  subgraph edit [One edit]
+    C --> T["Tests:<br>each proven able to fail"]
+    C --> R["Knowledge base records<br>and documentation"]
+    T --> M["Mutation testing<br>of the changed files"]
+  end
+  M --> P["Quality bar:<br>line by line and level by level,<br>findings fixed"]
+  R --> P
+  P --> S[Seal]
+  S --> K["Checks: types, lint, format,<br>tests, knowledge base"]
+  K --> G{"Commit gate:<br>machine checks"}
+  G -- "sealed, exit 0" --> H[Commit]
+  G -- "no seal or red" --> C
+```
+
+### Terminal example
+
+The pass from [How it looks](#how-it-looks), shortened; the messages are the
+ones the tool prints (the tool speaks Russian):
+
+```
+$ git commit
+=== Ворота перед коммитом ===
+  КОММИТ НЕ ПРОХОДИТ: свода нет вовсе
+  Свод по планке делают ДО коммита: node .claude/tools/graph.mjs bar
+
+$ node .claude/tools/graph.mjs bar          # an answer per criterion
+  дыр: 1
+    E9: чисто со ссылкой на находку другого критерия
+  Печать не поставлена. Свод с дырами — не свод.
+
+$ node .claude/tools/graph.mjs bar          # findings fixed, tests added
+  печать поставлена: 4df9ed3b9cd2
+  находок: 2
+    E9 …/RemoveButton.tsx:6 — двойное нажатие запускает удаление дважды (починено)
+    E3 …/pageSize.ts:2 — вход снаружи тихо исправляется вместо проверки (починено)
+
+$ git commit
+  свод покрывает правку: коммит проходит
+```
+
+The agent recorded the double click as a finding under one criterion and
+marked `E9`, which names it outright, as clean — and got no seal. Ending the
+turn without the seal is not possible either: the end-of-turn hook stops the
+agent and names what is missing.
+
+## The commit gate and the quality bar
+
+The commit gate is a machine check before every commit: an edit enters history
+only if a sealed pass over the quality bar covers it. The agent runs the check
+chain — types, lint, format, tests, the knowledge-base check — before it, and
+the end-of-turn hook does not let it finish the work without the seal.
 
 The quality bar is the list every piece of work on code is checked against:
 new code, a fix, a refactor, a review. Each criterion is a question to the diff
@@ -128,8 +197,6 @@ map against ISO/IEC 25010 — a map, not a claim of compliance; and cases — a
 defect that slipped through adds the sign it should have been caught by.
 Sections whose subject a project lacks — network, locales, a CI pipeline —
 are declared not applicable, and the bar does not ask them.
-
-### Flat and vertical
 
 Most reviews are flat: they read the lines of the diff. But an edit can be
 flawless in every line and still break the whole — add a second source of
@@ -147,35 +214,10 @@ up. So the bar checks every edit in two directions:
   each resource, the data flow, the consumers beyond the edit and the test
   that reaches through each.
 
-A good result at one level does not cover a bad one at another: every level
-gets its own answer. And anything new is compared not only with its
-neighbours but with the whole project: a second source of truth usually
-appears where nobody knew about the first one.
-
-## How it works
-
-Every obligation in the harness names what holds it: a check, a gate, a hook
-or a test. Where no machine support exists, that is written down plainly, and
-a separate summary collects such places: they stay visible instead of being
-forgotten.
-
-```mermaid
-flowchart TD
-  A[Task] --> B["Graph and knowledge base:<br>what the edit touches,<br>its tests, its records"]
-  B --> C[Code]
-  subgraph edit [One edit]
-    C --> T["Tests:<br>each proven able to fail"]
-    C --> R["Knowledge base records<br>and documentation"]
-    T --> M["Mutation testing<br>of the changed files"]
-  end
-  M --> P["Quality bar:<br>line by line and level by level,<br>findings fixed"]
-  R --> P
-  P --> S[Seal]
-  S --> K["Checks: types, lint, format,<br>tests, knowledge base"]
-  K --> G{Quality gate}
-  G -- "sealed, exit 0" --> H[Commit]
-  G -- "no seal or red" --> C
-```
+One criterion's answer does not close another: a finding is marked wherever a
+criterion names it, and every level gets its own answer. Anything new is
+compared not only with its neighbours but with the whole project: a second
+source of truth usually appears where nobody knew about the first one.
 
 ## Where the knowledge about the code comes from
 
@@ -187,27 +229,21 @@ gives it two sources, and neither of them is the model's memory.
 **The graph — computed, never stored.** `graph.mjs` parses every module of
 the project on every run, with the project's own TypeScript compiler, or with
 regular expressions when the compiler is not installed. It reads imports and
-re-exports, side-effect imports, dynamic `import()` — template addresses
-included — exports and constants; resolves the path aliases declared in
-`tsconfig.json`; and follows links by name through barrel files, so a module
-that takes everything from a package entry still shows its real dependencies.
-From this it answers what a file uses and who uses it, the blast radius of an
-edit, which tests reach a file, cycles, exports nobody uses and imports that
-go against the declared layer direction.
+re-exports, side-effect imports, dynamic `import()`, exports and constants;
+resolves the path aliases from `tsconfig.json` and follows links by name
+through barrel files. From this it answers what a file uses and who uses it,
+the blast radius of an edit, which tests reach a file, cycles, exports nobody
+uses and imports that go against the declared layer direction.
 
 **The knowledge base — written, then reconciled.** What cannot be read from a
 file itself lives in `.context/`: why something was done this way and what
 could be done instead, who owns a piece of state and who writes it, what
-breaks if an order changes, constraints held in another file, which test holds
-which behaviour, and links the import graph cannot see — an event-bus topic, a
-storage key, a CSS variable. Records are written in forms the tool parses, and
-`verify` reconciles them with the code both ways.
-
-**Why it is always current.** Computed facts are recomputed on every run: no
-one wrote them down, so nothing can go stale. Written facts are reconciled by
-`verify`, the last link of `npm run check` — the suite every edit ends with: a
-record that disagrees with the code fails it. Numbers that drift with every
-edit are not written at all — a command computes them when they are needed.
+breaks if an order changes, which test holds which behaviour, and links the
+import graph cannot see — an event-bus topic, a storage key, a CSS variable.
+Records are written in forms the tool parses, and `verify` — the last link of
+`npm run check` — reconciles them with the code both ways: a record that
+disagrees with the code fails the run. Numbers that drift with every edit are
+not written at all — a command computes them when they are needed.
 
 ```mermaid
 flowchart LR
@@ -216,6 +252,38 @@ flowchart LR
   G --> Q["brief · plan · tested · bar"]
   K --> Q
 ```
+
+## What every edit includes
+
+"Write a function" is not just the function. By default an edit includes:
+
+- **tests, in the same pass**: new code is closed by a test at once, and every
+  test that runs changed code proves it can still fail;
+- **mutation testing of the changed files**: Stryker breaks the code in every
+  place at once, and each surviving mutant gets one of three outcomes — a test
+  added, the code fixed, or declared unkillable with a concrete reason;
+- **knowledge-base records** in every file the edit concerns, and for the
+  neighbours whose description the edit changed;
+- **documentation, when a "why" appeared**: a decision record with its options
+  and price, the architecture of a layer, the meaning of a setting, the README
+  of a component folder;
+- **a behaviour guarantee** for a new capability: what the product promises,
+  where the promise comes from, and the test that holds it;
+- **a quality-bar pass and a seal**: an answer for every live criterion, line
+  by line and on every level, and every finding in the area fixed;
+- **a report in numbers**: which checks ran and with what exit code.
+
+The scope can be narrowed by a direct request ("just a sketch", "no tests") —
+and then the report says so.
+
+| Command (`node .claude/tools/graph.mjs …`) | What it does |
+| --- | --- |
+| `bar` | the pass over the quality bar, and the seal |
+| `brief <path>` | a file's dossier: what it uses, who uses it, what tests reach it, what is recorded about it |
+| `plan <path>` | what an edit will touch, before it is made: blast radius, tests, records |
+| `tested` | an edit against its tests, the knowledge base and the docs |
+| `mutated` | the mutation-testing debt of an edit |
+| `verify` | every knowledge-base check against the code at once |
 
 ## Economy
 
@@ -231,53 +299,9 @@ size of the project:
   opened; the tool reference and the table of checks — on demand; history and
   rationale — only when a rule itself is changed. The size of the rules that
   load is held by a budget in characters, and raising it is a visible change.
-- **The bar asks what applies.** Sections without a subject in the project are
-  declared not applicable and are not asked.
 - **The machine fills what it can.** Lint, code cuts and checks answer their
   rows of the protocol themselves; the session spends its effort only where
   judgement is needed.
-
-## What every edit includes
-
-"Write a function" is not just the function. By default an edit includes:
-
-- **Tests, in the same pass.** New code is closed by a test at once. Changed
-  code makes the agent reopen every test that runs it and prove each one can
-  still fail: break the code, see exactly this test turn red, restore. A test
-  that cannot fail is a defect of the same edit.
-- **Mutation testing of the changed files.** Stryker breaks the code in every
-  place at once and shows where no test noticed. Each surviving mutant gets one
-  of three outcomes: a test added, the code fixed, or declared unkillable with
-  a concrete reason. A ledger keyed by the file's content hash lives in git, and
-  `mutated` names files never measured or changed since.
-- **Knowledge-base records** in every file the edit concerns — the map, state,
-  timing, flows, constraints, decisions, the test registry — and for the
-  neighbours whose description the edit changed.
-- **Documentation, when a "why" appeared**: a decision record with its options
-  and price, the architecture of a layer, the meaning of a setting, the README
-  of a component folder. The feature showcase is updated with every behaviour
-  visible from outside. Comments are rare and short, and their length is
-  checked.
-- **A behaviour guarantee** for a new capability: what the product promises,
-  where the promise comes from, and the test that holds it.
-- **A quality-bar pass and a seal**: an answer for every live criterion, line
-  by line and on every level, and every finding in the area fixed.
-- **A report in numbers**: which checks ran and with what exit code; the
-  knowledge base and the docs are confirmed separately.
-
-The scope can be narrowed by a direct request ("just a sketch", "no tests") —
-and then the report says so.
-
-The main commands — all through `node .claude/tools/graph.mjs`:
-
-| Command | What it does |
-| --- | --- |
-| `bar` | the pass over the quality bar, and the seal |
-| `brief <path>` | a file's dossier: what it uses, who uses it, what tests reach it, what is recorded about it |
-| `plan <path>` | what an edit will touch, before it is made: blast radius, tests, records |
-| `tested` | an edit against its tests, the knowledge base and the docs |
-| `mutated` | the mutation-testing debt of an edit |
-| `verify` | every knowledge-base check against the code at once |
 
 ## Stack: built for frontend
 
@@ -324,7 +348,11 @@ stack is not hard: the principles stay the same, only the templates and the
 stack-specific checks change. Take the ideas and the tools — an agent will adapt
 the rest, seat it and finish it.
 
-## Quick start
+## Installation and setup
+
+**Needs:** Node.js 22.23.2 or newer, npm 11 or newer, git and Claude Code.
+
+**1. Copy the harness** into the root of the project:
 
 ```bash
 git clone https://github.com/Igor-lx/claudeHarness.git tmp
@@ -332,19 +360,45 @@ cp -r tmp/.claude <your project>/
 rm -rf tmp
 ```
 
-Then, in Claude Code, inside the project:
-
-- **"Seat the harness"** — the assistant lays out the configs, the knowledge
-  base, the gates and the checks, and runs them, following
-  `.claude/seat/seat.md`;
-- **"Run the transition"** — in a project that already has code, after
-  seating: the assistant reads all of the code, builds the knowledge base and
-  the docs, and records everything where the project departs from the rules
-  and the quality bar as debt with a plan. The code itself is not changed.
-
 If the project already has a `.claude` folder, copying does not wipe it: the
 harness appends its permissions to your settings file. Check other matching
 file names before copying.
+
+**2. Open the project in Claude Code — from its folder.** The environment takes
+the harness's permissions, gates and hooks from the folder the session started
+in. Started a level above — run `/cd <project>` or restart the session in the
+project folder, otherwise they do not apply.
+
+**3. Say "seat the harness".** Following `.claude/seat/seat.md`, the assistant
+lays out the configs, the knowledge base, the gates and the checks, adds the
+missing check commands and packages to the manifest without touching any
+existing version, runs the check chain and reports in numbers. An empty
+project gets a scaffold — a small app with a test, so the checks have
+something to work on from day one; a project with code gets no scaffold.
+Node.js or npm below the verified set stop seating before its first change;
+packages below the set are named by the run as a notice — whether to upgrade
+is your call.
+
+**4. A project with existing code — "run the transition".** The assistant reads
+all of the code, builds the knowledge base, the dependency graph and the
+docs, and records everything where the project departs from the rules and the
+quality bar as debt with a plan. The code itself is not changed. The debt is
+printed by every run and shrinks as work touches its places: what is found
+there is fixed in the same pass.
+
+**5. Work.** Tasks in plain words. By default an edit arrives with tests,
+knowledge-base records, documentation and a seal; the scope can be narrowed
+by a direct request.
+
+**Forks are yours to decide.** Where only a person can decide — a public
+contract, product behaviour, the rules themselves — the agent does not decide
+for you: it asks, records the question in the knowledge base and names it
+first in every report until it is answered.
+
+**Commits are on your command.** The agent does not commit on its own
+initiative and does not lift the commit gate even on command: a commit past
+the gate is yours to make. Any other rule gives way to your direct
+instruction, and the report names the bypass.
 
 ## What's inside
 
@@ -354,7 +408,7 @@ file names before copying.
 | `tools/` | the `graph.mjs` tool, its reference, the table of checks, the falsification recipes |
 | `skills/` | skills: task entry, probes, the bar probe, audit, packaging for handoff |
 | `seat/` | seating: the instruction, the map and templates of every project file |
-| `hooks/` | the pre-commit quality gate |
+| `hooks/` | the commit gate — a hook before every commit |
 | `state/` | open questions and deferred work on the harness itself |
 | `rationale/` | the reasons behind the rules: history, measurements, rejected options |
 
@@ -370,13 +424,10 @@ it, each with its own question:
 | --- | --- |
 | the `falsify` mode | does every check catch its own breakage |
 | the `probe` skill | does the harness handle a live task — and what held it |
-| the `bar-probe` skill | does the quality-bar pass find a defect planted in the code |
+| the `bar-probe` skill | does the quality-bar pass find a defect planted in the code: every criterion has its own plant on the probe stand |
 | the `audit` skill | do the rules themselves have gaps, contradictions, or places a machine could hold but prose holds instead |
 
-## Requirements and limits
-
-**Needs:** Node.js 22.23.2 or newer, npm 11 or newer, git, Claude Code; the
-stack is described in [Stack: built for frontend](#stack-built-for-frontend).
+## Limits
 
 **Language:** the rules, skills and tool output are written in Russian.
 
@@ -388,7 +439,7 @@ stack is described in [Stack: built for frontend](#stack-built-for-frontend).
   names which quality characteristics stay outside the bar;
 - judgement — is this the right boundary for a module, is it honestly named —
   is held by reading; how well, `bar-probe` measures;
-- the last word is yours: any rule gives way to your direct instruction, and
+- the last word is yours: the rules give way to your direct instruction, and
   the report names the bypass.
 
 ## Status
