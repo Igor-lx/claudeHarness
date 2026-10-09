@@ -154,28 +154,31 @@ flowchart TD
 ### Terminal example
 
 The pass from [How it looks](#how-it-looks), shortened; the messages are the
-ones the tool prints (the tool speaks Russian):
+ones the tool prints, translated*:
 
 ```
 $ git commit
-=== Ворота перед коммитом ===
-  КОММИТ НЕ ПРОХОДИТ: свода нет вовсе
-  Свод по планке делают ДО коммита: node .claude/tools/graph.mjs bar
+=== Commit gate ===
+  COMMIT REFUSED: there is no bar pass at all
+  The bar pass is made BEFORE the commit: node .claude/tools/graph.mjs bar
 
 $ node .claude/tools/graph.mjs bar          # an answer per criterion
-  дыр: 1
-    E9: чисто со ссылкой на находку другого критерия
-  Печать не поставлена. Свод с дырами — не свод.
+  holes: 1
+    E9: clean, citing another criterion's finding
+  No seal. A pass with holes is not a pass.
 
 $ node .claude/tools/graph.mjs bar          # findings fixed, tests added
-  печать поставлена: 4df9ed3b9cd2
-  находок: 2
-    E9 …/RemoveButton.tsx:6 — двойное нажатие запускает удаление дважды (починено)
-    E3 …/pageSize.ts:2 — вход снаружи тихо исправляется вместо проверки (починено)
+  seal set: 4df9ed3b9cd2
+  findings: 2
+    E9 …/RemoveButton.tsx:6 — a double click deletes twice (fixed)
+    E3 …/pageSize.ts:2 — external input silently corrected instead of checked (fixed)
 
 $ git commit
-  свод покрывает правку: коммит проходит
+  the bar pass covers the edit: commit goes through
 ```
+
+<sub>* The tool itself speaks Russian: the rules, the skills and every message
+are written in Russian.</sub>
 
 The agent recorded the double click as a finding under one criterion and
 marked `E9`, which names it outright, as clean — and got no seal. Ending the
