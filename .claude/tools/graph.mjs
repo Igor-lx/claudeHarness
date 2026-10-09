@@ -12729,10 +12729,29 @@ const barCutRowOf = (c, model) => {
 
 /** Исход строки, который ставит машина, либо `null`: нарушение линта и
  * срез — «нашлось»; «чисто» — только когда каждый машинный держатель
- * критерия из линта и сверок отвечает и молчит, а модель вопроса не задала.
- * Сверка молчит, если осмотрела предмет и не нашла ничего по всему
+ * критерия из линта и сверок отвечает и молчит, модель вопроса не задала, а
+ * набор форм вне держателя закрыт. При открытом наборе молчание держателей
+ * ложится в графу «что» опорой, а исход пуст: его ставит чтение по странице
+ * критерия. Сверка молчит, если осмотрела предмет и не нашла ничего по всему
  * репозиторию; срез и факт «чисто» не дают — они видят одну форму. */
-const barMachineRowOf = ({ lint, checks, c, files, model, asked }) => {
+const barMachineRowOf = (args) => {
+  const made = barMachineVerdictOf(args);
+  if (made?.outcome !== "чисто") return made;
+  if (BAR_FORMS_SPLIT[args.c.id]?.closed !== undefined) return made;
+  return {
+    outcome: "",
+    addr: "",
+    what: made.what.replace(
+      BAR_MACHINE_TAIL,
+      "; держатель видит не все формы — исход ставит чтение по странице критерия",
+    ),
+    by: made.by,
+  };
+};
+
+const BAR_MACHINE_TAIL = "; формы вне держателя — на чтении";
+
+const barMachineVerdictOf = ({ lint, checks, c, files, model, asked }) => {
   const lintSays =
     BAR_LINT[c.id] === undefined
       ? undefined
@@ -12754,7 +12773,7 @@ const barMachineRowOf = ({ lint, checks, c, files, model, asked }) => {
     "сверка " +
     names.map((n) => "«" + n + "»").join(", ") +
     " — нарушений нет по всему репозиторию";
-  const tail = "; формы вне держателя — на чтении";
+  const tail = BAR_MACHINE_TAIL;
   return {
     outcome: "чисто",
     addr: "",
@@ -15015,7 +15034,7 @@ if (mode === "bar") {
   const machineMade = expected
     .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
     .map(({ c, subject: one }) => machineRow(c, one))
-    .filter((one) => one !== null);
+    .filter((one) => one !== null && one.outcome !== "");
   const r = barProcess({ at, ...inputs, machineRow });
 
   const disputed = [
