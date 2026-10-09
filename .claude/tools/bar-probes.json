@@ -1226,7 +1226,7 @@
       "why": "на каждом кадре заводится новый объект",
       "create": {
         "path": "components/Pulse/hooks/useTrail.ts",
-        "text": "export const trailPoint = (time: number): { x: number; y: number } => ({\n  x: Math.sin(time),\n  y: Math.cos(time),\n});\n"
+        "text": "import { useEffect } from \"react\";\n\nexport const useTrail = (\n  move: (point: { readonly x: number; readonly y: number }) => void,\n): void => {\n  useEffect(() => {\n    let frame = 0;\n    const step = (time: number) => {\n      move({ x: Math.sin(time), y: Math.cos(time) });\n      frame = requestAnimationFrame(step);\n    };\n    frame = requestAnimationFrame(step);\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  }, [move]);\n};\n"
       }
     },
     {

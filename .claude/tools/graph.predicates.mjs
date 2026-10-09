@@ -663,6 +663,8 @@ export const MODEL_LEVEL = {
   повтор: "приложение",
   зависимость: "приложение",
   приглушение: "приложение",
+  настройка: "приложение",
+  поставка: "приложение",
 };
 
 /** Уровни прохода по порядку: от строки к целому. */
@@ -926,6 +928,10 @@ export const BAR_SIGNALS = [
   { ids: ["A9-тер"], sort: "повтор", mark: "условие", words: "условие повторено в другом месте, и в основании не сказано, где собрано правило" },
   { ids: ["R1", "R2", "R3"], sort: "зависимость", words: "правка добавила зависимость, и в основании нет её обоснования, размера и проверки на дубль" },
   { ids: ["R1-бис"], sort: "зависимость", mark: "диапазон", words: "версия зависимости задана диапазоном, и в основании это не названо" },
+  { ids: ["Q6"], sort: "настройка", mark: "политика источников", words: "правка тронула политику источников, и в основании не сказано, что она теперь разрешает" },
+  { ids: ["U1", "U2", "U3"], sort: "настройка", mark: "конвейер", words: "правка тронула конвейер, и в основании не сказано, какие ворота он держит после неё и не обходит ли их" },
+  { ids: ["R5"], sort: "настройка", mark: "бюджет", words: "правка тронула запись о бюджете поставки, и в основании не сказано, чем объяснён сдвиг" },
+  { ids: ["R4-бис", "Q4"], sort: "поставка", mark: "чужой адрес", words: "лист стилей тянет ресурс с чужого адреса, и в основании не сказано о кэше и о доверии к источнику" },
   { ids: ["J1"], sort: "тест", mark: "без утверждения", words: "тест без утверждения, и в основании не сказано, чем он падает" },
   { ids: ["J7"], sort: "тест", mark: "подмена", words: "тест подменяет часть системы, и в основании не сказано, что подмена не прячет" },
   { ids: ["J5"], sort: "тест", mark: "различие", words: "тест проверяет «изменилось», и в основании не сказано, различает ли значение" },
@@ -1206,11 +1212,8 @@ export const BAR_ATTENTION = {
   J8: "сложность оснастки против сложности кода — суждение; размер её не мерит",
   J9: "на какой вопрос отвечает тест — суждение о том, что он проверяет",
   "O5-бис": "что закреплять визуальным контрактом, решает проект",
-  Q6: "политику источников объявляют хост и сервер, в репозитории её может не быть",
   "R1-тер": "проверка зависимостей на уязвимости — шаг процесса, в тексте кода её нет",
   R4: "осмысленность разбиения поставки — суждение о том, что нужно сразу",
-  "R4-бис": "тяжесть содержимого и кэш — свойства поставки и сервера, а не строки",
-  R5: "бюджет размера — запись проекта числом; есть ли он — вопрос к базе",
   S1: "способ узнать об отказе в бою живёт вне предмета, у проекта он один",
   S6: "старт и остановка — свойство процесса целиком: что он делает при запуске и при уходе, в строке узла не видно",
   S8: "откат — свойство выкладки и формы данных: читает ли старая версия записанное новой, в коде одной версии не видно",
@@ -1259,7 +1262,7 @@ const UNSEEN = {
     "движение средствами, которых нет в образце: `setInterval` со сдвигом, `anime`, `react-transition-group`, `useTransition` — образец знает `requestAnimationFrame`, `animate`, `motion`, `gsap`, `useSpring` и движение листа стилей",
   method: "метод класса и объекта — тела признак ищет у `function` и у `const` со стрелкой",
   repeat:
-    "повтор с переименованными именами, переставленными строками либо короче окна — повтор ищут совпадением нормализованных строк окном",
+    "повтор с переименованными именами, переставленными строками, короче окна внутри функции либо в теле метода — повтор ищут окном нормализованных строк и совпадением тел функций верхнего уровня",
   log: "журнал через свою обёртку либо пакет журнала — признак видит `console`",
   measure:
     "измерение через пакет метрик, профилировщик либо `Date.now` — признак видит `performance.mark`, `measure`, `console.time` и `PerformanceObserver`",
@@ -1574,6 +1577,7 @@ export const BAR_FORMS = {
   ],
   G6: [
     "аллокация на горячем пути не из частого события: обход списка, отрисовка элемента — признак видит обработчики частых событий",
+    "аллокация в функции, которую кадровый цикл зовёт из другого файла, — признак видит кадровый цикл в своём файле",
   ],
   "G6-бис": [UNSEEN.list],
   "G6-тер": [
@@ -1794,7 +1798,7 @@ export const BAR_FORMS = {
     UNSEEN.log,
   ],
   Q4: [
-    "сторонний код через загрузчик, `import()` по адресу либо `Worker` с чужим адресом — признак видит `eval`, `new Function`, `<script>`, `<iframe>` и их создание через `createElement`, а правила линта — песочницу фрейма и код строкой в таймере",
+    "сторонний код через загрузчик, `import()` по адресу либо `Worker` с чужим адресом — признак видит `eval`, `new Function`, `<script>`, `<iframe>` и их создание через `createElement`, чужой адрес в листе стилей, а правила линта — песочницу фрейма и код строкой в таймере",
   ],
   R1: [UNSEEN.manifest, "зависимость вне манифеста: скрипт с сети, вендорная копия в репозитории — признак читает манифест"],
   "R1-бис": [UNSEEN.manifest, "версия точная, а файла блокировки в репозитории нет, — признак читает манифест"],
@@ -1803,6 +1807,18 @@ export const BAR_FORMS = {
     "два пакета одного назначения под разными именами — сверки ловят одноранговую зависимость, объявленную дважды, и пакет, повторяющий платформу",
   ],
   R3: [UNSEEN.manifest, "вес зависимости в критическом пути поставки — строка называет зависимость, а вес её покажет сборка"],
+  "R4-бис": [
+    "тяжёлые картинки и шрифты в исходном виде и кэш на стороне сервера — признак видит чужой адрес в листе стилей",
+    "чужой адрес в разметке страницы и в коде — признак читает листы стилей",
+  ],
+  R5: [
+    "рост поставки без правки бюджета — строка встаёт на правке записи о бюджете, а рост покажет сборка",
+    "бюджет, записанный словами вне образца, — строка ищет «бюджет», «поставка», `budget`, `size-limit`, `bundlesize`, `maxSize`",
+  ],
+  Q6: [
+    "политика, которую объявляет хост либо сервер вне репозитория, — строка встаёт на правке файла репозитория, где политика записана",
+    "сторонний код, вставленный без правки политики, — его спрашивают признаки `Q4`",
+  ],
   R6: [
     "шаг сборки, который зависит от того, что уже стоит у сборщика: глобальный пакет, кэш — сверки спрашивают объявленный диапазон среды и её версию",
     "версии зависимостей диапазоном — их спрашивает `R1-бис`",
@@ -1831,7 +1847,7 @@ export const BAR_FORMS = {
   ],
   S5: [UNSEEN.log, UNSEEN.measure],
   T1: [
-    "текст для человека в файлах `.ts`: строки ошибок, уведомлений, подписи константами — признак видит текст между тегами и в `title`, `placeholder`, `alt`, `aria-label`, `label` разметки",
+    "текст для человека в файлах `.ts`: строки ошибок, уведомлений, подписи константами — признак видит текст между тегами, строку-результат выражения между тегами и `title`, `placeholder`, `alt`, `aria-label`, `label` разметки",
   ],
   T2: ["склейка числа со строкой и дата по частям (`getDate()`) — признак видит `toFixed` и `toLocale…String()` без региона"],
   T3: ["выбор формы сравнением кроме `=== 1`: `> 1`, таблица окончаний — признак видит сравнение с единицей перед строкой"],
@@ -3597,9 +3613,10 @@ const codeSignalsOf = (file, text, own) => {
       at("сквозь", m.index, m[1] + "." + segments.join("."));
     },
   );
-  // Кэш без вытеснения: контейнер модуля растёт и ни разу не чистится.
+  // Кэш без вытеснения: контейнер модуля растёт и ни разу не чистится. Тип
+  // со стрелкой — `(() => void)[]` — тоже тип: его `=` не начало значения.
   for (const m of bare.matchAll(
-    /(?:^|\n)(?:export\s+)?const\s+([\w$]+)\s*(?::[^=\n]+)?=\s*(?:new\s+(?:Map|Set)\s*(?:<[^>]*>)?\s*\(|\[\s*\]|\{\s*\})/g,
+    /(?:^|\n)(?:export\s+)?const\s+([\w$]+)\s*(?::(?:[^=\n]|=>)+)?=\s*(?:new\s+(?:Map|Set)\s*(?:<[^>]*>)?\s*\(|\[\s*\]|\{\s*\})/g,
   )) {
     const name = escapeRe(m[1]);
     const grows = new RegExp("(?<![\\w$.])" + name + "\\s*(?:\\.\\s*(?:set|add|push|unshift)\\s*\\(|\\[[^\\]]+\\]\\s*=(?!=))").test(bare);
@@ -3724,6 +3741,17 @@ const codeSignalsOf = (file, text, own) => {
     each(/\b(?:title|placeholder|alt|label)\s*=\s*["']([^"'\n]*\p{L}[^"'\n]*)["']/gu, plain, (m) =>
       at("текст", m.index, m[1], "в разметке"),
     );
+    // Строка в выражении между тегами — `{dark ? "dark" : "light"}` — тоже
+    // текст, когда стоит результатом, а не доводом вызова и не стороной
+    // сравнения. Найдено ревьюером пробы.
+    each(/>\s*\{/g, bare, (m) => {
+      const open = m.index + m[0].length - 1;
+      const close = closeOf(bare, open);
+      if (close < 0 || !/^\s*</.test(bare.slice(close + 1))) return;
+      const inner = plain.slice(open + 1, close);
+      for (const one of inner.matchAll(/(?:^|[?:]|&&|\|\|)\s*(["'])([^"'\n]*\p{L}[^"'\n]*)\1/gu))
+        at("текст", open + 1 + one.index + one[0].indexOf(one[1]), one[2], "в разметке");
+    });
   }
   each(/\.\s*toFixed\s*\(|\.\s*toLocale(?:Date|Time)?String\s*\(\s*\)/g, bare, (m) => at("текст", m.index, m[0], "формат"));
   each(/(?:===?|!==?)\s*1\s*\?\s*["'`]/g, plain, (m) => at("текст", m.index, m[0], "множественное"));
@@ -3768,6 +3796,12 @@ const styleSignalsOf = (text, project) => {
       at("стиль", m.index, m[0].replace(/\s*\{$/, ""), "раскладка в движении");
   });
   each(/\bwill-change\s*:|\btranslateZ\s*\(|\btranslate3d\s*\(/g, (m) => at("стиль", m.index, m[0], "слой композитора"));
+  // Ресурс с чужого адреса: лист, шрифт, картинка — граница доверия и
+  // поставка, которой проект не владеет. Читается сырой текст: `//` адреса
+  // без кавычек разбор листа принял бы за комментарий.
+  for (const m of text.matchAll(/@import\s+(?:url\(\s*)?["']?https?:\/\/|\burl\(\s*["']?https?:\/\//g))
+    if (bare[m.index] === m[0][0])
+      at("поставка", m.index, m[0].replace(/["']/g, "").replace(/\s+/g, " "), "чужой адрес");
   if (!/:focus-visible\b/.test(bare))
     each(/\boutline\s*:\s*(?:none|0)\b/g, (m) => at("стиль", m.index, m[0], "без фокуса"));
   if (project.layered && !/@layer\b/.test(bare)) line("стиль", 1, "@layer", "вне слоя");
@@ -4835,6 +4869,14 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items;\n};", "1:целое"],
   ["signalsSummary", "src/a.ts\nexport const head = (text) => text.slice(0, 3);", ""],
   ["signalsSummary", "src/a.tsx\nexport const A = () => (\n  <p>\n    Settings\n  </p>\n);", "3:текст/в разметке"],
+  // строка-результат выражения между тегами — текст; довод вызова и сторона сравнения — нет
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ dark }) => <p>{dark ? \"Dark\" : \"Light\"}</p>;", "1:текст/в разметке;1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const A = () => <p>{'Hello'}</p>;", "1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ busy }) => <p>{busy && \"Saving\"}</p>;", "1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ name }) => <p>{name || \"Anonymous\"}</p>;", "1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ name }) => <p>{name ?? \"Anonymous\"}</p>;", "1:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ t }) => <p>{t(\"notes.empty\")}</p>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ theme, a, b }) => <p>{theme === \"dark\" ? a : b}</p>;", ""],
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items.length + order.tax;\n};", ""],
   ["signalsSummary", "src/a.ts\nexport function first<T>(xs: T[]) {\n  return xs[0];\n}", "1:обобщение"],
   ["signalsSummary", "src/a.ts\nexport function first<T extends object>(xs: T[]) {\n  return xs[0];\n}", ""],
@@ -4878,6 +4920,10 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.tsx\nexport const A = () => <p>{Date.now()}</p>;", "1:время;1:разметка"],
   ["signalsSummary", "src/a.css\n.a {\n  transition: margin 1s;\n  transition: padding 1s;\n}", "2:стиль/раскладка в движении;3:стиль/раскладка в движении;2:движение/стиль"],
   ["signalsSummary", "src/a.css\n@media (min-width: 40em) {\n  .a { color: red; }\n}\n@media (min-width: 60rem) {\n  .b { color: red; }\n}", "1:стиль/перелом;4:стиль/перелом"],
+  // ресурс с чужого адреса — листом, шрифтом, картинкой; свой путь и данные — нет
+  ["signalsSummary", "src/a.css\n@import url(\"https://fonts.example.com/css2\");\n@import 'https://cdn.example.com/x.css';\n@import \"./base.css\";", "1:поставка/чужой адрес;2:поставка/чужой адрес"],
+  ["signalsSummary", "src/a.css\n@font-face { src: url(https://cdn.example.com/a.woff2); }\n.b { background: url(\"/img/b.png\"); }\n.c { background: url(data:image/png;base64,AA); }", "1:поставка/чужой адрес"],
+  ["signalsSummary", "src/a.css\n/* url(https://x.example.com/a.png) */\n.a { color: red; }", "1:комментарий"],
   ["signalsSummary", "src/a.css\n.a { height: 100dvh; }\n.b { height: 100svh; }\n.c { height: 100lvh; }\n.d { width: 100vw; }", "1:стиль/вьюпорт;2:стиль/вьюпорт;3:стиль/вьюпорт;4:стиль/вьюпорт"],
   ["signalsSummary", "src/a.css\n.a { color: rgb(0, 0, 0); }\n.b { color: rgb(0, 0, 0); }\n.c { color: hsl(0, 0%, 0%); }\n.d { color: hsl(0, 0%, 0%); }\n.e { margin: 4px; }\n.f { margin: 4px; }\n.g { margin: 12px; }\n.h { margin: 12px; }", "1:стиль/повтор величины;3:стиль/повтор величины;5:стиль/повтор величины;7:стиль/повтор величины"],
   ["signalsSummary", "src/a.css\n.a {\n  transition: height 1s;\n  transition: top 1s;\n  transition: left 1s;\n  transition: right 1s;\n  transition: bottom 1s;\n  transition: margin-top 1s;\n  transition: padding-left 1s;\n  transition: all 1s;\n  transition: opacity 1s;\n}", "2:стиль/раскладка в движении;3:стиль/раскладка в движении;4:стиль/раскладка в движении;5:стиль/раскладка в движении;6:стиль/раскладка в движении;7:стиль/раскладка в движении;8:стиль/раскладка в движении;9:стиль/раскладка в движении;2:движение/стиль;3:движение/стиль;4:движение/стиль;5:движение/стиль;6:движение/стиль;7:движение/стиль;8:движение/стиль;9:движение/стиль;10:движение/стиль"],
@@ -4941,6 +4987,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const city = (order) => order.customer.address.format();", "1:целое"],
   ["signalsSummary", "src/a.ts\nconst limit = load();\nconst seen = new Set();\nexport const remember = (k) => seen.add(k);\nuse(limit);", "2:кэш"],
   ["signalsSummary", "src/a.ts\nconst log = [];\nexport const note = (x) => log.push(x);", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nconst hooks: (() => void)[] = [];\nexport const hook = (f: () => void) => hooks.push(f);", "1:кэш"],
   ["signalsSummary", "src/a.ts\nconst byId = {};\nexport const keep = (k, v) => { byId[k] = v; };", "1:кэш"],
   ["signalsSummary", "src/a.ts\nimport { x } from \"./x\";\nexport const slots = 8;\nexport const width = (total: number) => total / 8 + x;", "3:дубль"],
   ["signalsSummary", "src/a.ts\nexport const a = (xs: string[]) => xs.length > -1;\nexport const b = (xs: string[]) => xs.length < 0;", "1:всегда;2:всегда"],

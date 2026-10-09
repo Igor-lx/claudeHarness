@@ -6374,7 +6374,8 @@ const zList = (out) => out.split("\0").filter(Boolean);
 
 /** Пути, тронутые текущей правкой: изменённые И новые, ещё не добавленные.
  * `git diff` вторых не видит, а новый тест — обычный способ закрыть правку. */
-const changedPaths = async (repoRoot) => {
+const changedPaths = async (repoRoot) => changedPathsNow(repoRoot);
+const changedPathsNow = (repoRoot) => {
   let said;
   let prefix;
   try {
@@ -9225,7 +9226,7 @@ const symptomsOf = (f) => {
 
   // Изменяемое на уровне модуля: `let` и `var` с начала строки и контейнер,
   // объявленный константой и меняемый в этом же файле. Константа, которую
-  // не меняют, — таблица, а не состояние.
+  // не меняют, — таблица, а не состояние. Тип со стрелкой — тоже тип.
   bare.split("\n").forEach((line, i) => {
     const at = starts[i];
     const m = /^(?:export\s+)?(?:let|var)\s+([\w$]+|[{[])/.exec(line);
@@ -9234,7 +9235,7 @@ const symptomsOf = (f) => {
       return;
     }
     const c =
-      /^(?:export\s+)?const\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet|Array)\b|\[|\{)/.exec(
+      /^(?:export\s+)?const\s+([\w$]+)\s*(?::(?:[^=]|=>)+)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet|Array)\b|\[|\{)/.exec(
         line,
       );
     if (c !== null && changes(c[1]).some((re) => new RegExp(re.source).test(bare)))
@@ -9434,6 +9435,7 @@ const SIGNAL_TITLES = {
   "стиль|без фокуса": "видимый фокус снят",
   "стиль|вне слоя": "лист вне слоя каскада",
   "стиль|смешанные имена": "имена классов в двух соглашениях",
+  "поставка|чужой адрес": "ресурс с чужого адреса",
   "тест|без утверждения": "тест без утверждения",
   "тест|подмена": "подмена в тесте",
   "тест|различие": "тест проверяет «изменилось»",
@@ -9461,6 +9463,7 @@ const QUESTION_SORTS = new Set([
   "повтор",
   "постоянный",
   "зависимость",
+  "настройка",
   "приглушение",
   "гарантия",
   "хранение",
@@ -9528,11 +9531,63 @@ const CLONE_CHARS = 160;
 /** Условие, повторённое в другом месте: не короче стольких знаков и с
  * логической связкой — одиночное сравнение повторяется законно. */
 const CONDITION_CHARS = 24;
+/** Тело функции верхнего уровня, повторённое в другом месте: окно строк
+ * короткого тела не видит, а одна выборка в четырёх файлах — тот же повтор.
+ * Найдено ревьюером пробы. Тело короче стольких знаков — `x.length > 0` —
+ * повторяется законно. */
+const BODY_CHARS = 32;
+/** Где кончается выражение, начатое с `from`: первая точка с запятой либо
+ * строка с начала строки вне скобок; `-1` — скобка закрылась раньше. С
+ * `arrow` ищется стрелка вне скобок, а не конец. */
+const depthScan = (bare, from, arrow) => {
+  let depth = 0;
+  for (let i = from; i < bare.length; i += 1) {
+    const ch = bare[i];
+    if ("([{".includes(ch)) depth += 1;
+    else if (")]}".includes(ch)) {
+      if (depth === 0) return -1;
+      depth -= 1;
+    } else if (depth > 0) continue;
+    else if (arrow && ch === "=" && bare[i + 1] === ">") return i + 2;
+    else if (ch === ";" || (ch === "\n" && /\S/.test(bare[i + 1] ?? "")))
+      return arrow ? -1 : i;
+  }
+  return arrow ? -1 : bare.length;
+};
+/** Тела стрелок и функций верхнего уровня: `{ name, line, text }`. */
+const topBodiesOf = (code) => {
+  const bare = bareCodeOf(code);
+  const out = [];
+  const heads =
+    /^(?:export\s+)?(?:(?:const|let)\s+([\w$]+)\s*(?::(?:[^=\n]|=>)+?)?=(?![=>])\s*|(?:async\s+)?function\s*\*?\s*([\w$]+)\s*(?=[(<]))/gm;
+  for (const m of bare.matchAll(heads)) {
+    let start = -1;
+    const after = m.index + m[0].length;
+    if (m[1] !== undefined) start = depthScan(bare, after, true);
+    else {
+      const open = bare.indexOf("(", after);
+      const close = open < 0 ? -1 : closeOf(bare, open);
+      const brace = close < 0 ? -1 : bare.indexOf("{", close);
+      if (brace >= 0 && /^\s*(?::[^{;]*)?$/.test(bare.slice(close + 1, brace)))
+        start = brace;
+    }
+    if (start < 0) continue;
+    while (/\s/.test(bare[start] ?? "")) start += 1;
+    const end =
+      bare[start] === "{" ? closeOf(bare, start) + 1 : depthScan(bare, start, false);
+    if (end <= start) continue;
+    const text = code.slice(start, end).trim().replace(/\s+/g, " ");
+    if (text.length < BODY_CHARS) continue;
+    out.push({ name: m[1] ?? m[2], line: code.slice(0, start).split(LF).length, text });
+  }
+  return out;
+};
 let CLONES_CACHE = null;
 const cloneIndex = () => {
   if (CLONES_CACHE !== null) return CLONES_CACHE;
   const windows = new Map();
   const conditions = new Map();
+  const bodies = new Map();
   for (const f of files) {
     if (isTest(f) || f.endsWith(".d.ts")) continue;
     const code = commentlessOf(readFileSync(f, "utf8"));
@@ -9565,14 +9620,18 @@ const cloneIndex = () => {
       if (!conditions.has(cond)) conditions.set(cond, []);
       conditions.get(cond).push({ file: f, line: code.slice(0, p).split(LF).length });
     }
+    for (const b of topBodiesOf(code)) {
+      if (!bodies.has(b.text)) bodies.set(b.text, []);
+      bodies.get(b.text).push({ file: f, line: b.line, name: b.name });
+    }
   }
-  CLONES_CACHE = { windows, conditions };
+  CLONES_CACHE = { windows, conditions, bodies };
   return CLONES_CACHE;
 };
 /** Повторы файла: его строки, повторённые в другом месте проекта, —
  * диапазоном на каждого партнёра, — и его условия, повторённые там же. */
 const repeatsOf = (f) => {
-  const { windows, conditions } = cloneIndex();
+  const { windows, conditions, bodies } = cloneIndex();
   const byPartner = new Map();
   for (const list of windows.values()) {
     if (list.length < 2) continue;
@@ -9598,6 +9657,22 @@ const repeatsOf = (f) => {
       mark: "",
       what: "строки " + r.from + "–" + r.to + " повторены в " + barQuoted(rel(other) + ":" + r.at),
     }));
+  // Тело, повторённое там, где окно строк повтора не нашло.
+  for (const list of bodies.values()) {
+    const mine = list.find((x) => x.file === f);
+    if (mine === undefined) continue;
+    const others = list.filter((x) => x !== mine && !byPartner.has(x.file));
+    if (others.length === 0) continue;
+    out.push({
+      line: mine.line,
+      mark: "",
+      what:
+        "тело " +
+        barQuoted(mine.name) +
+        " повторено в " +
+        others.map((x) => barQuoted(rel(x.file) + ":" + x.line)).join(", "),
+    });
+  }
   for (const [cond, list] of conditions) {
     const mine = list.filter((x) => x.file === f);
     const others = list.filter((x) => x.file !== f);
@@ -9740,6 +9815,52 @@ const manifestShiftsOf = () => {
   return out;
 };
 
+/** Правки вне кода, о которых спрашивают критерии поставки и конвейера:
+ * политика источников, конвейер, запись о бюджете поставки. Предмет свода —
+ * код и стили, такая правка в него не входит, и «чисто» по этим критериям
+ * стояло ни на чём. Найдено ревьюерами проб. */
+const SETUP_PIPELINE =
+  /^(?:\.github\/workflows\/|\.gitlab-ci\.ya?ml$|\.circleci\/|azure-pipelines\.ya?ml$|bitbucket-pipelines\.ya?ml$|Jenkinsfile$)/;
+const SETUP_POLICY = /Content-Security-Policy/i;
+const SETUP_BUDGET = /бюджет|поставк|budget|size-?limit|bundlesize|maxSize/i;
+const setupShiftsOf = () => {
+  const out = [];
+  const skip = new Set(
+    [CONFIG.barProtocol, CONFIG.mutationLedger]
+      .filter((x) => x != null)
+      .map((x) => norm(path.join(BASE, x))),
+  );
+  for (const one of changedPathsNow(REPO_AT) ?? []) {
+    const abs = path.join(REPO_AT, one);
+    const where = norm(one);
+    if (where.startsWith(".claude/") || skip.has(norm(abs))) continue;
+    if (files.includes(abs) || styleFiles.includes(abs)) continue;
+    // В базе бюджет записан фактами; прочие её файлы — проза о коде, и
+    // слово «поставка» в карте о бюджете не говорит.
+    const inBase = !path.relative(BASE, abs).startsWith("..");
+    if (inBase && norm(abs) !== norm(path.join(BASE, "01-facts.md"))) continue;
+    const now = existsSync(abs) ? readFileSync(abs, "utf8") : "";
+    const was = headTextOf(abs) ?? "";
+    if (SETUP_PIPELINE.test(where))
+      out.push({ where, mark: "конвейер", what: "правка конвейера проверок" });
+    if (SETUP_POLICY.test(now) || SETUP_POLICY.test(was))
+      out.push({ where, mark: "политика источников", what: "правка файла с политикой источников" });
+    const before = new Set(was.split(LF));
+    const after = new Set(now.split(LF));
+    const moved = [
+      ...[...after].filter((l) => !before.has(l)),
+      ...[...before].filter((l) => !after.has(l)),
+    ].find((l) => SETUP_BUDGET.test(l));
+    if (moved !== undefined)
+      out.push({
+        where,
+        mark: "бюджет",
+        what: "правка строки о бюджете поставки: «" + moved.trim().slice(0, 80) + "»",
+      });
+  }
+  return out;
+};
+
 /** Виды строк модели, которые дают признаки текста кода: прежние и по всей
  * планке, кроме тех, что дают лист стилей, тест и граф. */
 const SYMPTOM_SORTS = [
@@ -9761,6 +9882,8 @@ const SYMPTOM_SORTS = [
         "повтор",
         "постоянный",
         "зависимость",
+        "настройка",
+        "поставка",
         "приглушение",
         "гарантия",
         "хранение",
@@ -11584,6 +11707,9 @@ const barModelOf = (
   // Зависимости, которые правка добавила или переставила.
   for (const one of change && want("зависимость") ? manifestShiftsOf() : [])
     add("зависимость", CONFIG.manifest, one.what, one.mark);
+  // Правки вне кода, о которых спрашивают критерии поставки и конвейера.
+  for (const one of change && want("настройка") ? setupShiftsOf() : [])
+    add("настройка", one.where, one.what, one.mark);
 
   // Соседи предмета по графу — в обе стороны: что он берёт, кто берёт его,
   // и файлы единиц переноса того, что он берёт. Правку сверяют не саму с
@@ -11839,13 +11965,27 @@ const barModelOf = (
       change ? guaranteeShifts().map((one) => [one.g.id, one.how]) : [],
     );
     const inWork = [...new Set([...focus, ...area])];
-    const named = (g) =>
-      g.nodes
-        .filter((n) => {
-          const f = guaranteeAbs(n);
-          return f !== null && inWork.some((one) => norm(one) === norm(f));
-        })
-        .join(", ");
+    // Узел гарантии в единице переноса, которую тронула работа: лист стилей
+    // компонента ломает обещание его хука, хотя гарантия листа не называет.
+    // Найдено ревьюером пробы.
+    const units = new Set(focus.filter((f) => !isTest(f)).map(unitOf));
+    const inUnit = (n) => {
+      const f = guaranteeAbs(n);
+      return f !== null && units.has(unitOf(f));
+    };
+    const named = (g) => {
+      const direct = g.nodes.filter((n) => {
+        const f = guaranteeAbs(n);
+        return f !== null && inWork.some((one) => norm(one) === norm(f));
+      });
+      return direct.length > 0
+        ? direct.join(", ")
+        : g.nodes.filter(inUnit).join(", ") + " — правлена его единица переноса";
+    };
+    const direct = new Set(guaranteesOver(inWork).map((g) => g.id));
+    const over = guarantees().rows.filter(
+      (g) => direct.has(g.id) || g.nodes.some(inUnit),
+    );
     for (const g of guarantees().rows) {
       if (shifts.get(g.id) !== "тест правлен") continue;
       add(
@@ -11862,7 +12002,7 @@ const barModelOf = (
         "изменено",
       );
     }
-    for (const g of guaranteesOver(inWork))
+    for (const g of over)
       add(
         "гарантия",
         rel0(at) + ":" + g.line,

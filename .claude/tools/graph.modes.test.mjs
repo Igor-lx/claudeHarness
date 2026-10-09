@@ -4039,7 +4039,7 @@ describe("признаки, видимые текстом, в модели св�
       };
       put(
         "src/shared/zzStore/zzStore.ts",
-        "export const zzItems: string[] = [];\nexport const zzConfig = { size: 0 };\nlet zzHits = 0;\nexport const zzBump = () => {\n  zzHits += 1;\n  return zzHits;\n};\n",
+        "export const zzItems: string[] = [];\nexport const zzConfig = { size: 0 };\nlet zzHits = 0;\nexport const zzBump = () => {\n  zzHits += 1;\n  return zzHits;\n};\nconst zzWatchers: (() => void)[] = [];\nexport const zzWatch = (f: () => void): void => {\n  zzWatchers.push(f);\n};\n",
       );
       put(
         "src/shared/zzFormat/zzFormat.ts",
@@ -4137,9 +4137,10 @@ describe("признаки, видимые текстом, в модели св�
       const mode = tool("levels", "shared/zzMode/zzMode.ts");
       expect(mode).toContain("флаг: булев параметр либо довод: строка 1 on");
       expect(mode).not.toContain("setZzMode(…)");
-      expect(tool("levels", "shared/zzStore/zzStore.ts")).toContain(
-        "модульное: изменяемое на уровне модуля: строка 3 zzHits",
-      );
+      const store = tool("levels", "shared/zzStore/zzStore.ts");
+      expect(store).toContain("модульное: изменяемое на уровне модуля: строка 3 zzHits");
+      // Тип со стрелкой не прячет контейнер модуля.
+      expect(store).toMatch(/модульное: изменяемое на уровне модуля: [^\n]*строка 8 zzWatchers/);
 
       // Беспредметность по признаку ложна.
       const asked = ["H7", "B1", "A4", "E1", "B4", "C8", "B8"];
@@ -6572,6 +6573,8 @@ describe("признаки по всей планке в модели свода
           ...block,
           "};",
           "export const zzFrame = (step: FrameRequestCallback) => requestAnimationFrame(step);",
+          "export const zzPick = (xs: readonly number[]) => xs.filter((x) => x > 0 && x < 10);",
+          "export const zzLen = (xs: readonly number[]) => xs.length;",
           "",
         ].join("\n"),
       );
@@ -6585,6 +6588,9 @@ describe("признаки по всей планке в модели свода
           'import { zzScale } from "../shared/zzMath/zzMath";',
           "export const zzA = (a: number) => zzScale(a, 2);",
           "export const zzB = (b: number) => zzScale(b, 2);",
+          "export const zzKeep = (xs: readonly number[]) =>",
+          "  xs.filter((x) => x > 0 && x < 10);",
+          "export const zzSize = (xs: readonly number[]) => xs.length;",
           "",
         ].join("\n"),
       );
@@ -6605,6 +6611,10 @@ describe("признаки по всей планке в модели свода
       const rows = modelOf(box);
       expect(has(rows, "повтор", "", "shared/zzMath/zzMath.ts")).toBe(true);
       expect(text).toMatch(/повторены в `shared\/zzMath\/zzCopy\.ts:\d+`/);
+      // Короткое тело окно строк не видит; повтор тела — строкой, а тело
+      // короче порога повтором не считается.
+      expect(text).toMatch(/тело `zzPick` повторено в `app\/zzUse\.ts:5`/);
+      expect(text).not.toMatch(/тело `zzLen`/);
       expect(text).toMatch(/zzScale\(…\): довод 2 всегда `2`, мест вызова `2`/);
       expect(has(rows, "тесты", "нет")).toBe(true);
       expect(has(rows, "ответственность", "союз")).toBe(true);
@@ -6622,6 +6632,27 @@ describe("признаки по всей планке в модели свода
       fs.appendFileSync(path.join(box, "src", "app", "zzUse.ts"), "export const zzC = 3;\n");
       tool("bar");
       expect(has(modelOf(box), "зависимость", "диапазон")).toBe(true);
+
+      // Правки вне кода — конвейер, политика источников, запись о бюджете —
+      // спрашивают свои критерии; слово «поставка» в карте о бюджете не говорит.
+      put(".github/workflows/zz.yml", "jobs:\n  check:\n    steps:\n      - run: npm run build\n");
+      put("zzpolicy.html", '<meta http-equiv="Content-Security-Policy" content="default-src *">\n');
+      const factsAt = path.join(box, ".context", "01-facts.md");
+      fs.writeFileSync(
+        factsAt,
+        fs
+          .readFileSync(factsAt, "utf8")
+          .replace("| Q. Безопасность | нет |", "| Q. Безопасность | да |")
+          .replace("| U. Конвейер проверок | нет |", "| U. Конвейер проверок | да |") +
+          "\n| бюджет поставки | снят |\n",
+      );
+      fs.appendFileSync(path.join(box, ".context", "00-map.md"), "\nпоставка собирается сборщиком\n");
+      tool("bar");
+      const setup = modelOf(box);
+      expect(has(setup, "настройка", "конвейер", ".github/workflows/zz.yml")).toBe(true);
+      expect(has(setup, "настройка", "политика источников", "zzpolicy.html")).toBe(true);
+      expect(has(setup, "настройка", "бюджет", ".context/01-facts.md")).toBe(true);
+      expect(has(setup, "настройка", "бюджет", ".context/00-map.md")).toBe(false);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -7292,6 +7323,42 @@ describe("гарантия поведения держится тестом", ()
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("правка листа в единице узла гарантии затрагивает гарантию, хотя лист она не называет", () => {
+    const box = seatEmpty("garant-unit-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const put = putIn(box);
+      badge(put);
+      put("src/components/ZzChip/ZzChip.module.scss", ".chip {\n  color: red;\n}\n");
+      promise(box, [ROW]);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      put("src/components/ZzBadge/ZzBadge.module.scss", ".badge {\n  animation: spin 1s infinite;\n}\n");
+      put("src/components/ZzChip/ZzChip.module.scss", ".chip {\n  color: blue;\n}\n");
+      spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar"], {
+        cwd: box,
+        encoding: "utf8",
+      });
+      const rows = fs
+        .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
+        .split("\n")
+        .filter((l) => /^\| П\d+ \| гарантия \|/.test(l));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toContain(
+        "REQ-1 (должно): на значке видна подпись — источник: разработчик, 2026-10-04; узлы в работе: components/ZzBadge/ZzBadge.tsx — правлена его единица переноса",
+      );
+      expect(rows[0]).toContain("| затронута |");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
 
 /**
