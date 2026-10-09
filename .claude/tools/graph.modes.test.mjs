@@ -13,6 +13,9 @@ import {
   BAR_SIGNALS,
   WITNESS_COLUMNS,
   bareCodeOf,
+  crossCandidatesOf,
+  crossWordsOf,
+  policyBodiesOf,
 } from "./graph.predicates.mjs";
 
 /**
@@ -2672,36 +2675,86 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
       })
       .join("\n"),
   );
-  fs.writeFileSync(protoAt, crossFilled(fs.readFileSync(protoAt, "utf8")));
+  fs.writeFileSync(
+    protoAt,
+    // Корень — над папкой базы: протокол перехода лежит в ней уровнем ниже.
+    crossFilled(fs.readFileSync(protoAt, "utf8"), protoAt.slice(0, protoAt.lastIndexOf(path.sep + ".context" + path.sep))),
+  );
 };
 
-// Перекрёстная сверка: строка на место находки, «также» — «никакие», если
-// ответа ещё нет. Так проба отвечает на неё, как отвечала бы сессия.
-const crossFilled = (text) => {
+// Перекрёстная сверка: строка на находку, как её пишет режим, — кандидатов
+// считает та же функция обвязки. Ответа ещё нет — «не X» о каждом кандидате
+// либо «никакие»: так проба отвечает на неё, как отвечала бы сессия, не
+// нашедшая связи.
+const crossFilled = (text, root) => {
   const lines = text.split("\n");
-  const head = lines.indexOf("| место | записано | также |");
+  const head = lines.indexOf("| находка | что | кандидаты | также |");
   if (head === -1) return text;
   let end = head + 1;
   while (end < lines.length && lines[end].startsWith("|")) end += 1;
+  const cellsOf = (line) => line.split(/(?<!\\)\|/).slice(1, -1).map((x) => x.trim());
   const said = new Map(
-    lines
-      .slice(head + 2, end)
-      .map((line) => line.split("|").map((x) => x.trim()))
-      .map((c) => [c[1].replace(/`/g, ""), c[3]]),
+    lines.slice(head + 2, end).map(cellsOf).map((c) => [c[0], c[3]]),
   );
-  const places = new Map();
+  const keyOf = (place) => {
+    const m = /^`?(.+?):([0-9]+)`?$/.exec(place.trim());
+    if (m === null) return null;
+    const file = fs.existsSync(path.join(root, m[1])) ? m[1] : "src/" + m[1];
+    return file + ":" + Number(m[2]);
+  };
+  const written = new Map();
+  const findings = [];
+  const askable = new Set();
+  const modelAt = new Map();
   for (const line of lines) {
-    const c = line.split("|").map((x) => x.trim());
-    if (c.length !== 9 || c[4] !== "нашлось") continue;
-    const more = /ещё (?:мест|нарушений)(?:\s*`[0-9]+`)?\s*:\s*(.+)$/.exec(c[6]);
-    for (const place of [c[5], ...(more === null ? [] : more[1].split(","))]) {
-      const key = place.trim().replace(/`/g, "");
-      places.set(key, (places.get(key) ?? new Set()).add(c[1]));
+    const c = cellsOf(line);
+    if (c.length === 8 && /^П[0-9]+$/.test(c[0])) {
+      const key = keyOf(c[2]);
+      if (key !== null) modelAt.set(key, [...(modelAt.get(key) ?? []), { sort: c[1], mark: c[5] }]);
+      continue;
     }
+    if (c.length !== 7 || !/^[A-ZА-Я][0-9]+/.test(c[0])) continue;
+    if (c[3] !== "лозунг") askable.add(c[0]);
+    if (c[3] !== "нашлось") continue;
+    const more = /ещё (?:мест|нарушений)(?:\s*`[0-9]+`)?\s*:\s*(.+)$/.exec(c[5]);
+    const keys = [c[4], ...(more === null ? [] : more[1].split(","))]
+      .map(keyOf)
+      .filter((key) => key !== null);
+    for (const key of keys) written.set(key, (written.get(key) ?? new Set()).add(c[0]));
+    if (keys.length > 0)
+      findings.push({ who: c[0] + (c[1] === "—" ? "" : " для " + c[1]), keys, what: c[5] });
   }
-  const rows = [...places.keys()]
-    .sort()
-    .map((key) => "| `" + key + "` | " + [...places.get(key)].sort().join(", ") + " | " + (said.get(key) || "никакие") + " |");
+  const bodies = ["quality.md", "quality-scoped.md"].flatMap((name) => {
+    const at = path.join(root, ".claude", "rules", name);
+    return fs.existsSync(at) ? policyBodiesOf(fs.readFileSync(at, "utf8"), () => "") : [];
+  });
+  const partsOf = (key) => [key.slice(0, key.lastIndexOf(":")), Number(key.slice(key.lastIndexOf(":") + 1))];
+  const rows = findings
+    .sort((x, y) => {
+      const [fx, lx] = partsOf(x.keys[0]);
+      const [fy, ly] = partsOf(y.keys[0]);
+      if (fx !== fy) return fx < fy ? -1 : 1;
+      if (lx !== ly) return lx - ly;
+      return x.who < y.who ? -1 : x.who > y.who ? 1 : 0;
+    })
+    .map((one) => {
+      const finding = one.who + " — `" + one.keys[0] + "`";
+      const mine = new Set(one.keys.flatMap((key) => [...(written.get(key) ?? [])]));
+      const what = crossWordsOf(one.what);
+      const cand = crossCandidatesOf(what, {
+        bodies,
+        live: new Set([...askable].filter((id) => !mine.has(id))),
+        signalIds: one.keys.flatMap((key) =>
+          (modelAt.get(key) ?? []).flatMap((m) =>
+            BAR_SIGNALS.filter(
+              (s) => s.sort === m.sort && (s.mark === undefined || [s.mark].flat().includes(m.mark)),
+            ).flatMap((s) => s.ids),
+          ),
+        ),
+      });
+      const answer = said.get(finding) || (cand.length > 0 ? cand.map((id) => "не " + id).join(", ") : "никакие");
+      return "| " + finding + " | " + what + " | " + cand.join(", ") + " | " + answer + " |";
+    });
   return [...lines.slice(0, head + 2), ...rows, ...lines.slice(end)].join("\n");
 };
 
@@ -2818,7 +2871,12 @@ describe("свод по планке от модели предмета", () => 
           return String(e.stdout ?? "");
         }
       };
-      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), "export const zzWide = (width: number): boolean => width > 0;\n");
+      // Булев параметр ставит на строку находки признак «флаг»: его критерии —
+      // кандидаты перекрёстной сверки, и о каждом нужен ответ.
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzWide.ts"),
+        "export const zzWide = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n",
+      );
       fs.writeFileSync(path.join(box, "src", "app", "zzTall.ts"), "export const zzTall = (height: number): boolean => height > 0;\n");
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar", "app/zzWide.ts");
@@ -2843,35 +2901,41 @@ describe("свод по планке от модели предмета", () => 
       expect(tool("bar", "app/zzWide.ts")).toContain("H6: чисто со ссылкой на находку другого критерия");
 
       // Без ссылки — та же находка, забытая у другого критерия. Её держит
-      // перекрёстная сверка: у места находки ответ, кого ещё она нарушает.
-      // Свод выше запечатан; работа продолжается — печать снимается.
+      // перекрёстная сверка: у находки ответ, кого ещё она нарушает, и о
+      // каждом кандидате — «X» либо «не X». Свод выше запечатан; работа
+      // продолжается — печать снимается.
       fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: .*$/m, "- печать: `нет`"));
+      const finding = "B5 — `src/app/zzWide.ts:1`";
+      const rowRe = /^(\| B5 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| ([^|]*) \|).*$/m;
       const also = (value) =>
-        fs.writeFileSync(
-          protoAt,
-          fs
-            .readFileSync(protoAt, "utf8")
-            .replace(/^(\| `src\/app\/zzWide\.ts:1` \| [^|]+\|).*$/m, "$1 " + value + " |"),
-        );
+        fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(rowRe, "$1 " + value + " |"));
+      const candidates = () =>
+        rowRe.exec(fs.readFileSync(protoAt, "utf8"))[2].split(",").map((x) => x.trim()).filter((x) => x !== "");
       fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя говорит, что считают | " } });
+      // Признак «флаг» на строке находки — её кандидаты.
+      expect(candidates()).toEqual(expect.arrayContaining(["A4", "B1"]));
       also("H6");
-      expect(tool("bar", "app/zzWide.ts")).toContain(
-        "H6: назван у места `src/app/zzWide.ts:1` перекрёстной сверкой, а «нашлось» с этим местом у него нет",
+      const named = tool("bar", "app/zzWide.ts");
+      expect(named).toContain(
+        "H6: назван у находки " + finding + " перекрёстной сверкой, а «нашлось» с её местом у него нет",
       );
+      expect(named).toMatch(/перекрёстная сверка, B5 — `src\/app\/zzWide\.ts:1`: кандидаты без ответа — [^;]*B1/);
       also("Z99");
-      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, `src/app/zzWide.ts:1`: «Z99» — не критерий этого свода");
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «Z99» — не критерий этого свода");
+      also("никакие, B1");
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «никакие» вместе с названными критериями");
       also("");
-      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: мест находок с пустой графой «также» — 1");
-      // Строку о месте режим дописывает сам, ответ сессии переносится.
-      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^\| `src\/app\/zzWide\.ts:1` .*\n/m, ""));
-      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: таблица мест не сходится с находками — недостаёт 1");
-      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^\| `src\/app\/zzWide\.ts:1` \| B5 \|\s+\|$/m);
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: находок с пустой графой «также» — 1");
+      // Строку о находке режим дописывает сам, ответ сессии переносится.
+      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^\| B5 — `src\/app\/zzWide\.ts:1` .*\n/m, ""));
+      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: таблица не сходится с находками — недостаёт 1");
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^\| B5 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| [^|]* \|\s+\|$/m);
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: { H6: "нашлось | src/app/zzWide.ts:1 | имя не говорит, что считают | вопрос" },
         holds: { приложение: "нет" },
       });
-      also("H6");
+      also(["H6", ...candidates().map((id) => "не " + id)].join(", "));
       expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
@@ -4039,6 +4103,7 @@ describe("признаки, видимые текстом, в модели св�
                 : line,
             )
             .join("\n"),
+          box,
         ),
       );
       const sealed = tool("bar", "components/ZzClock");
@@ -4303,6 +4368,7 @@ describe("свидетели в своде по планке", () => {
                 : line;
             })
             .join("\n"),
+          box,
         ),
       );
       const sealed = tool("bar", "components");

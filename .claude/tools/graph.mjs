@@ -51,6 +51,9 @@ import {
   BAR_SIGNALS,
   BAR_CUTS,
   BAR_PRESENT,
+  crossCandidatesOf,
+  crossWordsOf,
+  policyBodiesOf,
   BAR_CHECKS,
   BAR_CHECKS_MODELLED,
   BAR_CHECK_KINDS,
@@ -1704,6 +1707,10 @@ const barHeader = (at) =>
  * переносит исходы, а не теряет их. */
 const BAR_SUMMED = ["узел", "слой", "приложение"];
 const BAR_NO_SUBJECT = "—";
+/** Первая графа строки перекрёстной сверки: критерий, предмет и место. Стоит
+ * здесь, у разбора протокола: суд пробы разбирает протокол при загрузке
+ * модуля, выше объявлений свода. */
+const BAR_CROSS_FINDING = /^[A-ZА-Я][0-9]+(?:-[а-яё]+)?(?: для `[^`]+`)? — `[^`]+`$/;
 const barCellsOf = (line) =>
   line
     .split(/(?<!\\)\|/)
@@ -1731,10 +1738,10 @@ const barRowsOf = (body) => {
       reads.push({ n: Number(cells[0]), spec: cells[1], word: cells[2] });
       continue;
     }
-    // Перекрёстная сверка: место находки, кто её записал, кого ещё она
-    // нарушает.
-    if (cells.length === 3 && cells[0].startsWith(BAR_TICK)) {
-      cross.push({ place: barUnTick(cells[0]), who: cells[1], also: cells[2] });
+    // Перекрёстная сверка: находка — критерий, предмет и место, — её слова,
+    // кандидаты и ответ.
+    if (cells.length === 4 && BAR_CROSS_FINDING.test(cells[0])) {
+      cross.push({ finding: cells[0], what: cells[1], cand: cells[2], also: cells[3] });
       continue;
     }
     if (cells.length < 4 || /^-+$/.test(cells[0])) continue;
@@ -10029,32 +10036,9 @@ const policyBodies = () => {
   const scoped = path.join(BASE, CONFIG.qualityScope.policy);
   for (const file of [scoped.replace(/quality-scoped.md$/, "quality.md"), scoped]) {
     if (!existsSync(file)) continue;
-    let section = null;
-    let cur = null;
-    const flush = () => {
-      if (cur !== null)
-        POLICY_BODIES.push({
-          id: cur.id,
-          text: cur.lines.join(LF).trimEnd() + formsTailOf(cur.id),
-        });
-      cur = null;
-    };
-    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-      const head = /^## ([A-ZА-Я])[.]\s+(.+)$/.exec(line);
-      if (head !== null || /^#{1,6}\s/.test(line) || /^---\s*$/.test(line)) {
-        flush();
-        section = head !== null ? head[1] : /^#{1,2}\s/.test(line) ? null : section;
-        continue;
-      }
-      const one = /^[*][*]([A-ZА-Я][0-9]+(?:-[а-яё]+)?)[.]\s*(.*)$/.exec(line);
-      if (one !== null && section !== null) {
-        flush();
-        cur = { id: one[1], lines: [line] };
-        continue;
-      }
-      if (cur !== null) cur.lines.push(line);
-    }
-    flush();
+    // `own` — тело как в политике: по нему перекрёстная сверка считает
+    // кандидатов, и тот же разбор делает её проба в тестах обвязки.
+    POLICY_BODIES.push(...policyBodiesOf(readFileSync(file, "utf8"), formsTailOf));
   }
   return POLICY_BODIES;
 };
@@ -12039,14 +12023,21 @@ const barModelCode = (model) =>
  * первой же правке формы, и разошёлся бы молча: переход делают редко. */
 const BAR_HEAD = "| критерий | предмет | о чём | исход | адрес | что | судьба |";
 const BAR_BASE_HEAD = "| файл | база | документация | чем это объяснено |";
-/** Перекрёстная сверка находок: строка на место находки. Протокол устроен по
+/** Перекрёстная сверка находок: строка на находку. Протокол устроен по
  * критериям, и находка, записанная под одним, забывалась у другого, чьё тело
  * называет то же нарушение: флаг, записанный под `B1`, а `H8-бис` — «чисто»
  * без ссылки на него. Связи критериев заранее не перечислить, поэтому вопрос
- * задаётся у находки: какие ещё критерии её называют. Найдено пробой планки. */
+ * задаётся у находки: какие ещё критерии её называют. Найдено пробой планки.
+ *
+ * Строка — на находку, а не на место: на одной строке кода стоят разные
+ * нарушения, и вопрос «это же нарушение» у места неоднозначен. Кандидатов
+ * считает машина — признаки модели на месте находки и близость её слов к телу
+ * критерия, — и о каждом ответ «X» либо «не X». Без кандидатов ответ
+ * «никакие» стоял на всех местах двух пачек проб подряд и не связал ни одного. */
 const BAR_CROSS_TITLE = "## Перекрёстная сверка находок";
-const BAR_CROSS_HEAD = "| место | записано | также |";
+const BAR_CROSS_HEAD = "| находка | что | кандидаты | также |";
 const BAR_CROSS_NONE = "никакие";
+const BAR_CROSS_NOT = "не ";
 const BAR_MODEL_HEAD =
   "| модель | вид | где | что | сдвиг | пометка | снятие | откуда |";
 /** Откуда строка модели: из кода — граф, признаки текста, распознаватели, —
@@ -13082,17 +13073,19 @@ const barSkeletonOf = ({
     ...LEVEL_ORDER.flatMap(outcomesOf),
     BAR_CROSS_TITLE,
     "",
-    "Строка на место находки; её дописывает режим, когда исход дан. Графа",
-    "«также» — какие ещё критерии называют это же нарушение, через запятую,",
-    "либо " + barQuoted(BAR_CROSS_NONE) + ". Отвечают по каждой находке, прочитав тела всех",
-    "критериев: протокол идёт по критериям, и находка, записанная под одним,",
-    "забывается у другого. Каждый названный обязан стоять " + barQuoted("нашлось"),
-    "с этим местом — адресом либо в «ещё мест:».",
+    "Строка на находку; её дописывает режим, когда исход дан. Графа",
+    "«кандидаты» — критерии, которые могут называть то же нарушение: признак",
+    "модели на месте находки либо тело, близкое к её словам. Графа «также» —",
+    "ответ через запятую: о каждом кандидате " + barQuoted("X") + " либо " + barQuoted("не X") + ", и любой",
+    "другой критерий, чьё тело называет это нарушение; кандидатов нет и",
+    "других нет — " + barQuoted(BAR_CROSS_NONE) + ". Протокол идёт по критериям, и находка,",
+    "записанная под одним, забывается у другого. Каждый названный без «не»",
+    "обязан стоять " + barQuoted("нашлось") + " с местом этой находки — адресом либо в «ещё мест:».",
     "",
     BAR_CROSS_HEAD,
-    "| --- | --- | --- |",
+    "| --- | --- | --- | --- |",
     ...cross0.map(
-      (r) => "| " + barQuoted(r.place) + " | " + r.who + " | " + r.also + " |",
+      (r) => "| " + r.finding + " | " + r.what + " | " + r.cand + " | " + r.also + " |",
     ),
     "",
     "## Итог по уровням",
@@ -13331,6 +13324,7 @@ const barHolesOf = ({
   const placeKey = (abs, line) =>
     norm(path.relative(repoRoot, abs)) + ":" + Number(line);
   const placesFound = new Map();
+  const findingsAt = [];
   for (const { c, subject } of expected) {
     const who = barWho(c.id, subject);
     const one = said.get(barKey(c.id, subject)) ?? {
@@ -13428,6 +13422,7 @@ const barHolesOf = ({
     // каждое сверяется, как адрес: строка на работу одна, а нарушений
     // одного критерия бывает несколько.
     const more = barMorePlacesOf(one.what);
+    const keysOf = [];
     for (const place of [one.addr, ...(more === "" ? [] : more.split(","))]) {
       const spot = spotOf(place);
       if (spot === null) {
@@ -13473,6 +13468,7 @@ const barHolesOf = ({
       else {
         const key = placeKey(abs, spot[2]);
         placesFound.set(key, (placesFound.get(key) ?? new Set()).add(c.id));
+        keysOf.push(key);
       }
       // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
       // одну единицу переноса закрывал бы вопрос о другой.
@@ -13507,67 +13503,139 @@ const barHolesOf = ({
         if (loose !== "") holes.push(who + ": «" + fate + "», а " + loose);
       }
     }
+    if (keysOf.length > 0)
+      findingsAt.push({ who, keys: keysOf, what: one.what });
   }
-  // Перекрёстная сверка находок: у каждого места — ответ, какие ещё критерии
-  // называют это нарушение, и каждый названный стоит «нашлось» с этим местом.
-  // Связи критериев здесь не перечислены и не могут быть: их решает чтение по
-  // каждой находке, а машина держит, что ответ дан и с протоколом не спорит.
+  // Перекрёстная сверка находок: у каждой находки — ответ, какие ещё
+  // критерии называют это нарушение; о каждом кандидате, которого считает
+  // машина, сказано «X» либо «не X», и каждый названный без «не» стоит
+  // «нашлось» с её местом. Связи критериев здесь не перечислены и не могут
+  // быть: кандидатов дают модель и близость слов, а решает чтение.
+  const criterionIds = new Set(expected.map((e) => e.c.id));
+  const askable = new Set(
+    expected.filter((e) => !e.c.slogan).map((e) => e.c.id),
+  );
+  const modelAt = new Map();
+  for (const m of parsed.model) {
+    const spot = spotOf(m.where);
+    const abs = spot === null ? null : spotFile(spot[1]);
+    if (abs === null) continue;
+    const key = placeKey(abs, spot[2]);
+    modelAt.set(key, [...(modelAt.get(key) ?? []), m]);
+  }
+  const signalIdsAt = (key) =>
+    (modelAt.get(key) ?? []).flatMap((m) =>
+      BAR_SIGNALS.filter(
+        (one) =>
+          one.sort === m.sort &&
+          (one.mark === undefined || [one.mark].flat().includes(m.mark)),
+      ).flatMap((one) => one.ids),
+    );
   const crossBy = new Map();
   let crossStale = 0;
   for (const r of parsed.cross) {
-    const spot = spotOf(r.place);
-    const abs = spot === null ? null : spotFile(spot[1]);
-    const key = abs === null ? null : placeKey(abs, spot[2]);
-    if (key === null || !placesFound.has(key) || crossBy.has(key))
-      crossStale += 1;
-    else crossBy.set(key, r);
+    if (crossBy.has(r.finding)) crossStale += 1;
+    else crossBy.set(r.finding, r);
   }
-  const criterionIds = new Set(expected.map((e) => e.c.id));
+  // Порядок — по файлу, затем по номеру строки числом: строкой `:10`
+  // вставал перед `:3`.
+  const placeParts = (key) => {
+    const at = key.lastIndexOf(":");
+    return [key.slice(0, at), Number(key.slice(at + 1))];
+  };
+  const byPlace = (x, y) => {
+    const [fx, lx] = placeParts(x.keys[0]);
+    const [fy, ly] = placeParts(y.keys[0]);
+    if (fx !== fy) return fx < fy ? -1 : 1;
+    if (lx !== ly) return lx - ly;
+    return x.who < y.who ? -1 : x.who > y.who ? 1 : 0;
+  };
   let crossOpen = 0;
-  let crossWho = 0;
-  const crossRows = [...placesFound.keys()].sort().map((key) => {
-    const who = [...placesFound.get(key)].sort().join(", ");
-    const row = crossBy.get(key);
+  let crossDrift = 0;
+  const crossRows = [...findingsAt].sort(byPlace).map((one) => {
+    const finding = one.who + " — " + barQuoted(one.keys[0]);
+    const written = new Set(
+      one.keys.flatMap((key) => [...(placesFound.get(key) ?? [])]),
+    );
+    const live = new Set([...askable].filter((id) => !written.has(id)));
+    const what = crossWordsOf(one.what);
+    const cand = crossCandidatesOf(what, {
+      bodies: policyBodies(),
+      live,
+      signalIds: one.keys.flatMap(signalIdsAt),
+    }).join(", ");
+    const row = crossBy.get(finding);
     const also = row?.also ?? "";
-    if (row !== undefined && row.who !== who) crossWho += 1;
+    if (row !== undefined && (row.what !== what || row.cand !== cand))
+      crossDrift += 1;
     if (also === "") crossOpen += 1;
-    else if (also !== BAR_CROSS_NONE)
-      for (const id of also.split(/\s*,\s*/).filter((x) => x !== "")) {
+    else {
+      const said = new Set();
+      let none = false;
+      let named = 0;
+      for (const token of also.split(/\s*,\s*/).filter((x) => x !== "")) {
+        if (token === BAR_CROSS_NONE) {
+          none = true;
+          continue;
+        }
+        const not = token.startsWith(BAR_CROSS_NOT);
+        const id = not ? token.slice(BAR_CROSS_NOT.length).trim() : token;
+        said.add(id);
         if (!criterionIds.has(id))
           holes.push(
-            "перекрёстная сверка, " +
-              barQuoted(key) +
-              ": «" +
+            "перекрёстная сверка, " + finding + ": «" + id + "» — не критерий этого свода",
+          );
+        else if (!not) {
+          named += 1;
+          if (!written.has(id))
+            holes.push(
               id +
-              "» — не критерий этого свода",
-          );
-        else if (!placesFound.get(key).has(id))
-          holes.push(
-            id +
-              ": назван у места " +
-              barQuoted(key) +
-              " перекрёстной сверкой, а «нашлось» с этим местом у него нет — адресом либо в «ещё мест:»",
-          );
+                ": назван у находки " +
+                finding +
+                " перекрёстной сверкой, а «нашлось» с её местом у него нет — адресом либо в «ещё мест:»",
+            );
+        }
       }
-    return { place: key, who, also };
+      if (none && named > 0)
+        holes.push(
+          "перекрёстная сверка, " +
+            finding +
+            ": «" +
+            BAR_CROSS_NONE +
+            "» вместе с названными критериями",
+        );
+      const undecided = cand === "" ? [] : cand.split(", ").filter((id) => !said.has(id));
+      if (undecided.length > 0)
+        holes.push(
+          "перекрёстная сверка, " +
+            finding +
+            ": кандидаты без ответа — " +
+            undecided.join(", ") +
+            "; о каждом «X» либо «не X»",
+        );
+    }
+    return { finding, what, cand, also };
   });
-  const crossMissing = placesFound.size - crossBy.size;
-  const crossDiffers = crossMissing > 0 || crossStale > 0 || crossWho > 0;
+  const crossMissing = crossRows.filter((r) => !crossBy.has(r.finding)).length;
+  crossStale += [...crossBy.keys()].filter(
+    (key) => !crossRows.some((r) => r.finding === key),
+  ).length;
+  const crossDiffers = crossMissing > 0 || crossStale > 0 || crossDrift > 0;
   if (crossDiffers)
     holes.push(
-      "перекрёстная сверка: таблица мест не сходится с находками — недостаёт " +
+      "перекрёстная сверка: таблица не сходится с находками — недостаёт " +
         crossMissing +
         ", лишних " +
         crossStale +
-        ", с устаревшей графой «записано» " +
-        crossWho +
+        ", с устаревшими словами либо кандидатами " +
+        crossDrift +
         "; режим `bar` переписывает её сам",
     );
   if (crossOpen > 0)
     holes.push(
-      "перекрёстная сверка: мест находок с пустой графой «также» — " +
+      "перекрёстная сверка: находок с пустой графой «также» — " +
         crossOpen +
-        "; назвать критерии, чьё тело называет то же нарушение, либо «" +
+        "; о каждом кандидате «X» либо «не X» и любой другой критерий, чьё тело называет это нарушение, либо «" +
         BAR_CROSS_NONE +
         "»",
     );
@@ -13793,15 +13861,16 @@ const barHolesOf = ({
   return { holes, twice, extra, said, levelMap, crossRows, crossDiffers };
 };
 
-/** Таблица перекрёстной сверки, переписанная по находкам: строки о местах
- * без находки уходят, недостающие встают с пустой графой «также», ответ
- * переносится по месту. Таблицы нет — раздел встаёт в конец протокола. */
+/** Таблица перекрёстной сверки, переписанная по находкам: строки о снятых
+ * находках уходят, недостающие встают с пустой графой «также», слова и
+ * кандидаты берутся заново, ответ переносится по находке. Таблицы нет —
+ * раздел встаёт в конец протокола. */
 const barCrossWritten = (text, rows) => {
   const table = [
     BAR_CROSS_HEAD,
-    "| --- | --- | --- |",
+    "| --- | --- | --- | --- |",
     ...rows.map(
-      (r) => "| " + barQuoted(r.place) + " | " + r.who + " | " + r.also + " |",
+      (r) => "| " + r.finding + " | " + r.what + " | " + r.cand + " | " + r.also + " |",
     ),
   ];
   const lines = text.split(LF);
@@ -15121,8 +15190,9 @@ if (mode === "bar") {
     );
     console.log("  Затем итог по уровням — по каждому предмету: что работа");
     console.log("  на нём изменила и держится ли он; каждый сдвиг модели назван.");
-    console.log("  Находки есть — режим впишет их места в перекрёстную сверку:");
-    console.log("  у каждого ответить, какие ещё критерии называют это нарушение.");
+    console.log("  Находки есть — режим впишет их в перекрёстную сверку со словами и");
+    console.log("  кандидатами: о каждом кандидате «X» либо «не X», и любой другой");
+    console.log("  критерий, чьё тело называет то же нарушение.");
     console.log(
       "  Затем позвать режим снова — он сверит форму и поставит печать.",
     );

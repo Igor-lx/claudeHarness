@@ -568,3 +568,63 @@ describe("расширения звеньев и линта семени — п�
     expect([...linted].sort()).toEqual([...vocabulary.CODE_EXTENSIONS].sort());
   });
 });
+
+/**
+ * Кандидаты перекрёстной сверки: признаки модели на месте находки и тела,
+ * близкие к её словам. Близость меряет вес общих основ, а вес растёт с
+ * редкостью основы: на трёх телах любая основа часта, поэтому корпус дополнен
+ * посторонними — как в политике, где тел полторы сотни.
+ */
+describe("кандидаты перекрёстной сверки", () => {
+  const policy = [
+    "## A. Границы",
+    "",
+    "**A4. Флаг, меняющий смысл функции, — это две функции.** (единица)",
+    "Если внутри `if (flag)` разделяет тело пополам — тело и было двумя телами.",
+    "",
+    "**H8-бис. Абстракция стоит на устойчивом понятии.** (узел)",
+    "Признак ошибки — параметр, добавленный «чтобы подошло и для второго случая».",
+    "",
+    "**E9. Краевое — шире, чем числа.** (единица)",
+    "Проверяются и события: повторное нажатие, двойное срабатывание.",
+    "",
+    "## Пример в прозе",
+    "",
+    "**Z1. Не критерий: раздела с буквой нет.** (единица)",
+  ].join(NEWLINE);
+  const filler = Array.from({ length: 60 }, (_, k) => ({
+    id: "Q" + k,
+    own: "постороннее тело номер " + "абвгдежзик"[k % 10] + "слово" + k,
+  }));
+
+  it("тела по разделам с буквой, хвост дописан к тексту, а не к телу", () => {
+    const bodies = vocabulary.policyBodiesOf(policy, (id) => (id === "A4" ? NEWLINE + "хвост" : ""));
+    expect(bodies.map((b) => b.id)).toEqual(["A4", "H8-бис", "E9"]);
+    expect(bodies[0].text.endsWith(NEWLINE + "хвост")).toBe(true);
+    expect(bodies[0].own.endsWith("хвост")).toBe(false);
+  });
+
+  it("признаки модели — кандидаты из живых, по имени", () => {
+    const bodies = vocabulary.policyBodiesOf(policy, () => "");
+    expect(
+      vocabulary.crossCandidatesOf("о чём угодно", {
+        bodies,
+        live: new Set(["A4", "B1"]),
+        signalIds: ["B1", "A4", "Z9"],
+      }),
+    ).toEqual(["A4", "B1"]);
+  });
+
+  it("тело, близкое к словам находки, — кандидат; далёкое и неживое — нет", () => {
+    const bodies = [...vocabulary.policyBodiesOf(policy, () => ""), ...filler];
+    const live = new Set(["A4", "H8-бис", "E9"]);
+    const words = "параметр добавлен, чтобы подошло для второго случая";
+    expect(vocabulary.crossCandidatesOf(words, { bodies, live, signalIds: [] })).toEqual(["H8-бис"]);
+    expect(
+      vocabulary.crossCandidatesOf(words, { bodies, live: new Set(["A4", "E9"]), signalIds: [] }),
+    ).toEqual([]);
+    expect(
+      vocabulary.crossCandidatesOf("ничего общего с телами", { bodies, live, signalIds: [] }),
+    ).toEqual([]);
+  });
+});

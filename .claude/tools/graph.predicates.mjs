@@ -3827,6 +3827,17 @@ export const signalsSummary = (input) => {
 };
 
 export const PREDICATE_CASES = [
+  ["crossWordsOf", "имя не говорит, что считают", "имя не говорит, что считают"],
+  [
+    "crossWordsOf",
+    "флаг `asTitle` \\| делит тело; ещё мест: `src/a.ts:3`, `src/b.ts:4`",
+    "флаг `asTitle` / делит тело",
+  ],
+  [
+    "crossWordsOf",
+    "линт: react-hooks/purity — impure call; ещё нарушений `2`: src/a.ts:3, src/b.ts:4",
+    "линт: react-hooks/purity — impure call",
+  ],
   ["stateFormOf", "const [a, setA] = useState(0);", "хук состояния"],
   ["stateFormOf", "const useStateLike = 1;", ""],
   ["stateFormOf", "localStorage.setItem(k, v);", "хранилище браузера"],
@@ -5666,4 +5677,99 @@ export const printedIsRed = (lines, warning, soft) => {
     if (!quiet && /^ {4}\S/.test(line)) return true;
   }
   return false;
+};
+
+/** Тела критериев одного файла политики, по порядку: заголовок жирным и всё
+ * под ним до следующего критерия, заголовка или черты. Критерий вне раздела
+ * с буквой — пример в прозе, а не критерий. `own` — тело как в политике,
+ * `text` — оно же с хвостом, который дописывает `tailOf` по имени. */
+export const policyBodiesOf = (text, tailOf) => {
+  const out = [];
+  let section = null;
+  let cur = null;
+  const flush = () => {
+    if (cur !== null) {
+      const own = cur.lines.join("\n").trimEnd();
+      out.push({ id: cur.id, own, text: own + tailOf(cur.id) });
+    }
+    cur = null;
+  };
+  for (const line of text.split(/\r?\n/)) {
+    const head = /^## ([A-ZА-Я])[.]\s+(.+)$/.exec(line);
+    if (head !== null || /^#{1,6}\s/.test(line) || /^---\s*$/.test(line)) {
+      flush();
+      section = head !== null ? head[1] : /^#{1,2}\s/.test(line) ? null : section;
+      continue;
+    }
+    const one = /^[*][*]([A-ZА-Я][0-9]+(?:-[а-яё]+)?)[.]\s*(.*)$/.exec(line);
+    if (one !== null && section !== null) {
+      flush();
+      cur = { id: one[1], lines: [line] };
+      continue;
+    }
+    if (cur !== null) cur.lines.push(line);
+  }
+  flush();
+  return out;
+};
+
+/** Основа слова для близости — первые пять букв: окончание русского слова
+ * меняется, а начало держится, и сравнивают основы находки и тела между собой.
+ * Образец окончаний находил на проверочных находках на одну связь больше, но
+ * каждой из его шести десятков альтернатив нужен был свой случай. */
+const STEM_LENGTH = 5;
+const STOP_WORDS = new Set(
+  "это что как для при без над под или так если его она оно они".split(" "),
+);
+const stemOf = (word) => word.toLowerCase().replace(/ё/g, "е").slice(0, STEM_LENGTH);
+const stemsOf = (text) =>
+  new Set(
+    (text.match(/[а-яёa-z]{3,}/gi) ?? [])
+      .map((w) => w.toLowerCase())
+      .filter((w) => !STOP_WORDS.has(w))
+      .map(stemOf),
+  );
+
+/** Слова находки для перекрёстной сверки: без перечня прочих мест, без черты
+ * таблицы и не длиннее предела — строка сверки напоминает находку, полный
+ * текст стоит в исходе. */
+export const CROSS_WORDS_MAX = 160;
+export const crossWordsOf = (what) => {
+  const words = what
+    .replace(/;?\s*ещё (?:мест|нарушений)(?:\s*`[0-9]+`)?\s*:.*$/s, "")
+    .replace(/\\?\|/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words.length > CROSS_WORDS_MAX ? words.slice(0, CROSS_WORDS_MAX - 1) + "…" : words;
+};
+
+/** Кандидатов по близости слов — не больше стольких и не слабее порога. На
+ * проверочных находках проб критерий, чьё тело называет то же нарушение, стоял
+ * в первых трёх, когда стоял вообще, а посторонний — ниже веса шести. */
+export const CROSS_NEAR_MAX = 3;
+export const CROSS_NEAR_WEIGHT = 6;
+
+/** Критерии, которые могут называть то же нарушение, что находка с этими
+ * словами: признаки модели, вставшие на её месте (`signalIds`), и критерии,
+ * чьё тело (`bodies`, графа `own`) ближе всего к её словам — по весу общих
+ * основ, редкая основа весит больше. Берутся из `live`; порядок — по имени.
+ * Связей критериев здесь нет: кандидат — вопрос, а ответ на него даёт
+ * чтение. */
+export const crossCandidatesOf = (words, { bodies, live, signalIds }) => {
+  const docs = bodies.map((b) => ({ id: b.id, stems: stemsOf(b.own) }));
+  const df = new Map();
+  for (const d of docs) for (const s of d.stems) df.set(s, (df.get(s) ?? 0) + 1);
+  const idf = (s) => Math.log((docs.length + 1) / ((df.get(s) ?? 0) + 1));
+  const asked = stemsOf(words);
+  const near = docs
+    .filter((d) => live.has(d.id))
+    .map((d) => ({
+      id: d.id,
+      weight: [...asked].filter((s) => d.stems.has(s)).reduce((sum, s) => sum + idf(s), 0),
+    }))
+    .filter((x) => x.weight >= CROSS_NEAR_WEIGHT)
+    .sort((x, y) => y.weight - x.weight || (x.id < y.id ? -1 : 1))
+    .slice(0, CROSS_NEAR_MAX)
+    .map((x) => x.id);
+  return [...new Set([...signalIds, ...near])].filter((id) => live.has(id)).sort();
 };
