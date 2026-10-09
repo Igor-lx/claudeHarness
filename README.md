@@ -19,6 +19,7 @@ not go through.
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
 ![Vitest](https://img.shields.io/badge/Vitest-4-6E9F18?logo=vitest&logoColor=white)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522.23-339933)
+![Release](https://img.shields.io/github/v/release/Igor-lx/claudeHarness?color=blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 [How it looks](#how-it-looks) · [Quick start](#quick-start) · [What makes it different](#what-makes-it-different) · [How it works](#how-it-works) · [Installation and setup](#installation-and-setup)
@@ -444,7 +445,7 @@ it, each with its own question:
 
 ## Status
 
-**Functionally complete; in the tuning phase.** Everything described here is
+**v0.1.0: functionally complete; in the tuning phase.** Everything described here is
 in place and working: the quality bar and the seal, the graph and the
 knowledge base, the gates, seating and the transition, the self-checks. The
 architecture and the concept are settled and will not change. Current work is
