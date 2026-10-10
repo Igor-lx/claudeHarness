@@ -16,7 +16,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { createRequire } from "node:module";
+import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
 // «к какому файлу относится этот вопрос» должно быть записано ОДИН раз.
@@ -8716,6 +8716,10 @@ const locate = (q, prefix) => {
     if (expanded !== null && existsSync(expanded)) return norm(expanded);
     const atRepo = path.join(REPO_AT, candidate);
     if (existsSync(atRepo) && statSync(atRepo).isFile()) return norm(atRepo);
+    // Файл базы — от её папки: так адрес пишет строка гарантии в протоколе
+    // свода, и печать иначе роняла сверку «Не разобрано».
+    const atBase = path.join(BASE, candidate);
+    if (existsSync(atBase) && statSync(atBase).isFile()) return norm(atBase);
   }
   const hits = everyPath.filter((f) => f.endsWith("/" + q));
   return hits.length === 1 ? hits[0] : null;
@@ -9813,6 +9817,71 @@ const manifestShiftsOf = () => {
       });
     }
   return out;
+};
+
+/** Пакет, который называет адрес импорта: у пакета с областью — до второй
+ * косой, у прочих — до первой; `null` — свой файл, короткий адрес проекта,
+ * адрес со схемой либо встроенный модуль среды. */
+const NODE_BUILTINS = new Set(builtinModules);
+const packageOfSpec = (spec) => {
+  if (/^(?:\.|\/|[a-z][\w+.-]*:)/.test(spec)) return null;
+  if (ALIASES.some((a) => spec.startsWith(a.head))) return null;
+  const parts = spec.split("/");
+  const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  return NODE_BUILTINS.has(name) ? null : name;
+};
+
+/** Пакеты, которые правка впервые взяла в код поставки: их берёт файл
+ * предмета, а до правки не брал ни один файл кода. Манифест при этом не
+ * тронут — пакет лежал в нём и прежде, — а вопрос о зависимости тот же:
+ * правка завела её в поставку. Найдено ревьюером очереди проб: такая правка
+ * получала «нет предмета» по зависимостям. */
+const PACKAGE_SHIFTS = new Map();
+const codePackageShiftsOf = (subject) => {
+  const asked = subject.join(LF);
+  if (!PACKAGE_SHIFTS.has(asked))
+    PACKAGE_SHIFTS.set(asked, packageShiftsNow(subject));
+  return PACKAGE_SHIFTS.get(asked);
+};
+const packageShiftsNow = (subject) => {
+  const delivered = (f) => existsSync(f) && !isTest(f) && !isStylePath(f);
+  const importsIn = (text, f) => {
+    const out = [];
+    if (text === null) return out;
+    const parsed = parseModule(text, f);
+    for (const one of [...parsed.froms, ...parsed.bare, ...parsed.dynamic]) {
+      if (one.typeOnly) continue;
+      const name = packageOfSpec(one.spec);
+      if (name !== null)
+        out.push({ name, line: text.slice(0, one.end).split(LF).length });
+    }
+    return out;
+  };
+  const now = new Map();
+  for (const f of subject.filter(delivered))
+    for (const one of importsIn(readFileSync(f, "utf8"), f))
+      if (!now.has(one.name)) now.set(one.name, rel(f) + ":" + one.line);
+  if (now.size === 0) return [];
+  const left = new Set(now.keys());
+  for (const f of subject.filter(delivered))
+    for (const one of importsIn(headTextOf(f), f)) left.delete(one.name);
+  // Прочие файлы разбирают, пока не найден каждый пакет, и только те, где
+  // его имя стоит текстом: разбор всего проекта шёл бы на каждом коммите.
+  const inSubject = new Set(subject);
+  for (const f of files) {
+    if (left.size === 0) break;
+    if (inSubject.has(f) || !delivered(f)) continue;
+    const text = readFileSync(f, "utf8");
+    if (![...left].some((name) => text.includes(name))) continue;
+    for (const one of importsIn(text, f)) left.delete(one.name);
+  }
+  return [...now]
+    .filter(([name]) => left.has(name))
+    .map(([name, where]) => ({
+      where,
+      what: name + " — до правки код поставки его не брал",
+      mark: "впервые в коде",
+    }));
 };
 
 /** Правки вне кода, о которых спрашивают критерии поставки и конвейера:
@@ -11704,9 +11773,14 @@ const barModelOf = (
       "движение есть, а приглушённого движения нет ни в коде, ни в листах стилей",
       "нет",
     );
-  // Зависимости, которые правка добавила или переставила.
+  // Зависимости, которые правка добавила или переставила в манифесте, и
+  // пакеты, которые она впервые взяла в код.
   for (const one of change && want("зависимость") ? manifestShiftsOf() : [])
     add("зависимость", CONFIG.manifest, one.what, one.mark);
+  for (const one of change && want("зависимость")
+    ? codePackageShiftsOf(subject)
+    : [])
+    add("зависимость", one.where, one.what, one.mark);
   // Правки вне кода, о которых спрашивают критерии поставки и конвейера.
   for (const one of change && want("настройка") ? setupShiftsOf() : [])
     add("настройка", one.where, one.what, one.mark);
@@ -14707,20 +14781,24 @@ const barTransitionPlan = (s, live) => {
  * Один расчёт на режим `bar`, ворота перед коммитом и сверку цепочки.
  * `null` — git недоступен. */
 const barChangeOf = async (repoRoot) => {
-  const subject = await barChangedSubject(repoRoot);
-  if (subject === null) return null;
+  const changed = await barChangedSubject(repoRoot);
+  if (changed === null) return null;
+  const subject = [...new Set(changed)];
   // Манифест в предмет не входит — предмет только код и стили, — а
   // критерии о зависимостях спрашивают именно с его правки. Признак, взятый
   // из предмета, был ложен всегда: правка, добавившая пакет, получала «нет
   // предмета» по зависимостям, и вопрос о пакете не задавался.
   const manifestAt =
     CONFIG.manifest == null ? null : norm(path.join(BASE, CONFIG.manifest));
+  // Пакет, впервые взятый в код, — тот же вопрос о зависимости, хотя
+  // манифест не тронут: пакет лежал в нём и прежде.
   const manifestTouched =
-    manifestAt !== null &&
-    ((await changedPaths(repoRoot)) ?? []).some(
-      (f) => norm(path.join(repoRoot, f)) === manifestAt,
-    );
-  return { subject: [...new Set(subject)], manifestTouched };
+    (manifestAt !== null &&
+      ((await changedPaths(repoRoot)) ?? []).some(
+        (f) => norm(path.join(repoRoot, f)) === manifestAt,
+      )) ||
+    codePackageShiftsOf(subject).length > 0;
+  return { subject, manifestTouched };
 };
 
 /** Входы свода по предмету: область, модель, ожидаемые строки, свидетели,

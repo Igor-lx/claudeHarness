@@ -6621,10 +6621,33 @@ describe("признаки по всей планке в модели свода
       // Кадры есть, а приглушённого движения нет нигде в проекте.
       expect(has(rows, "приглушение", "нет", "проект")).toBe(true);
 
-      // Правка, добавившая зависимость диапазоном, спрашивает о ней.
+      // Пакет, впервые взятый в код поставки, спрашивает о зависимости, хотя
+      // манифест не тронут. Пакет, который код уже брал, и импорт одного
+      // типа строки не дают; тест кодом поставки не считается.
+      put("src/app/tests/zzPkg.test.ts", 'import { zzNew } from "zz-new";\nzzNew();\n');
+      fs.writeFileSync(
+        path.join(box, "src", "shared", "zzMath", "zzCopy.ts"),
+        'import { zzOld } from "zz-old/sub";\n' +
+          fs.readFileSync(path.join(box, "src", "shared", "zzMath", "zzCopy.ts"), "utf8"),
+      );
       git("init", "-q");
       git("add", "-A");
       git("commit", "-qm", "своё", "--no-verify");
+      const usePlain = fs.readFileSync(path.join(box, "src", "app", "zzUse.ts"), "utf8");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzUse.ts"),
+        'import { zzNew } from "zz-new";\nimport { zzOld } from "zz-old";\n' +
+          'import type { ZzT } from "@zz/types";\n' + usePlain,
+      );
+      tool("bar");
+      const first = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      expect(has(modelOf(box), "зависимость", "впервые в коде", "app/zzUse.ts:1")).toBe(true);
+      expect(first).toContain("zz-new — до правки код поставки его не брал");
+      expect(first).not.toMatch(/zz-old — до правки|@zz\/types — до правки/);
+      expect(first).not.toContain("манифест этой правкой не тронут");
+      fs.writeFileSync(path.join(box, "src", "app", "zzUse.ts"), usePlain);
+
+      // Правка, добавившая зависимость диапазоном, спрашивает о ней.
       const pkgAt = path.join(box, "package.json");
       const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
       pkg.dependencies = { ...(pkg.dependencies ?? {}), "zz-lib": "^1.0.0" };
@@ -7308,6 +7331,9 @@ describe("гарантия поведения держится тестом", ()
       const sealed = tool("bar");
       expect(sealed).toContain("печать поставлена");
       expect(sealed).toContain("гарантии против последнего коммита: без изменений");
+      // Адрес строки гарантии в протоколе — от папки базы, и сверка базы его
+      // разбирает: печать не роняет цепочку проверок проекта.
+      expect(verifyIn(box).get("Не разобрано (проверкой не покрыто)")).toBeUndefined();
 
       // Сдвиг таблицы печатается под печатью дословно — для отчёта.
       promise(box, [
