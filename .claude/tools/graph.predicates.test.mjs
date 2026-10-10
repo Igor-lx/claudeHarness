@@ -570,12 +570,9 @@ describe("расширения звеньев и линта семени — п�
 });
 
 /**
- * Кандидаты перекрёстной сверки: признаки модели на месте находки и тела,
- * близкие к её словам. Близость меряет вес общих основ, а вес растёт с
- * редкостью основы: на трёх телах любая основа часта, поэтому корпус дополнен
- * посторонними — как в политике, где тел полторы сотни.
+ * Тела критериев по разделам политики: их печатает режим `bar-read`.
  */
-describe("кандидаты перекрёстной сверки", () => {
+describe("тела критериев политики", () => {
   const policy = [
     "## A. Границы",
     "",
@@ -592,10 +589,6 @@ describe("кандидаты перекрёстной сверки", () => {
     "",
     "**Z1. Не критерий: раздела с буквой нет.** (единица)",
   ].join(NEWLINE);
-  const filler = Array.from({ length: 60 }, (_, k) => ({
-    id: "Q" + k,
-    own: "постороннее тело номер " + "абвгдежзик"[k % 10] + "слово" + k,
-  }));
 
   it("тела по разделам с буквой, хвост дописан к тексту, а не к телу", () => {
     const bodies = vocabulary.policyBodiesOf(policy, (id) => (id === "A4" ? NEWLINE + "хвост" : ""));
@@ -603,28 +596,38 @@ describe("кандидаты перекрёстной сверки", () => {
     expect(bodies[0].text.endsWith(NEWLINE + "хвост")).toBe(true);
     expect(bodies[0].own.endsWith("хвост")).toBe(false);
   });
+});
 
-  it("признаки модели — кандидаты из живых, по имени", () => {
-    const bodies = vocabulary.policyBodiesOf(policy, () => "");
+/**
+ * Кандидаты перекрёстной сверки: другие критерии того же вопроса модели на
+ * месте находки — строки, чей вопрос задан и критерию находки. Строка
+ * «внешнее» спрашивает `K1`, `K2`, `E3`, `D3`, `A14` и `A11`, с пометкой
+ * «сеть» — ещё `K3`, `K4` и `L4`; строка «флаг» — `B1` и `A4`.
+ */
+describe("кандидаты перекрёстной сверки", () => {
+  const live = (...ids) => new Set(ids);
+
+  it("строка, спрашивающая критерий находки, даёт остальных своих — живых, по имени", () => {
     expect(
-      vocabulary.crossCandidatesOf("о чём угодно", {
-        bodies,
-        live: new Set(["A4", "B1"]),
-        signalIds: ["B1", "A4", "Z9"],
+      vocabulary.crossCandidatesOf("K1", {
+        rows: [{ sort: "внешнее", mark: "" }],
+        live: live("K2", "E3", "A14", "B1"),
       }),
-    ).toEqual(["A4", "B1"]);
+    ).toEqual(["A14", "E3", "K2"]);
   });
 
-  it("тело, близкое к словам находки, — кандидат; далёкое и неживое — нет", () => {
-    const bodies = [...vocabulary.policyBodiesOf(policy, () => ""), ...filler];
-    const live = new Set(["A4", "H8-бис", "E9"]);
-    const words = "параметр добавлен, чтобы подошло для второго случая";
-    expect(vocabulary.crossCandidatesOf(words, { bodies, live, signalIds: [] })).toEqual(["H8-бис"]);
+  it("строка, не спрашивающая критерий находки, кандидатов не даёт", () => {
+    const rows = [{ sort: "флаг", mark: "" }];
+    expect(vocabulary.crossCandidatesOf("B5", { rows, live: live("A4", "B1") })).toEqual([]);
+    expect(vocabulary.crossCandidatesOf("B1", { rows, live: live("A4", "B1") })).toEqual(["A4"]);
+  });
+
+  it("пометка строки выбирает и свой вопрос, и вопрос без пометки", () => {
     expect(
-      vocabulary.crossCandidatesOf(words, { bodies, live: new Set(["A4", "E9"]), signalIds: [] }),
-    ).toEqual([]);
-    expect(
-      vocabulary.crossCandidatesOf("ничего общего с телами", { bodies, live, signalIds: [] }),
-    ).toEqual([]);
+      vocabulary.crossCandidatesOf("K3", {
+        rows: [{ sort: "внешнее", mark: "сеть" }],
+        live: live("K1", "K4", "L4", "K5"),
+      }),
+    ).toEqual(["K1", "K4", "L4"]);
   });
 });

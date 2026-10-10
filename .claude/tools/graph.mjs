@@ -13360,8 +13360,8 @@ const barSkeletonOf = ({
     BAR_CROSS_TITLE,
     "",
     "Строка на находку; её дописывает режим, когда исход дан. Графа",
-    "«кандидаты» — критерии, которые могут называть то же нарушение: признак",
-    "модели на месте находки либо тело, близкое к её словам. Графа «также» —",
+    "«кандидаты» — другие критерии, о которых спрашивает та же строка модели",
+    "на месте находки, что и о её критерии. Графа «также» —",
     "ответ через запятую: о каждом кандидате " + barQuoted("X") + " либо " + barQuoted("не X") + ", и любой",
     "другой критерий, чьё тело называет это нарушение; кандидатов нет и",
     "других нет — " + barQuoted(BAR_CROSS_NONE) + ". Протокол идёт по критериям, и находка,",
@@ -13797,7 +13797,7 @@ const barHolesOf = ({
   // критерии называют это нарушение; о каждом кандидате, которого считает
   // машина, сказано «X» либо «не X», и каждый названный без «не» стоит
   // «нашлось» с её местом. Связи критериев здесь не перечислены и не могут
-  // быть: кандидатов дают модель и близость слов, а решает чтение.
+  // быть: кандидатов даёт вопрос модели на месте находки, а решает чтение.
   const criterionIds = new Set(expected.map((e) => e.c.id));
   const askable = new Set(
     expected.filter((e) => !e.c.slogan).map((e) => e.c.id),
@@ -13810,14 +13810,6 @@ const barHolesOf = ({
     const key = placeKey(abs, spot[2]);
     modelAt.set(key, [...(modelAt.get(key) ?? []), m]);
   }
-  const signalIdsAt = (key) =>
-    (modelAt.get(key) ?? []).flatMap((m) =>
-      BAR_SIGNALS.filter(
-        (one) =>
-          one.sort === m.sort &&
-          (one.mark === undefined || [one.mark].flat().includes(m.mark)),
-      ).flatMap((one) => one.ids),
-    );
   const crossBy = new Map();
   let crossStale = 0;
   for (const r of parsed.cross) {
@@ -13846,10 +13838,9 @@ const barHolesOf = ({
     );
     const live = new Set([...askable].filter((id) => !written.has(id)));
     const what = crossWordsOf(one.what);
-    const cand = crossCandidatesOf(what, {
-      bodies: policyBodies(),
+    const cand = crossCandidatesOf(one.who.split(" ")[0], {
+      rows: modelAt.get(one.keys[0]) ?? [],
       live,
-      signalIds: one.keys.flatMap(signalIdsAt),
     }).join(", ");
     const row = crossBy.get(finding);
     const also = row?.also ?? "";

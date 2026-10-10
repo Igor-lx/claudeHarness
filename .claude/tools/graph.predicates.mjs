@@ -5909,23 +5909,6 @@ export const policyBodiesOf = (text, tailOf) => {
   return out;
 };
 
-/** Основа слова для близости — первые пять букв: окончание русского слова
- * меняется, а начало держится, и сравнивают основы находки и тела между собой.
- * Образец окончаний находил на проверочных находках на одну связь больше, но
- * каждой из его шести десятков альтернатив нужен был свой случай. */
-const STEM_LENGTH = 5;
-const STOP_WORDS = new Set(
-  "это что как для при без над под или так если его она оно они".split(" "),
-);
-const stemOf = (word) => word.toLowerCase().replace(/ё/g, "е").slice(0, STEM_LENGTH);
-const stemsOf = (text) =>
-  new Set(
-    (text.match(/[а-яёa-z]{3,}/gi) ?? [])
-      .map((w) => w.toLowerCase())
-      .filter((w) => !STOP_WORDS.has(w))
-      .map(stemOf),
-  );
-
 /** Слова находки для перекрёстной сверки: без перечня прочих мест, без черты
  * таблицы и не длиннее предела — строка сверки напоминает находку, полный
  * текст стоит в исходе. */
@@ -5939,33 +5922,22 @@ export const crossWordsOf = (what) => {
   return words.length > CROSS_WORDS_MAX ? words.slice(0, CROSS_WORDS_MAX - 1) + "…" : words;
 };
 
-/** Кандидатов по близости слов — не больше стольких и не слабее порога. На
- * проверочных находках проб критерий, чьё тело называет то же нарушение, стоял
- * в первых трёх, когда стоял вообще, а посторонний — ниже веса шести. */
-export const CROSS_NEAR_MAX = 3;
-export const CROSS_NEAR_WEIGHT = 6;
-
-/** Критерии, которые могут называть то же нарушение, что находка с этими
- * словами: признаки модели, вставшие на её месте (`signalIds`), и критерии,
- * чьё тело (`bodies`, графа `own`) ближе всего к её словам — по весу общих
- * основ, редкая основа весит больше. Берутся из `live`; порядок — по имени.
- * Связей критериев здесь нет: кандидат — вопрос, а ответ на него даёт
- * чтение. */
-export const crossCandidatesOf = (words, { bodies, live, signalIds }) => {
-  const docs = bodies.map((b) => ({ id: b.id, stems: stemsOf(b.own) }));
-  const df = new Map();
-  for (const d of docs) for (const s of d.stems) df.set(s, (df.get(s) ?? 0) + 1);
-  const idf = (s) => Math.log((docs.length + 1) / ((df.get(s) ?? 0) + 1));
-  const asked = stemsOf(words);
-  const near = docs
-    .filter((d) => live.has(d.id))
-    .map((d) => ({
-      id: d.id,
-      weight: [...asked].filter((s) => d.stems.has(s)).reduce((sum, s) => sum + idf(s), 0),
-    }))
-    .filter((x) => x.weight >= CROSS_NEAR_WEIGHT)
-    .sort((x, y) => y.weight - x.weight || (x.id < y.id ? -1 : 1))
-    .slice(0, CROSS_NEAR_MAX)
-    .map((x) => x.id);
-  return [...new Set([...signalIds, ...near])].filter((id) => live.has(id)).sort();
+/** Кандидаты перекрёстной сверки: другие критерии того же вопроса модели на
+ * основном месте находки — строки, чей вопрос задан и критерию находки.
+ * Берутся из `live`; порядок — по имени. Близость слов снята решением
+ * разработчика `2026-10-10`: на очереди проб из `343` кандидатов не принят
+ * ни один, а вопрос модели подсказал бы два промаха из трёх. */
+export const crossCandidatesOf = (own, { rows, live }) => {
+  const out = new Set();
+  for (const row of rows) {
+    const asked = BAR_SIGNALS.filter(
+      (one) =>
+        one.sort === row.sort &&
+        (one.mark === undefined || [one.mark].flat().includes(row.mark)),
+    );
+    if (!asked.some((one) => one.ids.includes(own))) continue;
+    for (const one of asked)
+      for (const id of one.ids) if (id !== own && live.has(id)) out.add(id);
+  }
+  return [...out].sort();
 };

@@ -16,7 +16,6 @@ import {
   bareCodeOf,
   crossCandidatesOf,
   crossWordsOf,
-  policyBodiesOf,
 } from "./graph.predicates.mjs";
 
 /**
@@ -2749,10 +2748,6 @@ const crossFilled = (text, root) => {
     if (keys.length > 0)
       findings.push({ who: c[0] + (c[1] === "—" ? "" : " для " + c[1]), keys, what: c[5] });
   }
-  const bodies = ["quality.md", "quality-scoped.md"].flatMap((name) => {
-    const at = path.join(root, ".claude", "rules", name);
-    return fs.existsSync(at) ? policyBodiesOf(fs.readFileSync(at, "utf8"), () => "") : [];
-  });
   const partsOf = (key) => [key.slice(0, key.lastIndexOf(":")), Number(key.slice(key.lastIndexOf(":") + 1))];
   const rows = findings
     .sort((x, y) => {
@@ -2766,16 +2761,9 @@ const crossFilled = (text, root) => {
       const finding = one.who + " — `" + one.keys[0] + "`";
       const mine = new Set(one.keys.flatMap((key) => [...(written.get(key) ?? [])]));
       const what = crossWordsOf(one.what);
-      const cand = crossCandidatesOf(what, {
-        bodies,
+      const cand = crossCandidatesOf(one.who.split(" ")[0], {
+        rows: modelAt.get(one.keys[0]) ?? [],
         live: new Set([...askable].filter((id) => !mine.has(id))),
-        signalIds: one.keys.flatMap((key) =>
-          (modelAt.get(key) ?? []).flatMap((m) =>
-            BAR_SIGNALS.filter(
-              (s) => s.sort === m.sort && (s.mark === undefined || [s.mark].flat().includes(m.mark)),
-            ).flatMap((s) => s.ids),
-          ),
-        ),
       });
       const answer = said.get(finding) || (cand.length > 0 ? cand.map((id) => "не " + id).join(", ") : "никакие");
       return "| " + finding + " | " + what + " | " + cand.join(", ") + " | " + answer + " |";
@@ -2896,8 +2884,8 @@ describe("свод по планке от модели предмета", () => 
           return String(e.stdout ?? "");
         }
       };
-      // Булев параметр ставит на строку находки признак «флаг»: его критерии —
-      // кандидаты перекрёстной сверки, и о каждом нужен ответ.
+      // Булев параметр ставит на строку находки признак «флаг»: он спрашивает
+      // `B1` и `A4`, и находка `B1` получает кандидатом `A4`.
       fs.writeFileSync(
         path.join(box, "src", "app", "zzWide.ts"),
         "export const zzWide = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n",
@@ -2907,22 +2895,22 @@ describe("свод по планке от модели предмета", () => 
       tool("bar", "app/zzWide.ts");
       const found = (more) => ({
         release: "не нужно: проба",
-        pick: { B5: "нашлось | src/app/zzWide.ts:1 | имя не говорит, что считают; ещё мест: " + more + " | вопрос" },
+        pick: { B1: "нашлось | src/app/zzWide.ts:1 | булев параметр делит функцию надвое; ещё мест: " + more + " | вопрос" },
       });
       fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzWide.ts`.\n");
       fillBar(protoAt, found("`src/app/zzNope.ts:1`"));
-      expect(tool("bar", "app/zzWide.ts")).toContain("B5: файла `src/app/zzNope.ts` нет");
+      expect(tool("bar", "app/zzWide.ts")).toContain("B1: файла `src/app/zzNope.ts` нет");
       fillBar(protoAt, found("`zzTall`"));
-      expect(tool("bar", "app/zzWide.ts")).toContain("B5: место в графе «что» не вида путь:строка: «zzTall»");
+      expect(tool("bar", "app/zzWide.ts")).toContain("B1: место в графе «что» не вида путь:строка: «zzTall»");
       fillBar(protoAt, found("`src/app/zzTall.ts:1`"));
       const unnamed = tool("bar", "app/zzWide.ts");
-      expect(unnamed).toContain("B5: «вопрос», а список вопросов");
+      expect(unnamed).toContain("B1: «вопрос», а список вопросов");
       expect(unnamed).toContain("zzTall.ts");
       fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzTall.ts`.\n");
       expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
       // Найденное по одному критерию — находка в каждом, чьё тело его
       // называет: «чисто» со ссылкой на чужую находку не принимается.
-      fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя названо находкой B5 | " } });
+      fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя названо находкой B1 | " } });
       expect(tool("bar", "app/zzWide.ts")).toContain("H6: чисто со ссылкой на находку другого критерия");
 
       // Без ссылки — та же находка, забытая у другого критерия. Её держит
@@ -2930,31 +2918,31 @@ describe("свод по планке от модели предмета", () => 
       // каждом кандидате — «X» либо «не X». Свод выше запечатан; работа
       // продолжается — печать снимается.
       fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: .*$/m, "- печать: `нет`"));
-      const finding = "B5 — `src/app/zzWide.ts:1`";
-      const rowRe = /^(\| B5 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| ([^|]*) \|).*$/m;
+      const finding = "B1 — `src/app/zzWide.ts:1`";
+      const rowRe = /^(\| B1 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| ([^|]*) \|).*$/m;
       const also = (value) =>
         fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(rowRe, "$1 " + value + " |"));
       const candidates = () =>
         rowRe.exec(fs.readFileSync(protoAt, "utf8"))[2].split(",").map((x) => x.trim()).filter((x) => x !== "");
       fillBar(protoAt, { release: "не нужно: проба", pick: { H6: "чисто |  | имя говорит, что считают | " } });
-      // Признак «флаг» на строке находки — её кандидаты.
-      expect(candidates()).toEqual(expect.arrayContaining(["A4", "B1"]));
+      // Кандидат — другой критерий того же вопроса модели на месте находки.
+      expect(candidates()).toEqual(["A4"]);
       also("H6");
       const named = tool("bar", "app/zzWide.ts");
       expect(named).toContain(
         "H6: назван у находки " + finding + " перекрёстной сверкой, а «нашлось» с её местом у него нет",
       );
-      expect(named).toMatch(/перекрёстная сверка, B5 — `src\/app\/zzWide\.ts:1`: кандидаты без ответа — [^;]*B1/);
+      expect(named).toMatch(/перекрёстная сверка, B1 — `src\/app\/zzWide\.ts:1`: кандидаты без ответа — [^;]*A4/);
       also("Z99");
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «Z99» — не критерий этого свода");
-      also("никакие, B1");
+      also("никакие, A4");
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «никакие» вместе с названными критериями");
       also("");
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: находок с пустой графой «также» — 1");
       // Строку о находке режим дописывает сам, ответ сессии переносится.
-      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^\| B5 — `src\/app\/zzWide\.ts:1` .*\n/m, ""));
+      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^\| B1 — `src\/app\/zzWide\.ts:1` .*\n/m, ""));
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: таблица не сходится с находками — недостаёт 1");
-      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^\| B5 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| [^|]* \|\s+\|$/m);
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^\| B1 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| [^|]* \|\s+\|$/m);
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: { H6: "нашлось | src/app/zzWide.ts:1 | имя не говорит, что считают | вопрос" },
