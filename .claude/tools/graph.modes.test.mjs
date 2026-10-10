@@ -6575,12 +6575,20 @@ describe("признаки по всей планке в модели свода
           "export const zzFrame = (step: FrameRequestCallback) => requestAnimationFrame(step);",
           "export const zzPick = (xs: readonly number[]) => xs.filter((x) => x > 0 && x < 10);",
           "export const zzLen = (xs: readonly number[]) => xs.length;",
+          'export const zzWide = (kind: string) => (kind === "plain" ? 1 : 2);',
+          'export const zzTall = (kind: string) => kind !== "list";',
           "",
         ].join("\n"),
       );
       put(
         "src/shared/zzMath/zzCopy.ts",
-        ["export const zzOther = (" + shape + ") => {", ...block, "};", ""].join("\n"),
+        [
+          "export const zzOther = (" + shape + ") => {",
+          ...block,
+          "};",
+          'export const zzFlat = (kind: string) => kind === "list";',
+          "",
+        ].join("\n"),
       );
       put(
         "src/app/zzUse.ts",
@@ -6591,6 +6599,7 @@ describe("признаки по всей планке в модели свода
           "export const zzKeep = (xs: readonly number[]) =>",
           "  xs.filter((x) => x > 0 && x < 10);",
           "export const zzSize = (xs: readonly number[]) => xs.length;",
+          'export const zzMark = (kind: string): string => (kind === "plain" ? "p" : "q");',
           "",
         ].join("\n"),
       );
@@ -6618,6 +6627,11 @@ describe("признаки по всей планке в модели свода
       expect(text).toMatch(/zzScale\(…\): довод 2 всегда `2`, мест вызова `2`/);
       expect(has(rows, "тесты", "нет")).toBe(true);
       expect(has(rows, "ответственность", "союз")).toBe(true);
+      // Метка, которую сравнивают и в другой единице переноса, — вопрос о
+      // цене нового варианта; в той же единице — нет.
+      expect(has(rows, "метка", "", "shared/zzMath/zzMath.ts:13")).toBe(true);
+      expect(text).toContain("`kind === plain` — та же метка в `app/zzUse.ts:7`");
+      expect(text).not.toContain("kind === list");
       // Кадры есть, а приглушённого движения нет нигде в проекте.
       expect(has(rows, "приглушение", "нет", "проект")).toBe(true);
 

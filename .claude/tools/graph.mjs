@@ -45,6 +45,7 @@ import {
   closeOf,
   topLevelParts,
   signalsOf,
+  tagComparisonsOf,
   stateFormOf,
   escapeRe,
   joinsTwo,
@@ -9403,6 +9404,8 @@ const SIGNAL_TITLES = {
   "имя|сокращение": "сокращённое имя",
   величина: "величина без единицы в имени",
   мемо: "запомненное",
+  документ: "поиск элемента во всём документе",
+  копия: "копия перед изменяющим методом",
   "однократно|захват": "однократный эффект читает состояние",
   однократно: "эффект с пустыми зависимостями",
   "эффект|только запись": "эффект только записывает выведенное",
@@ -9465,6 +9468,7 @@ const QUESTION_SORTS = new Set([
   "мутации",
   "близнец",
   "повтор",
+  "метка",
   "постоянный",
   "зависимость",
   "настройка",
@@ -9592,6 +9596,7 @@ const cloneIndex = () => {
   const windows = new Map();
   const conditions = new Map();
   const bodies = new Map();
+  const tags = new Map();
   for (const f of files) {
     if (isTest(f) || f.endsWith(".d.ts")) continue;
     const code = commentlessOf(readFileSync(f, "utf8"));
@@ -9628,8 +9633,14 @@ const cloneIndex = () => {
       if (!bodies.has(b.text)) bodies.set(b.text, []);
       bodies.get(b.text).push({ file: f, line: b.line, name: b.name });
     }
+    for (const one of tagComparisonsOf(code).split(";").filter(Boolean)) {
+      const cut = one.indexOf(":");
+      const key = one.slice(cut + 1);
+      if (!tags.has(key)) tags.set(key, []);
+      tags.get(key).push({ file: f, line: Number(one.slice(0, cut)) });
+    }
   }
-  CLONES_CACHE = { windows, conditions, bodies };
+  CLONES_CACHE = { windows, conditions, bodies, tags };
   return CLONES_CACHE;
 };
 /** Повторы файла: его строки, повторённые в другом месте проекта, —
@@ -9690,6 +9701,29 @@ const repeatsOf = (f) => {
           " повторено в " +
           barQuoted(rel(others[0].file) + ":" + others[0].line),
       });
+  }
+  return out;
+};
+
+/** Метки файла, с которыми сравнивают и в других единицах переноса: новый
+ * вариант метки потребует правки в каждой. Найдено пробой планки: вид
+ * заметки, разобранный тернарным сравнением в трёх слоях, прошёл свод без
+ * вопроса о цене изменения — короткое сравнение индекс условий не видит. */
+const tagRepeatsOf = (f) => {
+  const out = [];
+  for (const [key, list] of cloneIndex().tags) {
+    const mine = list.find((x) => x.file === f);
+    if (mine === undefined) continue;
+    const others = list.filter((x) => unitOf(x.file) !== unitOf(f));
+    if (others.length === 0) continue;
+    const [name, tag] = key.split("=");
+    out.push({
+      line: mine.line,
+      what:
+        barQuoted(name + " === " + tag) +
+        " — та же метка в " +
+        others.map((x) => barQuoted(rel(x.file) + ":" + x.line)).join(", "),
+    });
   }
   return out;
 };
@@ -9949,6 +9983,7 @@ const SYMPTOM_SORTS = [
         "мутации",
         "близнец",
         "повтор",
+        "метка",
         "постоянный",
         "зависимость",
         "настройка",
@@ -11551,6 +11586,8 @@ const barModelOf = (
       );
     for (const r of want("повтор") ? repeatsOf(f) : [])
       add("повтор", where + ":" + r.line, r.what, r.mark);
+    for (const r of want("метка") ? tagRepeatsOf(f) : [])
+      add("метка", where + ":" + r.line, r.what);
     for (const what of want("постоянный") ? constantInputsOf(f) : [])
       add("постоянный", where, what);
 
