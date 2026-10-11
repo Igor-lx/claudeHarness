@@ -603,6 +603,7 @@ const SCALAR = {
   testedLedger: "строка",
   barProtocol: "строка",
   barSince: "строка",
+  seriesSince: "строка",
   barProbeLedger: "строка",
   todo: "строка",
   questions: "строка",
@@ -2034,6 +2035,12 @@ const barCoverFault = (want, body) => {
   if (!want.length) return "";
   const sealed = barSealFault(body);
   if (sealed !== "") return sealed;
+  return barNamedFault(want, body, true);
+};
+/** Отпечатки предмета против протокола; `whole` — и обратное: всё, что
+ * протокол называет, есть в правке. Коммит части серии несёт часть правки,
+ * и обратного с него не спрашивают — его спрашивают с последней части. */
+const barNamedFault = (want, body, whole) => {
   const was = barHeaderOf(body);
   const had = new Map(was.marks.map((m) => [m.file, m.mark]));
   const loose = [];
@@ -2044,8 +2051,9 @@ const barCoverFault = (want, body) => {
       loose.push(one.file + " — свод сделан на другом его виде");
     had.delete(one.file);
   }
-  for (const file of had.keys())
-    loose.push(file + " — назван сводом, а в правке его нет");
+  if (whole)
+    for (const file of had.keys())
+      loose.push(file + " — назван сводом, а в правке его нет");
   return loose.join("; ");
 };
 /** Протокол запечатан на задаче изменения, и печать сходится; пустая строка —
@@ -8241,10 +8249,15 @@ if (mode === "bar-probe") {
           encoding: "utf8",
         }).trim();
         const text = readFileSync(configAt, "utf8");
-        const declared = text.replace(
-          /barSince:\s*(?:null|"[^"]*")/,
-          "barSince: " + JSON.stringify(first),
-        );
+        const declared = text
+          .replace(
+            /barSince:\s*(?:null|"[^"]*")/,
+            "barSince: " + JSON.stringify(first),
+          )
+          .replace(
+            /seriesSince:\s*(?:null|"[^"]*")/,
+            "seriesSince: " + JSON.stringify(first),
+          );
         if (declared !== text) {
           writeFileSync(configAt, declared);
           execFileSync(
@@ -15390,13 +15403,13 @@ if (mode === "gate") {
     } catch {
       line = null;
     }
+    // Прежняя строка — от правки коммита — заменяется: она называет
+    // прежнее дерево.
     if (line !== null && msgAt !== undefined && existsSync(msgAt)) {
-      const said = readFileSync(msgAt, "utf8");
-      if (!said.includes("Bar-series: "))
-        writeFileSync(
-          msgAt,
-          said.replace(/\s*$/, "") + NEWLINE + NEWLINE + line + NEWLINE,
-        );
+      const said = readFileSync(msgAt, "utf8")
+        .replace(/^Bar-series: .*$/gm, "")
+        .replace(/\s*$/, "");
+      writeFileSync(msgAt, said + NEWLINE + NEWLINE + line + NEWLINE);
     }
     process.exit(0);
   }
@@ -20325,6 +20338,15 @@ if (mode === "verify") {
           hooks +
           "), история есть, а CONFIG.barSince пуст — ревизия сводов по истории выключена: объявить основанием последний коммит до установки ворот",
       );
+  }
+  // Основание серии — коммит, с которого коммит с кодом идёт частью серии и
+  // несёт её строку. Пусто при объявленном основании сводов — ревизия судит
+  // всю историю прежним правилом, и коммит мимо серии не краснеет.
+  if (CONFIG.seriesSince == null && CONFIG.barSince != null) {
+    disarmedLooked += 1;
+    disarmed.push(
+      "CONFIG.barSince объявлен, а CONFIG.seriesSince пуст — коммиты мимо серии ревизия не видит: объявить основанием серии последний коммит до обновления обвязки",
+    );
   }
   // Два поля, добавленных вместе со своими сверками. Без этих двух строк они
   // ведут себя по-разному, и хуже то, которое молчит: незаявленная копия
@@ -25340,6 +25362,128 @@ if (mode === "verify") {
       } catch {
         log = null;
       }
+      // Коммиты серии: после её основания коммит с кодом — коммит части, и
+      // его узнают по строке `Bar-series` в сообщении.
+      let inSeries = new Set();
+      if (log !== null && CONFIG.seriesSince != null)
+        try {
+          inSeries = new Set(
+            git(["log", "--format=%H", CONFIG.seriesSince + "..HEAD"])
+              .split(NEWLINE)
+              .map((l) => l.trim())
+              .filter(Boolean),
+          );
+        } catch {
+          barPastNote =
+            "коммита-основания серии " +
+            CONFIG.seriesSince +
+            " в истории этой копии нет — коммиты частей не сверены";
+        }
+      // Пары «буква, путь», без поиска переименований — как у ворот.
+      const touchedOf = (args) => {
+        const said = zList(
+          git([...args, "--relative", "--name-status", "-z", "--no-renames"]),
+        );
+        const out = [];
+        for (let i = 0; i + 1 < said.length; i += 2)
+          out.push({ status: said[i], one: said[i + 1] });
+        return out;
+      };
+      const lineOf = (ref) => {
+        let body = "";
+        try {
+          body = git(["log", "-1", "--format=%B", ref]);
+        } catch {
+          return null;
+        }
+        const m =
+          /^Bar-series: ([0-9a-f]+) ([0-9]+)\/([0-9]+) ([0-9a-f]{40})$/m.exec(
+            body,
+          );
+        return m === null
+          ? null
+          : { seal: m[1], k: Number(m[2]), n: Number(m[3]), tree: m[4] };
+      };
+      // Приведение формата свода не требует — тот же ответ, что у ворот.
+      // Спрашивается лениво: только у коммита, который иначе красный.
+      const meantOf = async (want, before) => {
+        const meant = [];
+        for (const w of want) {
+          let was = null;
+          try {
+            was = git(["show", before + ":./" + w.one]);
+          } catch {
+            was = null;
+          }
+          if (!(await formatOnly(was, w.was, w.abs))) meant.push(w);
+        }
+        return meant;
+      };
+      const coverOf = async (want, said, before, whole) => {
+        const fault = barNamedFault(want, said, whole);
+        return fault === ""
+          ? ""
+          : barNamedFault(await meantOf(want, before), said, whole);
+      };
+      const subjectOf = async (touched, hash) => {
+        const want = [];
+        for (const { status, one } of touched) {
+          const abs = norm(path.join(REPO_AT, one));
+          // Удалённый этим коммитом код — в предмете, как у ворот.
+          if (status === "D") {
+            if (codeByPlace(abs))
+              want.push({
+                file: rel(abs),
+                mark: "нет файла",
+                one,
+                abs,
+                was: null,
+              });
+            continue;
+          }
+          // Предикат тот же, что у предмета свода и у ворот: корпус кода и
+          // корпус стилей. Свой предикат здесь отбирал иначе — тесты в него
+          // не попадали, — и ревизия объявляла непокрытым коммит, накрытый
+          // сводом полностью. Та же болезнь, от которой эта пара и лечит.
+          //
+          // Цена у общего предиката одна: файл, снесённый после того
+          // коммита, в корпусе не значится, и коммит, только сносивший код,
+          // ревизией не спрашивается.
+          //
+          // Но свод того коммита снесённый позже файл НАЗЫВАЕТ, и коммит,
+          // накрытый сводом полностью, краснел «назван сводом, а в правке
+          // его нет» от каждого сноса узла — задним числом и навсегда.
+          // Замерено удалением узла на стенде. Такой файл судится видом и
+          // местом — тем же признаком, каким его собирает обход корпуса:
+          // модуль, тест или стиль под корнем исходников.
+          const goneSince = !existsSync(abs) && codeByPlace(abs);
+          if (!files.includes(abs) && !styleFiles.includes(abs) && !goneSince)
+            continue;
+          if (abs.endsWith(".d.ts")) continue;
+          let was;
+          try {
+            was = git(["show", hash + ":./" + one]);
+          } catch {
+            continue;
+          }
+          // Семя берётся ИЗ ТОГО ЖЕ коммита: семя правится своей жизнью,
+          // и сравнение с сегодняшним сделало бы старую посадку красной
+          // задним числом.
+          let seedWas = null;
+          if (seeds.has(one)) {
+            const from = seeds.get(one);
+            try {
+              seedWas = git(["show", hash + ":./.claude/" + from]);
+            } catch {
+              seedWas = null;
+            }
+          }
+          if (sameAsSeed(was, seedWas) || (await formatOnly(seedWas, was, abs)))
+            continue;
+          want.push({ file: rel(abs), mark: barDigest(was), one, abs, was });
+        }
+        return want.sort((x, y) => (x.file < y.file ? -1 : 1));
+      };
       if (log === null)
         barPastNote =
           "коммита-основания " +
@@ -25349,107 +25493,67 @@ if (mode === "verify") {
         for (const hash of log) {
           let touched;
           try {
-            // Пары «буква, путь», без поиска переименований — как у ворот.
-            const said = zList(
-              git([
-                "show",
-                "--relative",
-                "--name-status",
-                "-z",
-                "--no-renames",
-                "--format=",
-                hash,
-              ]),
-            );
-            touched = [];
-            for (let i = 0; i + 1 < said.length; i += 2)
-              touched.push({ status: said[i], one: said[i + 1] });
+            touched = touchedOf(["show", "--format=", hash]);
           } catch {
             continue;
           }
-          const want = [];
-          for (const { status, one } of touched) {
-            const abs = norm(path.join(REPO_AT, one));
-            // Удалённый этим коммитом код — в предмете, как у ворот.
-            if (status === "D") {
-              if (codeByPlace(abs))
-                want.push({
-                  file: rel(abs),
-                  mark: "нет файла",
-                  one,
-                  abs,
-                  was: null,
-                });
-              continue;
-            }
-            // Предикат тот же, что у предмета свода и у ворот: корпус кода и
-            // корпус стилей. Свой предикат здесь отбирал иначе — тесты в него
-            // не попадали, — и ревизия объявляла непокрытым коммит, накрытый
-            // сводом полностью. Та же болезнь, от которой эта пара и лечит.
-            //
-            // Цена у общего предиката одна: файл, снесённый после того
-            // коммита, в корпусе не значится, и коммит, только сносивший код,
-            // ревизией не спрашивается.
-            //
-            // Но свод того коммита снесённый позже файл НАЗЫВАЕТ, и коммит,
-            // накрытый сводом полностью, краснел «назван сводом, а в правке
-            // его нет» от каждого сноса узла — задним числом и навсегда.
-            // Замерено удалением узла на стенде. Такой файл судится видом и
-            // местом — тем же признаком, каким его собирает обход корпуса:
-            // модуль, тест или стиль под корнем исходников.
-            const goneSince = !existsSync(abs) && codeByPlace(abs);
-            if (!files.includes(abs) && !styleFiles.includes(abs) && !goneSince)
-              continue;
-            if (abs.endsWith(".d.ts")) continue;
-            let was;
-            try {
-              was = git(["show", hash + ":./" + one]);
-            } catch {
-              continue;
-            }
-            // Семя берётся ИЗ ТОГО ЖЕ коммита: семя правится своей жизнью,
-            // и сравнение с сегодняшним сделало бы старую посадку красной
-            // задним числом.
-            let seedWas = null;
-            if (seeds.has(one)) {
-              const from = seeds.get(one);
-              try {
-                seedWas = git(["show", hash + ":./.claude/" + from]);
-              } catch {
-                seedWas = null;
-              }
-            }
-            if (
-              sameAsSeed(was, seedWas) ||
-              (await formatOnly(seedWas, was, abs))
-            )
-              continue;
-            want.push({ file: rel(abs), mark: barDigest(was), one, abs, was });
-          }
+          const want = await subjectOf(touched, hash);
           if (!want.length) continue;
           barPastLooked += 1;
-          want.sort((x, y) => (x.file < y.file ? -1 : 1));
           let said = null;
           try {
             said = git(["show", hash + ":./" + at]);
           } catch {
             said = null;
           }
-          let fault = barCoverFault(want, said);
-          // Приведение формата свода не требует — тот же ответ, что у ворот.
-          // Спрашивается лениво: только у коммита, который иначе красный.
-          if (fault !== "") {
-            const meant = [];
-            for (const w of want) {
-              let before = null;
-              try {
-                before = git(["show", hash + "^:./" + w.one]);
-              } catch {
-                before = null;
-              }
-              if (!(await formatOnly(before, w.was, w.abs))) meant.push(w);
+          let fault = barSealFault(said);
+          if (!inSeries.has(hash)) {
+            if (fault === "")
+              fault = await coverOf(want, said, hash + "^", true);
+            if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
+            continue;
+          }
+          // Коммит части: строка серии называет его дерево и печать его
+          // протокола, часть лежит на предыдущей той же серии, код части
+          // назван печатью на том же виде. Всю правку — что протокол называет
+          // ровно её — спрашивают с последней части, от основания серии.
+          const line = lineOf(hash);
+          if (line === null)
+            fault =
+              "коммит с кодом без строки серии: части коммитят через ворота, `node .claude/tools/graph.mjs series`";
+          else if (line.tree !== git(["rev-parse", hash + "^{tree}"]).trim())
+            fault = "строка серии называет не дерево этого коммита";
+          else if (fault === "" && line.seal !== barHeaderOf(said).seal)
+            fault = "строка серии называет не печать протокола этого коммита";
+          if (fault === "" && line.k > 1) {
+            const prev = lineOf(hash + "^");
+            if (
+              prev === null ||
+              prev.seal !== line.seal ||
+              prev.n !== line.n ||
+              prev.k !== line.k - 1
+            )
+              fault =
+                "часть " +
+                line.k +
+                " лежит не на части " +
+                (line.k - 1) +
+                " той же серии";
+          }
+          if (fault === "")
+            fault = await coverOf(want, said, hash + "^", false);
+          if (fault === "" && line.k === line.n) {
+            const base = hash + "~" + line.n;
+            let all = null;
+            try {
+              all = await subjectOf(touchedOf(["diff", base, hash]), hash);
+            } catch {
+              all = null;
             }
-            fault = barCoverFault(meant, said);
+            fault =
+              all === null
+                ? "основания серии " + base + " в истории нет"
+                : await coverOf(all, said, base, true);
           }
           if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
         }

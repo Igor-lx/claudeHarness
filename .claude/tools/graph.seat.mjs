@@ -268,21 +268,26 @@ export const runSeat = ({ toolDir, argv }) => {
     const base = git("rev-parse", "HEAD");
     const configAt = path.join(target, ".context", "graph.config.mjs");
     const config = readFileSync(configAt, "utf8");
-    if (!/^ {2}barSince: null,/m.test(config))
-      refuse(
-        "В семени настройки нет строки `barSince: null,` — основание ревизии",
-        "сводов ставить некуда: " + norm(configAt),
-      );
+    // Основания ревизии сводов и серии — один коммит: история посадки
+    // начинается с него.
+    for (const field of ["barSince", "seriesSince"])
+      if (!new RegExp("^ {2}" + field + ": null,", "m").test(config))
+        refuse(
+          "В семени настройки нет строки `" + field + ": null,` — основание",
+          "ревизии ставить некуда: " + norm(configAt),
+        );
     writeFileSync(
       configAt,
-      config.replace(/^ {2}barSince: null,/m, '  barSince: "' + base + '",'),
+      config
+        .replace(/^ {2}barSince: null,/m, '  barSince: "' + base + '",')
+        .replace(/^ {2}seriesSince: null,/m, '  seriesSince: "' + base + '",'),
     );
-    git("commit", "-qam", "barSince");
+    git("commit", "-qam", "barSince, seriesSince");
     // Ворота ставятся последними: оба коммита посадки — её собственные, и
     // своду в них судить нечего.
     git("config", "core.hooksPath", ".claude/hooks/git");
     made.push(
-      "git: основание ревизии сводов " +
+      "git: основание ревизии сводов и серии " +
         base.slice(0, 7) +
         ", ворота перед коммитом стоят",
     );

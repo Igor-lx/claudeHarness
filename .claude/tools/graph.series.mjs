@@ -255,12 +255,12 @@ export const seriesGateFault = (repoRoot) => {
 
 /** Строка серии для сообщения коммита: печать протокола, часть из скольких и
  * дерево. По ней ревизия по истории узнаёт коммит серии. Индекс — не часть
- * серии — `null`. */
+ * серии, прошедшая цепочку, — `null`: коммит мимо ворот строки не получает. */
 export const seriesLineOf = (repoRoot, seal) => {
   const marks = readMarks(repoRoot);
   const index = gitOut(repoRoot, ["write-tree"]);
   const at = (marks.parts ?? []).findIndex((p) => p.tree === index);
-  if (at < 0) return null;
+  if (at < 0 || marks.trees?.[index]?.code !== 0) return null;
   return (
     "Bar-series: " +
     seal +

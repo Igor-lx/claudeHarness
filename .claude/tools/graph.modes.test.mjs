@@ -4231,6 +4231,68 @@ describe("серия", () => {
       expect(git("log", "--format=%B", "-1").stdout).toMatch(
         /Bar-series: [0-9a-f]+ 1\/1 [0-9a-f]{40}/,
       );
+      // Ревизия по истории: основания сводов и серии — первый коммит. Коммиты
+      // частей сходятся; коммит с кодом мимо серии и строка с чужим деревом —
+      // красные навсегда.
+      const first = git("rev-list", "--max-parents=0", "HEAD").stdout.trim();
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfg = fs.readFileSync(cfgAt, "utf8");
+      expect(cfg).toMatch(/seriesSince:\s*null/);
+      fs.writeFileSync(
+        cfgAt,
+        cfg
+          .replace(/barSince:\s*null/, "barSince: " + JSON.stringify(first))
+          .replace(
+            /seriesSince:\s*null/,
+            "seriesSince: " + JSON.stringify(first),
+          ),
+      );
+      expect(git("commit", "-qam", "revision bases").status).toBe(0);
+      const past = () =>
+        tool("verify")
+          .out.split("=== Коммит с кодом накрыт сводом ===")[1]
+          ?.split("\n===")[0] ?? "";
+      expect(past()).toContain("без свода: 0");
+      put("src/shared/zza/zza.ts", "export const zza = 4;\n");
+      git("commit", "-qam", "past the series", "--no-verify");
+      const bypass = past();
+      expect(bypass).toContain("без свода: 1");
+      expect(bypass).toContain("без строки серии");
+      git("reset", "-q", "--hard", "HEAD^");
+      put("src/shared/zza/zza.ts", "export const zza = 4;\n");
+      git("add", "-A");
+      git(
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "forged\n\nBar-series: abc 1/1 " + "0".repeat(40),
+      );
+      expect(past()).toContain("строка серии называет не дерево этого коммита");
+      // Последняя часть отвечает за всю правку: строка «1/1» на дереве первой
+      // из двух частей сходится сама по себе, а протокол называет и вторую.
+      git("reset", "-q", "--hard", "HEAD^");
+      put("src/shared/zza/zza.ts", "export const zza = 5;\n");
+      put("src/shared/zzb/zzb.ts", "export const zzb = 6;\n");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      expect(tool("bar").out).toContain("части ждут коммита: 1–2 из 2");
+      expect(tool("series").code).toBe(0);
+      const sealOf = /- печать: `([0-9a-f]+)`/.exec(
+        fs.readFileSync(protoAt, "utf8"),
+      )[1];
+      const parts = JSON.parse(
+        fs.readFileSync(path.join(box, ".git", "graph-series.json"), "utf8"),
+      ).parts;
+      tool("series", "--stage", "1");
+      git(
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "half\n\nBar-series: " + sealOf + " 1/1 " + parts[0].tree,
+      );
+      expect(past()).toContain("назван сводом, а в правке его нет");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -7061,7 +7123,28 @@ describe("находки мини-стенда: факты, долг, отлож
         expect.arrayContaining([expect.stringMatching(/CONFIG\.barSince пуст/)]),
       );
       edit(box, ".context/graph.config.mjs", "  barSince: null,", '  barSince: "' + git("rev-parse", "HEAD").trim() + '",');
-      expect(disarmedOf().some((one) => one.includes("barSince"))).toBe(false);
+      // Основание серии объявляют вместе с ним: без него ревизия судит всю
+      // историю прежним правилом, и коммит мимо серии не краснеет.
+      const withBar = disarmedOf();
+      expect(
+        withBar.some(
+          (one) => one.includes("barSince") && !one.includes("seriesSince"),
+        ),
+      ).toBe(false);
+      expect(withBar).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/CONFIG\.seriesSince пуст/),
+        ]),
+      );
+      edit(
+        box,
+        ".context/graph.config.mjs",
+        "  seriesSince: null,",
+        '  seriesSince: "' + git("rev-parse", "HEAD").trim() + '",',
+      );
+      expect(disarmedOf().some((one) => one.includes("seriesSince"))).toBe(
+        false,
+      );
       // Состояние даёт модели строку с якорем на строку файла — ту, что
       // досье правки прежде советовало дописать цитатой.
       write(
@@ -8886,10 +8969,20 @@ describe("стенд проб", () => {
       box = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
       expect(box, planted).not.toBeNull();
       const verify = run(box, "verify");
-      const section = (title) => verify.split("=== " + title + " ===")[1]?.split("\n=== ")[0] ?? "";
-      expect(section("Ворота перед коммитом установлены")).toContain("не на месте: 0");
-      expect(section("Сверки, выключенные при живом предмете")).not.toContain("barSince");
-      expect(section("Коммит с кодом накрыт сводом")).not.toContain("не объявлено");
+      const section = (title) =>
+        verify.split("=== " + title + " ===")[1]?.split("\n=== ")[0] ?? "";
+      expect(section("Ворота перед коммитом установлены")).toContain(
+        "не на месте: 0",
+      );
+      expect(section("Сверки, выключенные при живом предмете")).not.toContain(
+        "barSince",
+      );
+      expect(section("Сверки, выключенные при живом предмете")).not.toContain(
+        "seriesSince",
+      );
+      expect(section("Коммит с кодом накрыт сводом")).not.toContain(
+        "не объявлено",
+      );
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
       if (box !== null) {
