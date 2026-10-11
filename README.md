@@ -43,8 +43,9 @@ What a machine check holds is unbreakable by construction.</h3>
 
 ## claudeHarness is not one more of hundreds of skill and rule sets
 
-It is an engineering system for code quality: it turns rules into machine
-checks, takes its knowledge of the code from the code itself, and lets nothing
+It is an out-of-the-box-ready engineering system for code quality: it turns
+rules into machine checks (JS-based, independent of the agent), takes its
+knowledge of the code from the code itself, and lets nothing
 into the commit history that has not been proven. Every edit brings its own
 tests and documentation and is checked against the quality bar criterion by
 criterion - line by line and level by level, up to the whole application. The
@@ -156,6 +157,15 @@ flowchart TD
   K --> G{"Commit gate:<br>machine checks"}
   G -- "sealed, exit 0" --> H[Commit]
   G -- "no seal or red" --> C
+  classDef plain fill:#EEF0F2,stroke:#8A939B,color:#1F2328
+  classDef check fill:#DCE3EA,stroke:#5B6B7A,color:#1F2328
+  classDef proof fill:#2F5D50,stroke:#2F5D50,color:#FFFFFF
+  class A,B,C,T,R,H plain
+  class M,P,K check
+  class S,G proof
+  style edit fill:none,stroke:#8A939B,stroke-dasharray:4 3
+  linkStyle default stroke:#8A939B
+  linkStyle 11 stroke:#A5584B,stroke-dasharray:4 3
 ```
 
 ### Terminal example
@@ -251,14 +261,6 @@ Records are written in forms the tool parses, and `verify` - the last link of
 `npm run check` - reconciles them with the code both ways: a record that
 disagrees with the code fails the run. Numbers that drift with every edit are
 not written at all - a command computes them when they are needed.
-
-```mermaid
-flowchart LR
-  S[Source code] -- "TypeScript compiler,<br>every run" --> G[Graph]
-  K["Knowledge base<br>.context/"] <-->|"verify,<br>both ways"| S
-  G --> Q["brief · plan · tested · bar"]
-  K --> Q
-```
 
 ## What every edit includes
 
