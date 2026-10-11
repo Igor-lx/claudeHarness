@@ -29,6 +29,7 @@ import {
   barRowFault,
   barMorePlacesOf,
   barNoSubject,
+  BAR_NONE_REASONS,
   barReleaseLine,
   RESOURCE_KINDS,
   resourceKindsIn,
@@ -3897,6 +3898,11 @@ const reexportersOf = (target) => {
  * Без этого очерченная область исключала стиль, и критерий про границу языков
  * (C7-бис планки) оказывался неисполнимым: дублирование срока перехода между
  * кодом и стилем проходило мимо разбора. Найдено на вопросе о функции.
+ *
+ * Лист компонента, которого узел только берёт, сюда не входит намеренно: он
+ * красит тот компонент, а не узел, и строка соседей о стилях стоит на листах,
+ * которые в области есть. Ревьюер пачки проб `2026-10-11` принял это за
+ * ошибку; добавить такие листы значит читать их на каждой правке зовущего.
  */
 const stylesNear = (target) => {
   // Читается КОД, а не текст: закомментированный хвост файла нёс подключение
@@ -13139,10 +13145,13 @@ const barSkeletonOf = ({
       c.slogan || none !== "" || machineRow === null
         ? null
         : machineRow(c, subject);
+    // Своя заготовка «нет предмета» из прежнего протокола не переносится:
+    // правка принесла предмет, и строка ждёт ответа заново.
     const keep =
       !c.slogan &&
       none === "" &&
       was !== undefined &&
+      !(was.outcome === "нет предмета" && BAR_NONE_REASONS.has(was.what)) &&
       !(machine?.outcome === "нашлось" && was.outcome !== "нашлось");
     const made = !keep && machine !== null;
     const outcome = c.slogan
@@ -13500,6 +13509,7 @@ const barHolesOf = ({
   salt = "",
   lintRow = null,
   checkRow = null,
+  mapDisputed = new Set(),
 }) => {
   const holes = [];
   const said = new Map();
@@ -14134,6 +14144,13 @@ const barHolesOf = ({
                 : " у файла без своей записи в карте") +
               " — прочитанное ложится в базу",
           );
+        else if (i === 0 && one === "не требуется" && mapDisputed.has(file))
+          holes.push(
+            file +
+              ", база: " +
+              barQuoted("не требуется") +
+              ", а сверка «Запись карты не спорит с кодом» опровергает его запись — строка карты правится",
+          );
         if (c[2] === "")
           holes.push(
             file +
@@ -14324,6 +14341,7 @@ const barAcceptOf = ({
   reads = [],
   lintRow = null,
   checkRow = null,
+  mapDisputed = new Set(),
 }) => {
   const parsed = barRowsOf(was.body);
   const drift = barSubjectDriftOf({
@@ -14362,6 +14380,7 @@ const barAcceptOf = ({
     salt: was.salt ?? "",
     lintRow,
     checkRow,
+    mapDisputed,
   });
   return {
     drift,
@@ -14393,6 +14412,7 @@ const barProcess = ({
   reads = [],
   lintRow = null,
   checkRow = null,
+  mapDisputed = new Set(),
   machineRow = null,
 }) => {
   const was = barHeader(at);
@@ -14417,6 +14437,7 @@ const barProcess = ({
           reads,
           lintRow,
           checkRow,
+          mapDisputed,
         });
   const parsedWas = accept?.parsed ?? null;
   if (accept === null || accept.drift !== "") {
@@ -14966,6 +14987,12 @@ const barInputsOf = async ({
     reads,
     lintRow,
     checkRow,
+    // Запись карты, которую опровергает код, базу не освобождает.
+    mapDisputed: new Set(
+      (checks?.get("Запись карты не спорит с кодом")?.lines ?? []).flatMap(
+        (line) => [...sourceNamedIn(line)].map(rel),
+      ),
+    ),
     work,
     area,
     subjects,
@@ -15626,6 +15653,13 @@ if (mode === "bar") {
     } else if (kind === "на изменение")
       console.log("  гарантии против последнего коммита: без изменений");
   }
+  // Сверка «Вопрос о планке задан на конечном виде правки» ждёт режима
+  // правки против её тестов на том же виде, и о нём говорят здесь: ревьюер
+  // пачки проб узнал об этом только из красной сверки.
+  if (kind === "на изменение" && CONFIG.testedLedger != null)
+    console.log(
+      "  Дальше — `node .claude/tools/graph.mjs tested`: без него на этом виде правки красна сверка «Вопрос о планке задан на конечном виде правки».",
+    );
   console.log("");
   console.log("  Печать говорит: по каждому критерию дан ответ, и дан на этом");
   console.log("  виде предмета. О верности ответа она не говорит ничего —");
@@ -24439,7 +24473,7 @@ if (mode === "verify") {
           ? "  правленого без вопроса нет"
           : "  правлено после последнего вопроса: " +
             unasked.length +
-            ". Позвать режим «правка против её тестов» и пройти по планке",
+            ". Позвать `node .claude/tools/graph.mjs tested` и пройти по планке",
   );
   for (const u of unasked) console.log("    " + u);
 
@@ -25274,7 +25308,10 @@ if (mode === "verify") {
       unrunnable.push(what + " — " + why + " (" + where + ")");
     };
     const RUN = /npm run ([a-z:]+)/g;
-    const NPX = /npx ([@a-z0-9/-]+)/g;
+    // Флаги перед пакетом и версия после него — не имя: `npx -y eslint@9`
+    // зовёт `eslint`, а читался флаг, и сверка краснела на законном.
+    const NPX =
+      /npx (?:--?[a-z][a-z-]* )*(@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?)/g;
     const MODE = /graph\.mjs ([a-z-]+)/g;
     const BASE_FILE = /`(\d\d-[a-z]+\.md)`/g;
     const SEED_PATH = /seat\/templates\/([A-Za-z0-9_./-]*[A-Za-z0-9_])/g;

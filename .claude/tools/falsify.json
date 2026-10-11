@@ -1443,6 +1443,11 @@
       "append": "\nОтложенное закрывают командой `npm run zznone`.\n"
     },
     {
+      "section": "Названное доктриной исполнимо",
+      "file": ".claude/rules/close.md",
+      "append": "\nЛинт зовут командой `npx -y zznone@1`.\n"
+    },
+    {
       "section": "Конвейер зовёт проверки",
       "edits": [
         {

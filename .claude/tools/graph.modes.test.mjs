@@ -449,7 +449,11 @@ describe("ворота конца хода", () => {
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar");
       fillBar(protoAt, { release: "не нужно: проба" });
-      expect(tool("bar")).toContain("печать поставлена");
+      const sealed = tool("bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain(
+        "Дальше — `node .claude/tools/graph.mjs tested`",
+      );
       expect(hook().status).toBe(0);
       expect(tool("stop", "--session")).toBe("");
     } finally {
@@ -3560,6 +3564,75 @@ describe("ядро по предметам уровня: правка, чтен�
   }, 300000);
 });
 
+// Своя заготовка «нет предмета» переносилась из прежнего протокола и тогда,
+// когда следующая правка принесла предмет: строка оставалась закрытой
+// причиной, которая больше не верна. Найдено ревьюером пачки проб.
+describe("заготовка «нет предмета» не переживает правку, принёсшую предмет", () => {
+  it("лист без кода, затем код к нему: строки о коде открыты заново", () => {
+    const box = seatEmpty("net-predmeta-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const bar = () => {
+        try {
+          execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "bar"],
+            {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+        } catch {
+          // Отказ печати — законный ответ: скелет протокола уже лежит.
+        }
+        return fs.readFileSync(
+          path.join(box, ".context", "bar-protocol.md"),
+          "utf8",
+        );
+      };
+      const unitRows = (proto) =>
+        proto
+          .split("\n")
+          .filter(
+            (l) =>
+              l.startsWith("| B1 | — |") &&
+              l.includes("файла кода в предмете правки нет"),
+          );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      const dir = path.join(box, "src", "components", "ZzBox");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "ZzBox.module.css"),
+        ".box {\n  color: red;\n}\n",
+      );
+      expect(unitRows(bar()).length).toBeGreaterThan(0);
+      fs.writeFileSync(
+        path.join(dir, "ZzBox.tsx"),
+        'import own from "./ZzBox.module.css";\n\nexport function ZzBox() {\n  return <div className={own.box} />;\n}\n',
+      );
+      expect(unitRows(bar())).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("свод на правке — по той же области, что разбор; новое — с каталогом проекта", () => {
   it("соседи по графу и по имени, их факты и записи; новый файл и новое состояние сверяют с каталогом", () => {
     const box = seatEmpty("oblast-");
@@ -5411,6 +5484,27 @@ describe("ворота перед коммитом в конвейере", () =>
   }, 180000);
 });
 
+// Флаг перед пакетом читался именем пакета, а версия — его частью: проза,
+// звавшая законный пакет через `npx -y`, роняла сверку.
+describe("названное доктриной исполнимо: пакет за флагами и без версии", () => {
+  it("`npx -y пакет@версия` спрашивает пакет, а не флаг", () => {
+    const box = seatEmpty("npx-flag-");
+    try {
+      fs.appendFileSync(
+        path.join(box, ".claude", "rules", "close.md"),
+        "\nЛинт — `npx -y eslint@10`, формат — `npx --yes prettier`, проба — `npx -y zznone@1`.\n",
+      );
+      const said = (
+        verifyIn(box).get("Названное доктриной исполнимо") ?? []
+      ).join("\n");
+      expect(said).toContain("npx zznone —");
+      expect(said).not.toMatch(/npx (-y|--yes|eslint|prettier)/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("скрипт манифеста назван и командой с доводами", () => {
   it("`npm run имя -- …` называет скрипт; не названный нигде — предупреждение", () => {
     const box = seatEmpty("skripty-");
@@ -5732,6 +5826,85 @@ describe("запись карты не спорит с кодом", () => {
         ),
       );
       expect(verifyIn(box).get("Запись карты не спорит с кодом")).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  // Таблица «База и документация» принимала «не требуется» у файла, чью
+  // запись карты опровергает код. Найдено ревьюером пачки проб.
+  it("свод не принимает «не требуется» в базе у файла, чью запись опровергает сверка", () => {
+    const box = seatEmpty("karta-svod-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+      const bar = () => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "bar"],
+            {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const code = path.join(box, "src", "app", "zzCounter.ts");
+      fs.writeFileSync(
+        code,
+        'import { useState } from "react";\nexport const useZz = () => useState(0);\n',
+      );
+      const map = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      fs.writeFileSync(
+        map,
+        fs
+          .readFileSync(map, "utf8")
+          .replace(
+            head,
+            head + "\n| `src/app/zzCounter.ts` | счётчик | нет | нет |",
+          ),
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      fs.appendFileSync(code, "export const zzStep = 1;\n");
+      bar();
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const proto = fs.readFileSync(protoAt, "utf8");
+      const row = /^\| `app\/zzCounter\.ts` \| {2}\| {2}\| {2}\|$/m;
+      expect(proto).toMatch(row);
+      fs.writeFileSync(
+        protoAt,
+        proto.replace(
+          row,
+          "| `app/zzCounter.ts` | не требуется | не требуется | запись верна |",
+        ),
+      );
+      expect(bar()).toMatch(
+        /app\/zzCounter\.ts, база: .не требуется., а сверка «Запись карты не спорит с кодом» опровергает его запись/,
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

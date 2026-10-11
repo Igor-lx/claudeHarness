@@ -158,6 +158,26 @@ export const codeOf = (text) =>
  * Вынесено сюда затем, что внутри режима это держалось одноразовой пробой
  * при заведении. Здесь его гоняет самопроверка при каждом вызове.
  */
+/** Причины, по которым «нет предмета» ставит машина, — закрытый набор. По
+ * нему протокол отличает свою заготовку от ответа сессии: заготовка,
+ * перенесённая из прежнего протокола, не переживает правку, принёсшую
+ * предмет. */
+const NONE = {
+  code: "файла кода в предмете правки нет",
+  style: "листа стилей в предмете правки нет",
+  styleOrCode: "ни листа стилей, ни кода в предмете правки нет",
+  styleOrTime: "ни листа стилей, ни кадров и таймеров в предмете правки нет",
+  test: "тестов у предмета правки нет ни одного",
+  time: "ни эффекта, ни таймера, ни наблюдателя в предмете правки нет",
+  timeOrAsync:
+    "ни эффекта, ни таймера, ни асинхронных операций в предмете правки нет",
+  list: "списков в предмете правки нет",
+  manifest: "манифест этой правкой не тронут",
+  forks: "парных копий проект не объявлял",
+  promise: "ни одна гарантия поведения не называет узел этой области",
+};
+export const BAR_NONE_REASONS = new Set(Object.values(NONE));
+
 /** Беспредметен ли критерий планки НА ЭТОЙ ПРАВКЕ — чистая её часть.
  *
  * На входе строка `<критерий>|<признак>=<0|1>,…` — сам критерий и то, что
@@ -260,7 +280,7 @@ export const barNoSubject = (row) => {
     "M6",
   ]);
   if (CODE_ONLY.has(id) && no("code"))
-    return "файла кода в предмете правки нет";
+    return NONE.code;
 
   // Правка без единого листа стилей. `C7-бис` и `O5` сюда НЕ идут: у них
   // второй конец в коде, и правка кода их предмета касается. `O3` и `O4-тер`
@@ -275,9 +295,9 @@ export const barNoSubject = (row) => {
     "O5-бис",
   ]);
   if (STYLE_ONLY.has(id) && no("style"))
-    return "листа стилей в предмете правки нет";
+    return NONE.style;
   if ((id === "O3" || id === "O4-тер") && no("style") && no("code"))
-    return "ни листа стилей, ни кода в предмете правки нет";
+    return NONE.styleOrCode;
 
   // «Нет предмета» ставится только по признаку-НАДМНОЖЕСТВУ: признак
   // обязан покрывать всё, о чём критерий, иначе машина объявляет чистым то,
@@ -288,7 +308,7 @@ export const barNoSubject = (row) => {
   // Жизненный цикл движения — тоже: переход листом стилей — движение без
   // единого таймера в коде.
   if ((id === "N6" || id === "N1") && no("style") && no("time"))
-    return "ни листа стилей, ни кадров и таймеров в предмете правки нет";
+    return NONE.styleOrTime;
 
   // Критерии о СУЩЕСТВУЮЩИХ тестах. `J2`, `J3`, `J9-бис`, `J9-тер` тут
   // неуместны: они спрашивают, написан ли тест, а не каков он.
@@ -304,38 +324,38 @@ export const barNoSubject = (row) => {
     "J13",
   ]);
   if (ABOUT_TESTS.has(id) && no("test"))
-    return "тестов у предмета правки нет ни одного";
+    return NONE.test;
 
   // Отложенное во времени: эффект, таймер, наблюдатель, кадровый цикл.
   // `C5` сюда не входит: порядок бывает и без времени — синхронная рассылка
   // подписчикам, порядок подключения, порядок инициализации модулей.
   const ABOUT_TIME = new Set(["C12", "F4", "M3", "N3"]);
   if (ABOUT_TIME.has(id) && no("time"))
-    return "ни эффекта, ни таймера, ни наблюдателя в предмете правки нет";
+    return NONE.time;
 
   // Ресурс и устаревание живут и во времени, и в асинхронном: подписка,
   // таймер, запрос с отменой. Беспредметны, только когда нет ни того, ни
   // другого.
   const TIME_OR_ASYNC = new Set(["C9", "F1", "F2"]);
   if (TIME_OR_ASYNC.has(id) && no("time") && no("async"))
-    return "ни эффекта, ни таймера, ни асинхронных операций в предмете правки нет";
+    return NONE.timeOrAsync;
 
   // Списки: отрисовка перечислением.
   const ABOUT_LIST = new Set(["M4", "G6-бис"]);
-  if (ABOUT_LIST.has(id) && no("list")) return "списков в предмете правки нет";
+  if (ABOUT_LIST.has(id) && no("list")) return NONE.list;
 
   // Зависимости: их спрашивают, когда тронут манифест.
   const ABOUT_DEPS = new Set(["R1", "R1-бис", "R2"]);
   if (ABOUT_DEPS.has(id) && no("manifest"))
-    return "манифест этой правкой не тронут";
+    return NONE.manifest;
 
   // Парные копии: их у проекта может не быть вовсе.
-  if (id === "A5-бис" && no("forks")) return "парных копий проект не объявлял";
+  if (id === "A5-бис" && no("forks")) return NONE.forks;
   // Затронутая гарантия — та, что называет узел области. Ни одна не
   // называет — тест гарантии правке не о чем прогонять. О новой
   // возможности (`J12`) так не судят: её гарантии ещё нет по построению.
   if (id === "J11" && no("promise"))
-    return "ни одна гарантия поведения не называет узел этой области";
+    return NONE.promise;
 
   return "";
 };
@@ -2769,6 +2789,29 @@ export const closeOf = (text, at) => {
   return -1;
 };
 
+/** `>` на позиции `at` кончает тег разметки, а не список параметров типа и не
+ * сравнение: назад до `<` на своём уровне скобок, и `<` открывает тег. Конец
+ * обобщения `useState<…>(` и сравнение читались концом тега, а код за ними —
+ * текстом для человека. Найдено ревьюером пачки проб. */
+const endsTag = (text, at) => {
+  let depth = 0;
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const c = text[i];
+    if (c === "}" || c === ")" || c === "]") depth += 1;
+    else if (c === "{" || c === "(" || c === "[") {
+      if (depth === 0) return false;
+      depth -= 1;
+    } else if (depth > 0) continue;
+    else if (c === ";" || c === ">") return false;
+    else if (c === "<")
+      return (
+        /[A-Za-z/>]/.test(text[i + 1] ?? "") &&
+        !/[\w$.]/.test(text[i - 1] ?? "")
+      );
+  }
+  return false;
+};
+
 /** Части списка через запятую верхнего уровня: текст и позиция каждой от
  * `base` — начала списка в разбираемом тексте. */
 export const topLevelParts = (inner, base) => {
@@ -3786,9 +3829,10 @@ const codeSignalsOf = (file, text, own) => {
   if (markup) {
     // Позиция — первая буква текста, а не скобка перед ним: текст на своей
     // строке под тегом вставал строкой выше.
-    each(/(?<![=-])>([^<>{}]*\p{L}[^<>{}]*)<\/?[A-Za-z]/gu, bare, (m) =>
-      at("текст", m.index + 1 + m[1].length - m[1].trimStart().length, m[1].trim(), "в разметке"),
-    );
+    each(/(?<![=-])>([^<>{}]*\p{L}[^<>{}]*)<\/?[A-Za-z>]/gu, bare, (m) => {
+      if (endsTag(bare, m.index))
+        at("текст", m.index + 1 + m[1].length - m[1].trimStart().length, m[1].trim(), "в разметке");
+    });
     each(/\b(?:title|placeholder|alt|label)\s*=\s*["']([^"'\n]*\p{L}[^"'\n]*)["']/gu, plain, (m) =>
       at("текст", m.index, m[1], "в разметке"),
     );
@@ -4925,6 +4969,12 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const total = (order) => {\n  return order.items;\n};", "1:целое"],
   ["signalsSummary", "src/a.ts\nexport const head = (text) => text.slice(0, 3);", ""],
   ["signalsSummary", "src/a.tsx\nexport const A = () => (\n  <p>\n    Settings\n  </p>\n);", "3:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const A = () => (\n  <>\n    Settings\n  </>\n);", "3:текст/в разметке"],
+  // конец обобщения и сравнение — не конец тега: код за ними текстом не читается
+  ["signalsSummary", "src/a.tsx\nexport const A = () => {\n  const [mode] = useState<\n    \"edit\" | null\n  >(null);\n  return (\n    <p>{mode}</p>\n  );\n};", ""],
+  ["signalsSummary", "src/a.tsx\nexport const A = () => {\n  const box = useRef<HTMLDivElement>(null);\n  return (\n    <p ref={box}>{1}</p>\n  );\n};", ""],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ a, b }) => <p>{a > b ? <b>{a}</b> : null}</p>;", ""],
+  ["signalsSummary", "src/a.tsx\nexport const A = ({ go }) => <button type=\"button\" onClick={() => go()}>Save</button>;", "1:текст/в разметке"],
   // строка-результат выражения между тегами — текст; довод вызова и сторона сравнения — нет
   ["signalsSummary", "src/a.tsx\nexport const A = ({ dark }) => <p>{dark ? \"Dark\" : \"Light\"}</p>;", "1:текст/в разметке;1:текст/в разметке"],
   ["signalsSummary", "src/a.tsx\nexport const A = () => <p>{'Hello'}</p>;", "1:текст/в разметке"],
