@@ -2276,6 +2276,267 @@
           "replace": "    localStorage.setItem(\n      DRAFT_KEY,\n      JSON.stringify({\n        version: DRAFT_VERSION,\n        heading: draft.title,\n        text: draft.body,\n      }),\n    );"
         }
       ]
+    },
+    {
+      "criterion": "M1",
+      "why": "автосохранение запускается под флагом модуля: работает только при одном вызове — повторный монтаж его не перезапускает, а снять интервал нечем",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const AUTOSAVE_INTERVAL_MS = 30_000;\n\nlet autosaveStarted = false;\n\nexport const startAutosave = (save) => {\n  if (autosaveStarted) return;\n  autosaveStarted = true;\n  window.setInterval(save, AUTOSAVE_INTERVAL_MS);\n};",
+          "ts": "const AUTOSAVE_INTERVAL_MS = 30_000;\n\nlet autosaveStarted = false;\n\nexport const startAutosave = (save: () => void): void => {\n  if (autosaveStarted) return;\n  autosaveStarted = true;\n  window.setInterval(save, AUTOSAVE_INTERVAL_MS);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B8",
+      "why": "четыре булевых флага входа записью `Record`: из шестнадцати сочетаний осмысленны единицы, а тип этого не говорит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const noteBadges = (flags) => {\n  const badges = [];\n  if (flags.pinned && !flags.archived) badges.push(\"pinned\");\n  if (flags.archived) badges.push(\"archived\");\n  if (flags.shared && !flags.locked) badges.push(\"shared\");\n  if (flags.locked) badges.push(\"locked\");\n  return badges;\n};",
+          "ts": "export const noteBadges = (\n  flags: Partial<Record<\"pinned\" | \"archived\" | \"shared\" | \"locked\", boolean>>,\n): string[] => {\n  const badges: string[] = [];\n  if (flags.pinned && !flags.archived) badges.push(\"pinned\");\n  if (flags.archived) badges.push(\"archived\");\n  if (flags.shared && !flags.locked) badges.push(\"shared\");\n  if (flags.locked) badges.push(\"locked\");\n  return badges;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "H6-тер",
+      "why": "сокращения внутри составных имён: `buildReqOpts`, `userCfg`, `retryCnt`",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const buildReqOpts = (userCfg) => ({\n  timeoutMs: userCfg.timeoutMs,\n  retries: userCfg.retryCnt,\n});",
+          "ts": "export const buildReqOpts = (userCfg: {\n  timeoutMs: number;\n  retryCnt: number;\n}): { timeoutMs: number; retries: number } => ({\n  timeoutMs: userCfg.timeoutMs,\n  retries: userCfg.retryCnt,\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "G6-кватер",
+      "why": "поиск по массиву тегов на каждую запись, спрятанный в помощник: обход внутри обхода вместо словаря",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const tagNameOf = (tags, tagId) =>\n  tags.find((tag) => tag.id === tagId)?.name ?? \"\";\n\nexport const withTagNames = (items, tags) =>\n  items.map((item) => ({ ...item, tagName: tagNameOf(tags, item.tagId) }));",
+          "ts": "const tagNameOf = (\n  tags: readonly { id: string; name: string }[],\n  tagId: string,\n): string => tags.find((tag) => tag.id === tagId)?.name ?? \"\";\n\nexport const withTagNames = <Item extends { tagId: string }>(\n  items: readonly Item[],\n  tags: readonly { id: string; name: string }[],\n): (Item & { tagName: string })[] =>\n  items.map((item) => ({ ...item, tagName: tagNameOf(tags, item.tagId) }));"
+        }
+      ]
+    },
+    {
+      "criterion": "H7-бис",
+      "why": "задержка сохранения без единицы в имени: миллисекунды это или секунды, `SAVE_LATENCY` не говорит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const SAVE_LATENCY = 400;\n\nexport const scheduleSave = (save) => window.setTimeout(save, SAVE_LATENCY);",
+          "ts": "export const SAVE_LATENCY = 400;\n\nexport const scheduleSave = (save: () => void): number =>\n  window.setTimeout(save, SAVE_LATENCY);"
+        }
+      ]
+    },
+    {
+      "criterion": "B11",
+      "why": "размер страницы задан числом в двух файлах под разными именами: правка одного не тронет другого",
+      "into": [
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "export const NOTES_PER_PAGE = 20;\n\nexport const pageOf = (items, page) =>\n  items.slice(page * NOTES_PER_PAGE, (page + 1) * NOTES_PER_PAGE);",
+          "ts": "export const NOTES_PER_PAGE = 20;\n\nexport function pageOf<Item>(items: readonly Item[], page: number): Item[] {\n  return items.slice(page * NOTES_PER_PAGE, (page + 1) * NOTES_PER_PAGE);\n}"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "const PAGE_LIMIT = 20;\n\nexport const hasNextPage = (total, page) => (page + 1) * PAGE_LIMIT < total;",
+          "ts": "const PAGE_LIMIT = 20;\n\nexport const hasNextPage = (total: number, page: number): boolean =>\n  (page + 1) * PAGE_LIMIT < total;"
+        }
+      ],
+      "culprits": [
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "T2",
+      "why": "дата собрана по частям через `getDate()` мимо форматирования по региону",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const shortDate = (time) => {\n  const date = new Date(time);\n  return [date.getDate(), date.getMonth() + 1, date.getFullYear()].join(\".\");\n};",
+          "ts": "export const shortDate = (time: number): string => {\n  const date = new Date(time);\n  return [date.getDate(), date.getMonth() + 1, date.getFullYear()].join(\".\");\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "P4-бис",
+      "why": "кнопка во время сохранения только бледнеет: для вспомогательной технологии она обычная, и по ней продолжают нажимать",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "const DIMMED_OPACITY = 0.5;\n\nexport function SaveButton({ saving, onSave }) {\n  return (\n    <button\n      type=\"button\"\n      style={{ opacity: saving ? DIMMED_OPACITY : 1 }}\n      onClick={onSave}\n    >\n      Save\n    </button>\n  );\n}",
+          "ts": "const DIMMED_OPACITY = 0.5;\n\nexport function SaveButton({\n  saving,\n  onSave,\n}: {\n  readonly saving: boolean;\n  readonly onSave: () => void;\n}) {\n  return (\n    <button\n      type=\"button\"\n      style={{ opacity: saving ? DIMMED_OPACITY : 1 }}\n      onClick={onSave}\n    >\n      Save\n    </button>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "P5",
+      "why": "ошибка синхронизации появляется тернарным выражением без живой области: вспомогательная технология о ней не узнаёт",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "export function SyncStatus({ status }) {\n  return <p>{status === \"failed\" ? \"Sync failed, retrying\" : null}</p>;\n}",
+          "ts": "export function SyncStatus({\n  status,\n}: {\n  readonly status: \"idle\" | \"saved\" | \"failed\";\n}) {\n  return <p>{status === \"failed\" ? \"Sync failed, retrying\" : null}</p>;\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "B4",
+      "why": "функция отдаёт объект с полями «на всякий случай»: число, первый, последний, пустота — потребитель соберёт из них своё правило",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const summarizeTitles = (titles) => ({\n  titles,\n  count: titles.length,\n  first: titles[0],\n  last: titles.at(-1),\n  isEmpty: titles.length === 0,\n});",
+          "ts": "export const summarizeTitles = (titles: readonly string[]) => ({\n  titles,\n  count: titles.length,\n  first: titles[0],\n  last: titles.at(-1),\n  isEmpty: titles.length === 0,\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "B6-бис",
+      "why": "вход объявлен необязательным, а без него узел бросает: сигнатура разрешает вызов, которого узел не переживает",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const titleForLocale = (title, locale) => {\n  if (locale === undefined) throw new Error(\"locale is required\");\n  return title.toLocaleUpperCase(locale);\n};",
+          "ts": "export const titleForLocale = (title: string, locale?: string): string => {\n  if (locale === undefined) throw new Error(\"locale is required\");\n  return title.toLocaleUpperCase(locale);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "O2",
+      "why": "правило держится цепочкой из пяти селекторов с `#id`: перекрасить заголовок можно только ещё более тяжёлым селектором",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "стиль",
+          "text": "#notes-root section ul li h3 {\n  font-weight: 600;\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "A1-тер",
+      "why": "функция и считает слова, и оформляет подпись: проверить счёт отдельно от строки нельзя",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const wordCountLabel = (texts) => {\n  const words = texts.reduce(\n    (sum, text) => sum + text.split(/\\s+/).filter(Boolean).length,\n    0,\n  );\n  return `${String(words)} words`;\n};",
+          "ts": "export const wordCountLabel = (texts: readonly string[]): string => {\n  const words = texts.reduce(\n    (sum, text) => sum + text.split(/\\s+/).filter(Boolean).length,\n    0,\n  );\n  return `${String(words)} words`;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A9-тер",
+      "why": "правило «пустой черновик» записано дважды, разными словами и в другом порядке: правка одного разойдётся с другим",
+      "into": [
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "export const isBlankDraft = (draft) =>\n  draft.title.trim() === \"\" && draft.body.trim() === \"\";",
+          "ts": "export const isBlankDraft = (draft: { title: string; body: string }): boolean =>\n  draft.title.trim() === \"\" && draft.body.trim() === \"\";"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "export const canDropDraft = (draft) =>\n  !draft.body.trim() && !draft.title.trim();",
+          "ts": "export const canDropDraft = (draft: { title: string; body: string }): boolean =>\n  !draft.body.trim() && !draft.title.trim();"
+        }
+      ],
+      "culprits": [
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "T1",
+      "why": "текст для человека лежит строкой в файле `.ts`, мимо словаря переводов",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const SAVE_FAILED_MESSAGE =\n  \"Could not save your note. Check the connection and try again.\";\n\nexport const saveFailedText = (reason) => `${SAVE_FAILED_MESSAGE} (${reason})`;",
+          "ts": "export const SAVE_FAILED_MESSAGE =\n  \"Could not save your note. Check the connection and try again.\";\n\nexport const saveFailedText = (reason: string): string =>\n  `${SAVE_FAILED_MESSAGE} (${reason})`;"
+        }
+      ]
+    },
+    {
+      "criterion": "C5",
+      "why": "работает потому, что эффекты сегодня выполняются в этом порядке",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect } from \"react\";\n\nexport const useFocusFirstField = () => {\n  useEffect(() => {\n    document.querySelector(\"form input\")?.focus();\n  }, []);\n};",
+          "ts": "import { useEffect } from \"react\";\n\nexport const useFocusFirstField = (): void => {\n  useEffect(() => {\n    document.querySelector<HTMLInputElement>(\"form input\")?.focus();\n  }, []);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "J9-бис",
+      "why": "инвариант «порядок не меняет вход» держится одной копией в конструкции, тест его не закрепляет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const oldestFirst = (items) =>\n  [...items].sort((a, b) => a.createdAt - b.createdAt);",
+          "ts": "export const oldestFirst = <Item extends { createdAt: number }>(\n  items: readonly Item[],\n): Item[] => [...items].sort((a, b) => a.createdAt - b.createdAt);"
+        },
+        {
+          "role": "проверка",
+          "file": "тест",
+          "text": "import { oldestFirst } from \"{{from:виновник}}\";\n\nit(\"puts the oldest item first\", () => {\n  const items = [\n    { id: \"b\", createdAt: 2 },\n    { id: \"a\", createdAt: 1 },\n  ];\n  expect(oldestFirst(items).map((item) => item.id)).toEqual([\"a\", \"b\"]);\n});"
+        }
+      ],
+      "culprits": [
+        "виновник",
+        "проверка"
+      ]
+    },
+    {
+      "criterion": "I1",
+      "why": "новый вид записи требует правки в трёх местах: подпись, значок и адрес сравнивают одну метку порознь",
+      "into": [
+        {
+          "role": "метка",
+          "file": "модуль",
+          "text": "export const entryKindLabel = (kind) =>\n  kind === \"plain\" ? \"Note\" : \"Checklist\";",
+          "ts": "export type EntryKind = \"plain\" | \"list\";\n\nexport const entryKindLabel = (kind: EntryKind): string =>\n  kind === \"plain\" ? \"Note\" : \"Checklist\";"
+        },
+        {
+          "role": "значок",
+          "file": "разметка",
+          "text": "export function EntryKindIcon({ kind }) {\n  return <span aria-hidden=\"true\">{kind === \"plain\" ? \"¶\" : \"☑\"}</span>;\n}",
+          "ts": "import type { EntryKind } from \"{{from:метка}}\";\n\nexport function EntryKindIcon({ kind }: { readonly kind: EntryKind }) {\n  return <span aria-hidden=\"true\">{kind === \"plain\" ? \"¶\" : \"☑\"}</span>;\n}"
+        },
+        {
+          "role": "путь",
+          "file": "модуль",
+          "text": "export const entryKindRoute = (kind) =>\n  kind === \"plain\" ? \"/notes\" : \"/lists\";",
+          "ts": "import type { EntryKind } from \"{{from:метка}}\";\n\nexport const entryKindRoute = (kind: EntryKind): string =>\n  kind === \"plain\" ? \"/notes\" : \"/lists\";"
+        }
+      ],
+      "culprits": [
+        "метка",
+        "значок",
+        "путь"
+      ]
     }
   ],
   "covers": [
