@@ -129,6 +129,7 @@ import {
 } from "./graph.parts.mjs";
 // Серия: цепочка проверок на каждой части правки, отметки по дереву.
 import {
+  SERIES_PART,
   livingBaseOf,
   nextPartOf,
   partTreesOf,
@@ -25065,6 +25066,12 @@ if (mode === "verify") {
     const at =
       CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
     const nested = process.env[BAR_NESTED] === "1";
+    // Цепочка на дереве промежуточной части серии: протокол называет всю
+    // пачку, а правлено только до этой части. Код части обязан быть назван
+    // печатью на том же виде; всю правку и приём сверяет последняя часть —
+    // её дерево равно рабочему.
+    const part = /^([0-9]+)\/([0-9]+)$/.exec(process.env[SERIES_PART] ?? "");
+    const midSeries = part !== null && Number(part[1]) < Number(part[2]);
     const subject = at === null || nested ? [] : await barChangedSubject(REPO);
     {
       const all = liveBarCriteria();
@@ -25088,7 +25095,19 @@ if (mode === "verify") {
         barGaps.push(
           "протокол сделан на задаче чтения, а правленое есть: свод не о нём",
         );
-      else if (!barSameMarks(was.marks, marks))
+      else if (midSeries) {
+        const fault =
+          barSealFault(was.body) || barNamedFault(marks, was.body, false);
+        if (fault !== "")
+          barGaps.push("часть серии не накрыта сводом: " + fault);
+        else
+          barSaid =
+            "часть " +
+            part[1] +
+            " из " +
+            part[2] +
+            " серии: код части назван печатью на том же виде — всю правку и приём сверяет последняя часть";
+      } else if (!barSameMarks(was.marks, marks))
         barGaps.push(
           "протокол сделан на другом виде предмета: файлов в нём " +
             was.marks.length +

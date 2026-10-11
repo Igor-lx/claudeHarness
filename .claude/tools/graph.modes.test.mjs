@@ -4097,6 +4097,93 @@ describe("серия", () => {
     }
   }, 300000);
 
+  // Цепочка проекта на дереве промежуточной части видит протокол всей пачки:
+  // сверка свода спрашивает там подмножество, а всю правку и приём — на
+  // последней части, чьё дерево равно рабочему.
+  it("сверка свода в цепочке серии: промежуточная часть — подмножество, последняя — вся правка", () => {
+    const box = seatEmpty("seriya-svod-");
+    const sink = path.join(
+      os.tmpdir(),
+      "seriya-svod-" + process.pid + "-" + Date.now() + ".txt",
+    );
+    try {
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+      const tool = (...args) => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      };
+      // Цепочка — одна сверка свода: красна, если её секция называет дыру;
+      // секцию дописывает в файл вне репозитория.
+      put(
+        "chk.mjs",
+        [
+          'import { appendFileSync } from "node:fs";',
+          'import { spawnSync } from "node:child_process";',
+          'const out = spawnSync(process.execPath, [".claude/tools/graph.mjs", "verify"], { encoding: "utf8" }).stdout;',
+          'const said = (out.split("=== Планка пройдена покритериально ===")[1] ?? "").split("\\n===")[0];',
+          "appendFileSync(" + JSON.stringify(sink) + ", said);",
+          "process.exit(/^ {4}\\S/m.test(said) ? 1 : 0);",
+          "",
+        ].join("\n"),
+      );
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts.check = "node chk.mjs";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n";
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(
+            head,
+            head +
+              "| `src/shared/zza/zza.ts` | первое | нет | нет |\n| `src/shared/zzb/zzb.ts` | второе | нет | нет |\n",
+          ),
+      );
+      put("src/shared/zza/zza.ts", "export const zza = 1;\n");
+      put("src/shared/zzb/zzb.ts", "export const zzb = 2;\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      expect(tool("bar").out).toContain("части ждут коммита: 1–2 из 2");
+      const ran = tool("series");
+      const said = fs.existsSync(sink) ? fs.readFileSync(sink, "utf8") : "";
+      expect(ran.code, ran.out + said).toBe(0);
+      expect(said).toContain(
+        "часть 1 из 2 серии: код части назван печатью на том же виде",
+      );
+      expect(said).toContain("свод закрыт печатью и принят");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(sink, { force: true });
+    }
+  }, 300000);
+
   // Ворота пропускают коммит с кодом, только если индекс — дерево части,
   // прошедшее цепочку, и ложится на дерево предыдущей части; печать протокола
   // при этом сходится. Части коммитят по порядку, через обычные хуки.

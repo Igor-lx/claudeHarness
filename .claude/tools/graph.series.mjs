@@ -39,6 +39,11 @@ export const gitDirOf = (repoRoot) =>
     }).trim(),
   );
 
+/** Имя переменной среды, которой серия говорит цепочке «часть k из n». Дерево
+ * промежуточной части несёт протокол всей пачки, и сверка свода по нему
+ * спрашивает подмножество: код части назван печатью на том же виде. */
+export const SERIES_PART = "GRAPH_SERIES_PART";
+
 /** Отметки серии: основание и деревья, прошедшие цепочку. */
 const marksAt = (repoRoot) =>
   path.join(gitDirOf(repoRoot), "graph-series.json");
@@ -166,7 +171,7 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
       git(["read-tree", "-u", "--reset", t.tree], dir);
       const run = spawnSync(command[0], command.slice(1), {
         cwd: dir,
-        env,
+        env: { ...env, [SERIES_PART]: t.part + "/" + trees.length },
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
       });
