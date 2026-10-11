@@ -115,6 +115,18 @@ import {
   sandboxManifests,
   sandboxPackages,
 } from "./graph.seat.mjs";
+// Части правки: таблица в протоколе свода, связность, записи и наложение.
+import {
+  applyParts,
+  changedLinesOf,
+  componentsOf,
+  hunksOf,
+  linesOf,
+  partsSectionOf,
+  partsTableOf,
+  PARTS_TITLE,
+  recordsOf,
+} from "./graph.parts.mjs";
 
 // Вывод в канал Node пишет асинхронно, а режимы кончаются `process.exit()`,
 // который обрывает недописанное. Замерено: из `20` запусков, печатавших в
@@ -1751,8 +1763,12 @@ const barRowsOf = (body) => {
   const witnesses = [];
   const reads = [];
   const cross = [];
+  // Таблица частей разбирается своим разбором: её строки по числу граф
+  // похожи на страницы чтения.
+  let inParts = false;
   for (const line of body.split(/\r?\n/)) {
-    if (!line.startsWith("| ")) continue;
+    if (line.startsWith("## ")) inParts = line === "## " + PARTS_TITLE;
+    if (inParts || !line.startsWith("| ")) continue;
     const cells = barCellsOf(line);
     // Страница чтения: номер, описание, слово.
     if (cells.length === 3 && /^[0-9]+$/.test(cells[0])) {
@@ -2959,7 +2975,11 @@ const ALIASES = (() => {
   read(path.join(BASE, "..", start));
   return out;
 })();
-const resolve = (fromFile, spec) => {
+const resolve = (fromFile, spec) =>
+  resolveAmong(fromFile, spec, (c) => files.includes(c));
+/** Адрес импорта среди файлов, которые признаёт `known`: граф спрашивает
+ * файлы на диске, части правки — и удалённый файл. */
+const resolveAmong = (fromFile, spec, known) => {
   let base;
   if (spec.startsWith(".")) {
     base = norm(path.resolve(path.dirname(fromFile), spec));
@@ -2996,7 +3016,7 @@ const resolve = (fromFile, spec) => {
       (ext) => base.slice(0, -path.extname(base).length) + ext,
     ),
   ];
-  for (const c of cands) if (files.includes(c)) return c;
+  for (const c of cands) if (known(c)) return c;
   return null;
 };
 /** Файлы, которые берёт импорт во время работы с адресом-шаблоном: всё под
@@ -12991,6 +13011,7 @@ const barSkeletonOf = ({
   reads = [],
   salt = "",
   machineRow = null,
+  parts = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
@@ -13326,6 +13347,7 @@ const barSkeletonOf = ({
           "",
         ]
       : []),
+    ...(parts === null ? [] : partsSectionOf(parts)),
   ];
   return rows.join(LF);
 };
@@ -14229,8 +14251,10 @@ const barAcceptOf = ({
   lintRow = null,
   checkRow = null,
   mapDisputed = new Set(),
+  partsOf = null,
 }) => {
   const parsed = barRowsOf(was.body);
+  const parts = partsOf === null ? null : partsOf(was.body);
   const drift = barSubjectDriftOf({
     was,
     parsedWas: parsed,
@@ -14243,11 +14267,19 @@ const barAcceptOf = ({
     witnesses,
     reads,
   });
-  if (drift !== "")
+  // Несвязанных частей больше одной, а таблицы нет — скелет печатают с ней.
+  const partsDrift =
+    parts !== null && parts.table === null && parts.proposal.length > 1
+      ? "части правки не размечены: несвязанных частей " + parts.proposal.length
+      : "";
+  if (drift !== "" || partsDrift !== "")
     return {
-      drift,
+      drift: drift || partsDrift,
       parsed,
-      faults: ["протокол собран не на нынешнем виде предмета — " + drift],
+      faults: [
+        "протокол собран не на нынешнем виде предмета — " +
+          (drift || partsDrift),
+      ],
     };
   const found = barHolesOf({
     kind,
@@ -14269,6 +14301,7 @@ const barAcceptOf = ({
     checkRow,
     mapDisputed,
   });
+  found.holes.push(...(parts?.holes ?? []));
   return {
     drift,
     parsed,
@@ -14279,6 +14312,31 @@ const barAcceptOf = ({
       ...found.holes,
     ],
   };
+};
+/** Строки таблицы частей для скелета: прежняя раскладка сессии — слияния и
+ * названные файлы — сохраняется, новые компоненты ложатся к строке, где уже
+ * лежит их файл, иначе своей строкой. Несвязанная часть одна — таблицы нет. */
+const barPartsRowsOf = (partsOf, was) => {
+  if (partsOf === null) return null;
+  const { proposal } = partsOf(null);
+  const old = was === null ? null : partsTableOf(was.body);
+  if (proposal.length < 2 && (old === null || old.length < 2)) return null;
+  const subject = new Set(proposal.flat().map(rel));
+  const rows = (old ?? [])
+    .map((r) => ({
+      files: r.files.filter((q) => subject.has(q) || !CODE_OR_STYLE.test(q)),
+      what: r.what,
+    }))
+    .filter((r) => r.files.length > 0);
+  for (const comp of proposal) {
+    const mine = comp.map(rel);
+    const free = mine.filter((q) => !rows.some((r) => r.files.includes(q)));
+    if (free.length === 0) continue;
+    const home = rows.find((r) => mine.some((q) => r.files.includes(q)));
+    if (home !== undefined) home.files.push(...free);
+    else rows.push({ files: free, what: "" });
+  }
+  return rows.length < 2 && proposal.length < 2 ? null : rows;
 };
 const barProcess = ({
   at,
@@ -14300,6 +14358,7 @@ const barProcess = ({
   lintRow = null,
   checkRow = null,
   mapDisputed = new Set(),
+  partsOf = null,
   machineRow = null,
 }) => {
   const was = barHeader(at);
@@ -14325,6 +14384,7 @@ const barProcess = ({
           lintRow,
           checkRow,
           mapDisputed,
+          partsOf,
         });
   const parsedWas = accept?.parsed ?? null;
   if (accept === null || accept.drift !== "") {
@@ -14413,6 +14473,7 @@ const barProcess = ({
             ? was.salt
             : randomBytes(4).toString("hex"),
         machineRow,
+        parts: barPartsRowsOf(partsOf, was),
       }),
     );
     return {
@@ -14747,6 +14808,305 @@ const barChangeOf = async (repoRoot) => {
  * которым её ставили: режим `bar`, ворота и сверка цепочки зовут одну
  * функцию. Сверок прогона здесь нет — их держатель зовёт прогон, а прогон
  * зовёт приём. */
+// --- части правки -------------------------------------------------------------
+//
+// Несколько независимых правок проходят планку одним сводом, а в историю
+// уходят отдельными коммитами — коммит на часть. Части предлагает машина:
+// компоненты связности правленых файлов; сессия вправе их сливать, но не
+// резать. Каждый изменённый файл и каждая изменённая запись базы лежат ровно
+// в одной части, и сумма частей, наложенных на последний коммит, равна
+// рабочему дереву. Решение разработчика `2026-10-10`.
+
+/** Файлы, которые пишет сам инструмент, — к первой части: протокол и следы
+ * прогонов. */
+const partToolFiles = () =>
+  [
+    CONFIG.barProtocol,
+    CONFIG.testedLedger,
+    CONFIG.mutationLedger,
+    CONFIG.barProbeLedger,
+  ]
+    .filter((one) => one != null)
+    .map((one) => norm(path.join(BASE, one)));
+/** Файлы зависимостей: манифест и блокировка лежат в одной части. */
+const PART_DEPS =
+  /^(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/;
+
+/** Связь двух правленых файлов — закрытый перечень, причина словами либо
+ * `null`. Общий нетронутый помощник связью не считается: через него правки
+ * друг на друга не влияют. */
+const partLinkOf = (renames) => {
+  const deps = new Map();
+  const depsOf = (f) => {
+    if (!deps.has(f))
+      deps.set(
+        f,
+        existsSync(f)
+          ? new Set([
+              ...(importsOf.get(f) ?? []),
+              ...usesWithVia(f).uses.keys(),
+            ])
+          : new Set(),
+      );
+    return deps.get(f);
+  };
+  // Удалённый файл и тот, кто брал его по последнему коммиту.
+  const took = (gone, taker) => {
+    if (existsSync(gone) || !existsSync(taker)) return false;
+    const text = headTextOf(taker);
+    if (text === null) return false;
+    const parsed = parseModule(text, taker);
+    return [...parsed.froms, ...parsed.bare, ...parsed.dynamic].some(
+      (one) => resolveAmong(taker, one.spec, (c) => c === gone) !== null,
+    );
+  };
+  return (x, y) => {
+    if (unitOf(x) === unitOf(y)) return "общая единица переноса " + unitOf(x);
+    if (depsOf(x).has(y) || depsOf(y).has(x))
+      return "импорт между " + rel(x) + " и " + rel(y);
+    if (existsSync(x) && linkPartnersOf(x).includes(y))
+      return "строка таблицы связей называет " + rel(x) + " и " + rel(y);
+    if (existsSync(x) && existsSync(y) && sharedPartnersOf(x).includes(y))
+      return "имя-константа у " + rel(x) + " и " + rel(y);
+    if (took(x, y) || took(y, x))
+      return "удалённый файл и тот, кто его брал: " + rel(x) + " и " + rel(y);
+    if (renames.some(([a, b]) => (a === x && b === y) || (a === y && b === x)))
+      return "переименование " + rel(x) + " и " + rel(y);
+    return null;
+  };
+};
+
+/** Переименования в правке: удалённый файл и новый, у которых совпадает не
+ * меньше половины строк. git видит переименование, только когда оба пути в
+ * индексе, а `mv` без него — это удаление и новый файл. */
+const partRenamesOf = (subject) => {
+  const gone = subject.filter((f) => !existsSync(f));
+  const born = subject.filter((f) => existsSync(f) && headTextOf(f) === null);
+  const out = [];
+  for (const g of gone) {
+    const before = new Set((headTextOf(g) ?? "").split(LF).filter(Boolean));
+    if (before.size === 0) continue;
+    for (const b of born) {
+      const after = readFileSync(b, "utf8").split(LF).filter(Boolean);
+      const same = after.filter((line) => before.has(line)).length;
+      if (same * 2 >= Math.max(before.size, after.length)) out.push([g, b]);
+    }
+  }
+  return out;
+};
+
+/** Изменения одного файла построчно: прежние и новые строки и ханки. */
+const partDiffOf = (abs, repoRoot) => {
+  const before = headTextOf(abs);
+  const after = existsSync(abs) ? readFileSync(abs, "utf8") : null;
+  const oldLines = linesOf(before ?? "");
+  const newLines = linesOf(after ?? "");
+  let hunks;
+  if (before === null) hunks = [{ a: 0, b: 0, c: 1, d: newLines.length }];
+  else if (after === null) hunks = [{ a: 1, b: oldLines.length, c: 0, d: 0 }];
+  else
+    hunks = hunksOf(
+      execFileSync(
+        "git",
+        [
+          "diff",
+          "-U0",
+          "--no-color",
+          "--no-ext-diff",
+          "HEAD",
+          "--",
+          norm(path.relative(repoRoot, abs)),
+        ],
+        { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+      ),
+    );
+  return { before, after, oldLines, newLines, hunks };
+};
+
+/** Части правки: предложение машины, таблица протокола, раскладка и дыры.
+ * Таблицы нет — одна часть на весь предмет. */
+const barPartsOf = ({ subject, repoRoot, body }) => {
+  const renames = partRenamesOf(subject);
+  const link = partLinkOf(renames);
+  const proposal = componentsOf(subject, link);
+  const table = body == null ? null : partsTableOf(body);
+  const out = {
+    proposal,
+    table,
+    holes: [],
+    partOf: new Map(),
+    splits: new Map(),
+  };
+  if (table === null) return out;
+  const holes = out.holes;
+  const changed = (changedPathsNow(repoRoot) ?? []).map((f) =>
+    norm(path.join(repoRoot, f)),
+  );
+  const changedSet = new Set(changed);
+  const absOf = (q) =>
+    [path.join(ROOT, q), path.join(repoRoot, q)]
+      .map(norm)
+      .find((one) => changedSet.has(one)) ?? null;
+  // Явные: файлы, названные таблицей.
+  const partOf = out.partOf;
+  table.forEach((row, k) => {
+    const n = k + 1;
+    if (row.n !== String(n))
+      holes.push(
+        "части: строка " +
+          row.n +
+          " стоит " +
+          n +
+          "-й — номера идут по порядку с единицы",
+      );
+    if (row.files.length === 0) holes.push("часть " + n + " пуста");
+    if (row.what === "")
+      holes.push(
+        "часть " + n + ": графа «что» пуста — из неё сообщение коммита части",
+      );
+    for (const q of row.files) {
+      const abs = absOf(q);
+      if (abs === null) {
+        holes.push(
+          "часть " + n + ": " + barQuoted(q) + " не правлен этой работой",
+        );
+        continue;
+      }
+      if (partOf.has(abs))
+        holes.push(
+          barQuoted(q) + " назван частями " + partOf.get(abs) + " и " + n,
+        );
+      else partOf.set(abs, n);
+    }
+  });
+  const count = table.length;
+  for (const f of subject)
+    if (!partOf.has(f))
+      holes.push(
+        "файл предмета " + barQuoted(rel(f)) + " не назван ни одной частью",
+      );
+  // Части не связаны: связь между файлами разных частей — дыра со связью.
+  for (let i = 0; i < subject.length; i += 1)
+    for (let j = i + 1; j < subject.length; j += 1) {
+      const a = partOf.get(subject[i]);
+      const b = partOf.get(subject[j]);
+      if (a === undefined || b === undefined || a === b) continue;
+      const why = link(subject[i], subject[j]);
+      if (why !== null)
+        holes.push(
+          "части " +
+            Math.min(a, b) +
+            " и " +
+            Math.max(a, b) +
+            " связаны: " +
+            why +
+            " — слить части",
+        );
+    }
+  // Прочие изменённые файлы: инструментальные — к первой части; в папке
+  // единицы переноса — к части этой единицы; база и документация — по
+  // записям; остальное называют в таблице.
+  const unitPart = new Map();
+  for (const [f, n] of partOf)
+    if (SRC_ROOTS.some((r) => f.startsWith(r + "/")))
+      unitPart.set(unitOf(f), n);
+  const tool = new Set(partToolFiles());
+  for (const f of changed) {
+    if (partOf.has(f)) continue;
+    if (tool.has(f)) {
+      partOf.set(f, 1);
+      continue;
+    }
+    if (
+      SRC_ROOTS.some((r) => f.startsWith(r + "/")) &&
+      unitPart.has(unitOf(f))
+    ) {
+      partOf.set(f, unitPart.get(unitOf(f)));
+      continue;
+    }
+    if (f.endsWith(".md")) {
+      out.splits.set(f, null);
+      continue;
+    }
+    if (count === 1) partOf.set(f, 1);
+    else
+      holes.push(
+        "файл " +
+          barQuoted(norm(path.relative(repoRoot, f))) +
+          " не отнесён к части — назвать его в графе «файлы» нужной части",
+      );
+  }
+  // Зависимости — в одной части: блокировку собирает менеджер пакетов.
+  const depParts = new Set(
+    [...partOf]
+      .filter(([f]) => PART_DEPS.test(path.basename(f)))
+      .map(([, n]) => n),
+  );
+  if (depParts.size > 1)
+    holes.push(
+      "зависимости меняют части " +
+        [...depParts].sort().join(" и ") +
+        " — слить части либо разнести правки по разным пачкам",
+    );
+  // Записи базы и документации: запись — к части, чьи файлы называет.
+  const filesOfPart = new Map();
+  for (const [f, n] of partOf) {
+    if (!filesOfPart.has(n)) filesOfPart.set(n, []);
+    filesOfPart.get(n).push(f);
+  }
+  const partsNamedIn = (text) =>
+    [...filesOfPart]
+      .filter(([, list]) => list.some((f) => namesFileIn(text, f)))
+      .map(([n]) => n)
+      .sort((x, y) => x - y);
+  for (const f of out.splits.keys()) {
+    const d = partDiffOf(f, repoRoot);
+    const oldRec = recordsOf(d.oldLines);
+    const newRec = recordsOf(d.newLines);
+    const { removed, added } = changedLinesOf(d.hunks);
+    const partOfLine = { removed: new Map(), added: new Map() };
+    const said = new Set();
+    const where = norm(path.relative(repoRoot, f));
+    const judge = (lines, rec, i, side, map) => {
+      const [s, e] = rec[i];
+      const named = partsNamedIn(lines.slice(s, e + 1).join(""));
+      const one = named.length === 0 && count === 1 ? [1] : named;
+      if (one.length === 1) {
+        map.set(i, one[0]);
+        return;
+      }
+      const key = side + s;
+      if (said.has(key)) return;
+      said.add(key);
+      holes.push(
+        "запись " +
+          barQuoted(where + ":" + (s + 1)) +
+          (one.length === 0
+            ? " не называет файлов ни одной части — назвать файл либо отнести файл целиком графой «файлы»"
+            : " называет файлы частей " + one.join(" и ") + " — слить части"),
+      );
+    };
+    for (const i of removed)
+      judge(d.oldLines, oldRec, i, "-", partOfLine.removed);
+    for (const i of added) judge(d.newLines, newRec, i, "+", partOfLine.added);
+    out.splits.set(f, { ...d, partOf: partOfLine });
+    // Самопроверка: все части вместе дают рабочее дерево байт в байт.
+    const all = new Set(table.map((_, k) => k + 1));
+    if (
+      removed.every((i) => partOfLine.removed.has(i)) &&
+      added.every((i) => partOfLine.added.has(i)) &&
+      applyParts(d.oldLines, d.newLines, d.hunks, partOfLine, all) !==
+        (d.after ?? "")
+    )
+      holes.push(
+        "раскладка не сошлась: сумма частей " +
+          barQuoted(where) +
+          " не равна рабочему дереву",
+      );
+  }
+  return out;
+};
+
 const barInputsOf = async ({
   live,
   kind,
@@ -14874,6 +15234,11 @@ const barInputsOf = async ({
     reads,
     lintRow,
     checkRow,
+    // Части правки — на задаче изменения: предмет коммитят частями.
+    partsOf:
+      kind === "на изменение"
+        ? (body) => barPartsOf({ subject, repoRoot, body })
+        : null,
     // Запись карты, которую опровергает код, базу не освобождает.
     mapDisputed: new Set(
       (checks?.get("Запись карты не спорит с кодом")?.lines ?? []).flatMap(

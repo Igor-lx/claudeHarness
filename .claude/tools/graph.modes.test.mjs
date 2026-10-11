@@ -1652,7 +1652,7 @@ describe("ревизия сводов по истории", () => {
           return line;
         })
         .join("\n");
-      fs.writeFileSync(protoAt, filled);
+      fs.writeFileSync(protoAt, partsMerged(filled));
       // «Правлено» называет правленый файл базы: проба правит запись идиом.
       fs.appendFileSync(path.join(box, ".context", "10-idioms.md"), "\n");
       fillWords(protoAt);
@@ -2796,8 +2796,30 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
   fs.writeFileSync(
     protoAt,
     // Корень — над папкой базы: протокол перехода лежит в ней уровнем ниже.
-    crossFilled(fs.readFileSync(protoAt, "utf8"), protoAt.slice(0, protoAt.lastIndexOf(path.sep + ".context" + path.sep))),
+    partsMerged(
+      crossFilled(fs.readFileSync(protoAt, "utf8"), protoAt.slice(0, protoAt.lastIndexOf(path.sep + ".context" + path.sep))),
+    ),
   );
+};
+
+// Части правки: проба сдаёт правку одним коммитом — как сессия, слившая
+// все части в одну строку. Иначе дописанная выше строка в идиомах не
+// называла бы файлов ни одной части.
+const partsMerged = (text) => {
+  const lines = text.split("\n");
+  const at = lines.indexOf("## Части правки");
+  if (at === -1) return text;
+  let end = at + 1;
+  while (end < lines.length && !lines[end].startsWith("## ")) end += 1;
+  const rows = lines.slice(at, end).filter((l) => /^\| [0-9]+ \| /.test(l));
+  if (rows.length === 0) return text;
+  const files = rows.flatMap((l) =>
+    [...l.matchAll(/`[^`]+`/g)].map((m) => m[0]),
+  );
+  const first = lines.indexOf(rows[0]);
+  const out = lines.filter((l) => !rows.includes(l));
+  out.splice(first, 0, "| 1 | " + files.join(", ") + " | проба |");
+  return out.join("\n");
 };
 
 // Перекрёстная сверка: строка на находку, как её пишет режим, — кандидатов
@@ -3648,6 +3670,250 @@ describe("ядро по предметам уровня: правка, чтен�
       expect(section()).toContain("шаг закрыт: протоколов 5, все запечатаны");
       fs.rmSync(dir, { recursive: true, force: true });
       expect(section()).toContain("    шаг «архитектурный проход» закрыт, а протоколов нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+/**
+ * Части правки: несколько независимых правок проходят планку одним сводом, а
+ * в историю уходят коммитом на часть. Части предлагает машина компонентами
+ * связности; связь — закрытый перечень, и каждый её вид держит правленое одной
+ * частью сам по себе. Раскладку изменённых файлов и записей базы по частям
+ * держит приём протокола. Решение разработчика `2026-10-10`.
+ */
+describe("части правки", () => {
+  it("связь держит одной частью, несвязанное — частями; раскладка и её дыры", () => {
+    const box = seatEmpty("chasti-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+      const bar = () => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "bar"],
+            {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      };
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const rows = () => {
+        bar();
+        const proto = fs.readFileSync(protoAt, "utf8");
+        const at = proto.indexOf("## Части правки");
+        return at < 0
+          ? 0
+          : proto
+              .slice(at)
+              .split("\n")
+              .filter((l) => /^\| [0-9]+ \| `/.test(l)).length;
+      };
+      const reset = () => {
+        git("checkout", "-q", "--", ".");
+        git("clean", "-qfd", "--", "src", ".context");
+      };
+      // Основание: общий помощник, константа, файл и тот, кто его берёт,
+      // файл под переименование.
+      put(
+        "src/shared/zzh/zzh.ts",
+        "export const zzHelp = (n: number): number => n;\n",
+      );
+      put("src/shared/zzk/zzk.ts", 'export const ZZ_KEY = "zz";\n');
+      put("src/shared/zzc/zzc.ts", "export const zzc = 1;\n");
+      put(
+        "src/shared/zzd/zzd.ts",
+        'import { zzc } from "../zzc/zzc";\n\nexport const zzd = zzc;\n',
+      );
+      put(
+        "src/shared/zze/zze.ts",
+        "export const zzMoved = (n: number): number => n + 40;\n",
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      const helped = (name) =>
+        'import { zzHelp } from "../zzh/zzh";\n\nexport const ' +
+        name +
+        " = zzHelp(1);\n";
+      // Общий нетронутый помощник связью не считается: две части.
+      put("src/shared/zza/zza.ts", helped("zza"));
+      put("src/shared/zzb/zzb.ts", helped("zzb"));
+      expect(rows()).toBe(2);
+      // Импорт — одна часть.
+      put(
+        "src/shared/zzb/zzb.ts",
+        'import { zza } from "../zza/zza";\n\nexport const zzb = zza;\n',
+      );
+      reset();
+      put("src/shared/zza/zza.ts", helped("zza"));
+      put(
+        "src/shared/zzb/zzb.ts",
+        'import { zza } from "../zza/zza";\n\nexport const zzb = zza;\n',
+      );
+      expect(rows()).toBe(0);
+      // Общая единица переноса — одна часть.
+      reset();
+      put("src/shared/zzg/zza.ts", "export const zza = 1;\n");
+      put("src/shared/zzg/zzb.ts", "export const zzb = 2;\n");
+      expect(rows()).toBe(0);
+      // Имя-константа у обоих — одна часть.
+      reset();
+      const keyed = (name) =>
+        'import { ZZ_KEY } from "../zzk/zzk";\n\nexport const ' +
+        name +
+        " = ZZ_KEY;\n";
+      put("src/shared/zza/zza.ts", keyed("zza"));
+      put("src/shared/zzb/zzb.ts", keyed("zzb"));
+      expect(rows()).toBe(0);
+      // Удалённый файл и тот, кто его брал, — одна часть.
+      reset();
+      fs.rmSync(path.join(box, "src/shared/zzc/zzc.ts"));
+      put("src/shared/zzd/zzd.ts", "export const zzd = 1;\n");
+      expect(rows()).toBe(0);
+      // Переименование — одна часть.
+      reset();
+      fs.rmSync(path.join(box, "src/shared/zze/zze.ts"));
+      put(
+        "src/shared/zzf/zzf.ts",
+        "export const zzMoved = (n: number): number => n + 40;\n",
+      );
+      expect(rows()).toBe(0);
+      // Строка таблицы связей — одна часть.
+      reset();
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfg,
+        fs
+          .readFileSync(cfg, "utf8")
+          .replace(
+            "  domTables: null,",
+            '  domTables: { file: "03-graph.md", headings: ["| Связь zz | Концы |"] },',
+          ),
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "03-graph.md"),
+        "\n## Связи zz\n\n| Связь zz | Концы |\n| --- | --- |\n| zz | `src/shared/zza/zza.ts`, `src/shared/zzb/zzb.ts` |\n",
+      );
+      put("src/shared/zza/zza.ts", helped("zza"));
+      put("src/shared/zzb/zzb.ts", helped("zzb"));
+      expect(rows()).toBe(0);
+      // Раскладка: две части, у каждой запись карты, — дыр о частях нет, кроме
+      // пустой графы «что»; слова в ней — и тех нет.
+      reset();
+      put("src/shared/zza/zza.ts", helped("zza"));
+      put("src/shared/zzb/zzb.ts", helped("zzb"));
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n";
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(
+            head,
+            head +
+              "| `src/shared/zza/zza.ts` | первое | нет | нет |\n| `src/shared/zzb/zzb.ts` | второе | нет | нет |\n",
+          ),
+      );
+      expect(rows()).toBe(2);
+      const partHoles = (out) =>
+        out
+          .split("\n")
+          .filter((l) =>
+            /^ {4}(част|файл |запись |зависимости|раскладка)/.test(l),
+          )
+          .map((l) => l.trim());
+      expect(partHoles(bar())).toEqual([
+        "часть 1: графа «что» пуста — из неё сообщение коммита части",
+        "часть 2: графа «что» пуста — из неё сообщение коммита части",
+      ]);
+      const fill = (edit) =>
+        fs.writeFileSync(protoAt, edit(fs.readFileSync(protoAt, "utf8")));
+      fill((p) =>
+        p
+          .replace(
+            "| 1 | `shared/zza/zza.ts` |  |",
+            "| 1 | `shared/zza/zza.ts` | add zza |",
+          )
+          .replace(
+            "| 2 | `shared/zzb/zzb.ts` |  |",
+            "| 2 | `shared/zzb/zzb.ts` | add zzb |",
+          ),
+      );
+      expect(partHoles(bar())).toEqual([]);
+      // Конфиг вне частей, запись о двух частях, зависимости в двух частях.
+      fs.appendFileSync(path.join(box, ".prettierrc.json"), "\n");
+      fs.appendFileSync(
+        path.join(box, ".context", "10-idioms.md"),
+        "\nОба: `src/shared/zza/zza.ts` и `src/shared/zzb/zzb.ts`.\n",
+      );
+      expect(partHoles(bar())).toEqual([
+        "файл `.prettierrc.json` не отнесён к части — назвать его в графе «файлы» нужной части",
+        "запись `.context/10-idioms.md:1` называет файлы частей 1 и 2 — слить части",
+      ]);
+      fs.appendFileSync(path.join(box, "package.json"), "\n");
+      put("package-lock.json", "{}\n");
+      fill((p) =>
+        p
+          .replace(
+            "| `shared/zza/zza.ts` | add zza |",
+            "| `shared/zza/zza.ts`, `.prettierrc.json`, `package.json` | add zza |",
+          )
+          .replace(
+            "| `shared/zzb/zzb.ts` | add zzb |",
+            "| `shared/zzb/zzb.ts`, `package-lock.json` | add zzb |",
+          ),
+      );
+      // Манифест в предмете меняет набор критериев: протокол пересобирается.
+      bar();
+      expect(partHoles(bar())).toEqual([
+        "зависимости меняют части 1 и 2 — слить части либо разнести правки по разным пачкам",
+        "запись `.context/10-idioms.md:1` называет файлы частей 1 и 2 — слить части",
+      ]);
+      // Связь, появившаяся после разметки, разрезает компоненту — дыра со связью.
+      fs.rmSync(path.join(box, "package-lock.json"));
+      git("checkout", "-q", "--", "package.json", ".context/10-idioms.md");
+      fill((p) =>
+        p
+          .replace(", `package.json` | add zza |", " | add zza |")
+          .replace(", `package-lock.json` | add zzb |", " | add zzb |"),
+      );
+      put(
+        "src/shared/zzb/zzb.ts",
+        'import { zza } from "../zza/zza";\n\nexport const zzb = zza;\n',
+      );
+      bar();
+      expect(partHoles(bar())).toContain(
+        "части 1 и 2 связаны: импорт между shared/zza/zza.ts и shared/zzb/zzb.ts — слить части",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
