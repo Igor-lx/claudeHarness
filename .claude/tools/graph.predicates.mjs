@@ -359,7 +359,7 @@ export const barNoSubject = (row) => {
 const SUBJECT_TIME =
   /\buse(?:Layout|Insertion)?Effect\b|\buseSyncExternalStore\b|\bset(?:Timeout|Interval|Immediate)\s*\(|\brequest(?:AnimationFrame|IdleCallback)\s*\(|\bqueueMicrotask\s*\(|\baddEventListener\s*\(|\baddListener\s*\(|\.(?:on|once)\s*\(|\.on[a-z]+\s*=(?!=)|\bnew\s+[A-Za-z]*Observer\b|\.subscribe\s*\(|\bwatchPosition\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|BroadcastChannel|MessageChannel)\b/;
 const SUBJECT_ASYNC =
-  /\basync\b|\bawait\b|\bPromise\b|\.(?:then|catch|finally)\s*\(|\bAbortController\b|\bfetch\s*\(|\bXMLHttpRequest\b|\.on[a-z]+\s*=(?!=)|\bqueueMicrotask\s*\(|\brequestIdleCallback\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|FileReader)\b|\bpostMessage\s*\(/;
+  /\basync\b|\bawait\b|\bPromise\b|\.(?:then|catch|finally)\s*\(|\bAbortController\b|\bfetch\s*\(|\bXMLHttpRequest\b|\.on(?:load|error|message|success)\s*=(?!=)|\bqueueMicrotask\s*\(|\brequestIdleCallback\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|FileReader)\b|\bpostMessage\s*\(/;
 const SUBJECT_LIST =
   /\.(?:map|flatMap|reduce|forEach)\s*\(|\bArray\.from\s*\(|\bfor\s*\(|\bwhile\s*\(/;
 const SUBJECT_STYLE =
@@ -4115,6 +4115,10 @@ export const PREDICATE_CASES = [
   ["barRestsOn", "проверено чтением|П1=база", ""],
   ["barSubjectFlags", "useEffect(() => tick(), []);", "time"],
   ["barSubjectFlags", "img.onload = () => setReady(true);", "time,async"],
+  ["barSubjectFlags", "socket.onerror = () => setOffline(true);", "time,async"],
+  ["barSubjectFlags", "worker.onmessage = (event) => show(event.data);", "time,async"],
+  ["barSubjectFlags", "request.onsuccess = () => keep(request.result);", "time,async"],
+  ["barSubjectFlags", "window.onresize = () => fit();", "time"],
   ["barSubjectFlags", "if (a == b) total = a;", ""],
   ["barSubjectFlags", "<button onClick={load}>go</button>", ""],
   ["barSubjectFlags", 'socket.on("message", onMessage);', "time"],
@@ -5300,6 +5304,9 @@ export const PREDICATE_CASES = [
   ["scopeKindsOfLine", "window.addEventListener('message', onMessage);", "K/подписка на сообщение"],
   ["scopeKindsOfLine", "window.addEventListener(\"messageerror\", onBroken);", ""],
   ["scopeKindsOfLine", "promise.then(done);", "L/ожидание ответа"],
+  ["scopeKindsOfLine", "xhr.onload = done;", "L/ожидание ответа"],
+  ["scopeKindsOfLine", "window.onresize = fit;", ""],
+  ["scopeKindsOfLine", "window.addEventListener(\"resize\", fit);", ""],
   ["scopeKindsOfLine", "setTimeout(tick, delayMs);", "L/таймеры и наблюдатели"],
   ["scopeKindsOfLine", "setInterval(tick, delayMs);", "L/таймеры и наблюдатели"],
   ["scopeKindsOfLine", "setImmediate(tick);", "L/таймеры и наблюдатели"],
