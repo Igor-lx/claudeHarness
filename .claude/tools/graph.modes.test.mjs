@@ -98,6 +98,7 @@ const OUTSIDE = {
     "без пути кладёт снимок ПАПКОЙ рядом с репозиторием; гоняется отдельным тестом ниже — во временную папку",
   "bar-probe": "заводит песочницу, в которой работает человек, а не набор",
   seat: "сажает обвязку в папку и ставит пакеты; гоняется отдельным тестом ниже — во временную папку",
+  series: "гоняет цепочку проверок проекта на каждой части во временной копии — минуты; гоняется отдельным тестом ниже",
 };
 
 /** Имена режимов берутся у самого инструмента: список руками разошёлся бы с
@@ -3914,6 +3915,118 @@ describe("части правки", () => {
       expect(partHoles(bar())).toContain(
         "части 1 и 2 связаны: импорт между shared/zza/zza.ts и shared/zzb/zzb.ts — слить части",
       );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+/**
+ * Серия: цепочка проверок проекта на каждой части правки, по дереву «последний
+ * коммит плюс части с первой по эту», с отметкой по хешу дерева. Связка
+ * проверок в наборе подменена дешёвой: краснеет, когда в корне дерева лежит
+ * файл `RED`.
+ */
+describe("серия", () => {
+  it("прогон по частям, отметки по дереву, красная часть названа, индекс — ровно дерево части", () => {
+    const box = seatEmpty("seriya-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+      const tool = (...args) => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      };
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts.check =
+        "node -e \"process.exit(require('fs').existsSync('RED') ? 1 : 0)\"";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      put("src/shared/zza/zza.ts", "export const zza = 1;\n");
+      put("src/shared/zzb/zzb.ts", "export const zzb = 2;\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const edit = (from, to) => {
+        const p = fs.readFileSync(protoAt, "utf8");
+        expect(p).toContain(from);
+        fs.writeFileSync(protoAt, p.replace(from, to));
+      };
+      edit(
+        "| 1 | `shared/zza/zza.ts` |  |",
+        "| 1 | `shared/zza/zza.ts` | add zza |",
+      );
+      edit(
+        "| 2 | `shared/zzb/zzb.ts` |  |",
+        "| 2 | `shared/zzb/zzb.ts` | add zzb |",
+      );
+      // Без отметки дерево в индекс не кладётся.
+      expect(tool("series", "--stage", "1").out).toContain(
+        "цепочку не проходило",
+      );
+      const first = tool("series");
+      expect(first.code, first.out).toBe(0);
+      expect(first.out).toMatch(/часть 1: дерево [0-9a-f]{7} — код 0\n/);
+      expect(first.out).toMatch(/часть 2: дерево [0-9a-f]{7} — код 0\n/);
+      // Дерево с отметкой заново не гоняется.
+      expect(tool("series").out.match(/отметка была/g)?.length).toBe(2);
+      // Правка второй части гасит её отметку, первой — нет.
+      put("src/shared/zzb/zzb.ts", "export const zzb = 3;\n");
+      const again = tool("series").out;
+      expect(again).toMatch(/часть 1: [^\n]*отметка была/);
+      expect(again).toMatch(/часть 2: дерево [0-9a-f]{7} — код 0\n/);
+      // Красная часть названа, вывод — в файле.
+      put("RED", "");
+      edit(
+        "| 2 | `shared/zzb/zzb.ts` | add zzb |",
+        "| 2 | `shared/zzb/zzb.ts`, `RED` | add zzb |",
+      );
+      const red = tool("series");
+      expect(red.code).toBe(1);
+      expect(red.out).toContain("Часть 2 красная");
+      expect(red.out).toMatch(/часть 1: [^\n]*код 0/);
+      fs.rmSync(path.join(box, "RED"));
+      edit(
+        "| 2 | `shared/zzb/zzb.ts`, `RED` | add zzb |",
+        "| 2 | `shared/zzb/zzb.ts` | add zzb |",
+      );
+      expect(tool("series").code).toBe(0);
+      // Индекс — ровно дерево части: первая часть без второй.
+      expect(tool("series", "--stage", "1").out).toContain("часть 1 из 2");
+      const staged = git("diff", "--cached", "--name-only")
+        .split("\n")
+        .filter(Boolean);
+      expect(staged).toContain("src/shared/zza/zza.ts");
+      expect(staged).not.toContain("src/shared/zzb/zzb.ts");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

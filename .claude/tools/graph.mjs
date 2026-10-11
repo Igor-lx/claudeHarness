@@ -127,6 +127,13 @@ import {
   PARTS_TITLE,
   recordsOf,
 } from "./graph.parts.mjs";
+// Серия: цепочка проверок на каждой части правки, отметки по дереву.
+import {
+  partTreesOf,
+  readMarks,
+  runSeries,
+  stageTree,
+} from "./graph.series.mjs";
 
 // Вывод в канал Node пишет асинхронно, а режимы кончаются `process.exit()`,
 // который обрывает недописанное. Замерено: из `20` запусков, печатавших в
@@ -15918,6 +15925,127 @@ if (mode === "bar") {
   console.log(
     "  признаки планки прогоном не ловятся, и это не изображается.",
   );
+  process.exit(0);
+}
+
+// Серия: цепочка проверок проекта на каждой части правки.
+//
+// Свод по планке один на пачку, а коммит — на часть: каждая часть обязана
+// дать код ноль на цепочке ровно на том дереве, которое кладёт. Серия
+// собирает дерево «последний коммит плюс части с первой по эту» во временной
+// копии, гоняет цепочку и пишет отметку по хешу дерева в папку git; дерево с
+// отметкой заново не гоняется. `--stage <часть>` кладёт в индекс ровно
+// дерево части, прошедшее цепочку. Решение разработчика `2026-10-10`.
+if (mode === "series") {
+  const at =
+    CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
+  const was = barHeader(at);
+  const subject = await barChangedSubject(REPO_AT);
+  const parts =
+    was === null || subject === null
+      ? null
+      : barPartsOf({ subject, repoRoot: REPO_AT, body: was.body });
+  const count =
+    parts === null ? 0 : parts.table === null ? 1 : parts.table.length;
+  sayLooked("частей правки", count);
+  const refuse = (...why) => {
+    console.log("=== Серия не прогнана ===");
+    for (const one of why) console.log("  " + one);
+    process.exit(1);
+  };
+  if (was === null)
+    refuse("Протокола свода нет: сперва `node .claude/tools/graph.mjs bar`.");
+  if (subject === null) refuse("Состояние репозитория прочитать не удалось.");
+  if (parts.holes.length > 0)
+    refuse(
+      "Раскладка правки по частям с дырами — сперва их закрыть в протоколе:",
+      ...parts.holes.map((h) => "  " + h),
+    );
+  const changed = (changedPathsNow(REPO_AT) ?? []).map((f) =>
+    norm(path.join(REPO_AT, f)),
+  );
+  const whole = new Map(
+    changed
+      .filter((f) => !parts.splits.has(f))
+      .map((f) => [f, parts.partOf.get(f) ?? 1]),
+  );
+  const base = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: REPO_AT,
+    encoding: "utf8",
+  }).trim();
+  const trees = partTreesOf({
+    repoRoot: REPO_AT,
+    base,
+    count,
+    whole,
+    splits: parts.splits,
+  });
+  const stageAt = process.argv.indexOf("--stage");
+  if (stageAt > 0) {
+    const n = Number(process.argv[stageAt + 1]);
+    const one = trees.find((t) => t.part === n);
+    if (one === undefined)
+      refuse(
+        "Части " +
+          (process.argv[stageAt + 1] ?? "") +
+          " нет: частей " +
+          count +
+          ".",
+      );
+    const marks = readMarks(REPO_AT);
+    if (marks.base !== base || marks.trees[one.tree]?.code !== 0)
+      refuse(
+        "Дерево части " +
+          n +
+          " цепочку не проходило: сперва `node .claude/tools/graph.mjs series`.",
+      );
+    stageTree(REPO_AT, one.tree);
+    console.log("=== Часть в индексе ===");
+    console.log(
+      "  часть " + n + " из " + count + ": дерево " + one.tree.slice(0, 7),
+    );
+    console.log("  Коммит — командой: `git commit`.");
+    process.exit(0);
+  }
+  const result = runSeries({
+    repoRoot: REPO_AT,
+    base,
+    trees,
+    command: [PACKAGE_MANAGER, "run", "check"],
+    packagesFrom: REPO_AT,
+  });
+  const red = result.find((r) => r.code !== 0 && r.code !== null);
+  console.log(
+    red === undefined ? "=== Серия прогнана ===" : "=== Серия встала ===",
+  );
+  console.log("  основание: " + base.slice(0, 7));
+  for (const r of result)
+    console.log(
+      "  часть " +
+        r.part +
+        ": дерево " +
+        r.tree.slice(0, 7) +
+        " — " +
+        (r.code === null
+          ? "не гонялась: встала раньше"
+          : "код " + r.code + (r.was ? ", отметка была" : "")),
+    );
+  if (red !== undefined) {
+    console.log("");
+    console.log(
+      "  Часть " +
+        red.part +
+        " красная: цепочка `" +
+        PACKAGE_MANAGER +
+        " run check` дала код " +
+        red.code +
+        ".",
+    );
+    console.log("  Вывод — " + rel(red.log));
+    for (const line of readFileSync(red.log, "utf8").trim().split(LF).slice(-5))
+      console.log("    " + line);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
