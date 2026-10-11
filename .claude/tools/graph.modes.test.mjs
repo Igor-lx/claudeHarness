@@ -1095,6 +1095,7 @@ describe("удалённый файл кода в предмете", () => {
           "",
         ].join("\n"),
       );
+      fakeCheck(box);
       git("init", "-q");
       git("add", "-A");
       git("commit", "-qm", "посадка", "--no-verify");
@@ -1117,7 +1118,7 @@ describe("удалённый файл кода в предмете", () => {
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(run("bar").stdout).toContain("печать поставлена");
       expect(run("stop", "--hook").status).toBe(0);
-      git("add", "-A");
+      seriesStaged(box);
       expect(run("gate").status).toBe(0);
       // Переименование `git mv`: прежний путь — удалённый, и свод, ход и
       // ворота видят оба пути, как после `mv`.
@@ -1134,7 +1135,7 @@ describe("удалённый файл кода в предмете", () => {
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(run("bar").stdout).toContain("печать поставлена");
       expect(run("stop", "--hook").status).toBe(0);
-      git("add", "-A");
+      seriesStaged(box);
       expect(run("gate").status).toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
@@ -1177,6 +1178,7 @@ describe("печать, посчитанная руками", () => {
         run("verify")
           .stdout.split("=== Планка пройдена покритериально ===")[1]
           .split("\n===")[0];
+      fakeCheck(box);
       git("init", "-q");
       git("add", "-A");
       git("commit", "-qm", "посадка", "--no-verify");
@@ -1219,7 +1221,7 @@ describe("печать, посчитанная руками", () => {
       run("bar");
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(run("bar").stdout).toContain("печать поставлена");
-      git("add", "-A");
+      seriesStaged(box);
       expect(run("gate").status).toBe(0);
       expect(barSection()).toContain("свод закрыт печатью и принят");
     } finally {
@@ -1253,6 +1255,7 @@ describe("красная сверка-держатель режет печать
           encoding: "utf8",
           input: "{}",
         });
+      fakeCheck(box);
       git("init", "-q");
       git("add", "-A");
       git("commit", "-qm", "посадка", "--no-verify");
@@ -1313,7 +1316,7 @@ describe("красная сверка-держатель режет печать
         holds: { приложение: "нет" },
       });
       expect(run("bar").stdout).toContain("печать поставлена");
-      git("add", "-A");
+      seriesStaged(box);
       expect(run("gate").status).toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
@@ -2727,13 +2730,18 @@ const fillWords = (protoAt) => {
       .join("\n"),
   );
 };
-const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
+const fillBar = (
+  protoAt,
+  { release, pick = {}, holds = "да", keepParts = false },
+) => {
   const words = pageWordsOf(protoAt);
   const before = fs.readFileSync(protoAt, "utf8");
   // «Правлено» у базы называет файл, правленый работой: проба правит запись
   // идиом — она модели не питает, и протокол от этого не пересобирается.
+  // Проба, сдающая правку частями, идиом не трогает: у каждого файла своя
+  // запись карты, и база ему не требуется.
   const idioms = path.join(protoAt.slice(0, protoAt.lastIndexOf(path.sep + ".context" + path.sep)), ".context", "10-idioms.md");
-  if (fs.existsSync(idioms)) fs.appendFileSync(idioms, "\n");
+  if (!keepParts && fs.existsSync(idioms)) fs.appendFileSync(idioms, "\n");
   const all = barRowsCited(before);
   fs.writeFileSync(
     protoAt,
@@ -2769,7 +2777,13 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
         if (c.length === 6 && /^\s*`[^`]+`\s*$/.test(c[1]))
           return c[2].trim() !== ""
             ? line
-            : "| " + c[1].trim() + " | правлено | не требуется | `.context/10-idioms.md` — проба |";
+            : keepParts
+              ? "| " +
+                c[1].trim() +
+                " | не требуется | не требуется | запись карты на месте |"
+              : "| " +
+                c[1].trim() +
+                " | правлено | не требуется | `.context/10-idioms.md` — проба |";
         // строка исхода: критерий, предмет, о чём, исход, адрес, что, судьба
         if (c.length !== 9 || /^\s*-+\s*$/.test(c[1])) return line;
         const id = c[1].trim();
@@ -2797,10 +2811,29 @@ const fillBar = (protoAt, { release, pick = {}, holds = "да" }) => {
   fs.writeFileSync(
     protoAt,
     // Корень — над папкой базы: протокол перехода лежит в ней уровнем ниже.
-    partsMerged(
+    (keepParts ? partsNamed : partsMerged)(
       crossFilled(fs.readFileSync(protoAt, "utf8"), protoAt.slice(0, protoAt.lastIndexOf(path.sep + ".context" + path.sep))),
     ),
   );
+};
+
+// Части правки, которые проба сдаёт порознь: графа «что» каждой — сообщение
+// её коммита. Строка части похожа на страницу чтения, и слово страницы,
+// вписанное в неё выше, здесь заменяется.
+const partsNamed = (text) => {
+  const lines = text.split("\n");
+  const at = lines.indexOf("## Части правки");
+  if (at === -1) return text;
+  for (
+    let i = at + 1;
+    i < lines.length && !lines[i].startsWith("## ");
+    i += 1
+  ) {
+    const m = /^\| ([0-9]+) \| (.+?) \| [^|]* \|$/.exec(lines[i]);
+    if (m !== null)
+      lines[i] = "| " + m[1] + " | " + m[2] + " | add part " + m[1] + " |";
+  }
+  return lines.join("\n");
 };
 
 // Части правки: проба сдаёт правку одним коммитом — как сессия, слившая
@@ -2821,6 +2854,30 @@ const partsMerged = (text) => {
   const out = lines.filter((l) => !rows.includes(l));
   out.splice(first, 0, "| 1 | " + files.join(", ") + " | проба |");
   return out.join("\n");
+};
+
+// Цепочка проверок проекта в серии — заглушка, красная, пока лежит файл-метка
+// `red`. Кладут до коммита-основания: иначе манифест — часть правки.
+const fakeCheck = (box, red = "RED") => {
+  const pkgAt = path.join(box, "package.json");
+  const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+  pkg.scripts.check =
+    "node -e \"process.exit(require('fs').existsSync('" + red + "') ? 1 : 0)\"";
+  fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+};
+
+// Индекс — дерево первой части серии: коммит с кодом ворота пускают только
+// так. Вывод обоих вызовов — для сообщения упавшего ожидания.
+const seriesStaged = (box) => {
+  const tool = (...args) =>
+    spawnSync(
+      process.execPath,
+      [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+      { cwd: box, encoding: "utf8" },
+    );
+  const ran = tool("series");
+  const staged = tool("series", "--stage", "1");
+  expect(staged.status, ran.stdout + staged.stdout).toBe(0);
 };
 
 // Перекрёстная сверка: строка на находку, как её пишет режим, — кандидатов
@@ -3964,31 +4021,38 @@ describe("серия", () => {
         fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
         fs.writeFileSync(path.join(box, rel), text);
       };
-      const pkgAt = path.join(box, "package.json");
-      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
-      pkg.scripts.check =
-        "node -e \"process.exit(require('fs').existsSync('RED') ? 1 : 0)\"";
-      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      // Красная часть — та, где лежит файл-метка: он в папке второй единицы
+      // и уходит с её частью.
+      fakeCheck(box, "src/shared/zzb/red.ts");
       git("init", "-q");
       git("add", "-A");
       git("commit", "-qm", "основание", "--no-verify");
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n";
+      const mapWas = fs.readFileSync(mapAt, "utf8");
+      const mapRows = (rows) =>
+        fs.writeFileSync(mapAt, mapWas.replace(head, head + rows));
+      const rowsAb =
+        "| `src/shared/zza/zza.ts` | первое | нет | нет |\n| `src/shared/zzb/zzb.ts` | второе | нет | нет |\n";
       put("src/shared/zza/zza.ts", "export const zza = 1;\n");
       put("src/shared/zzb/zzb.ts", "export const zzb = 2;\n");
+      mapRows(rowsAb);
       const protoAt = path.join(box, ".context", "bar-protocol.md");
-      tool("bar");
-      const edit = (from, to) => {
-        const p = fs.readFileSync(protoAt, "utf8");
-        expect(p).toContain(from);
-        fs.writeFileSync(protoAt, p.replace(from, to));
+      // Свод заново — с чистого протокола: слова изменившихся страниц иначе
+      // остались бы прежними, а проба страниц не перечитывает.
+      const sealed = () => {
+        fs.rmSync(protoAt, { force: true });
+        tool("bar");
+        fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+        const out = tool("bar").out;
+        expect(out, out).toContain("печать поставлена");
       };
-      edit(
-        "| 1 | `shared/zza/zza.ts` |  |",
-        "| 1 | `shared/zza/zza.ts` | add zza |",
-      );
-      edit(
-        "| 2 | `shared/zzb/zzb.ts` |  |",
-        "| 2 | `shared/zzb/zzb.ts` | add zzb |",
-      );
+      tool("bar");
+      const proposed = fs.readFileSync(protoAt, "utf8");
+      expect(proposed).toContain("| 1 | `shared/zza/zza.ts` |  |");
+      expect(proposed).toContain("| 2 | `shared/zzb/zzb.ts` |  |");
+      sealed();
       // Без отметки дерево в индекс не кладётся.
       expect(tool("series", "--stage", "1").out).toContain(
         "цепочку не проходило",
@@ -3999,26 +4063,27 @@ describe("серия", () => {
       expect(first.out).toMatch(/часть 2: дерево [0-9a-f]{7} — код 0\n/);
       // Дерево с отметкой заново не гоняется.
       expect(tool("series").out.match(/отметка была/g)?.length).toBe(2);
-      // Правка второй части гасит её отметку, первой — нет.
+      // Правка после свода: серия ждёт свода заново, а он меняет протокол —
+      // и протокол лежит в первой части, поэтому гоняются обе.
       put("src/shared/zzb/zzb.ts", "export const zzb = 3;\n");
+      const stale = tool("series");
+      expect(stale.code).toBe(1);
+      expect(stale.out).toContain("свод сделан на другом его виде");
+      sealed();
       const again = tool("series").out;
-      expect(again).toMatch(/часть 1: [^\n]*отметка была/);
+      expect(again).toMatch(/часть 1: дерево [0-9a-f]{7} — код 0\n/);
       expect(again).toMatch(/часть 2: дерево [0-9a-f]{7} — код 0\n/);
       // Красная часть названа, вывод — в файле.
-      put("RED", "");
-      edit(
-        "| 2 | `shared/zzb/zzb.ts` | add zzb |",
-        "| 2 | `shared/zzb/zzb.ts`, `RED` | add zzb |",
-      );
+      put("src/shared/zzb/red.ts", "export const red = 1;\n");
+      mapRows(rowsAb + "| `src/shared/zzb/red.ts` | метка | нет | нет |\n");
+      sealed();
       const red = tool("series");
       expect(red.code).toBe(1);
       expect(red.out).toContain("Часть 2 красная");
       expect(red.out).toMatch(/часть 1: [^\n]*код 0/);
-      fs.rmSync(path.join(box, "RED"));
-      edit(
-        "| 2 | `shared/zzb/zzb.ts`, `RED` | add zzb |",
-        "| 2 | `shared/zzb/zzb.ts` | add zzb |",
-      );
+      fs.rmSync(path.join(box, "src", "shared", "zzb", "red.ts"));
+      mapRows(rowsAb);
+      sealed();
       expect(tool("series").code).toBe(0);
       // Индекс — ровно дерево части: первая часть без второй.
       expect(tool("series", "--stage", "1").out).toContain("часть 1 из 2");
@@ -4027,6 +4092,145 @@ describe("серия", () => {
         .filter(Boolean);
       expect(staged).toContain("src/shared/zza/zza.ts");
       expect(staged).not.toContain("src/shared/zzb/zzb.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  // Ворота пропускают коммит с кодом, только если индекс — дерево части,
+  // прошедшее цепочку, и ложится на дерево предыдущей части; печать протокола
+  // при этом сходится. Части коммитят по порядку, через обычные хуки.
+  it("коммит на часть через ворота: печать, дерево, порядок; работа в одну часть тем же путём", () => {
+    const box = seatEmpty("seriya-vorota-");
+    try {
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+      const tool = (...args) => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      };
+      fakeCheck(box);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      git("config", "core.hooksPath", ".claude/hooks/git");
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n";
+      const mapRows = (rows) =>
+        fs.writeFileSync(
+          mapAt,
+          fs.readFileSync(mapAt, "utf8").replace(head, head + rows),
+        );
+      put("src/shared/zza/zza.ts", "export const zza = 1;\n");
+      put("src/shared/zzb/zzb.ts", "export const zzb = 2;\n");
+      mapRows(
+        "| `src/shared/zza/zza.ts` | первое | нет | нет |\n| `src/shared/zzb/zzb.ts` | второе | нет | нет |\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      const sealed = tool("bar").out;
+      expect(sealed).toContain("печать поставлена");
+      expect(sealed).toContain("части ждут коммита: 1–2 из 2");
+      // Серия не прогнана — ворота не пускают всю пачку разом.
+      git("add", "-A");
+      const unrun = git("commit", "-qm", "всё разом");
+      expect(unrun.status).not.toBe(0);
+      expect(unrun.stdout + unrun.stderr).toContain(
+        "дерево индекса цепочку не проходило",
+      );
+      git("reset", "-q");
+      expect(tool("series").code).toBe(0);
+      // Не по порядку — отказ; индекс шире части — отказ.
+      expect(tool("series", "--stage", "2").out).toContain("следующая — 1");
+      expect(tool("series", "--stage", "1").code).toBe(0);
+      git("add", "src/shared/zzb/zzb.ts");
+      const wider = git("commit", "-qm", "шире части");
+      expect(wider.stdout + wider.stderr).toContain(
+        "дерево индекса цепочку не проходило",
+      );
+      // Дерево второй части прямо на основание — мимо первой: отказ.
+      const marks = JSON.parse(
+        fs.readFileSync(path.join(box, ".git", "graph-series.json"), "utf8"),
+      );
+      git("read-tree", marks.parts[1].tree);
+      const skipped = git("commit", "-qm", "мимо первой");
+      expect(skipped.stdout + skipped.stderr).toContain(
+        "части коммитят по порядку",
+      );
+      git("reset", "-q");
+      // Протокол правлен после печати — серия не гоняется: деревьям частей
+      // ворота верят без отпечатков, и печать обязана покрывать правку.
+      const proto = fs.readFileSync(protoAt, "utf8");
+      fs.writeFileSync(protoAt, proto + "\n");
+      const unsealed = tool("series");
+      expect(unsealed.code).toBe(1);
+      expect(unsealed.out).toContain("печать не сходится");
+      fs.writeFileSync(protoAt, proto);
+      // Первая часть — руками. Серия жива: свод и конец хода судят всю
+      // пачку от основания, а не остаток против последнего коммита.
+      expect(tool("series").code).toBe(0);
+      tool("series", "--stage", "1");
+      const part1 = git("commit", "-qm", "add part 1");
+      expect(part1.status, part1.stdout + part1.stderr).toBe(0);
+      const living = tool("bar").out;
+      expect(living).toContain("печать уже стоит");
+      expect(living).toContain("части ждут коммита: 2 из 2");
+      const stop = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "stop", "--hook"],
+        { cwd: box, encoding: "utf8", input: "{}" },
+      );
+      expect(stop.status, stop.stderr).toBe(0);
+      // Остальные части — по слову разработчика, через обычные хуки.
+      const done = tool("series", "--commit");
+      expect(done.code, done.out).toBe(0);
+      expect(done.out).not.toContain("часть 1 закоммичена");
+      const log = git("log", "--format=%B%x00", "-2")
+        .stdout.split("\0")
+        .map((m) => m.trim())
+        .filter(Boolean);
+      expect(log[1]).toMatch(
+        /^add part 1\n\nBar-series: [0-9a-f]+ 1\/2 [0-9a-f]{40}$/,
+      );
+      expect(log[0]).toMatch(
+        /^add part 2\n\nBar-series: [0-9a-f]+ 2\/2 [0-9a-f]{40}$/,
+      );
+      expect(git("status", "--porcelain").stdout).toBe("");
+      // Работа в одну часть — тем же путём: свод, серия, часть в индекс, коммит.
+      put("src/shared/zza/zza.ts", "export const zza = 3;\n");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      expect(tool("bar").out).toContain("печать поставлена");
+      git("add", "-A");
+      expect(git("commit", "-qm", "без серии").status).not.toBe(0);
+      git("reset", "-q");
+      expect(tool("series").code).toBe(0);
+      expect(tool("series", "--stage", "1").code).toBe(0);
+      const one = git("commit", "-qm", "single part");
+      expect(one.status, one.stdout + one.stderr).toBe(0);
+      expect(git("log", "--format=%B", "-1").stdout).toMatch(
+        /Bar-series: [0-9a-f]+ 1\/1 [0-9a-f]{40}/,
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5939,6 +6143,26 @@ describe("ворота перед коммитом в конвейере", () =>
       };
       const { CI: _ci, ...local } = process.env;
       expect(gate(local)).toContain("`core.hooksPath` не задан");
+      // Свой менеджер хуков: git идёт в его папку, и ворота зовут оба его
+      // хука — перед коммитом и сообщения: без второго коммит части не
+      // несёт строки серии.
+      fs.mkdirSync(path.join(box, ".husky", "_"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, ".husky", "pre-commit"),
+        "node .claude/tools/graph.mjs gate\n",
+      );
+      execFileSync("git", ["config", "core.hooksPath", ".husky/_"], {
+        cwd: box,
+      });
+      expect(gate(local)).toContain("хуки там ворот не зовут");
+      fs.writeFileSync(
+        path.join(box, ".husky", "prepare-commit-msg"),
+        'node .claude/tools/graph.mjs gate --message "$1"\n',
+      );
+      expect(gate(local)).not.toMatch(/^ {4}\S/m);
+      execFileSync("git", ["config", "--unset", "core.hooksPath"], {
+        cwd: box,
+      });
       const piped = gate({ ...local, CI: "true" });
       expect(piped).not.toMatch(/^ {4}\S/m);
       expect(piped).toContain("конвейер");

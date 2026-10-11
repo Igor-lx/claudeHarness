@@ -129,11 +129,24 @@ import {
 } from "./graph.parts.mjs";
 // Серия: цепочка проверок на каждой части правки, отметки по дереву.
 import {
+  livingBaseOf,
+  nextPartOf,
   partTreesOf,
   readMarks,
   runSeries,
+  seriesGateFault,
+  seriesLineOf,
   stageTree,
 } from "./graph.series.mjs";
+/** Основание работы: последний коммит, а пока серия сдана не вся — её
+ * основание. Правленое и прежний вид файла считают от него: свод запечатан
+ * на всей пачке, и после коммита первой части он судит ту же пачку. */
+const WORK_BASE = new Map();
+const workBaseOf = (repoRoot) => {
+  if (!WORK_BASE.has(repoRoot))
+    WORK_BASE.set(repoRoot, livingBaseOf(repoRoot) ?? "HEAD");
+  return WORK_BASE.get(repoRoot);
+};
 
 // Вывод в канал Node пишет асинхронно, а режимы кончаются `process.exit()`,
 // который обрывает недописанное. Замерено: из `20` запусков, печатавших в
@@ -1970,7 +1983,7 @@ const withoutFormatOnly = async (abs, repoRoot) => {
     const one = path.relative(repoRoot, f).split(path.sep).join("/");
     let head = null;
     try {
-      head = execFileSync("git", ["show", "HEAD:./" + one], {
+      head = execFileSync("git", ["show", workBaseOf(repoRoot) + ":./" + one], {
         cwd: repoRoot,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -2019,14 +2032,9 @@ const untouchedSeed = (at, repoRoot, seeds) => {
  */
 const barCoverFault = (want, body) => {
   if (!want.length) return "";
-  if (body === null) return "свода нет вовсе";
+  const sealed = barSealFault(body);
+  if (sealed !== "") return sealed;
   const was = barHeaderOf(body);
-  if (was.kind !== "на изменение")
-    return "свод сделан на задаче чтения, а правленый код есть";
-  if (was.seal === null || was.seal === "нет")
-    return "печати нет: свод начат и не закончен";
-  if (was.seal !== barSealOf(body))
-    return "печать не сходится: протокол правлен после того, как закрыт";
   const had = new Map(was.marks.map((m) => [m.file, m.mark]));
   const loose = [];
   for (const one of want) {
@@ -2039,6 +2047,19 @@ const barCoverFault = (want, body) => {
   for (const file of had.keys())
     loose.push(file + " — назван сводом, а в правке его нет");
   return loose.join("; ");
+};
+/** Протокол запечатан на задаче изменения, и печать сходится; пустая строка —
+ * да. Одна проверка на ворота, конец хода и ревизию. */
+const barSealFault = (body) => {
+  if (body === null) return "свода нет вовсе";
+  const was = barHeaderOf(body);
+  if (was.kind !== "на изменение")
+    return "свод сделан на задаче чтения, а правленый код есть";
+  if (was.seal === null || was.seal === "нет")
+    return "печати нет: свод начат и не закончен";
+  if (was.seal !== barSealOf(body))
+    return "печать не сходится: протокол правлен после того, как закрыт";
+  return "";
 };
 const barSameMarks = (was, now) =>
   was.length === now.length &&
@@ -6356,6 +6377,8 @@ const zList = (out) => out.split("\0").filter(Boolean);
  * `git diff` вторых не видит, а новый тест — обычный способ закрыть правку. */
 const changedPaths = async (repoRoot) => changedPathsNow(repoRoot);
 const changedPathsNow = (repoRoot) => {
+  const base = workBaseOf(repoRoot);
+  if (base !== "HEAD") return changedSinceBase(repoRoot, base);
   let said;
   let prefix;
   try {
@@ -6390,6 +6413,36 @@ const changedPathsNow = (repoRoot) => {
   return out
     .filter((one) => one !== "" && one.startsWith(prefix))
     .map((one) => one.slice(prefix.length));
+};
+
+/** Пути, тронутые от основания живой серии: всё, что пачка поменяла, — и
+ * закоммиченные её части, и незакоммиченные, и новые файлы. */
+const changedSinceBase = (repoRoot, base) => {
+  try {
+    const opts = {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024,
+    };
+    const tracked = zList(
+      execFileSync(
+        "git",
+        ["diff", "--name-only", "-z", "--relative", "--no-renames", base],
+        opts,
+      ),
+    );
+    const fresh = zList(
+      execFileSync(
+        "git",
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        opts,
+      ),
+    );
+    return [...new Set([...tracked, ...fresh])];
+  } catch {
+    return null;
+  }
 };
 
 // --- stop: ворота конца хода -------------------------------------------------
@@ -10469,7 +10522,7 @@ const headTextOf = (abs) => {
   try {
     text = execFileSync(
       "git",
-      ["show", "HEAD:./" + norm(path.relative(REPO_AT, abs))],
+      ["show", workBaseOf(REPO_AT) + ":./" + norm(path.relative(REPO_AT, abs))],
       { cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
   } catch {
@@ -14920,7 +14973,7 @@ const partDiffOf = (abs, repoRoot) => {
           "-U0",
           "--no-color",
           "--no-ext-diff",
-          "HEAD",
+          workBaseOf(repoRoot),
           "--",
           norm(path.relative(repoRoot, abs)),
         ],
@@ -15313,6 +15366,40 @@ if (mode === "gate") {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
+  const stagedProtocol = () => {
+    if (CONFIG.barProtocol == null) return null;
+    const at = path.posix.join(
+      path.relative(REPO_AT, BASE).split(path.sep).join("/"),
+      CONFIG.barProtocol,
+    );
+    try {
+      return git(["show", ":./" + at]);
+    } catch {
+      return null;
+    }
+  };
+  // Хук сообщения коммита: строка серии — печать, часть и дерево. Коммит не
+  // судится здесь: его уже пропустили ворота.
+  if (process.argv.includes("--message")) {
+    const msgAt = process.argv[process.argv.indexOf("--message") + 1];
+    const body = stagedProtocol();
+    const seal = body === null ? null : barHeaderOf(body).seal;
+    let line = null;
+    try {
+      line = seal === null ? null : seriesLineOf(REPO_AT, seal);
+    } catch {
+      line = null;
+    }
+    if (line !== null && msgAt !== undefined && existsSync(msgAt)) {
+      const said = readFileSync(msgAt, "utf8");
+      if (!said.includes("Bar-series: "))
+        writeFileSync(
+          msgAt,
+          said.replace(/\s*$/, "") + NEWLINE + NEWLINE + line + NEWLINE,
+        );
+    }
+    process.exit(0);
+  }
   let staged;
   try {
     // Пары «буква, путь». Без поиска переименований: прежний путь — удалённый
@@ -15414,19 +15501,17 @@ if (mode === "gate") {
     process.exit(0);
   }
   for (const one of want) console.log("    " + one.file);
-  let body = null;
-  if (CONFIG.barProtocol != null) {
-    const at = path.posix.join(
-      path.relative(REPO_AT, BASE).split(path.sep).join("/"),
-      CONFIG.barProtocol,
-    );
-    try {
-      body = git(["show", ":./" + at]);
-    } catch {
-      body = null;
-    }
+  const body = stagedProtocol();
+  // Коммит с кодом — часть серии: печать протокола, дерево индекса прошло
+  // цепочку проверок и ложится на дерево предыдущей части. Репозиторий без
+  // коммитов серии не знает — тогда свод сверяют отпечатками, как прежде.
+  let tree = null;
+  try {
+    tree = seriesGateFault(REPO_AT);
+  } catch {
+    tree = null;
   }
-  const fault = barCoverFault(want, body);
+  const fault = tree === null ? barCoverFault(want, body) : barSealFault(body);
   // Печать — открытый отпечаток: протокол с «чисто» во всех строках и
   // печатью, посчитанной руками, прошёл бы по ней одной. Поэтому протокол
   // принимают тем же приёмом, что режим `bar` делает перед печатью, — со
@@ -15436,18 +15521,19 @@ if (mode === "gate") {
       ? (await barRefusalOf(barHeaderOf(body), REPO_AT, barChecksOf(REPO_AT)))
           .faults
       : [];
-  if (fault === "" && refused.length === 0) {
+  const part = fault === "" && refused.length === 0 ? (tree ?? "") : "";
+  if (fault === "" && refused.length === 0 && part === "") {
     console.log("  свод покрывает правку: коммит проходит");
     process.exit(0);
   }
   if (fault !== "") console.log("  Коммит не проходит: " + fault);
-  else {
+  else if (refused.length > 0) {
     console.log(
       "  Коммит не проходит: печать стоит, а протокол не принят — нарушений " +
         refused.length,
     );
     for (const one of refused.slice(0, 10)) console.log("    " + one);
-  }
+  } else console.log("  Коммит не проходит: " + part);
   console.log(
     "  Свод по планке делают до коммита: node .claude/tools/graph.mjs bar",
   );
@@ -15847,6 +15933,28 @@ if (mode === "bar") {
   console.log(
     (r.already ? "  печать уже стоит: " : "  печать поставлена: ") + r.seal,
   );
+  // Части, ждущие коммита: число — по таблице протокола, первая — следующая
+  // за той, чьё дерево лежит в последнем коммите живой серии.
+  {
+    const table = partsTableOf(barHeader(at)?.body ?? "");
+    const count = table === null ? 1 : table.length;
+    const marks = readMarks(REPO_AT);
+    let next = 1;
+    if (workBaseOf(REPO_AT) !== "HEAD")
+      try {
+        next = nextPartOf(REPO_AT, marks.parts, marks.base);
+      } catch {
+        next = null;
+      }
+    if (next !== null)
+      console.log(
+        "  части ждут коммита: " +
+          (next === count ? next : next + "–" + count) +
+          " из " +
+          count +
+          " — `node .claude/tools/graph.mjs series`, затем коммит по части",
+      );
+  }
   console.log("  уровни: " + r.levels.join("; "));
   console.log("  находок: " + r.found.length);
   for (const { who, one } of r.found)
@@ -15961,6 +16069,14 @@ if (mode === "series") {
       "Раскладка правки по частям с дырами — сперва их закрыть в протоколе:",
       ...parts.holes.map((h) => "  " + h),
     );
+  // Деревья частей строят из рабочего дерева, и ворота верят им без
+  // отпечатков: серия гоняется только на правке, которую печать покрывает.
+  const cover = barCoverFault(barMarks(subject), was.body);
+  if (cover !== "")
+    refuse(
+      "Свод не покрывает правку: " + cover,
+      "Сперва `node .claude/tools/graph.mjs bar`.",
+    );
   const changed = (changedPathsNow(REPO_AT) ?? []).map((f) =>
     norm(path.join(REPO_AT, f)),
   );
@@ -15969,10 +16085,14 @@ if (mode === "series") {
       .filter((f) => !parts.splits.has(f))
       .map((f) => [f, parts.partOf.get(f) ?? 1]),
   );
-  const base = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: REPO_AT,
-    encoding: "utf8",
-  }).trim();
+  // Живая серия — от своего основания: закоммиченные части лежат в нём же.
+  const base =
+    workBaseOf(REPO_AT) === "HEAD"
+      ? execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: REPO_AT,
+          encoding: "utf8",
+        }).trim()
+      : workBaseOf(REPO_AT);
   const trees = partTreesOf({
     repoRoot: REPO_AT,
     base,
@@ -15998,6 +16118,13 @@ if (mode === "series") {
         "Дерево части " +
           n +
           " цепочку не проходило: сперва `node .claude/tools/graph.mjs series`.",
+      );
+    const next = nextPartOf(REPO_AT, trees, base);
+    if (next !== n)
+      refuse(
+        next === null
+          ? "Серия сдана либо последний коммит — не её часть: класть в индекс нечего."
+          : "Части коммитят по порядку: следующая — " + next + ".",
       );
     stageTree(REPO_AT, one.tree);
     console.log("=== Часть в индексе ===");
@@ -16030,6 +16157,42 @@ if (mode === "series") {
           ? "не гонялась: встала раньше"
           : "код " + r.code + (r.was ? ", отметка была" : "")),
     );
+  // Коммиты серии — по слову разработчика: части по порядку, каждая через
+  // обычные хуки, сообщение — из графы «что».
+  if (red === undefined && process.argv.includes("--commit")) {
+    const table = parts.table;
+    if (table === null)
+      refuse(
+        "У работы в одну часть сообщения в протоколе нет: `series --stage 1` и коммит командой.",
+      );
+    const from = nextPartOf(REPO_AT, trees, base);
+    if (from === null)
+      refuse(
+        "Серия сдана либо последний коммит — не её часть: коммитить нечего.",
+      );
+    for (const t of trees.filter((one) => one.part >= from)) {
+      stageTree(REPO_AT, t.tree);
+      const made = spawnSync(
+        "git",
+        ["commit", "-q", "-m", table[t.part - 1].what],
+        { cwd: REPO_AT, encoding: "utf8" },
+      );
+      if (made.status !== 0) {
+        console.log("  Коммит части " + t.part + " не прошёл:");
+        for (const line of (
+          String(made.stdout ?? "") + String(made.stderr ?? "")
+        )
+          .trim()
+          .split(LF)
+          .slice(-8))
+          console.log("    " + line);
+        process.exit(1);
+      }
+      console.log(
+        "  часть " + t.part + " закоммичена: " + table[t.part - 1].what,
+      );
+    }
+  }
   if (red !== undefined) {
     console.log("");
     console.log(
@@ -25373,17 +25536,21 @@ if (mode === "verify") {
       // исполнит: у husky девятой версии это хук папкой выше служебной `_`.
       // Замерено посадкой в проект на husky: после установки пакетов ворота
       // молчали, а сверка требовала настройки, которая не держится.
-      const callsGate = (dir) =>
-        [
-          path.join(dir, "pre-commit"),
-          ...(path.basename(dir) === "_"
-            ? [path.join(path.dirname(dir), "pre-commit")]
-            : []),
-        ].some(
-          (at) =>
-            existsSync(at) &&
-            /graph\.mjs["']?\s+gate\b/.test(readFileSync(at, "utf8")),
+      // Хуков два: ворота перед коммитом и строка серии в его сообщении, —
+      // без второго ревизия по истории не узнаёт коммит части.
+      const callsGate = (dir) => {
+        const calls = (hook, line) =>
+          [
+            path.join(dir, hook),
+            ...(path.basename(dir) === "_"
+              ? [path.join(path.dirname(dir), hook)]
+              : []),
+          ].some((at) => existsSync(at) && line.test(readFileSync(at, "utf8")));
+        return (
+          calls("pre-commit", /graph\.mjs["']?\s+gate\b(?![ \t]+--message)/) &&
+          calls("prepare-commit-msg", /graph\.mjs["']?\s+gate\s+--message\b/)
         );
+      };
       // Конвейер — тот же свежий клон, только коммитов в нём не делают:
       // настройка ворот там не нужна, а коммит без свода ловит ревизия по
       // истории. Прежде сверка краснела в любом конвейере, и требование
@@ -25419,10 +25586,11 @@ if (mode === "verify") {
               : norm(path.relative(REPO_AT, looksAt)) || ".") +
             ", а ворота лежат в " +
             said.dir +
-            ", и хук там ворот не зовёт. Путь — от корня репозитория: `" +
+            ", и хуки там ворот не зовут. Путь — от корня репозитория: `" +
             setHooks +
             "`; свой менеджер хуков — вызов " +
-            "`node .claude/tools/graph.mjs gate` в его хуке перед коммитом",
+            "`node .claude/tools/graph.mjs gate` в его хуке перед коммитом " +
+            'и `node .claude/tools/graph.mjs gate --message "$1"` в хуке сообщения',
         );
     }
   }

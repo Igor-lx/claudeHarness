@@ -120,7 +120,12 @@ export const partTreesOf = ({ repoRoot, base, count, whole, splits }) => {
  * основания остаются: откат правки возвращает дерево, уже прошедшее цепочку. */
 export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
   const was = readMarks(repoRoot);
-  const marks = { base, trees: was.base === base ? was.trees : {} };
+  // Деревья частей по порядку — для ворот и для основания живой серии.
+  const marks = {
+    base,
+    parts: trees.map(({ part, tree }) => ({ part, tree })),
+    trees: was.base === base ? was.trees : {},
+  };
   const out = [];
   const todo = trees.filter((t) => marks.trees[t.tree]?.code !== 0);
   if (todo.length === 0) {
@@ -195,3 +200,84 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
 /** Индекс проекта — ровно дерево части. */
 export const stageTree = (repoRoot, tree) =>
   execFileSync("git", ["read-tree", tree], { cwd: repoRoot, encoding: "utf8" });
+
+const gitOut = (repoRoot, args) =>
+  execFileSync("git", args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+
+/** Основание живой серии: часть её частей закоммичена, часть нет. Тогда
+ * правленое считают от основания, а не от последнего коммита: свод запечатан
+ * на всей пачке, и судить его по остатку значило бы судить другой предмет.
+ * Серии нет, она не начата либо сдана целиком — `null`. */
+export const livingBaseOf = (repoRoot) => {
+  try {
+    const marks = readMarks(repoRoot);
+    if (!marks.base || !Array.isArray(marks.parts) || marks.parts.length < 2)
+      return null;
+    if (gitOut(repoRoot, ["rev-parse", "HEAD"]) === marks.base) return null;
+    const headTree = gitOut(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+    const at = marks.parts.findIndex((p) => p.tree === headTree);
+    return at >= 0 && at < marks.parts.length - 1 ? marks.base : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Почему индекс не годится в коммит серии: дерево индекса — часть, прошедшая
+ * цепочку, и ложится на дерево предыдущей части, а первая — на основание.
+ * Пустая строка — годится. */
+export const seriesGateFault = (repoRoot) => {
+  const marks = readMarks(repoRoot);
+  const index = gitOut(repoRoot, ["write-tree"]);
+  const at = (marks.parts ?? []).findIndex((p) => p.tree === index);
+  if (at < 0 || marks.trees?.[index]?.code !== 0)
+    return "дерево индекса цепочку не проходило: сперва `node .claude/tools/graph.mjs series`, затем `series --stage <часть>`";
+  const head = gitOut(repoRoot, ["rev-parse", "HEAD"]);
+  if (at === 0)
+    return head === marks.base
+      ? ""
+      : "часть 1 ложится на основание серии " +
+          marks.base.slice(0, 7) +
+          ", а последний коммит — " +
+          head.slice(0, 7);
+  return gitOut(repoRoot, ["rev-parse", "HEAD^{tree}"]) ===
+    marks.parts[at - 1].tree
+    ? ""
+    : "часть " +
+        (at + 1) +
+        " ложится на часть " +
+        at +
+        ", а последний коммит — не она: части коммитят по порядку";
+};
+
+/** Строка серии для сообщения коммита: печать протокола, часть из скольких и
+ * дерево. По ней ревизия по истории узнаёт коммит серии. Индекс — не часть
+ * серии — `null`. */
+export const seriesLineOf = (repoRoot, seal) => {
+  const marks = readMarks(repoRoot);
+  const index = gitOut(repoRoot, ["write-tree"]);
+  const at = (marks.parts ?? []).findIndex((p) => p.tree === index);
+  if (at < 0) return null;
+  return (
+    "Bar-series: " +
+    seal +
+    " " +
+    (at + 1) +
+    "/" +
+    marks.parts.length +
+    " " +
+    index
+  );
+};
+
+/** Следующая часть к коммиту: первая после той, чьё дерево лежит в последнем
+ * коммите; ничего не закоммичено — первая. Сдана вся — `null`. */
+export const nextPartOf = (repoRoot, trees, base) => {
+  if (gitOut(repoRoot, ["rev-parse", "HEAD"]) === base) return 1;
+  const headTree = gitOut(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+  const at = trees.findIndex((t) => t.tree === headTree);
+  return at < 0 || at === trees.length - 1 ? null : at + 2;
+};
