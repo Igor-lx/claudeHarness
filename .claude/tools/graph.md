@@ -1573,7 +1573,7 @@ git -c user.name=seat -c user.email=seat@local commit -qm seat
 git config core.hooksPath .claude/hooks/git
 B=$(git rev-list --max-parents=0 HEAD)
 sed -i "s#^  barSince: null,#  barSince: \"$B\",#" .context/graph.config.mjs
-git -c user.name=seat -c user.email=seat@local commit -qam "barSince"
+env -u CLAUDE_CODE_CHILD_SESSION git -c user.name=seat -c user.email=seat@local commit -qam "barSince"
 env -u CLAUDE_CODE_CHILD_SESSION node .claude/tools/graph.mjs verify; echo "verify: $?"
 ```
 
@@ -1604,7 +1604,8 @@ for(const r of walk(".",dst).filter(keep)) if(!want.has(r)) fs.rmSync(p.join(dst
 
 - **Хуки посадки в этой сессии не исполняются**: сессия стартовала в
   репозитории обвязки. Сверка «Хуки проекта исполняются в этой сессии» тогда
-  красная по праву, поэтому сверку базы зовут без признака сессии; тесты
+  красная по праву, а ворота перед коммитом отказывают, поэтому сверку
+  базы и коммит в посадке зовут без признака сессии; тесты
   обвязки снимают его сами, фальсификация ставит свой.
 - **Набор тестов идёт дольше `10` минут** — его запускают в фоне и ждут строки
   с кодом возврата в файле вывода. Оборванный прогон оставляет в базе посадки
