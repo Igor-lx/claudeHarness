@@ -6359,6 +6359,46 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(verifyIn(box).get("Правила направления")).toEqual([
         "shared/zzs/zzt.ts → components/zzA/zzA.tsx",
       ]);
+      // Тест едет со своей единицей: ребро из него вверх рвёт перенос так же.
+      fs.rmSync(path.join(box, "src/shared/zzs/zzt.ts"));
+      write(
+        box,
+        "src/shared/zzs/tests/zzs.test.ts",
+        'import { ZzA } from "../../../components/zzA/zzA";\n\nexport const zzu = ZzA;\n',
+      );
+      expect(verifyIn(box).get("Правила направления")).toEqual([
+        "shared/zzs/tests/zzs.test.ts → components/zzA/zzA.tsx",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  // Изоляция — то же правило о границе слоя: тест едет со своей единицей.
+  it("изоляция слоя судит и тест", () => {
+    const box = seatEmpty("izolyaciya-");
+    try {
+      edit(
+        box,
+        ".context/graph.config.mjs",
+        "  isolationHeading: null,",
+        '  isolationHeading: "Изоляция слоёв",',
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "00-map.md"),
+        "\n## Изоляция слоёв\n\n| Слой | Можно брать |\n| --- | --- |\n| `shared/zzi` | `shared/zzi` |\n",
+      );
+      write(box, "src/shared/zzi/zzi.ts", "export const zzi = 1;\n");
+      write(box, "src/shared/zzo/zzo.ts", "export const zzo = 2;\n");
+      expect(verifyIn(box).get("Правила изоляции")).toBeUndefined();
+      write(
+        box,
+        "src/shared/zzi/tests/zzi.test.ts",
+        'import { zzo } from "../../zzo/zzo";\n\nexport const zzu = zzo;\n',
+      );
+      expect(verifyIn(box).get("Правила изоляции")).toEqual([
+        "shared/zzi/tests/zzi.test.ts → shared/zzo/zzo.ts",
+      ]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

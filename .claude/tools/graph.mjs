@@ -8767,7 +8767,11 @@ const directionFaults = () => {
   const edges = [];
   const allowUsed = new Set();
   for (const rule of layerTables().rules) {
-    const layer = insideOnce(rule.layer).filter((f) => !isTest(f));
+    // Тест судится наравне с кодом: он лежит в папке своей единицы и едет с
+    // ней, и ребро из него в слой выше рвёт перенос так же. Прежде тесты
+    // пропускались без записанной причины, а глоссарий велит обратное.
+    // Решено разработчиком `2026-10-11`.
+    const layer = insideOnce(rule.layer);
     const allowedBy = new Map();
     for (const q of rule.allowed)
       for (const hit of insideOnce(q)) allowedBy.set(hit, q);
@@ -17505,8 +17509,8 @@ if (mode === "verify") {
     const allowed = new Set(
       rule.only.flatMap((q) => inside(q, null)?.hits ?? []),
     );
+    // Тест — тоже: то же правило о границе слоя, что у направления.
     for (const f of own) {
-      if (isTest(f)) continue;
       for (const dep of importsOf.get(f) ?? [])
         if (!own.has(dep) && !allowed.has(dep))
           brokenIso.push(`${rel(f)} → ${rel(dep)}`);
