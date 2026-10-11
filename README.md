@@ -4,7 +4,7 @@
 
 # claudeHarness
 
-**Frontend code quality for Claude Code, held by machine checks, not by the AI agent's attention.**
+**Frontend code quality for Claude Code, held by independent machine checks, not by the AI agent's attention.**
 
 Give the agent a task - get code, tests and documentation proven by machine
 checks.<br>Without proof the agent cannot finish its work, and the commit does
