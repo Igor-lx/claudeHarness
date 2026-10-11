@@ -1595,6 +1595,29 @@ for(const r of walk(".",dst).filter(keep)) if(!want.has(r)) fs.rmSync(p.join(dst
 ' "$H/.claude" "$F/.claude"
 ```
 
+**Магазин для проб процесса** — живое приложение поверх посадки, данными в
+`.claude/tools/probe-shop.json`: задаче пробы `probe` есть на чём работать без
+письма кода с нуля. Кладут его сразу после заведения посадки, из её папки;
+код коммитится мимо ворот, и основание ревизии сводов встаёт на этот коммит:
+
+```bash
+node -e '
+const fs=require("fs"),p=require("path");
+const shop=JSON.parse(fs.readFileSync(".claude/tools/probe-shop.json","utf8"));
+for (const [f,t] of Object.entries(shop.files)){
+  fs.mkdirSync(p.dirname(f),{recursive:true}); fs.writeFileSync(f,t); }'
+git add -A
+git -c user.name=seat -c user.email=seat@local commit -q --no-verify -m shop
+B=$(git rev-parse HEAD)
+sed -i "s#^  barSince: \"[0-9a-f]*\",#  barSince: \"$B\",#" .context/graph.config.mjs
+env -u CLAUDE_CODE_CHILD_SESSION git -c user.name=seat -c user.email=seat@local commit -qam "barSince"
+env -u CLAUDE_CODE_CHILD_SESSION node .claude/tools/graph.mjs verify; echo "verify: $?"
+```
+
+Правят магазин на собранной посадке и выгружают в данные файлы, которые
+отличаются от свежей посадки, без `package-lock.json`: семя, взятое как есть,
+в данных застыло бы прежней редакцией.
+
 Проверки — из папки посадки: тесты обвязки (около `12` минут), сверка базы
 с `env -u CLAUDE_CODE_CHILD_SESSION`, `falsify` (около `13` минут) — когда
 тронуты сверки или рецепты, `bar-hold` — когда тронуты планка или её словари,
