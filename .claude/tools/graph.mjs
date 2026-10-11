@@ -107,6 +107,14 @@ import {
 // Разбор модуля — что он берёт и что отдаёт — одной записью на текст: граф,
 // имена, поверхность и привязки читают её, а не каждый свой образец.
 import { parserFor, regexParser } from "./graph.parse.mjs";
+// Испытательная посадка и пакеты песочниц: посадке нужен один порядок и до
+// настройки проекта, и внутри режимов, которые её разбирают.
+import {
+  layShelf,
+  runSeat,
+  sandboxManifests,
+  sandboxPackages,
+} from "./graph.seat.mjs";
 
 // Вывод в канал Node пишет асинхронно, а режимы кончаются `process.exit()`,
 // который обрывает недописанное. Замерено: из `20` запусков, печатавших в
@@ -344,6 +352,17 @@ if (mode === "guard") {
   console.log(why === "" ? "  обхода ворот нет" : "    обход ворот: " + why);
   process.exit(why === "" ? 0 : 1);
 }
+
+// Посадка и стенд проб собираются до настройки проекта: в мастерской обвязки
+// её нет, а площадка для проб нужна именно там.
+if (
+  mode === "seat" ||
+  (mode === "bar-probe" && process.argv.includes("--stand-build"))
+)
+  runSeat({
+    toolDir: path.dirname(fileURLToPath(import.meta.url)),
+    argv: process.argv.slice(2),
+  });
 
 if (mode === "env") {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2024,65 +2043,6 @@ const sandboxTree = (from, to) => {
   }
 };
 
-/** Манифесты установленных пакетов — и только они.
- *
- * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и
- * к содержимому сверок отношения не имеет. Но сверка версий читает именно
- * её — номер версии лежит в манифесте каждого пакета, — и в песочнице ей
- * нечего было читать: она не краснела НИКОГДА, то есть рецепта под неё не
- * существовало в принципе. Манифесты весят килобайты, и этого довольно.
- *
- * Найдено при выплате долга рецептов: поломка, работающая на самом проекте,
- * в песочнице молчала. */
-const sandboxManifests = (from, to) => {
-  if (!existsSync(from)) return;
-  for (const e of readdirSync(from)) {
-    const dir = path.join(from, e);
-    if (!statSync(dir).isDirectory()) continue;
-    if (e.startsWith("@")) {
-      sandboxManifests(dir, path.join(to, e));
-      continue;
-    }
-    const manifest = path.join(dir, "package.json");
-    if (!existsSync(manifest)) continue;
-    mkdirSync(path.join(to, e), { recursive: true });
-    writeFileSync(path.join(to, e, "package.json"), readFileSync(manifest));
-  }
-};
-
-/** Пакеты проекта для песочницы пробы — ссылкой на каждый пакет.
- *
- * Свод в песочнице пробы зовёт линт проекта, а линту нужны пакеты целиком.
- * С одними манифестами `eslint` не разрешался: свод печатал «линт
- * недоступен», правила линта как держатели в пробе молчали, и проба мерила
- * проход не в тех условиях, в которых его делают. Найдено пробой планки.
- *
- * Копия весила бы сотни мегабайт, ссылка не весит ничего. Скрытые папки,
- * кроме `.bin`, не связываются: туда пишут кэши раннеров, и запись из
- * песочницы легла бы в папку проекта. Песочница фальсификации держит одни
- * манифесты: рецепт ломает то, что лежит в песочнице, и ссылка донесла бы
- * поломку до проекта. Ссылку завести нельзя — пакет едет манифестом. */
-const sandboxPackages = (from, to) => {
-  if (!existsSync(from)) return;
-  mkdirSync(to, { recursive: true });
-  for (const e of readdirSync(from)) {
-    if (e.startsWith(".") && e !== ".bin") continue;
-    const dir = path.join(from, e);
-    try {
-      symlinkSync(dir, path.join(to, e), "junction");
-    } catch {
-      if (!statSync(dir).isDirectory()) continue;
-      if (e.startsWith("@")) sandboxManifests(dir, path.join(to, e));
-      else if (existsSync(path.join(dir, "package.json"))) {
-        mkdirSync(path.join(to, e), { recursive: true });
-        writeFileSync(
-          path.join(to, e, "package.json"),
-          readFileSync(path.join(dir, "package.json")),
-        );
-      }
-    }
-  }
-};
 /** ЧУЖИЕ связи через разметку и стили: имена, у которых один конец внутри
  * репозитория есть, а второго нет.
  *
@@ -5873,23 +5833,9 @@ if (mode === "handoff") {
   const probe = path.join(root, ".проба-посадки");
   try {
     rmSync(probe, { recursive: true, force: true });
-    for (const d of seatMap.dirs)
-      mkdirSync(path.join(probe, d), { recursive: true });
-    copyTree(claudeAt, path.join(probe, ".claude"));
-    for (const one of seatMap.copy) {
-      // Пометки карты читаются и здесь. Семя, которое кладут НЕ на посадке,
-      // проба не кладёт — иначе она сажает не то, что сажает посадка, и
-      // собственная сверка снимка краснеет на его же правильной сборке.
-      // Найдено ровно так: пометка появилась данными, проба её не узнала, и
-      // снимок перестал собираться — молча для того, кто смотрит на первую
-      // строку вывода.
-      if (one.notAtSeating !== undefined) continue;
-      const src = path.join(claudeAt, one.from);
-      const dst = path.join(probe, one.to);
-      if (!existsSync(src)) throw new Error("в снимке нет семени: " + one.from);
-      mkdirSync(path.dirname(dst), { recursive: true });
-      writeFileSync(dst, readFileSync(src, "utf8"));
-    }
+    // Проба сажает тем же порядком, что и посадка: своя копия порядка уже
+    // расходилась с ним, и снимок переставал собираться.
+    layShelf(claudeAt, probe);
     // Годность снимка определяет КОД ВОЗВРАТА сверки, а не разбор её вывода.
     // Разбор строк уже соврал однажды: выражение искало букву вместо любого
     // непробела, потому что обратный слеш терялся при правке, и снимок
@@ -7703,69 +7649,6 @@ if (mode === "bar-probe") {
     sayLooked("живых критериев планки", all === null ? 0 : all.all.length);
   }
   const NEWLINE = String.fromCharCode(10);
-  // Стенд проб — проект, где у каждого критерия планки есть предмет: живы
-  // все разделы по применимости. Лежит данными рядом с книгой посадок, а не
-  // папкой в мастерской: тесты обвязки собирают его на любой посадке
-  // обвязки. Собирается посадкой обвязки в пустую папку и своими файлами
-  // поверх; пробы идут внутри собранной папки обычным порядком.
-  if (process.argv.includes("--stand-build")) {
-    const dest = process.argv[process.argv.indexOf("--stand-build") + 1];
-    const standAt = path.join(TOOL_DIR, "bar-stand.json");
-    if (dest === undefined || dest.startsWith("--")) {
-      console.log("=== Стенд не собран ===");
-      console.log("  Куда собирать, не сказано: bar-probe --stand-build <папка>.");
-      process.exit(1);
-    }
-    if (!existsSync(standAt)) {
-      console.log("=== Стенд не собран ===");
-      console.log("  Ожидался файл: " + norm(standAt));
-      process.exit(1);
-    }
-    const target = path.resolve(dest);
-    if (existsSync(target) && readdirSync(target).length > 0) {
-      console.log("=== Стенд не собран ===");
-      console.log("  Папка не пуста: " + norm(target));
-      process.exit(1);
-    }
-    const shelf = path.join(TOOL_DIR, "..");
-    const seatMap = JSON.parse(
-      readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
-    );
-    mkdirSync(target, { recursive: true });
-    for (const d of seatMap.dirs ?? [])
-      mkdirSync(path.join(target, d), { recursive: true });
-    sandboxTree(shelf, path.join(target, ".claude"));
-    for (const own of seatMap.projectOwnedInsideHarness ?? [])
-      rmSync(path.join(target, ".claude", own), { recursive: true, force: true });
-    for (const one of seatMap.copy ?? []) {
-      if (one.notAtSeating !== undefined) continue;
-      const to = path.join(target, one.to);
-      mkdirSync(path.dirname(to), { recursive: true });
-      writeFileSync(to, readFileSync(path.join(shelf, one.from)));
-    }
-    const stand = JSON.parse(readFileSync(standAt, "utf8"));
-    for (const [p, text] of Object.entries(stand.files ?? {})) {
-      const to = path.join(target, p);
-      mkdirSync(path.dirname(to), { recursive: true });
-      writeFileSync(to, text.split("\n").join(NEWLINE));
-    }
-    for (const p of stand.remove ?? [])
-      rmSync(path.join(target, p), { recursive: true, force: true });
-    sandboxPackages(
-      path.join(BASE, "..", "node_modules"),
-      path.join(target, "node_modules"),
-    );
-    console.log("=== Стенд проб собран ===");
-    console.log("  папка: " + norm(target));
-    console.log("  своих файлов стенда: " + Object.keys(stand.files ?? {}).length);
-    console.log("");
-    console.log("  Пробы — внутри папки стенда:");
-    console.log("    cd " + norm(target));
-    console.log(
-      "    node .claude/tools/graph.mjs bar-probe --criterion=<критерий> | --batch=<критерии через запятую>",
-    );
-    process.exit(0);
-  }
   const at = path.join(TOOL_DIR, "bar-probes.json");
   if (!existsSync(at)) {
     console.log("=== Сажаемых нарушений нет ===");

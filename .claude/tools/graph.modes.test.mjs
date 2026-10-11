@@ -17,6 +17,7 @@ import {
   crossCandidatesOf,
   crossWordsOf,
 } from "./graph.predicates.mjs";
+import { layShelf } from "./graph.seat.mjs";
 
 /**
  * Дымовой набор на РЕЖИМЫ инструмента.
@@ -96,6 +97,7 @@ const OUTSIDE = {
   handoff:
     "без пути кладёт снимок ПАПКОЙ рядом с репозиторием; гоняется отдельным тестом ниже — во временную папку",
   "bar-probe": "заводит песочницу, в которой работает человек, а не набор",
+  seat: "сажает обвязку в папку и ставит пакеты; гоняется отдельным тестом ниже — во временную папку",
 };
 
 /** Имена режимов берутся у самого инструмента: список руками разошёлся бы с
@@ -257,6 +259,111 @@ describe("снимок обвязки собирается", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+});
+
+/**
+ * Испытательная посадка одной командой. Прежде её заводили процедурой из
+ * справочника, копируя в оболочку, и шаг, пропущенный сессией, ломал замер,
+ * не давая признака. Пакеты в наборе — ссылкой на пакеты посадки, где он
+ * идёт, без сети; отказ без пакетов проверяется с выключенной сетью.
+ */
+describe("испытательная посадка одной командой", () => {
+  const seatIn = (dest, ...rest) =>
+    spawnSync(process.execPath, [TOOL, "seat", dest, ...rest], {
+      cwd: path.join(TOOL_DIR, "..", ".."),
+      encoding: "utf8",
+    });
+
+  it("собирается со сверкой ноль; повторный вызов обновляет обвязку и пакеты не трогает", () => {
+    const dest = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "seat-")),
+      "p",
+    );
+    try {
+      const first = seatIn(dest);
+      expect(first.status, first.stdout).toBe(0);
+      expect(first.stdout).toContain("=== Посадка собрана ===");
+      expect(first.stdout).toContain("пакеты: ссылкой на ");
+      expect(first.stdout).toContain("сверка базы: код 0");
+      const pkg = path.join(dest, "node_modules", "vitest");
+      const linked = fs.readlinkSync(pkg);
+      const stray = path.join(dest, ".claude", "tools", "zz-stray.txt");
+      fs.writeFileSync(stray, "лишнее\n");
+      const again = seatIn(dest);
+      expect(again.status, again.stdout).toBe(0);
+      expect(again.stdout).toContain("=== Посадка обновлена ===");
+      expect(again.stdout).toContain("снято 1");
+      expect(again.stdout).toContain("пакеты: не тронуты");
+      expect(fs.existsSync(stray)).toBe(false);
+      expect(fs.readlinkSync(pkg)).toBe(linked);
+      expect(fs.existsSync(path.join(dest, "package-lock.json"))).toBe(false);
+      expect(seatIn(dest, "--shop").stdout).toContain("на свежую посадку");
+    } finally {
+      fs.rmSync(path.dirname(dest), { recursive: true, force: true });
+    }
+  }, 300000);
+
+  // Магазин лежит данными и собирается поверх посадки: правка семян роняет
+  // его без правки его файлов.
+  it("магазин поверх: сверка базы и проверки проекта — код ноль", () => {
+    const dest = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "seat-shop-")),
+      "p",
+    );
+    try {
+      const built = seatIn(dest, "--shop");
+      expect(built.status, built.stdout).toBe(0);
+      expect(built.stdout).toContain("магазин поверх, файлов: ");
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const check = spawnSync("npm", ["run", "check"], {
+        cwd: dest,
+        encoding: "utf8",
+        env,
+      });
+      expect(
+        check.status,
+        (check.stdout + check.stderr).split("\n").slice(-40).join("\n"),
+      ).toBe(0);
+    } finally {
+      fs.rmSync(path.dirname(dest), { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("нет пакетов и нет сети — отказ с причиной, папка убрана", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "seat-bare-"));
+    try {
+      fs.cpSync(path.join(TOOL_DIR, ".."), path.join(box, "shelf", ".claude"), {
+        recursive: true,
+      });
+      const dest = path.join(box, "p");
+      const cache = path.join(box, "npm-cache");
+      fs.mkdirSync(cache);
+      const said = spawnSync(
+        process.execPath,
+        [
+          path.join(box, "shelf", ".claude", "tools", "graph.mjs"),
+          "seat",
+          dest,
+        ],
+        {
+          cwd: path.join(box, "shelf"),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            npm_config_offline: "true",
+            npm_config_cache: cache,
+          },
+        },
+      );
+      expect(said.status).toBe(1);
+      expect(said.stdout).toContain("=== Посадка не собрана ===");
+      expect(said.stdout).toContain("Пакеты не встали");
+      expect(fs.existsSync(dest)).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 /**
@@ -1596,25 +1703,8 @@ describe("ревизия сводов по истории", () => {
  * звено тестов проекта краснело из-за обвязки. Сажается тем же порядком,
  * что и самопроверка снимка. */
 const seatEmpty = (prefix) => {
-  const shelf = path.join(TOOL_DIR, "..");
-  const map = JSON.parse(
-    fs.readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
-  );
-  const own = new Set(map.projectOwnedInsideHarness ?? []);
   const box = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  for (const d of map.dirs)
-    fs.mkdirSync(path.join(box, d), { recursive: true });
-  fs.cpSync(shelf, path.join(box, ".claude"), {
-    recursive: true,
-    filter: (src) =>
-      path.dirname(src) !== shelf || !own.has(path.basename(src)),
-  });
-  for (const one of map.copy) {
-    if (one.notAtSeating !== undefined) continue;
-    const dst = path.join(box, one.to);
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(path.join(shelf, one.from), dst);
-  }
+  layShelf(path.join(TOOL_DIR, ".."), box);
   return box;
 };
 /** Файл перехода из семени, поле настройки под него и пункты долга. */
@@ -8443,13 +8533,19 @@ describe("проба планки: выбор, пачка, вид файла и 
         }),
       );
       expect(runIn(box, "bar-probe", "--stand-build")).toContain("Куда собирать, не сказано");
+      // Пакеты — ссылкой на пакеты посадки, где идёт набор: без них сборка
+      // ставила бы их из сети. Свой файл стенда в карте не описан, и сверка
+      // базы на нём красная — сборка об этом говорит, а не молчит.
+      fs.symlinkSync(path.join(TOOL_DIR, "..", "..", "node_modules"), path.join(box, "node_modules"), "junction");
       const out = runIn(box, "bar-probe", "--stand-build", dest);
-      expect(out).toContain("=== Стенд проб собран ===");
+      expect(out).toContain("=== Стенд проб собран — сверка базы красная ===");
       for (const one of [".claude/tools/graph.mjs", "CLAUDE.md", "src/app/App.tsx", "src/app/zzStand.ts"])
         expect(fs.existsSync(path.join(dest, one)), one).toBe(true);
       expect(fs.existsSync(path.join(dest, "docs", "FEATURES.md"))).toBe(false);
       expect(runIn(box, "bar-probe", "--stand-build", dest)).toContain("Папка не пуста");
     } finally {
+      // Ссылка снимается сама по себе: удаление папки не идёт в пакеты посадки.
+      fs.rmSync(path.join(box, "node_modules"), { force: true });
       fs.rmSync(box, { recursive: true, force: true });
       fs.rmSync(dest, { recursive: true, force: true });
     }
