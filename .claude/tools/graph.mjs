@@ -10325,6 +10325,15 @@ const policyPageOf = (items) => {
     for (const f of new Set(one.forms)) count.set(f, (count.get(f) ?? 0) + 1);
   const shared = [...count].filter(([, n]) => n > 1).map(([f]) => f);
   const out = [];
+  // Файл политики — раз на страницу: отсылка у каждого критерия была одной
+  // и той же строкой, замер `2026-10-12` — `10 675` знаков на свод стенда.
+  const files = [...new Set(items.map((c) => c.file).filter(Boolean))];
+  if (files.length > 0)
+    out.push(
+      "Тела критериев — " +
+        files.map((f) => barQuoted(f)).join(", ") +
+        ": в контексте по шапке.",
+    );
   if (shared.length > 0)
     out.push(
       [
@@ -10367,8 +10376,9 @@ const criterionHeadOf = (own) => {
   return end < 0 ? own : own.slice(0, end);
 };
 
-/** Критерии планки по порядку политики: на странице — заголовок жирным,
- * отсылка к файлу политики и формы вне держателя. Тело страница не печатает:
+/** Критерии планки по порядку политики: на странице — заголовок жирным и
+ * формы вне держателя, а файлы политики страница называет раз, в начале.
+ * Тело страница не печатает:
  * политику среда кладёт в контекст по шапке `paths:`, и тело на странице было
  * бы её вторым экземпляром. Замер `2026-10-12`: пачка из `23` посадок в
  * существующий код с телами на странице и без них — поймано одно и то же.
@@ -10386,13 +10396,8 @@ const policyBodies = () => {
     POLICY_BODIES.push(
       ...bodies.map((c) => ({
         ...c,
-        text:
-          criterionHeadOf(c.own) +
-          LF +
-          "тело — " +
-          barQuoted(rel(file)) +
-          ", в контексте по шапке" +
-          c.text.slice(c.own.length),
+        file: rel(file),
+        text: criterionHeadOf(c.own) + c.text.slice(c.own.length),
       })),
     );
   }

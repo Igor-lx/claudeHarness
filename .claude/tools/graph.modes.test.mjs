@@ -4163,7 +4163,7 @@ describe("страница политики", () => {
     }
   }, 180000);
 
-  it("страница критерия — заголовок, отсылка к политике и формы; тела на ней нет", () => {
+  it("страница критериев — заголовки, формы и раз отсылка к политике; тел на ней нет", () => {
     const box = seatEmpty("bodies-off-");
     try {
       const tool = (...args) =>
@@ -4178,19 +4178,22 @@ describe("страница политики", () => {
           ).stdout ?? "",
         );
       tool("bar", "src/app");
-      const lines = tool("bar-read")
+      const pages = tool("bar-read")
         .split(/^(?==== Страница )/m)
-        .filter((p) => p.includes("политика:"))
-        .join("")
-        .split("\n");
+        .filter((p) => p.includes("политика:"));
+      // Файл политики страница называет раз, а не у каждого критерия.
+      for (const page of pages) {
+        const pointers = page
+          .split("\n")
+          .filter((l) => l.startsWith("Тела критериев — "));
+        expect(pointers.length, page.slice(0, 80)).toBe(1);
+        expect(pointers[0]).toMatch(
+          /^Тела критериев — `\.claude\/rules\/quality(?:-scoped)?\.md`(?:, `\.claude\/rules\/quality-scoped\.md`)?: в контексте по шапке\.$/,
+        );
+      }
+      const lines = pages.join("").split("\n");
       const heads = lines.filter((l) => /^\*\*[A-Z][0-9]+/.test(l));
       expect(heads.length).toBeGreaterThan(0);
-      const pointers = lines.filter((l) => l.startsWith("тело — "));
-      expect(pointers.length).toBe(heads.length);
-      for (const one of pointers)
-        expect(one).toMatch(
-          /^тело — `\.claude\/rules\/quality(?:-scoped)?\.md`, в контексте по шапке$/,
-        );
       expect(lines).toContain("Вне держателя — проверяется чтением:");
       // Первая строка тела каждого критерия страницы стоит в политике, а на
       // странице её нет. Заголовок бывает длиннее строки: тело начинается
