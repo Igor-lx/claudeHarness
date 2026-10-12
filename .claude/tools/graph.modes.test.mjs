@@ -7486,6 +7486,13 @@ describe("запись карты не спорит с кодом", () => {
       const proto = fs.readFileSync(protoAt, "utf8");
       const row = /^\| `app\/zzKeep\.ts` \| {2}\| {2}\| {2}\|$/m;
       expect(proto).toMatch(row);
+      // Правила приёма — в прозе протокола, а не только в коде инструмента.
+      for (const rule of [
+        "у файла без своей записи в карте",
+        "опровергает сверка «Запись карты не спорит с кодом»",
+        "который съехал якорь по сверке «Якоря»",
+      ])
+        expect(proto).toContain(rule);
       fs.writeFileSync(
         protoAt,
         proto.replace(
