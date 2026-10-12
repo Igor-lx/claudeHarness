@@ -4041,6 +4041,50 @@ const answersOf = (blank, filled) => {
   return out.join("\n") + "\n";
 };
 
+describe("короткий вывод сверки", () => {
+  it("без --full — находки, предупреждения и счёт; код возврата тот же", () => {
+    const box = seatEmpty("verify-brief-");
+    try {
+      const env = { ...process.env };
+      delete env.GRAPH_VERIFY_FULL;
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const run = (...args) =>
+        spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "verify", ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+            env,
+          },
+        );
+      const full = run("--full");
+      const brief = run();
+      expect(brief.status).toBe(full.status);
+      const sections = String(full.stdout)
+        .split(/^(?==== )/m)
+        .slice(1);
+      const red = sections.find(
+        (s) =>
+          /^ {4}\S/m.test(s) && !s.split("\n")[0].includes("прогон не роняет"),
+      );
+      const green = sections.find(
+        (s) => !/^ {4}\S/m.test(s) && !/осмотрено [^:]+: 0\s*$/m.test(s),
+      );
+      expect(red, full.stdout).toBeDefined();
+      expect(brief.stdout).toContain(red.trimEnd());
+      expect(brief.stdout).not.toContain(green.split("\n")[0]);
+      expect(full.stdout).toContain(green.split("\n")[0]);
+      expect(brief.stdout).toMatch(
+        /зелёных не показано: [1-9][0-9]* — полный вывод: `graph\.mjs verify --full`/,
+      );
+      expect(brief.stdout.length).toBeLessThan(full.stdout.length / 2);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("ответы свода файлом", () => {
   it("bar-fill вписывает те же клетки, что правка таблицы; отказ — без записи", () => {
     const box = seatEmpty("bar-fill-");

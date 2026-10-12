@@ -95,6 +95,7 @@ import {
   firstCellOf,
   namesAddress,
   printedIsRed,
+  verifyBriefOf,
   SCOPE_LINE_KINDS,
   SCOPE_MODULE_KINDS,
   SCOPE_PAIRED,
@@ -4898,7 +4899,7 @@ if (mode === "falsify") {
     try {
       return execFileSync(
         process.execPath,
-        [path.join(cwd, ".claude/tools/graph.mjs"), "verify"],
+        [path.join(cwd, ".claude/tools/graph.mjs"), "verify", "--full"],
         {
           encoding: "utf8",
           cwd,
@@ -12882,7 +12883,7 @@ const barLintRowOf = ({ lint, c, files, asked }) => {
 const barChecksOf = (repoRoot) => {
   const run = spawnSync(
     process.execPath,
-    [fileURLToPath(import.meta.url), "verify"],
+    [fileURLToPath(import.meta.url), "verify", "--full"],
     {
       cwd: repoRoot,
       encoding: "utf8",
@@ -17483,15 +17484,27 @@ if (mode === "verify") {
   // им его узнаёт и разбор фальсификации. Секция, которая печатает не
   // находки, а предупреждение, говорит это своим заголовком, и только она
   // исключается.
+  //
+  // Без ключа `--full` печатается короткий вывод (`verifyBriefOf`): на
+  // зелёном все секции ничего не говорят читающему. Его печатают на выходе
+  // процесса: режим выходит и раньше конца. Полный вывод читают те, кто
+  // разбирает секции, — фальсификация, приём свода, тесты обвязки.
+  const WARNING = "прогон не роняет";
   const SAID = [];
   {
+    const full =
+      process.argv.includes("--full") || process.env.GRAPH_VERIFY_FULL === "1";
     const was = console.log;
     console.log = (...args) => {
       SAID.push(args.join(" "));
-      was(...args);
+      if (full) was(...args);
     };
+    if (!full)
+      process.on("exit", () => {
+        for (const line of verifyBriefOf(SAID, WARNING))
+          process.stdout.write(line + "\n");
+      });
   }
-  const WARNING = "прогон не роняет";
   // Сверки, которые СМЯГЧАЕТ флаг посадки: их предмет доделывает фаза 2 —
   // правила проекта заполняются из ответа разработчика, отложенные семена
   // сливаются. Секция печатает всё

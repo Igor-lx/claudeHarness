@@ -15,6 +15,7 @@ const {
   inComment,
   printedIsRed,
   sectionsOf,
+  verifyBriefOf,
   selfCheck,
 } = vocabulary;
 
@@ -416,6 +417,40 @@ describe("sectionsOf", () => {
     const got = sectionsOf(run, NEWLINE);
     for (const red of got.values())
       for (const line of red) expect(line.startsWith("    ")).toBe(true);
+  });
+});
+
+describe("verifyBriefOf", () => {
+  // Короткий вывод сверки: находки и предупреждения целиком, ослепшие — по
+  // имени, зелёные — счётом.
+  const WARN = "прогон не роняет";
+  const lines = [
+    "──────────────",
+    "=== Красная ===",
+    "  осмотрено файлов: 3",
+    "    src/a.ts — не так",
+    "=== Зелёная ===",
+    "  осмотрено файлов: 3",
+    "  нарушений: 0",
+    "=== Слепая ===",
+    "  осмотрено пометок: 0",
+    "=== Версии (предупреждение, прогон не роняет) ===",
+    "    npm ниже проверенной",
+  ];
+  const out = verifyBriefOf(lines, WARN);
+
+  it("держит всё до первой секции и каждую секцию с находкой целиком", () => {
+    expect(out.slice(0, 4)).toEqual(lines.slice(0, 4));
+    expect(out).toContain("=== Версии (предупреждение, прогон не роняет) ===");
+    expect(out).toContain("    npm ниже проверенной");
+  });
+
+  it("зелёную секцию не печатает, ослепшую называет по имени, всё считает", () => {
+    expect(out).not.toContain("=== Зелёная ===");
+    expect(out).toContain("  осмотрено ноль: Слепая");
+    expect(out.at(-1)).toBe(
+      "  сверок: 4, с находками: 1, с предупреждением: 1, зелёных не показано: 2 — полный вывод: `graph.mjs verify --full`",
+    );
   });
 });
 

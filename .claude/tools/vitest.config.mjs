@@ -8,5 +8,7 @@ export default defineConfig({
     root: fileURLToPath(new URL("../..", import.meta.url)),
     include: [".claude/tools/**/*.test.mjs"],
     environment: "node",
+    // Тесты разбирают вывод сверки по секциям — им полный.
+    env: { GRAPH_VERIFY_FULL: "1" },
   },
 });

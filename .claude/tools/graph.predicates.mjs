@@ -5932,6 +5932,56 @@ export const printedIsRed = (lines, warning, soft) => {
   return false;
 };
 
+/** Короткий вывод сверки: что печатать, когда полный не просили.
+ *
+ * Полный прогон печатает все секции, и на зелёном они ничего не говорят
+ * читающему: замер `2026-10-12` на стенде — `16 889` знаков, из них зелёные
+ * секции — `14 452`. Здесь остаётся всё, что стоит до первой секции, каждая
+ * секция с находкой — строкой в четыре пробела, — красная либо
+ * предупреждение, имена секций, осмотревших ноль: слепота сверки остаётся
+ * видна, — и строка счёта. Код возврата судит полный вывод, а не этот. */
+export const verifyBriefOf = (lines, warning) => {
+  const out = [];
+  const sections = [];
+  let cur = null;
+  for (const line of lines) {
+    const title = /^=== (.+) ===$/.exec(line);
+    if (title !== null) {
+      cur = { title: title[1], line, body: [] };
+      sections.push(cur);
+    } else if (cur === null) out.push(line);
+    else cur.body.push(line);
+  }
+  const blind = [];
+  let red = 0;
+  let warned = 0;
+  let hidden = 0;
+  for (const s of sections) {
+    if (s.body.some((l) => /^ {4}\S/.test(l))) {
+      out.push(s.line, ...s.body);
+      if (s.title.includes(warning)) warned += 1;
+      else red += 1;
+      continue;
+    }
+    hidden += 1;
+    if (s.body.some((l) => /^\s*осмотрено [^:]+: 0\s*$/.test(l)))
+      blind.push(s.title);
+  }
+  if (blind.length > 0) out.push("  осмотрено ноль: " + blind.join(", "));
+  out.push(
+    "  сверок: " +
+      sections.length +
+      ", с находками: " +
+      red +
+      ", с предупреждением: " +
+      warned +
+      ", зелёных не показано: " +
+      hidden +
+      " — полный вывод: `graph.mjs verify --full`",
+  );
+  return out;
+};
+
 /** Тела критериев одного файла политики, по порядку: заголовок жирным и всё
  * под ним до следующего критерия, заголовка или черты. Критерий вне раздела
  * с буквой — пример в прозе, а не критерий. `own` — тело как в политике,
