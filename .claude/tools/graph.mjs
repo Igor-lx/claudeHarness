@@ -10243,15 +10243,72 @@ const pageWord = (salt, spec, text) => {
  * страницы. Сессия читает страницу, судя критерий, и форма, которой модель
  * не покажет, стоит перед ней там же, где тело: «чисто» по такой форме — на
  * чтении, а не на модели. */
+const FORMS_HEAD = "Вне держателя — проверяется чтением:";
 const formsTailOf = (id) => {
   const forms = BAR_FORMS_SPLIT[id];
   if (forms?.forms === undefined) return "";
   return (
     LF +
     LF +
-    "Вне держателя — проверяется чтением:" +
+    FORMS_HEAD +
     forms.forms.map((f) => LF + "- " + f.form + " — " + f.why).join("")
   );
+};
+
+/** Страница политики: тела критериев подряд. Форма вне держателя, общая для
+ * нескольких критериев страницы, печатается раз, в начале, с их списком, а у
+ * критерия остаётся отсылка. Прежде она стояла у каждого: замер `2026-10-12`
+ * на стенде — `14 831` знак повтора на свод. */
+const policyPageOf = (items) => {
+  const parsed = items.map((c) => {
+    const at = c.text.indexOf(LF + LF + FORMS_HEAD);
+    return at < 0
+      ? { id: c.id, body: c.text, forms: [] }
+      : {
+          id: c.id,
+          body: c.text.slice(0, at),
+          forms: c.text
+            .slice(at + 2 + FORMS_HEAD.length)
+            .split(LF)
+            .filter((l) => l.startsWith("- ")),
+        };
+  });
+  const count = new Map();
+  for (const one of parsed)
+    for (const f of new Set(one.forms)) count.set(f, (count.get(f) ?? 0) + 1);
+  const shared = [...count].filter(([, n]) => n > 1).map(([f]) => f);
+  const out = [];
+  if (shared.length > 0)
+    out.push(
+      [
+        "Общие формы вне держателя — проверяются чтением у названных критериев:",
+        ...shared.map(
+          (f) =>
+            f +
+            LF +
+            "  у " +
+            parsed
+              .filter((one) => one.forms.includes(f))
+              .map((one) => barQuoted(one.id))
+              .join(", "),
+        ),
+      ].join(LF),
+    );
+  for (const one of parsed) {
+    const own = one.forms.filter((f) => !shared.includes(f));
+    const common = one.forms.some((f) => shared.includes(f));
+    out.push(
+      one.body +
+        (own.length > 0 || common
+          ? LF +
+            LF +
+            FORMS_HEAD +
+            own.map((f) => LF + f).join("") +
+            (common ? LF + "- и общие формы страницы, выше" : "")
+          : ""),
+    );
+  }
+  return out.join(LF + LF);
 };
 
 /** Тела критериев планки по порядку политики: заголовок жирным и всё под
@@ -10330,9 +10387,9 @@ const pageTextOf = (spec) => {
       const from = m === null ? -1 : at(m[1]);
       const to = m === null ? -1 : at(m[2] ?? m[1]);
       if (from < 0 || to < from) return "критериев нет";
-      for (let k = from; k <= to; k += 1) out.push(all[k].text);
+      for (let k = from; k <= to; k += 1) out.push(all[k]);
     }
-    return out.join(LF + LF);
+    return policyPageOf(out);
   }
   const code = /^(?:код|сосед) `([^`]+)`, строки (.+)$/.exec(spec);
   if (code !== null) return numberedLines(absOfRel(code[1]), rangesOf(code[2]));

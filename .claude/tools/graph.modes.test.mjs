@@ -4041,6 +4041,48 @@ const answersOf = (blank, filled) => {
   return out.join("\n") + "\n";
 };
 
+describe("страница политики", () => {
+  it("общая форма вне держателя — раз на страницу, со списком критериев; у критерия — отсылка", () => {
+    const box = seatEmpty("forms-once-");
+    try {
+      const tool = (...args) =>
+        String(
+          spawnSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            {
+              cwd: box,
+              encoding: "utf8",
+            },
+          ).stdout ?? "",
+        );
+      tool("bar", "src/app");
+      const pages = tool("bar-read")
+        .split(/^(?==== Страница )/m)
+        .filter((p) => p.includes("политика:"));
+      expect(pages.length).toBeGreaterThan(0);
+      let shared = 0;
+      for (const page of pages) {
+        const forms = page
+          .split("\n")
+          .filter(
+            (l) => l.startsWith("- ") && l !== "- и общие формы страницы, выше",
+          );
+        for (const one of new Set(forms))
+          expect(forms.filter((l) => l === one).length, one).toBe(1);
+        if (page.includes("Общие формы вне держателя")) {
+          shared += 1;
+          expect(page).toMatch(/^ {2}у `[^`]+`(?:, `[^`]+`)+$/m);
+          expect(page).toContain("- и общие формы страницы, выше");
+        }
+      }
+      expect(shared).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("короткий вывод сверки", () => {
   it("без --full — находки, предупреждения и счёт; код возврата тот же", () => {
     const box = seatEmpty("verify-brief-");
