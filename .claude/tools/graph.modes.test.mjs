@@ -7420,6 +7420,75 @@ describe("запись карты не спорит с кодом", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  it("«не требуется» у файла, на который в базе съехал якорь, не принимается", () => {
+    const box = seatEmpty("base-anchor-");
+    try {
+      const git = (...args) =>
+        execFileSync("git", args, {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      const bar = () => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "bar"],
+            {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const code = path.join(box, "src", "app", "zzKeep.ts");
+      fs.writeFileSync(
+        code,
+        "export const zzKeep = 1;\nexport const zzStep = 2;\n",
+      );
+      const map = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      fs.writeFileSync(
+        map,
+        fs
+          .readFileSync(map, "utf8")
+          .replace(head, head + "\n| `src/app/zzKeep.ts` | шаг | нет | нет |"),
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "09-decisions.md"),
+        "\nШаг держится здесь: `src/app/zzKeep.ts:2` `zzStep = 2`.\n",
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      fs.writeFileSync(
+        code,
+        "export const zzLead = 0;\nexport const zzKeep = 1;\nexport const zzStep = 2;\n",
+      );
+      bar();
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const proto = fs.readFileSync(protoAt, "utf8");
+      const row = /^\| `app\/zzKeep\.ts` \| {2}\| {2}\| {2}\|$/m;
+      expect(proto).toMatch(row);
+      fs.writeFileSync(
+        protoAt,
+        proto.replace(
+          row,
+          "| `app/zzKeep.ts` | не требуется | не требуется | запись верна |",
+        ),
+      );
+      expect(bar()).toMatch(
+        /app\/zzKeep\.ts, база: .не требуется., а сверка «Якоря» называет съехавший якорь на него/,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
 
 /**

@@ -13524,10 +13524,12 @@ const barSkeletonOf = ({
             "Критерии разложены по уровню, на котором их судят. Ядро уровня узла",
             "спрашивают по каждой единице переноса предмета, ядро уровня слоя — по",
             "каждому слою: у строки графа «предмет», и находка в ней называет файл",
-            "этого предмета. Соседи из области — что предмет берёт, кто берёт его,",
-            "листы стилей и партнёры по имени — отвечают на ядро одной строкой " +
+            "этого предмета. Соседи из других единиц переноса и слоёв — что",
+            "предмет берёт, кто берёт его, листы стилей и партнёры по имени —",
+            "отвечают на ядро одной строкой " +
               barQuoted(BAR_AREA) +
-              ".",
+              "; сосед в тронутой единице либо слое",
+            "отвечает её строкой.",
             "Остальное — одной строкой на работу, и о предмете, и о соседях: область",
             "читают целиком, и найденное в ней — находка того же захода.",
           ]),
@@ -13693,6 +13695,7 @@ const barHolesOf = ({
   lintRow = null,
   checkRow = null,
   mapDisputed = new Set(),
+  anchorBroken = new Set(),
 }) => {
   const holes = [];
   const said = new Map();
@@ -14348,6 +14351,13 @@ const barHolesOf = ({
               barQuoted("не требуется") +
               ", а сверка «Запись карты не спорит с кодом» опровергает его запись — строка карты правится",
           );
+        else if (i === 0 && one === "не требуется" && anchorBroken.has(file))
+          holes.push(
+            file +
+              ", база: " +
+              barQuoted("не требуется") +
+              ", а сверка «Якоря» называет съехавший якорь на него — якорь правится, режим `repoint`",
+          );
         if (c[2] === "")
           holes.push(
             file +
@@ -14539,6 +14549,7 @@ const barAcceptOf = ({
   lintRow = null,
   checkRow = null,
   mapDisputed = new Set(),
+  anchorBroken = new Set(),
   partsOf = null,
 }) => {
   const parsed = barRowsOf(was.body);
@@ -14588,6 +14599,7 @@ const barAcceptOf = ({
     lintRow,
     checkRow,
     mapDisputed,
+    anchorBroken,
   });
   found.holes.push(...(parts?.holes ?? []));
   return {
@@ -14646,6 +14658,7 @@ const barProcess = ({
   lintRow = null,
   checkRow = null,
   mapDisputed = new Set(),
+  anchorBroken = new Set(),
   partsOf = null,
   machineRow = null,
   guide = null,
@@ -14674,6 +14687,7 @@ const barProcess = ({
           lintRow,
           checkRow,
           mapDisputed,
+          anchorBroken,
           partsOf,
         });
   const parsedWas = accept?.parsed ?? null;
@@ -15572,6 +15586,13 @@ const barInputsOf = async ({
     mapDisputed: new Set(
       (checks?.get("Запись карты не спорит с кодом")?.lines ?? []).flatMap(
         (line) => [...sourceNamedIn(line)].map(rel),
+      ),
+    ),
+    // Съехавший якорь базы на файл тоже не освобождает его базу: прежде его
+    // видела одна сверка, и свод принимал «не требуется». Найдено пробой.
+    anchorBroken: new Set(
+      (checks?.get("Якоря")?.lines ?? []).flatMap((line) =>
+        [...sourceNamedIn(line)].map(rel),
       ),
     ),
     work,
