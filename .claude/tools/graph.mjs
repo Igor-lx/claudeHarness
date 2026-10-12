@@ -56,6 +56,7 @@ import {
   crossCandidatesOf,
   crossWordsOf,
   policyBodiesOf,
+  modelRefsShifted,
   BAR_CHECKS,
   BAR_CHECKS_MODELLED,
   BAR_CHECK_KINDS,
@@ -10093,7 +10094,12 @@ const declarationsOf = (f) => {
   // один голый параметр — либо первый довод обёртки (`memo(…)`).
   const inputsFrom = (at, wrapped = false) => {
     const rest = bare.slice(at, at + 400);
-    const head = /^\s*(?:async\s+)?(?:function\b[^(]*)?\(/.exec(rest);
+    // Параметры типа перед скобкой — `<T>(items: T[]) =>` — тоже функция:
+    // прежде такая шла константой, без входов и без вопроса об абстракции.
+    const head =
+      /^\s*(?:async\s+)?(?:function\b[^(]*|<(?:[^<>]|<[^<>]*>)*>\s*)?\(/.exec(
+        rest,
+      );
     if (head !== null) {
       const p = at + head[0].length - 1;
       if (wrapped || /^\s*(?:async\s+)?function\b/.test(rest)) return countAt(p);
@@ -10129,7 +10135,7 @@ const declarationsOf = (f) => {
     const fn =
       sort === "function" ||
       (value !== null &&
-        /^(?:async\s+)?(?:\(|function\b|[\w$]+\s*=>|[\w$.]+\s*(?:<[^<>]*>)?\s*\()/.test(
+        /^(?:async\s+)?(?:\(|<(?:[^<>]|<[^<>]*>)*>\s*\(|function\b|[\w$]+\s*=>|[\w$.]+\s*(?:<[^<>]*>)?\s*\()/.test(
           bare.slice(at + value[0].length, at + value[0].length + 200),
         ));
     out.push({
@@ -10200,10 +10206,17 @@ const barWitnessesOf = (list, asked, { change = false } = {}) => {
       lines += bareCodeOf(text)
         .split("\n")
         .filter((l) => l.trim() !== "").length;
+      // Сочетания дают и булевы поля объекта либо типа, а не одно состояние
+      // хуков: объект из четырёх флагов получал «полей меньше двух».
       fields += text
         .split(LF)
         .filter(
-          (l) => !/^\s*(\/\/|\*|\/\*)/.test(l) && BRIEF_SUBJECTS.state.test(l),
+          (l) =>
+            !/^\s*(\/\/|\*|\/\*)/.test(l) &&
+            (BRIEF_SUBJECTS.state.test(l) ||
+              /^\s*(?:readonly\s+)?[\w$]+\s*\??\s*:\s*(?:boolean|true|false)\s*[,;]?\s*$/.test(
+                l,
+              )),
         ).length;
     }
     rows.push({
@@ -13539,7 +13552,7 @@ const barSkeletonOf = ({
       "записанная под одним, забывается у другого. Каждый названный без «не»",
       "обязан стоять " +
         barQuoted("нашлось") +
-        " с местом этой находки — адресом либо в «ещё мест:».",
+        " с основным местом этой находки — адресом либо в «ещё мест:».",
       "",
     ]),
     BAR_CROSS_HEAD,
@@ -13976,19 +13989,31 @@ const barHolesOf = ({
   // Перекрёстная сверка находок: у каждой находки — ответ, какие ещё
   // критерии называют это нарушение; о каждом кандидате, которого считает
   // машина, сказано «X» либо «не X», и каждый названный без «не» стоит
-  // «нашлось» с её местом. Связи критериев здесь не перечислены и не могут
+  // «нашлось» с её основным местом. Связи критериев здесь не перечислены и не могут
   // быть: кандидатов даёт вопрос модели на месте находки, а решает чтение.
   const criterionIds = new Set(expected.map((e) => e.c.id));
   const askable = new Set(
     expected.filter((e) => !e.c.slogan).map((e) => e.c.id),
   );
+  // Строка признака называет все свои места в файле подряд — «строка N»,
+  // первая из них в графе «где»; находка на любом из них спрашивает ту же
+  // строку. Прежде строка стояла только на первом месте, и находка на
+  // втором кандидатов не получала. Строки «последнего коммита» — места
+  // прежнего дерева, и сюда они не идут.
   const modelAt = new Map();
   for (const m of parsed.model) {
     const spot = spotOf(m.where);
     const abs = spot === null ? null : spotFile(spot[1]);
     if (abs === null) continue;
-    const key = placeKey(abs, spot[2]);
-    modelAt.set(key, [...(modelAt.get(key) ?? []), m]);
+    const listed = [
+      ...m.what.matchAll(/строка ([0-9]+)(?![0-9])(?! последнего)/g),
+    ].map((x) => Number(x[1]));
+    const lines =
+      listed[0] === Number(spot[2]) ? [...new Set(listed)] : [Number(spot[2])];
+    for (const line of lines) {
+      const key = placeKey(abs, line);
+      modelAt.set(key, [...(modelAt.get(key) ?? []), m]);
+    }
   }
   const crossBy = new Map();
   let crossStale = 0;
@@ -14013,10 +14038,12 @@ const barHolesOf = ({
   let crossDrift = 0;
   const crossRows = [...findingsAt].sort(byPlace).map((one) => {
     const finding = one.who + " — " + barQuoted(one.keys[0]);
-    const written = new Set(
-      one.keys.flatMap((key) => [...(placesFound.get(key) ?? [])]),
-    );
-    const live = new Set([...askable].filter((id) => !written.has(id)));
+    // Вопрос перекрёстной сверки — об основном месте находки: кандидата
+    // отсекает и «также X» засчитывает только «нашлось» с ним. Прочие места
+    // находки — другие нарушения того же рода, и критерий, отмеченный на
+    // одном из них, о её основном месте ничего не говорит.
+    const atMain = placesFound.get(one.keys[0]) ?? new Set();
+    const live = new Set([...askable].filter((id) => !atMain.has(id)));
     const what = crossWordsOf(one.what);
     const cand = crossCandidatesOf(one.who.split(" ")[0], {
       rows: modelAt.get(one.keys[0]) ?? [],
@@ -14045,12 +14072,12 @@ const barHolesOf = ({
           );
         else if (!not) {
           named += 1;
-          if (!written.has(id))
+          if (!atMain.has(id))
             holes.push(
               id +
                 ": назван у находки " +
                 finding +
-                " перекрёстной сверкой, а «нашлось» с её местом у него нет — адресом либо в «ещё мест:»",
+                " перекрёстной сверкой, а «нашлось» с её основным местом у него нет — адресом либо в «ещё мест:»",
             );
         }
       }
@@ -14709,6 +14736,38 @@ const barProcess = ({
           carry.witness.delete(w.key);
       }
     }
+    // Номер строки модели — счёт: новая строка в середине сдвигает все
+    // следующие, и ссылка в перенесённом ответе указала бы на чужую строку.
+    // Найдено пробой: правка базы добавила строку, и «чисто» с прежним
+    // номером встало на годную, но другую строку. Ссылки переписываются по
+    // ключу строки; ответ, ссылавшийся на исчезнувшую, не переносится.
+    // Идёт после сброса ядра: счёт сброшенного — о правке кода, а этот — о
+    // ссылках на строки, которых больше нет.
+    let refsGone = 0;
+    if (carry !== null) {
+      const now = new Map(model.map((m) => [barModelKey(m), m.id]));
+      const to = new Map(
+        parsedWas.model.map((m) => [m.id, now.get(barModelKey(m)) ?? null]),
+      );
+      if ([...to].some(([a, b]) => a !== b)) {
+        for (const [k, o] of [...carry.said]) {
+          const s = modelRefsShifted(o.what ?? "", to);
+          if (s.gone && o.outcome !== "") refsGone += 1;
+          if (s.gone) carry.said.delete(k);
+          else carry.said.set(k, { ...o, what: s.text });
+        }
+        for (const field of ["levelRows", "witness"])
+          for (const [k, cells] of [...carry[field]]) {
+            const s = cells.map((c) => modelRefsShifted(c, to));
+            if (s.some((x) => x.gone)) carry[field].delete(k);
+            else
+              carry[field].set(
+                k,
+                s.map((x) => x.text),
+              );
+          }
+      }
+    }
     const lost =
       was === null || carry !== null
         ? 0
@@ -14749,6 +14808,7 @@ const barProcess = ({
           : [...carry.said.values()].filter((one) => one.outcome !== "")
               .length,
       reset,
+      refsGone,
       edited,
       levelReset: carry !== null && edited.length > 0,
       lost,
@@ -15314,8 +15374,12 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
         " — слить части либо разнести правки по разным пачкам",
     );
   // Записи базы и документации: запись — к части, чьи файлы называет.
+  // Инструментальный файл — протокол свода, реестры — записью не
+  // называется: путь протокола в тексте вопроса связывал часть с первой, и
+  // раскладка требовала слить части. Найдено пробой.
   const filesOfPart = new Map();
   for (const [f, n] of partOf) {
+    if (tool.has(f)) continue;
     if (!filesOfPart.has(n)) filesOfPart.set(n, []);
     filesOfPart.get(n).push(f);
   }
@@ -16057,6 +16121,11 @@ if (mode === "bar") {
           r.reset +
           " — правлен код: " +
           r.edited.join(", "),
+      );
+    if (r.refsGone > 0)
+      console.log(
+        "  исходов со ссылкой на строку модели, которой больше нет, снято: " +
+          r.refsGone,
       );
     if (r.levelReset)
       console.log("  итог по уровням сброшен: он о коде, которого больше нет");

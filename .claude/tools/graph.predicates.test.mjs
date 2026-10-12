@@ -645,6 +645,30 @@ describe("тела критериев политики", () => {
  * «внешнее» спрашивает `K1`, `K2`, `E3`, `D3`, `A14` и `A11`, с пометкой
  * «сеть» — ещё `K3`, `K4` и `L4`; строка «флаг» — `B1` и `A4`.
  */
+describe("ссылки на строки модели после пересборки", () => {
+  const to = new Map([
+    ["П1", "П1"],
+    ["П2", "П3"],
+    ["П3", "П4"],
+    ["П4", null],
+  ]);
+  it("номер и диапазон — по новым номерам; разорванный диапазон — списком", () => {
+    expect(vocabulary.modelRefsShifted("П2 разобран; П1 тоже", to)).toEqual({
+      text: "П3 разобран; П1 тоже",
+      gone: false,
+    });
+    expect(vocabulary.modelRefsShifted("П2–П3", to).text).toBe("П3–П4");
+    expect(vocabulary.modelRefsShifted("П1–П3", to).text).toBe("П1, П3, П4");
+  });
+  it("ссылка на исчезнувшую строку — ответ не переносится; чужой номер не трогается", () => {
+    expect(vocabulary.modelRefsShifted("см. П4", to).gone).toBe(true);
+    expect(vocabulary.modelRefsShifted("П9 и СвП2", to)).toEqual({
+      text: "П9 и СвП2",
+      gone: false,
+    });
+  });
+});
+
 describe("кандидаты перекрёстной сверки", () => {
   const live = (...ids) => new Set(ids);
 
@@ -655,6 +679,15 @@ describe("кандидаты перекрёстной сверки", () => {
         live: live("K2", "E3", "A14", "B1"),
       }),
     ).toEqual(["A14", "E3", "K2"]);
+  });
+
+  it("булевы поля типа спрашивают и сочетания, и явные состояния", () => {
+    expect(
+      vocabulary.crossCandidatesOf("B8", {
+        rows: [{ sort: "флаги", mark: "вход" }],
+        live: live("C1", "C8", "B8"),
+      }),
+    ).toEqual(["C1", "C8"]);
   });
 
   it("строка, не спрашивающая критерий находки, кандидатов не даёт", () => {

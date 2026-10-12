@@ -3104,7 +3104,9 @@ describe("свод по планке от модели предмета", () => 
       also("H6");
       const named = tool("bar", "app/zzWide.ts");
       expect(named).toContain(
-        "H6: назван у находки " + finding + " перекрёстной сверкой, а «нашлось» с её местом у него нет",
+        "H6: назван у находки " +
+          finding +
+          " перекрёстной сверкой, а «нашлось» с её основным местом у него нет",
       );
       expect(named).toMatch(/перекрёстная сверка, B1 — `src\/app\/zzWide\.ts:1`: кандидаты без ответа — [^;]*A4/);
       also("Z99");
@@ -3124,6 +3126,76 @@ describe("свод по планке от модели предмета", () => 
       });
       also(["H6", ...candidates().map((id) => "не " + id)].join(", "));
       expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  // Строка признака называет все свои места; кандидатов находке даёт любое
+  // из них, а отсекает и засчитывает только её основное место.
+  it("кандидаты — по любому месту строки модели и по основному месту находки", () => {
+    const box = seatEmpty("cross-places-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            {
+              cwd: box,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzTwo.ts"),
+        "export const zzOne = (w: number, strict: boolean): boolean => (strict ? w > 1 : w > 0);\n" +
+          "export const zzTwo = (h: number, loose: boolean): boolean => (loose ? h > 0 : h > 1);\n",
+      );
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzTall.ts"),
+        "export const zzTall = (height: number): boolean => height > 0;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzTwo.ts");
+      // Одна строка признака «флаг» на файл: первое место — строка 1, второе — 2.
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /^\| П[0-9]+ \| флаг \| `app\/zzTwo\.ts:1` \| [^|]*строка 2/m,
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\nВопрос о `src/app/zzTwo.ts`.\n\nВопрос о `src/app/zzTall.ts`.\n",
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          B1: "нашлось | src/app/zzTwo.ts:2 | второй флаг делит функцию надвое; ещё мест: `src/app/zzTall.ts:1` | вопрос",
+          A4: "нашлось | src/app/zzTall.ts:1 | флаг на побочном месте находки | вопрос",
+        },
+      });
+      tool("bar", "app/zzTwo.ts");
+      const rowRe =
+        /^(\| B1 — `src\/app\/zzTwo\.ts:2` \| [^|]+ \| ([^|]*) \|).*$/m;
+      const candidates = () =>
+        rowRe
+          .exec(fs.readFileSync(protoAt, "utf8"))[2]
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x) => x !== "");
+      // Находка на втором месте строки получает её кандидата, и «нашлось» на
+      // побочном месте находки его не отсекает.
+      expect(candidates()).toContain("A4");
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace(rowRe, "$1 A4 |"),
+      );
+      expect(tool("bar", "app/zzTwo.ts")).toContain(
+        "A4: назван у находки B1 — `src/app/zzTwo.ts:2` перекрёстной сверкой, а «нашлось» с её основным местом у него нет",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3935,6 +4007,13 @@ describe("части правки", () => {
           ),
       );
       expect(partHoles(bar())).toEqual([]);
+      // Путь протокола в записи — не файл части: протокол инструментальный.
+      fs.appendFileSync(
+        path.join(box, ".context", "10-idioms.md"),
+        "\nВторая: `src/shared/zzb/zzb.ts`, свод — `.context/bar-protocol.md`.\n",
+      );
+      expect(partHoles(bar())).toEqual([]);
+      git("checkout", "-q", "--", ".context/10-idioms.md");
       // Конфиг вне частей, запись о двух частях, зависимости в двух частях.
       fs.appendFileSync(path.join(box, ".prettierrc.json"), "\n");
       fs.appendFileSync(
@@ -5352,6 +5431,12 @@ describe("признаки, видимые текстом, в модели св�
         "src/components/ZzClock/types.ts",
         "export type ZzClockProps = {\n  a: boolean;\n  b?: boolean;\n  c: boolean;\n};\n",
       );
+      // Параметр на своей строке: место признака — его строка, а не строка
+      // выше, где кончился предыдущий.
+      put(
+        "src/components/ZzClock/zzWide.ts",
+        "export const zzWide = (\n  width: number,\n  strict: boolean,\n): boolean => (strict ? width > 1 : width > 0);\n",
+      );
       put(
         "src/components/ZzPrice/ZzPrice.tsx",
         'import { zzMoney } from "../../shared/zzFormat/zzFormat";\nexport const zzPrice = () => zzMoney(3);\nexport const ZzTag = () => <i tabIndex={7} />;\n',
@@ -5379,7 +5464,16 @@ describe("признаки, видимые текстом, в модели св�
       expect(read).toMatch(
         row("флаг", "булев параметр либо довод: строка 6 `fast`, строка 6 `label`, строка 23 `zzRender(…)`"),
       );
-      expect(read).toMatch(row("перехват", "пустой перехват: строка 19 `catch`, строка 22 `.catch`", "пустой"));
+      expect(read).toMatch(
+        row("флаг", "булев параметр либо довод: строка 3 `strict`"),
+      );
+      expect(read).toMatch(
+        row(
+          "перехват",
+          "пустой перехват: строка 19 `catch`, строка 22 `.catch`",
+          "пустой",
+        ),
+      );
       expect(read).toMatch(row("кортеж", "ответ кортежем: строка 26 `4`"));
       expect(read).toMatch(
         row("мутация", "меняет взятое импортом: строка 13 `zzItems.push(`, строка 14 `zzConfig.size=`"),
@@ -5467,7 +5561,113 @@ describe("признаки, видимые текстом, в модели св�
   }, 300000);
 });
 
+describe("ссылки на строки модели при пересборке", () => {
+  it("перенесённый ответ ссылается на ту же строку по её новому номеру", () => {
+    const box = seatEmpty("renum-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const dir = path.join(box, "src", "app", "zzRen");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "zzB.ts"),
+        "export const zzB = (w: number, strict: boolean): number => (strict ? w : 0);\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzRen");
+      const idOf = (text) =>
+        /^\| (П[0-9]+) \| флаг \| `app\/zzRen\/zzB\.ts:1` \|/m.exec(text)?.[1];
+      const before = idOf(fs.readFileSync(protoAt, "utf8"));
+      expect(before).toBeDefined();
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          B5:
+            "нашлось | src/app/zzRen/zzB.ts:1 | имя не говорит, что считают (" +
+            before +
+            ") | вопрос",
+        },
+      });
+      // Файл раньше по порядку: его строка флага встаёт перед прежней.
+      fs.writeFileSync(
+        path.join(dir, "zzA.ts"),
+        "export const zzA = (n: number, loose: boolean): number => (loose ? n : 0);\n",
+      );
+      tool("bar", "app/zzRen");
+      const text = fs.readFileSync(protoAt, "utf8");
+      const after = idOf(text);
+      expect(after).toBeDefined();
+      expect(after).not.toBe(before);
+      expect(text).toMatch(
+        new RegExp(
+          "^\\| B5 \\|.*имя не говорит, что считают \\(" + after + "\\)",
+          "m",
+        ),
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 describe("свидетели в своде по планке", () => {
+  // Обобщённая стрелка — функция со входами, а объект из булевых полей даёт
+  // сочетания: автоответа у них нет.
+  it("обобщённая стрелка и булевы поля объекта спрашиваются, а не отвечаются инструментом", () => {
+    const box = seatEmpty("witness-generic-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const at = path.join(box, "src", "shared", "zzReq", "zzReq.ts");
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      fs.writeFileSync(
+        at,
+        [
+          "export const zzOldest = <T extends { at: number }>(items: T[], limit: number): T[] =>",
+          "  [...items].sort((a, b) => a.at - b.at).slice(0, limit);",
+          "export const zzRequest = () => ({",
+          "  isIdle: true,",
+          "  isLoading: false,",
+          "  isError: false,",
+          "  isDone: false,",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      tool("bar", "shared/zzReq");
+      const read = fs.readFileSync(
+        path.join(box, ".context", "bar-protocol.md"),
+        "utf8",
+      );
+      expect(read).toMatch(
+        /^\| Св1 \| `shared\/zzReq` \| [^|]+ \|  \|  \|  \|  \|$/m,
+      );
+      expect(read).toContain(
+        "| Св2 | `shared/zzReq/zzReq.ts:1` | `zzOldest` |  |  |  |  |  |",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("фраза единицы, ответ по объявлению, вердикт по ответу", () => {
     const box = seatEmpty("witness-");
     try {
