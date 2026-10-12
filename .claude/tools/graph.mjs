@@ -131,6 +131,7 @@ import {
 // Серия: цепочка проверок на каждой части правки, отметки по дереву.
 import {
   SERIES_PART,
+  gitDirOf,
   livingBaseOf,
   nextPartOf,
   partTreesOf,
@@ -1724,6 +1725,10 @@ const barHeaderOf = (body) => {
     "^- соль чтения: " + BAR_TICK + "([0-9a-f]+)" + BAR_TICK + "$",
     "m",
   ).exec(body);
+  const address = new RegExp(
+    "^- адрес: " + BAR_TICK + "(.+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
   const rowOf = new RegExp(
     "^\\| " +
       BAR_TICK +
@@ -1746,8 +1751,50 @@ const barHeaderOf = (body) => {
     seal: seal === null ? null : seal[1],
     modelRows: modelRows === null ? null : Number(modelRows[1]),
     salt: salt === null ? null : salt[1],
+    address: address === null ? null : address[1],
     marks: [...body.matchAll(rowOf)].map((h) => ({ file: h[1], mark: h[2] })),
   };
+};
+/** Хранилище протоколов свода — в папке git: протокол принадлежит клону.
+ * Файл протокола один, и следующая работа его затирала: свод той же
+ * области после другой работы делался заново целиком, а свод чтения посреди
+ * правки уносил её ответы. Протокол другого рода либо другого адреса уходит
+ * сюда, свой возвращается и идёт обычным путём: тот же вид предмета —
+ * «печать уже стоит», иной — перенос исходов. Чужой протокол из файла
+ * снимается: его исходы о другой области в новый свод не переносятся.
+ * Хранится не больше `BAR_STORE_KEEP` протоколов, старейшие удаляются. */
+const BAR_STORE_KEEP = 20;
+const barStoreKeyOf = (kind, address) =>
+  createHash("sha1")
+    .update(kind + LF + address)
+    .digest("hex")
+    .slice(0, 12);
+const barStoreSwap = ({ at, kind, address }) => {
+  let dir;
+  try {
+    dir = path.join(gitDirOf(REPO_AT), "graph-bar-store");
+  } catch {
+    return;
+  }
+  const was = existsSync(at) ? readFileSync(at, "utf8") : null;
+  if (was !== null) {
+    const head = barHeaderOf(was);
+    const own = head.kind === "на чтение" ? (head.address ?? "") : "правка";
+    if (head.kind === kind && own === address) return;
+    if (head.kind === "на изменение" || head.kind === "на чтение") {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, barStoreKeyOf(head.kind, own) + ".md"), was);
+      const kept = readdirSync(dir)
+        .filter((n) => n.endsWith(".md"))
+        .map((n) => ({ n, t: statSync(path.join(dir, n)).mtimeMs }))
+        .sort((x, y) => y.t - x.t);
+      for (const old of kept.slice(BAR_STORE_KEEP))
+        rmSync(path.join(dir, old.n));
+    }
+    rmSync(at);
+  }
+  const stored = path.join(dir, barStoreKeyOf(kind, address) + ".md");
+  if (existsSync(stored)) writeFileSync(at, readFileSync(stored, "utf8"));
 };
 const barHeader = (at) =>
   at === null || !existsSync(at) ? null : barHeaderOf(readFileSync(at, "utf8"));
@@ -13149,6 +13196,7 @@ const barSkeletonOf = ({
   machineRow = null,
   parts = null,
   guide = null,
+  address = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
@@ -13286,6 +13334,7 @@ const barSkeletonOf = ({
     "## Предмет",
     "",
     "- род: " + barQuoted(kind),
+    ...(address !== null ? ["- адрес: " + barQuoted(address)] : []),
     "- строк модели от инструмента: " + barQuoted(String(model.length)),
     ...(reads.length ? ["- соль чтения: " + barQuoted(salt)] : []),
     BAR_NOSEAL,
@@ -14530,6 +14579,7 @@ const barProcess = ({
   partsOf = null,
   machineRow = null,
   guide = null,
+  address = null,
 }) => {
   const was = barHeader(at);
   const accept =
@@ -14645,6 +14695,7 @@ const barProcess = ({
         machineRow,
         parts: barPartsRowsOf(partsOf, was),
         guide,
+        address,
       }),
     );
     return {
@@ -15829,6 +15880,7 @@ if (mode === "bar") {
   // кого проверяют, сужается до удобного незаметно для всех.
   const arg = argPath(process.argv[3]);
   let kind;
+  let address = "правка";
   let subject;
   // Узлы, чья модель собирается: на задаче чтения — сам адрес, а не его
   // соседи (у общего соседа потребителей десятки, и модель тонула бы в
@@ -15851,6 +15903,7 @@ if (mode === "bar") {
       process.exit(1);
     }
     focus = under.length > 0 ? under : [hits[0]];
+    address = under.length > 0 ? folder : rel(hits[0]);
     kind = "на чтение";
     // Область чтения — та же, что очерчивает досье. Соседи — по ИМЕНАМ,
     // сквозь бочки: по строке импорта в предмет попадал публичный вход,
@@ -15924,7 +15977,13 @@ if (mode === "bar") {
     .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
     .map(({ c, subject: one }) => machineRow(c, one))
     .filter((one) => one !== null && one.outcome !== "");
-  const r = barProcess({ at, ...inputs, machineRow });
+  barStoreSwap({ at, kind, address });
+  const r = barProcess({
+    at,
+    ...inputs,
+    machineRow,
+    address: kind === "на чтение" ? address : null,
+  });
 
   const disputed = [
     ...new Set(

@@ -4041,6 +4041,87 @@ const answersOf = (blank, filled) => {
   return out.join("\n") + "\n";
 };
 
+describe("хранилище протоколов свода", () => {
+  it("свод той же области не делается заново, свод чтения не уносит ответы правки, хранится не больше двадцати", () => {
+    const box = seatEmpty("bar-store-");
+    try {
+      const tool = (...args) =>
+        String(
+          spawnSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            {
+              cwd: box,
+              encoding: "utf8",
+            },
+          ).stdout ?? "",
+        );
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const store = path.join(box, ".git", "graph-bar-store");
+      const sealed = (...args) => {
+        tool("bar", ...args);
+        fillBar(protoAt, { release: "не нужно: проба" });
+        const out = tool("bar", ...args);
+        expect(out, out).toContain("печать поставлена");
+      };
+      // Чтение: область А запечатана, затем область Б, затем снова А.
+      sealed("src/app");
+      // Адрес — от корня исходников, как пишет пути весь инструмент.
+      expect(fs.readFileSync(protoAt, "utf8")).toContain("- адрес: `app`");
+      expect(tool("bar", "src/shared/styles")).toContain("протокол напечатан");
+      expect(fs.readdirSync(store).length).toBe(1);
+      expect(tool("bar", "src/app")).toContain("печать уже стоит");
+      // Правка: запечатанный протокол правки переживает свод чтения.
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzKeep.ts"),
+        "export const zzKeep = 1;\n",
+      );
+      sealed();
+      expect(tool("bar", "src/shared/styles")).not.toContain(
+        "печать уже стоит",
+      );
+      expect(tool("bar")).toContain("печать уже стоит");
+      // Вытеснение: старейшие сверх двадцати удаляются.
+      const old = Date.now() / 1000 - 3600;
+      for (let k = 0; k < 25; k += 1) {
+        const one = path.join(
+          store,
+          "zz" + String(k).padStart(10, "0") + ".md",
+        );
+        fs.writeFileSync(one, "# старый\n");
+        fs.utimesSync(one, old + k, old + k);
+      }
+      tool("bar", "src/shared/styles");
+      expect(
+        fs.readdirSync(store).filter((n) => n.endsWith(".md")).length,
+      ).toBe(20);
+      expect(fs.existsSync(path.join(store, "zz0000000000.md"))).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 describe("страница политики", () => {
   it("общая форма вне держателя — раз на страницу, со списком критериев; у критерия — отсылка", () => {
     const box = seatEmpty("forms-once-");
