@@ -13378,6 +13378,16 @@ const barSkeletonOf = ({
       ? "# Свод по планке — протокол перехода"
       : "# Свод по планке — протокол текущей работы",
     "",
+    // Инструкцию протокол перехода не несёт, но говорит, где она: сессия
+    // после сжатия контекста либо с другого аккаунта заполняла его без неё.
+    ...(transition
+      ? [
+          "Как заполнять — печатает " +
+            barQuoted("graph.mjs bar --transition") +
+            ", раз на все протоколы перехода.",
+          "",
+        ]
+      : []),
     ...prose([
       "Скелет печатает режим " +
         barQuoted("bar") +
@@ -14664,6 +14674,28 @@ const barProcess = ({
   guide = null,
   address = null,
 }) => {
+  // Инструкцию перехода собирают и тогда, когда протокол не пересобирается:
+  // иначе повторный зов режима её не печатал, и адрес в протоколе вёл в
+  // пустоту. Каркас строится в памяти и не пишется.
+  if (guide !== null)
+    barSkeletonOf({
+      kind,
+      marks,
+      model,
+      expected,
+      levelSubjects,
+      carried: null,
+      withBase,
+      noneOf,
+      baseFiles,
+      witnesses,
+      reads,
+      salt: "",
+      machineRow,
+      parts: null,
+      guide,
+      address,
+    });
   const was = barHeader(at);
   const accept =
     was === null

@@ -3732,6 +3732,10 @@ describe("ядро по предметам уровня: правка, чтен�
       const cart = fs.readFileSync(path.join(dir, "node--components--zzCart.md"), "utf8");
       expect(cart).toContain("- род: `на переход`");
       expect(cart).not.toContain("Скелет печатает режим");
+      expect(
+        cart.split("Как заполнять — печатает `graph.mjs bar --transition`")
+          .length,
+      ).toBe(2);
       expect(cart).toContain("| A1 | `components/zzCart` |");
       expect(cart).not.toMatch(/^\| H7 \|/m);
       expect(cart).not.toMatch(/^\| A6 \|/m);
@@ -3775,9 +3779,16 @@ describe("ядро по предметам уровня: правка, чтен�
           holds: { "узел@components/zzCart": "нет" },
           pick: { "B7@components/zzCart": "нашлось | src/components/zzCart/zzCart.tsx:3 | лишнее имя | долг" },
         });
-      expect(tool("bar", "--transition")).toContain(
+      const again = tool("bar", "--transition");
+      expect(again).toContain(
         "«долг», а файл перехода `15-transition.md` не называет `src/components/zzCart/zzCart.tsx`",
       );
+      // Повторный зов печатает инструкцию снова: по адресу в протоколе её
+      // находит сессия, продолжающая переход.
+      expect(
+        again.split("Как заполнять протоколы перехода — один раз на все")
+          .length,
+      ).toBe(2);
       fs.writeFileSync(
         planAt,
         fs
