@@ -4163,7 +4163,7 @@ describe("страница политики", () => {
     }
   }, 180000);
 
-  it("поле barPageBodies: false — у критерия заголовок и отсылка к политике, формы на месте", () => {
+  it("страница критерия — заголовок, отсылка к политике и формы; тела на ней нет", () => {
     const box = seatEmpty("bodies-off-");
     try {
       const tool = (...args) =>
@@ -4178,54 +4178,40 @@ describe("страница политики", () => {
           ).stdout ?? "",
         );
       tool("bar", "src/app");
-      const policy = () =>
-        tool("bar-read")
-          .split(/^(?==== Страница )/m)
-          .filter((p) => p.includes("политика:"))
-          .join("")
-          .split("\n");
-      const heads = (lines) => lines.filter((l) => /^\*\*[A-Z][0-9]+/.test(l));
-      // Формы — блоки под своими шапками: в телах критериев тоже бывают
-      // списки, и строка «- » сама по себе формой не является.
-      const forms = (lines) => {
-        const out = [];
-        let inside = false;
-        for (const l of lines) {
-          if (l === "" || l.startsWith("--- ") || l.startsWith("=== "))
-            inside = false;
-          else if (
-            l === "Вне держателя — проверяется чтением:" ||
-            l.startsWith("Общие формы вне держателя")
-          )
-            inside = true;
-          if (inside) out.push(l);
-        }
-        return out;
-      };
-      const full = policy();
-      const cfgAt = path.join(box, ".context", "graph.config.mjs");
-      const cfg = fs.readFileSync(cfgAt, "utf8");
-      expect(cfg).toContain("  barSince: null,");
-      fs.writeFileSync(
-        cfgAt,
-        cfg.replace(
-          "  barSince: null,",
-          "  barSince: null,\n  barPageBodies: false,",
-        ),
-      );
-      const short = policy();
-      expect(heads(full).length).toBeGreaterThan(0);
-      expect(heads(short)).toEqual(heads(full));
-      expect(forms(full).length).toBeGreaterThan(0);
-      expect(forms(short)).toEqual(forms(full));
-      const pointers = short.filter((l) => l.startsWith("тело — "));
-      expect(pointers.length).toBe(heads(short).length);
+      const lines = tool("bar-read")
+        .split(/^(?==== Страница )/m)
+        .filter((p) => p.includes("политика:"))
+        .join("")
+        .split("\n");
+      const heads = lines.filter((l) => /^\*\*[A-Z][0-9]+/.test(l));
+      expect(heads.length).toBeGreaterThan(0);
+      const pointers = lines.filter((l) => l.startsWith("тело — "));
+      expect(pointers.length).toBe(heads.length);
       for (const one of pointers)
         expect(one).toMatch(
           /^тело — `\.claude\/rules\/quality(?:-scoped)?\.md`, в контексте по шапке$/,
         );
-      expect(full.some((l) => l.startsWith("тело — "))).toBe(false);
-      expect(short.join("\n").length).toBeLessThan(full.join("\n").length);
+      expect(lines).toContain("Вне держателя — проверяется чтением:");
+      // Первая строка тела каждого критерия страницы стоит в политике, а на
+      // странице её нет. Заголовок бывает длиннее строки: тело начинается
+      // за строкой с закрывающими звёздочками.
+      const policy = ["quality.md", "quality-scoped.md"]
+        .map((f) =>
+          fs.readFileSync(path.join(box, ".claude", "rules", f), "utf8"),
+        )
+        .join("\n")
+        .split("\n");
+      let bodies = 0;
+      for (const head of heads) {
+        let k = policy.indexOf(head);
+        expect(k, head).toBeGreaterThanOrEqual(0);
+        while (!policy[k].includes("**", 2)) k += 1;
+        const body = policy[k + 1];
+        if (body.trim() === "") continue;
+        bodies += 1;
+        expect(lines, head).not.toContain(body);
+      }
+      expect(bodies).toBeGreaterThan(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

@@ -2,6 +2,8 @@
 paths:
   - "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
   - "**/*.{css,scss,sass,less,styl}"
+  - "**/bar-protocol.md"
+  - "**/15-transition-bar/*.md"
 ---
 
 # Планка качества — по чему сверяется результат
