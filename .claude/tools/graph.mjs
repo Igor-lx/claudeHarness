@@ -15711,6 +15711,9 @@ if (mode === "bar") {
       "  затем итог предмета. Печать говорит: ответ дан; о верности ответа —",
     );
     console.log("  ничего.");
+    console.log(
+      "  Ответы — файлом на протокол: `graph.mjs bar-fill <файл> <протокол>`.",
+    );
     process.exit(tally.запечатан.length === subjects.length ? 0 : 1);
   }
 
@@ -15905,6 +15908,9 @@ if (mode === "bar") {
     console.log(
       "  Затем позвать режим снова — он сверит форму и поставит печать.",
     );
+    console.log(
+      "  Клетки вписывают файлом ответов, а не правкой таблицы: `graph.mjs bar-fill <файл>`.",
+    );
     process.exit(1);
   }
 
@@ -15942,6 +15948,7 @@ if (mode === "bar") {
     for (const h of r.holes) console.log("    " + h);
     console.log("");
     console.log("  Печать не поставлена, пока в протоколе есть дыры.");
+    console.log("  Ответы на дыры — файлом: `graph.mjs bar-fill <файл>`.");
     process.exit(1);
   }
   console.log(
@@ -16288,6 +16295,157 @@ if (mode === "bar-read") {
   console.log(
     "«Прочитано». Слово снимают, прочитав страницу, а не программой." + NEWLINE,
   );
+  process.exit(0);
+}
+
+// Ответы свода — файлом. Сессия вписывала исходы правкой таблицы: на каждую
+// строку — старая строка и новая целиком. Замер `2026-10-12` на стенде:
+// около `37 600` знаков вывода на свод при `5 697` знаках смысла. Здесь
+// строка ответа — ключ и клетки. Режим только вписывает; судит, как и
+// прежде, `bar`: те же клетки проходят тот же приём.
+if (mode === "bar-fill") {
+  const args = process.argv.slice(3);
+  const answersAt = args[0] === undefined ? null : path.resolve(args[0]);
+  const protocolAt =
+    args[1] !== undefined
+      ? path.resolve(args[1])
+      : CONFIG.barProtocol == null
+        ? null
+        : path.join(BASE, CONFIG.barProtocol);
+  const said =
+    answersAt !== null && existsSync(answersAt)
+      ? readFileSync(answersAt, "utf8").split(/\r?\n/)
+      : null;
+  const asked = (said ?? [])
+    .map((line, k) => ({ line: line.trim(), n: k + 1 }))
+    .filter(({ line }) => line !== "" && !line.startsWith("#"));
+  sayLooked("строк в файле ответов", asked.length);
+  const refuse = (...why) => {
+    console.log("=== Ответы не вписаны ===");
+    for (const one of why) console.log("  " + one);
+    process.exit(1);
+  };
+  if (said === null)
+    refuse(
+      "Файла ответов нет: `graph.mjs bar-fill <файл ответов> [протокол]`.",
+    );
+  if (protocolAt === null || !existsSync(protocolAt))
+    refuse("Протокола нет: сперва `graph.mjs bar`.");
+  const body = readFileSync(protocolAt, "utf8");
+  const lines = body.split(LF);
+  // Строка таблицы, которую заполняет сессия: ключ и номера граф, которые
+  // она заполняет. Таблицу строки узнают по разделу, в котором она стоит.
+  const rows = new Map();
+  let section = "";
+  lines.forEach((line, at) => {
+    if (line.startsWith("## ")) section = line;
+    if (!line.startsWith("| ")) return;
+    const cells = barCellsOf(line);
+    const head = cells[0] ?? "";
+    let key = null;
+    let fill = null;
+    if (
+      section === "## Прочитано" &&
+      cells.length === 3 &&
+      /^[0-9]+$/.test(head)
+    ) {
+      key = "стр " + head;
+      fill = [2];
+    } else if (
+      section === "## Модель предмета" &&
+      cells.length === 8 &&
+      /^П[0-9]+$/.test(head)
+    ) {
+      key = head;
+      fill = [6];
+    } else if (section === "## Свидетели" && /^Св[0-9]+$/.test(head)) {
+      key = head;
+      fill =
+        cells.length === 7
+          ? [3, 4, 5, 6]
+          : cells.length === 8
+            ? [3, 4, 5, 6, 7]
+            : null;
+    } else if (
+      section === "## Исходы" &&
+      cells.length === 7 &&
+      head !== "критерий" &&
+      !/^-+$/.test(head)
+    ) {
+      const subject = barUnTick(cells[1]).trim();
+      key = subject === BAR_NO_SUBJECT ? head : head + "@" + subject;
+      fill = [3, 4, 5, 6];
+    } else if (
+      section === BAR_CROSS_TITLE &&
+      cells.length === 4 &&
+      BAR_CROSS_FINDING.test(head)
+    ) {
+      key = "также " + head;
+      fill = [3];
+    } else if (
+      section === "## Итог по уровням" &&
+      cells.length === 5 &&
+      BAR_SUMMED.includes(head)
+    ) {
+      const subject = barUnTick(cells[1]).trim();
+      key = subject === BAR_NO_SUBJECT ? head : head + "@" + subject;
+      fill = [2, 3, 4];
+    } else if (
+      section === "## База и документация" &&
+      cells.length === 4 &&
+      head.startsWith(BAR_TICK)
+    ) {
+      key = barUnTick(head).trim();
+      fill = [1, 2, 3];
+    } else if (
+      section === "## " + PARTS_TITLE &&
+      cells.length === 3 &&
+      /^[0-9]+$/.test(head)
+    ) {
+      key = "часть " + head;
+      fill = [1, 2];
+    }
+    if (key !== null && fill !== null) rows.set(key, { at, cells, fill });
+  });
+  const faults = [];
+  const seen = new Set();
+  for (const { line, n } of asked) {
+    const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
+    const key = parts[0];
+    const row = rows.get(key);
+    if (row === undefined) {
+      faults.push("строка " + n + ": ключа «" + key + "» в протоколе нет");
+      continue;
+    }
+    if (seen.has(key)) {
+      faults.push("строка " + n + ": ключ «" + key + "» дважды");
+      continue;
+    }
+    seen.add(key);
+    const given = parts.slice(1);
+    if (given.length !== row.fill.length) {
+      faults.push(
+        "строка " +
+          n +
+          ": клеток " +
+          given.length +
+          ", а заполняемых граф у «" +
+          key +
+          "» " +
+          row.fill.length,
+      );
+      continue;
+    }
+    row.fill.forEach((col, k) => {
+      if (given[k] !== "=") row.cells[col] = given[k];
+    });
+    lines[row.at] = "| " + row.cells.join(" | ") + " |";
+  }
+  if (faults.length > 0) refuse(...faults);
+  writeFileSync(protocolAt, lines.join(LF));
+  console.log("=== Ответы вписаны ===");
+  console.log("  вписано строк: " + asked.length + " — " + rel(protocolAt));
+  console.log("  Дальше — `graph.mjs bar`: он сверит форму и поставит печать.");
   process.exit(0);
 }
 

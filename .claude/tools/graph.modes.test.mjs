@@ -3984,6 +3984,155 @@ describe("части правки", () => {
  * проверок в наборе подменена дешёвой: краснеет, когда в корне дерева лежит
  * файл `RED`.
  */
+// Ответы свода — файлом: строка ответа на строку таблицы. Ключи — по
+// справочнику, режим `bar-fill`: таблицу строки узнают по её разделу.
+const answersOf = (blank, filled) => {
+  const cellsOf = (line) =>
+    line
+      .split(/(?<!\\)\|/)
+      .slice(1, -1)
+      .map((c) => c.trim());
+  const untick = (x) => x.split("`").join("").trim();
+  const was = blank.split("\n");
+  const out = [];
+  let section = "";
+  filled.split("\n").forEach((line, k) => {
+    if (line.startsWith("## ")) section = line;
+    if (!line.startsWith("| ") || line === was[k]) return;
+    const now = cellsOf(line);
+    const before = cellsOf(was[k]);
+    const head = now[0];
+    let key = null;
+    let fill = null;
+    if (section === "## Прочитано") [key, fill] = ["стр " + head, [2]];
+    else if (section === "## Модель предмета") [key, fill] = [head, [6]];
+    else if (section === "## Свидетели")
+      [key, fill] = [head, now.length === 7 ? [3, 4, 5, 6] : [3, 4, 5, 6, 7]];
+    else if (section === "## Исходы")
+      [key, fill] = [
+        untick(now[1]) === "—" ? head : head + "@" + untick(now[1]),
+        [3, 4, 5, 6],
+      ];
+    else if (section === "## Итог по уровням")
+      [key, fill] = [
+        untick(now[1]) === "—" ? head : head + "@" + untick(now[1]),
+        [2, 3, 4],
+      ];
+    else if (section === "## База и документация")
+      [key, fill] = [untick(head), [1, 2, 3]];
+    if (key === null) throw new Error("строка вне таблиц ответа: " + line);
+    out.push(
+      [
+        key,
+        ...fill.map((c) =>
+          now[c] === before[c] && now[c] !== "" ? "=" : now[c],
+        ),
+      ].join(" | "),
+    );
+  });
+  return out.join("\n") + "\n";
+};
+
+describe("ответы свода файлом", () => {
+  it("bar-fill вписывает те же клетки, что правка таблицы; отказ — без записи", () => {
+    const box = seatEmpty("bar-fill-");
+    try {
+      const tool = (...args) => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          {
+            cwd: box,
+            encoding: "utf8",
+          },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzFill.ts"),
+        "export const zzFill = (n: number): number => n * 2;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const first0 = tool("bar").out;
+      expect(first0, first0).toContain("bar-fill <файл>");
+      const blank = fs.readFileSync(protoAt, "utf8");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      // Графу «о чём» проба заполняет своим словом, а `bar` её не судит и
+      // `bar-fill` не пишет: сравнение идёт без неё.
+      const blankLines = blank.split("\n");
+      const filled = fs
+        .readFileSync(protoAt, "utf8")
+        .split("\n")
+        .map((line, k) => {
+          const c = line.split("|");
+          const d = (blankLines[k] ?? "").split("|");
+          return c.length === 9 &&
+            d.length === 9 &&
+            c[1] === d[1] &&
+            c[2] === d[2]
+            ? [...c.slice(0, 3), d[3], ...c.slice(4)].join("|")
+            : line;
+        })
+        .join("\n");
+      const answers = answersOf(blank, filled);
+      // Машинная клетка, оставленная как есть, — «=»: путь проверен.
+      expect(answers, answers).toMatch(/ \| =$/m);
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(answersAt, answers);
+      fs.writeFileSync(protoAt, blank);
+      const done = tool("bar-fill", answersAt);
+      expect(done.code, done.out).toBe(0);
+      const wrote = fs.readFileSync(protoAt, "utf8").split("\n");
+      const odd = filled.split("\n").findIndex((line, k) => line !== wrote[k]);
+      expect(
+        odd,
+        odd < 0 ? "" : filled.split("\n")[odd] + "\n" + wrote[odd],
+      ).toBe(-1);
+      expect(tool("bar").out).toContain("печать поставлена");
+      // Отказ — целиком: ключа нет, ключ дважды, не то число клеток.
+      const first = answers.split("\n")[0];
+      const key = answers
+        .split("\n")
+        .find((line) => /^[A-U][0-9]/.test(line))
+        .split(" | ")[0];
+      for (const [bad, why] of [
+        ["Z99 | чисто |  |  | ", "ключа «Z99» в протоколе нет"],
+        [first + "\n" + first, "дважды"],
+        [key + " | чисто", "клеток 1, а заполняемых граф у «" + key + "» 4"],
+      ]) {
+        fs.writeFileSync(protoAt, blank);
+        fs.writeFileSync(answersAt, bad + "\n");
+        const r = tool("bar-fill", answersAt);
+        expect(r.code).toBe(1);
+        expect(r.out).toContain(why);
+        expect(fs.readFileSync(protoAt, "utf8")).toBe(blank);
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("серия", () => {
   it("прогон по частям, отметки по дереву, красная часть названа, индекс — ровно дерево части", () => {
     const box = seatEmpty("seriya-");
