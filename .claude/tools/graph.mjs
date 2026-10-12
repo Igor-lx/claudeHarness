@@ -594,6 +594,7 @@ const SCALAR = {
   seating: "число",
   exceptionLimit: "число",
   guardTraceAgeS: "число",
+  barPageBodies: "да или нет",
   src: "строка либо список строк",
   map: "строка",
   tests: "строка",
@@ -634,6 +635,7 @@ const SCALAR_OK = {
   число: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
   строка: (v) => typeof v === "string",
   список: (v) => Array.isArray(v),
+  "да или нет": (v) => typeof v === "boolean",
   "строка либо список строк": (v) =>
     typeof v === "string" ||
     (Array.isArray(v) &&
@@ -10358,8 +10360,22 @@ const policyPageOf = (items) => {
   return out.join(LF + LF);
 };
 
+/** Заголовок критерия — от начала до закрывающих звёздочек и до конца их
+ * строки: заголовок бывает длиннее строки. */
+const criterionHeadOf = (own) => {
+  const close = own.indexOf("**", 2);
+  if (close < 0) return own.split(LF)[0];
+  const end = own.indexOf(LF, close);
+  return end < 0 ? own : own.slice(0, end);
+};
+
 /** Тела критериев планки по порядку политики: заголовок жирным и всё под
- * ним до следующего критерия, заголовка или черты. */
+ * ним до следующего критерия, заголовка или черты.
+ *
+ * Поле `barPageBodies: false` — вариант замера пункта `7` плана экономии:
+ * страница печатает заголовок и формы вне держателя, а тело — отсылкой к
+ * политике, которую среда уже положила в контекст по шапке. Поле временное:
+ * замер решит, остаётся ли один путь из двух. */
 let POLICY_BODIES = null;
 const policyBodies = () => {
   if (POLICY_BODIES !== null) return POLICY_BODIES;
@@ -10370,7 +10386,21 @@ const policyBodies = () => {
     if (!existsSync(file)) continue;
     // `own` — тело как в политике: по нему перекрёстная сверка считает
     // кандидатов, и тот же разбор делает её проба в тестах обвязки.
-    POLICY_BODIES.push(...policyBodiesOf(readFileSync(file, "utf8"), formsTailOf));
+    const bodies = policyBodiesOf(readFileSync(file, "utf8"), formsTailOf);
+    POLICY_BODIES.push(
+      ...(CONFIG.barPageBodies === false
+        ? bodies.map((c) => ({
+            ...c,
+            text:
+              criterionHeadOf(c.own) +
+              LF +
+              "тело — " +
+              barQuoted(rel(file)) +
+              ", в контексте по шапке" +
+              c.text.slice(c.own.length),
+          }))
+        : bodies),
+    );
   }
   return POLICY_BODIES;
 };

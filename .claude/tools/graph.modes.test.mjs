@@ -4162,6 +4162,74 @@ describe("страница политики", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  it("поле barPageBodies: false — у критерия заголовок и отсылка к политике, формы на месте", () => {
+    const box = seatEmpty("bodies-off-");
+    try {
+      const tool = (...args) =>
+        String(
+          spawnSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            {
+              cwd: box,
+              encoding: "utf8",
+            },
+          ).stdout ?? "",
+        );
+      tool("bar", "src/app");
+      const policy = () =>
+        tool("bar-read")
+          .split(/^(?==== Страница )/m)
+          .filter((p) => p.includes("политика:"))
+          .join("")
+          .split("\n");
+      const heads = (lines) => lines.filter((l) => /^\*\*[A-Z][0-9]+/.test(l));
+      // Формы — блоки под своими шапками: в телах критериев тоже бывают
+      // списки, и строка «- » сама по себе формой не является.
+      const forms = (lines) => {
+        const out = [];
+        let inside = false;
+        for (const l of lines) {
+          if (l === "" || l.startsWith("--- ") || l.startsWith("=== "))
+            inside = false;
+          else if (
+            l === "Вне держателя — проверяется чтением:" ||
+            l.startsWith("Общие формы вне держателя")
+          )
+            inside = true;
+          if (inside) out.push(l);
+        }
+        return out;
+      };
+      const full = policy();
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfg = fs.readFileSync(cfgAt, "utf8");
+      expect(cfg).toContain("  barSince: null,");
+      fs.writeFileSync(
+        cfgAt,
+        cfg.replace(
+          "  barSince: null,",
+          "  barSince: null,\n  barPageBodies: false,",
+        ),
+      );
+      const short = policy();
+      expect(heads(full).length).toBeGreaterThan(0);
+      expect(heads(short)).toEqual(heads(full));
+      expect(forms(full).length).toBeGreaterThan(0);
+      expect(forms(short)).toEqual(forms(full));
+      const pointers = short.filter((l) => l.startsWith("тело — "));
+      expect(pointers.length).toBe(heads(short).length);
+      for (const one of pointers)
+        expect(one).toMatch(
+          /^тело — `\.claude\/rules\/quality(?:-scoped)?\.md`, в контексте по шапке$/,
+        );
+      expect(full.some((l) => l.startsWith("тело — "))).toBe(false);
+      expect(short.join("\n").length).toBeLessThan(full.join("\n").length);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 describe("короткий вывод сверки", () => {
