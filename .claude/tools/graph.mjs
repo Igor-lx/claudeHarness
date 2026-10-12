@@ -24152,7 +24152,7 @@ if (mode === "verify") {
   // 14a-4-бис. Характеристика качества названа в планке.
   //
   // Планка судит код, а модель качества продукта шире, и печать свода читали
-  // как сертификат продукта. Карта в политике сверяет планку с ISO/IEC 25010
+  // как сертификат продукта. Карта в обосновании сверяет планку с ISO/IEC 25010
   // редакции 2023 года: на каждую характеристику — разделы и критерии, которые
   // её держат, либо слова «вне планки» и чем она держится. Без сверки правка
   // политики выронила бы класс молча, а карта описывала бы раздел, которого
@@ -24173,7 +24173,13 @@ if (mode === "verify") {
           letters.add(m[1]);
         for (const c of barCriteria(f)) ids.add(c.id);
       }
-      const lines = readFileSync(core, "utf8").split(NEWLINE);
+      // Первый уровень карты лежит в обосновании, рядом со вторым: на
+      // каждую правку кода его не читают, а сверке он нужен целиком.
+      const mapAt = shelfAt("rationale/quality.md");
+      const lines =
+        mapAt !== null && existsSync(mapAt)
+          ? readFileSync(mapAt, "utf8").split(NEWLINE)
+          : [];
       const at = lines.findIndex((l) => l.trim() === QUALITY_MAP_HEADING);
       if (at < 0)
         qualityMapDrift.push(`шапка карты не найдена: ${QUALITY_MAP_HEADING}`);
@@ -24193,7 +24199,10 @@ if (mode === "verify") {
           else if (seen.has(name))
             qualityMapDrift.push(`«${name}»: строка задвоена`);
           seen.add(name);
-          const named = held === "—" ? [] : held.split(",").map((s) => s.trim());
+          const named =
+            held === "—"
+              ? []
+              : held.split(",").map((s) => s.trim().replace(/^`|`$/g, ""));
           level1.set(name, named);
           for (const one of named)
             if (!letters.has(one) && !ids.has(one))
