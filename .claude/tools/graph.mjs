@@ -8147,8 +8147,22 @@ if (mode === "bar-probe") {
       notPlanted(
         "В книге посадок нет прикрытий (`covers`): посаженное стояло бы одно в правленом и выдавало себя.",
       );
+    // Роль, чьё нарушение — тема, чужая хозяину, называет слова этой темы
+    // полем `away`: модуль, в пути которого стоит такое слово, хозяином не
+    // выбирается — в нём посаженное нарушением не было бы. Найдено пробой:
+    // журнал аудита лёг в модуль журнала, и оба свода верно его не назвали.
+    const awayFrom = (f, one) =>
+      (one.away ?? []).some((word) =>
+        path
+          .relative(projectRoot, f)
+          .toLowerCase()
+          .split(/[\\/.]/)
+          .some((part) => part.includes(word)),
+      );
     const freeFor = (one, taken) =>
-      poolOf(one.file).find((x) => !taken.has(x) && !clashes(x, one));
+      poolOf(one.file).find(
+        (x) => !taken.has(x) && !clashes(x, one) && !awayFrom(x, one),
+      );
     const rolesOf = (p, busy) => {
       const taken = new Set(busy);
       const roleFile = new Map();

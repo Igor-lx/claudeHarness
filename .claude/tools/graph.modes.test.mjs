@@ -6058,6 +6058,94 @@ describe("проба планки из нескольких файлов", () =>
   }, 240000);
 });
 
+describe("посадка не ложится в модуль своей темы", () => {
+  it("роль с полем away обходит модуль, в пути которого стоит слово темы", () => {
+    const box = seatEmpty("probaway-");
+    const left = [];
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      const one = {
+        criterion: "A1",
+        why: "в узел дописан журнал аудита",
+        into: [
+          {
+            role: "виновник",
+            file: "модуль",
+            away: ["zzaudit"],
+            text: 'export const zzTrail = (a) => {\n  console.info("[audit]", a);\n};',
+            ts: 'export const zzTrail = (a: string): void => {\n  console.info("[audit]", a);\n};',
+          },
+        ],
+      };
+      const cover = {
+        file: "разметка",
+        text: "export const zzCover = () => 1;",
+        ts: "export const zzCover = (): number => 1;",
+      };
+      fs.writeFileSync(
+        probes,
+        JSON.stringify({ plants: [one], covers: [cover] }),
+      );
+      const codeUnder = (dir) =>
+        fs
+          .readdirSync(path.join(box, dir), { withFileTypes: true })
+          .flatMap((e) =>
+            e.isDirectory()
+              ? e.name === "tests"
+                ? []
+                : codeUnder(dir + "/" + e.name)
+              : /\.tsx?$/.test(e.name) && !e.name.endsWith(".d.ts")
+                ? [dir + "/" + e.name]
+                : [],
+          );
+      // Имя посадки уже стоит во всех модулях проекта: свободен один модуль
+      // темы — его посадка обязана обойти.
+      for (const rel of codeUnder("src"))
+        fs.appendFileSync(path.join(box, rel), "\nexport const zzTrail = 0;\n");
+      const put = (rel) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(
+          path.join(box, rel),
+          "export const zzKeep = (n: number): number => n;\n",
+        );
+      };
+      put("src/shared/zzaudit/zzaudit.ts");
+      const run = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const plantedTo = (out) => {
+        const sandbox = /песочница: (.+)/.exec(out)?.[1]?.trim() ?? null;
+        const id = /bar-probe (\d+)/.exec(out)?.[1] ?? null;
+        if (sandbox === null || id === null) return null;
+        const markAt = path.join(
+          os.tmpdir(),
+          "bar-probe-" + id + ".plant.json",
+        );
+        left.push(sandbox, markAt);
+        return JSON.parse(fs.readFileSync(markAt, "utf8")).files[0];
+      };
+      const alone = run("bar-probe", "--existing", "--seed=1");
+      expect(plantedTo(alone), alone).toBeNull();
+      expect(alone).toContain("не вмещает");
+      put("src/shared/zzFree/zzFree.ts");
+      const culprit = plantedTo(run("bar-probe", "--existing", "--seed=1"));
+      expect(culprit).not.toBeNull();
+      expect(path.basename(culprit)).toBe("zzFree.ts");
+    } finally {
+      for (const one of left) fs.rmSync(one, { recursive: true, force: true });
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("проба планки в существующем коде", () => {
   it("нарушение дописано в живые файлы среди обычной правки, свод его называет, суд засчитывает", () => {
     const box = seatEmpty("probaex-");
