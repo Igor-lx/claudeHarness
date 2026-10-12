@@ -571,7 +571,8 @@ describe("classifyRun", () => {
  * Шапка правила о коде грузит правило, когда сессия открыла файл под её
  * образец, а инструмент судит код по своему перечню расширений. Два перечня
  * расходились: шапки знали `.mjs` и `.mts`, обход корпуса — нет, а `.styl`
- * знал только инструмент. Шапки сличаются с перечнем словаря.
+ * знал только инструмент. Шапки сличаются с перечнем словаря. Шапка без
+ * образца по расширению — правило о документах, а не о коде, и её не сличают.
  */
 describe("шапки правил о коде — перечнем словаря", () => {
   it("расширения в шапке каждого правила с образцом — ровно расширения кода и стилей", () => {
@@ -580,12 +581,17 @@ describe("шапки правил о коде — перечнем словар�
     let headed = 0;
     for (const name of fs.readdirSync(rules).filter((n) => n.endsWith(".md"))) {
       const head = /^---\n([\s\S]*?)\n---\n/.exec(fs.readFileSync(path.join(rules, name), "utf8"));
-      if (head === null || !/^paths:/m.test(head[1])) continue;
+      if (
+        head === null ||
+        !/^paths:/m.test(head[1]) ||
+        !/"\*\*\/\*\./.test(head[1])
+      )
+        continue;
       headed += 1;
       const exts = [...head[1].matchAll(/"\*\*\/\*\.\{([^}]+)\}"/g)].flatMap((m) => m[1].split(","));
       expect(exts.sort(), name).toEqual(want);
     }
-    expect(headed).toBeGreaterThan(3);
+    expect(headed).toBeGreaterThanOrEqual(3);
   });
 });
 
