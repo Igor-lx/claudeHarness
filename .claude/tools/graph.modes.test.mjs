@@ -3640,6 +3640,13 @@ describe("ядро по предметам уровня: правка, чтен�
       // Пустой проход: протоколы напечатаны, код не ноль.
       const first = tool("bar", "--transition");
       expect(first).toContain("предметов: 5 (единиц переноса 3, слоёв 1, приложение 1)");
+      // Проза о заполнении — раз на все протоколы, в выводе режима, а не в
+      // каждом протоколе: на стенде повтор стоил `94 703` знака.
+      expect(
+        first.split("Как заполнять протоколы перехода — один раз на все")
+          .length,
+      ).toBe(2);
+      expect(first).toContain("Скелет печатает режим");
       const dir = path.join(box, ".context", "15-transition-bar");
       for (const one of [
         "node--components--zzCart.md",
@@ -3652,6 +3659,7 @@ describe("ядро по предметам уровня: правка, чтен�
       // Ядро одного уровня — и только оно.
       const cart = fs.readFileSync(path.join(dir, "node--components--zzCart.md"), "utf8");
       expect(cart).toContain("- род: `на переход`");
+      expect(cart).not.toContain("Скелет печатает режим");
       expect(cart).toContain("| A1 | `components/zzCart` |");
       expect(cart).not.toMatch(/^\| H7 \|/m);
       expect(cart).not.toMatch(/^\| A6 \|/m);
