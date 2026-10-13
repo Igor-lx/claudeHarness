@@ -11240,4 +11240,43 @@ describe("починки по пробе планки 2026-10-13", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("кандидат перекрёстной сверки берётся и из тела политики: `A6-бис` называет `A9-тер`", () => {
+    const box = seatEmpty("kin-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzWide.ts"),
+        "export const zzWide = (width: number): boolean => width > 0;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      tool("bar", "app/zzWide.ts");
+      const sealed = fs
+        .readFileSync(protoAt, "utf8")
+        .replace(/^- печать: .*$/m, "- печать: `нет`");
+      fs.writeFileSync(
+        protoAt,
+        sealed
+          .split("\n")
+          .map((line) => {
+            const c = line.split("|");
+            if (c.length !== 9 || c[1].trim() !== "A6-бис") return line;
+            c[4] = " нашлось ";
+            c[5] = " src/app/zzWide.ts:1 ";
+            c[6] = " правило повторено другими словами ";
+            c[7] = " вопрос ";
+            return c.join("|");
+          })
+          .join("\n"),
+      );
+      tool("bar", "app/zzWide.ts");
+      expect(tool("bar", "app/zzWide.ts")).toContain(
+        "ключ — «также » и находка дословно: A6-бис — `src/app/zzWide.ts:1` — кандидаты A9-тер",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });

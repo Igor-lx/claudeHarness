@@ -55,6 +55,7 @@ import {
   BAR_CUTS,
   BAR_PRESENT,
   crossCandidatesOf,
+  policyKinOf,
   crossWordsOf,
   policyBodiesOf,
   modelRefsShifted,
@@ -1554,6 +1555,29 @@ const liveQualityScopes = () => {
 const barPolicyOf = () => {
   const scoped = path.join(BASE, CONFIG.qualityScope.policy);
   return { scoped, core: scoped.replace(/quality-scoped.md$/, "quality.md") };
+};
+/** Критерии, названные в теле другого критерия, — в обе стороны: кандидаты
+ * перекрёстной сверки сверх вопроса модели. Читается из самой политики. */
+let POLICY_KIN = null;
+const policyKin = () => {
+  if (POLICY_KIN !== null) return POLICY_KIN;
+  POLICY_KIN = new Map();
+  const { scoped, core } = barPolicyOf();
+  for (const file of [core, scoped])
+    if (existsSync(file))
+      for (const pair of policyKinOf(readFileSync(file, "utf8"))
+        .split(";")
+        .filter(Boolean)) {
+        const [a, b] = pair.split(">");
+        for (const [x, y] of [
+          [a, b],
+          [b, a],
+        ]) {
+          if (!POLICY_KIN.has(x)) POLICY_KIN.set(x, new Set());
+          POLICY_KIN.get(x).add(y);
+        }
+      }
+  return POLICY_KIN;
 };
 /** Живой набор критериев: ядро целиком плюс разделы по применимости,
  * объявленные живыми таблицей применимости.
@@ -14428,6 +14452,7 @@ const barHolesOf = ({
     const cand = crossCandidatesOf(one.who.split(" ")[0], {
       rows: modelAt.get(one.keys[0]) ?? [],
       live,
+      kin: policyKin(),
     }).join(", ");
     const row = crossBy.get(finding);
     const also = row?.also ?? "";
