@@ -25,6 +25,7 @@ import { builtinModules, createRequire } from "node:module";
 import {
   classifyRun,
   gitHookBypass,
+  pageReadByShell,
   sandboxEscape,
   barRowFault,
   barMorePlacesOf,
@@ -373,21 +374,38 @@ if (mode === "guard") {
     }
   else command = process.argv.slice(3).join(" ");
   const why = gitHookBypass(command);
+  // Страница свода, прочитанная оболочкой, шапку правил не будит: тела
+  // критериев в контекст не придут.
+  const page = pageReadByShell(command);
   if (hook) {
-    if (why === "") process.exit(0);
-    process.stderr.write(
-      "Обвязка: команда снимает ворота перед коммитом (" +
-        why +
-        ").\n" +
-        "Коммит с кодом идёт через ворота: свод по планке `node .claude/tools/graph.mjs bar`, печать, затем обычный `git commit`.\n" +
-        "Коммит мимо ворот делает разработчик сам, если так решил.\n",
-    );
+    if (why === "" && page === "") process.exit(0);
+    if (why === "")
+      process.stderr.write(
+        "Обвязка: страница свода читается инструментом Read, а не `" +
+          page +
+          "`.\n" +
+          "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанная оболочкой страница её не приносит, и свод судил бы по заголовкам.\n" +
+          "Список страниц печатает `node .claude/tools/graph.mjs bar-read`; открыть файл из списка — Read.\n",
+      );
+    else
+      process.stderr.write(
+        "Обвязка: команда снимает ворота перед коммитом (" +
+          why +
+          ").\n" +
+          "Коммит с кодом идёт через ворота: свод по планке `node .claude/tools/graph.mjs bar`, печать, затем обычный `git commit`.\n" +
+          "Коммит мимо ворот делает разработчик сам, если так решил.\n",
+      );
     process.exit(2);
   }
   console.log("=== Страж обхода ворот ===");
   sayLooked("команд", command === "" ? 0 : 1);
   console.log(why === "" ? "  обхода ворот нет" : "    обход ворот: " + why);
-  process.exit(why === "" ? 0 : 1);
+  console.log(
+    page === ""
+      ? "  чтения страниц свода оболочкой нет"
+      : "    чтение страницы свода: " + page,
+  );
+  process.exit(why === "" && page === "" ? 0 : 1);
 }
 
 // Посадка и стенд проб собираются до настройки проекта: в мастерской обвязки

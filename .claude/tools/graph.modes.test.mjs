@@ -471,6 +471,26 @@ describe("страж обхода ворот", () => {
     expect(ask(home, 'git commit -m "x"').status).toBe(0);
   }, 180000);
 
+  it("останавливает чтение страницы свода оболочкой, называя Read, и пропускает остальное", () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    const stopped = ask(home, "cat .context/bar-pages/bar-protocol-1.md");
+    expect(stopped.status).toBe(2);
+    expect(stopped.stderr).toContain("инструментом Read, а не `cat`");
+    expect(stopped.stderr).toContain("bar-read");
+    for (const fine of [
+      "ls .context/bar-pages",
+      "git status --short -- .context/bar-pages",
+      "node .claude/tools/graph.mjs bar-read 1",
+      "cat src/app/App.tsx",
+    ])
+      expect(ask(home, fine).status, fine).toBe(0);
+    // Коммит мимо ворот называется своей причиной, не путаясь со страницей.
+    const bypass = ask(home, "git commit --no-verify -m x");
+    expect(bypass.status).toBe(2);
+    expect(bypass.stderr).toContain("commit --no-verify");
+    expect(bypass.stderr).not.toContain("инструментом Read");
+  }, 180000);
+
   it("отвечает в папке без базы проекта", () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), "strazh-"));
     try {

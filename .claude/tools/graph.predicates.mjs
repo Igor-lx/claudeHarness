@@ -5423,6 +5423,49 @@ export const PREDICATE_CASES = [
   ["gitHookBypass", "bash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
   ["gitHookBypass", "zsh -c \"git commit --no-verify -m x\"", "commit --no-verify"],
   ["gitHookBypass", "/bin/dash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
+  // --- pageReadByShell: чтение страницы свода командой оболочки ---
+  ["pageReadByShell", "cat .context/bar-pages/bar-protocol-1.md", "cat"],
+  ["pageReadByShell", "head -50 .context/bar-pages/bar-protocol-2.md", "head"],
+  [
+    "pageReadByShell",
+    "sed -n 1,20p .context/bar-pages/bar-protocol-3.md",
+    "sed",
+  ],
+  ["pageReadByShell", "cd .context && cat bar-pages/bar-protocol-1.md", "cat"],
+  ["pageReadByShell", "cat < .context/bar-pages/bar-protocol-1.md", "cat"],
+  [
+    "pageReadByShell",
+    "grep -n слово .context/bar-pages/bar-protocol-1.md",
+    "grep",
+  ],
+  ["pageReadByShell", 'bash -c "cat .context/bar-pages/x.md"', "cat"],
+  ["pageReadByShell", 'zsh -c "cat .context/bar-pages/x.md"', "cat"],
+  ["pageReadByShell", '/bin/dash -c "cat .context/bar-pages/x.md"', "cat"],
+  ["pageReadByShell", "/usr/bin/cat .context/bar-pages/x.md", "cat"],
+  ["pageReadByShell", "FOO=1 cat .context/bar-pages/x.md", "cat"],
+  [
+    "pageReadByShell",
+    "cat .context/15-transition-bar/bar-pages/node--app-3.md",
+    "cat",
+  ],
+  [
+    "pageReadByShell",
+    "cat .context/bar-protocol.md | head -5 && tail .context/bar-pages/x.md",
+    "tail",
+  ],
+  ["pageReadByShell", "ls .context/bar-pages", ""],
+  ["pageReadByShell", "rm -rf .context/bar-pages", ""],
+  ["pageReadByShell", "git status --short -- .context/bar-pages", ""],
+  ["pageReadByShell", "echo cat .context/bar-pages/x.md", ""],
+  ["pageReadByShell", 'git commit -m "cat .context/bar-pages/x.md"', ""],
+  ["pageReadByShell", "node .claude/tools/graph.mjs bar-read 1", ""],
+  ["pageReadByShell", "cat src/app/App.tsx", ""],
+  ["pageReadByShell", "cat .context/bar-pages-notes.md", ""],
+  [
+    "pageReadByShell",
+    "cat <<'EOF'" + NEWLINE + ".context/bar-pages/x.md" + NEWLINE + "EOF",
+    "",
+  ],
   // --- применимость разделов планки: свидетели предмета -------------------
   ["scopeKindsOfLine", "const x = 1;", ""],
   ["scopeKindsOfLine", "fetch(url).then((r) => r.json());", "K/сеть;L/ожидание ответа"],
@@ -5800,34 +5843,11 @@ export const sandboxEscape = (recipe) => {
   return "";
 };
 
-/** Обход ворот git в команде оболочки — причина, иначе пустая строка.
- *
- * Ворота перед коммитом стоят хуком git, и снимает их сама команда:
- * `commit --no-verify` либо коротко `-n`, подмена `core.hooksPath` ключом
- * `-c`, запись в эту настройку или её снятие. Разбирается оболочка, а не
- * подстрока: флаг в тексте сообщения, в доводе `echo` и в теле встроенного
- * документа командой не является, и запрет на нём учил бы обходить страж.
- * Команда внутри `sh -c`, `bash -c` и `eval` разбирается тем же порядком.
- * Запись в настройку пути хуков обвязки законна: её делает посадка.
- *
- * Подстановку флага и псевдоним разбор не ловит: страж стоит против обхода по
- * привычке, а прошедший мимо обход краснит ревизия сводов по истории. */
-export const gitHookBypass = (command) => {
-  const OWN_HOOKS = ".claude/hooks/git";
-  const SHOW_PREFIX = "$(git rev-parse --show-prefix)";
-  // Своя папка хуков — и от корня репозитория: у вложенного проекта путь
-  // начинается его папкой либо подстановкой, которую даёт посадка.
-  const own = (value) => {
-    const v = value.replace(/^\.\//, "").replace(/\/+$/, "");
-    if (v === OWN_HOOKS || v === SHOW_PREFIX + OWN_HOOKS) return true;
-    if (!v.endsWith("/" + OWN_HOOKS)) return false;
-    const head = v.slice(0, -OWN_HOOKS.length - 1);
-    return (
-      !/^[~/]/.test(head) &&
-      !/[$:]/.test(head) &&
-      !head.split("/").includes("..")
-    );
-  };
+/** Команды оболочки: слова каждой, без тел встроенных документов. Разбираются
+ * кавычки и разделители `; & | ( )` и перевод строки; подстановка и
+ * псевдоним не раскрываются. Общий разбор для стражей: флаг в тексте
+ * сообщения и в доводе `echo` командой не является. */
+const shellCommandsOf = (command) => {
   // Тела встроенных документов — данные, а не команды.
   const kept = [];
   let until = null;
@@ -5882,6 +5902,38 @@ export const gitHookBypass = (command) => {
     }
   }
   endCommand();
+  return commands;
+};
+
+/** Обход ворот git в команде оболочки — причина, иначе пустая строка.
+ *
+ * Ворота перед коммитом стоят хуком git, и снимает их сама команда:
+ * `commit --no-verify` либо коротко `-n`, подмена `core.hooksPath` ключом
+ * `-c`, запись в эту настройку или её снятие. Разбирается оболочка, а не
+ * подстрока: флаг в тексте сообщения, в доводе `echo` и в теле встроенного
+ * документа командой не является, и запрет на нём учил бы обходить страж.
+ * Команда внутри `sh -c`, `bash -c` и `eval` разбирается тем же порядком.
+ * Запись в настройку пути хуков обвязки законна: её делает посадка.
+ *
+ * Подстановку флага и псевдоним разбор не ловит: страж стоит против обхода по
+ * привычке, а прошедший мимо обход краснит ревизия сводов по истории. */
+export const gitHookBypass = (command) => {
+  const OWN_HOOKS = ".claude/hooks/git";
+  const SHOW_PREFIX = "$(git rev-parse --show-prefix)";
+  // Своя папка хуков — и от корня репозитория: у вложенного проекта путь
+  // начинается его папкой либо подстановкой, которую даёт посадка.
+  const own = (value) => {
+    const v = value.replace(/^\.\//, "").replace(/\/+$/, "");
+    if (v === OWN_HOOKS || v === SHOW_PREFIX + OWN_HOOKS) return true;
+    if (!v.endsWith("/" + OWN_HOOKS)) return false;
+    const head = v.slice(0, -OWN_HOOKS.length - 1);
+    return (
+      !/^[~/]/.test(head) &&
+      !/[$:]/.test(head) &&
+      !head.split("/").includes("..")
+    );
+  };
+  const commands = shellCommandsOf(command);
   const commitBypass = (args) => {
     const TAKES = "mFCct";
     const LONG_TAKES = new Set([
@@ -5997,6 +6049,72 @@ export const gitHookBypass = (command) => {
     return "";
   };
   for (const ws of commands) {
+    const why = check(ws);
+    if (why !== "") return why;
+  }
+  return "";
+};
+
+/** Чтение страницы свода командой оболочки — имя команды, иначе пустая строка.
+ *
+ * Страницы чтения лежат файлами в папке `bar-pages`, и политику в контекст
+ * приносит шапка правила, когда файл открыт инструментом чтения. `cat`,
+ * `head`, `sed` и им подобные страницу покажут, а шапку не разбудят: тела
+ * критериев не придут, и свод судит по заголовкам. Страж останавливает
+ * команду, которая читает содержимое файла из этой папки; `ls`, `rm`, `git` и
+ * прочее, что содержимого не читает, он пропускает. Разбирается оболочка, а
+ * не подстрока, как у `gitHookBypass`; умышленный обход (шаблон имени,
+ * `node -e`) страж не ловит — он стоит против привычки. */
+export const pageReadByShell = (command) => {
+  const READERS = new Set([
+    "cat",
+    "head",
+    "tail",
+    "sed",
+    "awk",
+    "gawk",
+    "less",
+    "more",
+    "bat",
+    "nl",
+    "tac",
+    "od",
+    "xxd",
+    "hexdump",
+    "strings",
+    "cut",
+    "sort",
+    "uniq",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
+    "type",
+    "get-content",
+    "gc",
+  ]);
+  const inPages = (w) =>
+    w
+      .replace(/\\/g, "/")
+      .split("/")
+      .some((part) => part === BAR_PAGES_DIR);
+  const check = (ws) => {
+    let k = 0;
+    while (k < ws.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[k])) k += 1;
+    const head = ws[k];
+    if (head === undefined) return "";
+    if (head === "eval") return pageReadByShell(ws.slice(k + 1).join(" "));
+    if (/^(?:.*\/)?(?:ba|z|da)?sh$/.test(head)) {
+      const at = ws.indexOf("-c", k + 1);
+      return at < 0 || ws[at + 1] === undefined
+        ? ""
+        : pageReadByShell(ws[at + 1]);
+    }
+    const name = head.replace(/^.*\//, "").toLowerCase();
+    return READERS.has(name) && ws.slice(k + 1).some(inPages) ? name : "";
+  };
+  for (const ws of shellCommandsOf(command)) {
     const why = check(ws);
     if (why !== "") return why;
   }
