@@ -10787,3 +10787,154 @@ describe("страницы чтения — файлами", () => {
     }
   }, 300000);
 });
+
+describe("слова страниц перед сжатием контекста", () => {
+  const setup = () => {
+    const box = seatEmpty("bar-stale-");
+    const tool = (...args) =>
+      String(
+        spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8" },
+        ).stdout ?? "",
+      );
+    const git = (...args) =>
+      spawnSync(
+        "git",
+        [
+          "-c",
+          "user.name=u",
+          "-c",
+          "user.email=u@local",
+          "-c",
+          "core.hooksPath=",
+          ...args,
+        ],
+        { cwd: box, encoding: "utf8" },
+      );
+    git("init", "-q");
+    git("add", "-A");
+    git("commit", "-qm", "основание", "--no-verify");
+    const note = path.join(box, "src", "shared", "zzWords");
+    fs.mkdirSync(note, { recursive: true });
+    fs.writeFileSync(
+      path.join(note, "zzWords.ts"),
+      "export const zzWords = 1;\n",
+    );
+    const protoAt = path.join(box, ".context", "bar-protocol.md");
+    const words = () =>
+      [
+        ...fs
+          .readFileSync(protoAt, "utf8")
+          .matchAll(/^\| \d+ \| [^|]+ \| ([^|\s][^|]*?) \|$/gm),
+      ].length;
+    return { box, tool, protoAt, words };
+  };
+
+  it("слова незапечатанного протокола гасятся, исходы на месте, свод просит перечитать; запечатанный не трогается", () => {
+    const { box, tool, protoAt, words } = setup();
+    try {
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const before = fs.readFileSync(protoAt, "utf8");
+      const filled = words();
+      expect(filled).toBeGreaterThan(1);
+      const clean = (before.match(/\| чисто \|/g) ?? []).length;
+      expect(clean).toBeGreaterThan(0);
+
+      const stale = tool("bar-read", "--stale");
+      expect(stale, stale).toContain("погашено слов: " + filled);
+      expect(words()).toBe(0);
+      const after = fs.readFileSync(protoAt, "utf8");
+      expect((after.match(/\| чисто \|/g) ?? []).length).toBe(clean);
+      const asked = tool("bar");
+      expect(asked, asked).toContain("слово не вписано — graph.mjs bar-read");
+      expect(asked).not.toContain("печать поставлена");
+
+      // Перечитали страницы — свод запечатывается; сжатие после печати её не рвёт.
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain("печать поставлена");
+      const sealed = fs.readFileSync(protoAt, "utf8");
+      const again = tool("bar-read", "--stale");
+      expect(again, again).toContain("погашено слов: 0");
+      expect(fs.readFileSync(protoAt, "utf8")).toBe(sealed);
+      expect(tool("bar")).toContain("печать уже стоит");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("слова протоколов перехода гасятся тоже", () => {
+    const { box, tool } = setup();
+    try {
+      withTransitionDebt(box, []);
+      const dir = path.join(box, ".context", "15-transition-bar");
+      fs.mkdirSync(dir, { recursive: true });
+      const one = path.join(dir, "node--zzWords.md");
+      const table = (seal) =>
+        [
+          "## Предмет",
+          "",
+          "- род: `на переход`",
+          "- печать: `" + seal + "`",
+          "",
+          "## Прочитано",
+          "",
+          "| страница | что | слово |",
+          "| --- | --- | --- |",
+          "| 1 | политика: `A1`–`A5` | берег-ветер |",
+          "| 2 | код `shared/zzWords/zzWords.ts`, строки 1–1 | гроза-дождь |",
+          "",
+          "## Исходы",
+          "",
+          "| A1 | x | чисто |",
+          "",
+        ].join("\n");
+      fs.writeFileSync(one, table("нет"));
+      const done = path.join(dir, "node--zzDone.md");
+      fs.writeFileSync(done, table("0123456789ab"));
+      const out = tool("bar-read", "--stale");
+      expect(out, out).toContain("погашено слов: 2");
+      const text = fs.readFileSync(one, "utf8");
+      expect(text).toContain("| 1 | политика: `A1`–`A5` |  |");
+      expect(text).toContain(
+        "| 2 | код `shared/zzWords/zzWords.ts`, строки 1–1 |  |",
+      );
+      expect(text).toContain("| A1 | x | чисто |");
+      expect(fs.readFileSync(done, "utf8")).toBe(table("0123456789ab"));
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("обёртка при сбое режима молчит в вывод и не держит сжатие", () => {
+    const { box } = setup();
+    try {
+      const hook = path.join(box, ".claude", "tools", "hook.mjs");
+      const event = JSON.stringify({
+        hook_event_name: "PreCompact",
+        trigger: "auto",
+      });
+      const run = () =>
+        spawnSync(process.execPath, [hook, "bar-read", "--stale"], {
+          cwd: box,
+          encoding: "utf8",
+          input: event,
+        });
+      expect(run().status).toBe(0);
+      fs.writeFileSync(
+        path.join(box, ".claude", "tools", "graph.mjs"),
+        'throw new Error("сломан");\n',
+      );
+      const broken = run();
+      expect(broken.status).toBe(0);
+      expect(broken.stdout).toBe("");
+      expect(broken.stderr).toContain(
+        "слова страниц перед сжатием не погашены",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+});

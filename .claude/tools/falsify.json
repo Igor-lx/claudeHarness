@@ -750,6 +750,12 @@
     {
       "section": "Ворота конца хода и страж обхода включены",
       "file": ".claude/settings.json",
+      "find": "\"bar-read\",\n              \"--stale\"",
+      "replace": "\"bar-read\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
       "find": "\"${CLAUDE_PROJECT_DIR}/.claude/tools/hook.mjs\"",
       "replace": "\".claude/tools/hook.mjs\""
     },

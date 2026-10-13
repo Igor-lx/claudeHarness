@@ -23,6 +23,7 @@ const LIMIT_S = 120;
 const args = process.argv.slice(2);
 const isStop = args[0] === "stop" && args.includes("--hook");
 const isGuard = args[0] === "guard" && args.includes("--hook");
+const isStale = args[0] === "bar-read" && args.includes("--stale");
 /** Чем проверить руками: тот же режим без ключа хука. */
 const byHand =
   "node .claude/tools/graph.mjs " +
@@ -168,6 +169,17 @@ if (run.error === undefined && (run.status === 0 || run.status === 2)) {
       }) + "\n",
     );
   }
+} else if (isStale) {
+  // Перед сжатием: сжатие хук не держит и текста в него не кладёт — среда
+  // отбрасывает и `systemMessage`, и `hookSpecificOutput` этого события.
+  // Отказ называется в stderr и в вывод режима, что виден при ручном вызове.
+  process.stderr.write(
+    "Обвязка: слова страниц перед сжатием не погашены — " +
+      whyFailed(run) +
+      ". Руками: `" +
+      byHand +
+      "`.\n",
+  );
 } else if (isGuard) {
   // Мимо стража идут только команды git: коммит мимо ворот проверить нечем,
   // и его решает человек. Прочие команды стражу не предмет.

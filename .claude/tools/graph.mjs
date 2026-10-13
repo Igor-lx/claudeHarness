@@ -10793,6 +10793,23 @@ const barReadPagesOf = ({ ids, subject = [], neighbours = [] }) => {
   return pages;
 };
 
+/** Протокол с погашенными словами страниц: в разделе «Прочитано» графа
+ * «слово» каждой строки пустеет, остальное не меняется. Возвращает текст и
+ * число погашенных слов. */
+const barWordsClearedOf = (body) => {
+  let inRead = false;
+  let n = 0;
+  const out = body.split(LF).map((line) => {
+    if (line.startsWith("## ")) inRead = line === "## Прочитано";
+    if (!inRead) return line;
+    const m = /^\| (\d+) \| (.+?) \| ([^|\s][^|]*?) \|$/.exec(line);
+    if (m === null) return line;
+    n += 1;
+    return "| " + m[1] + " | " + m[2] + " |  |";
+  });
+  return { text: out.join(LF), n };
+};
+
 /** Раздел чтения: порядок словами и таблица страниц. */
 const barReadSection = (pages, carried, prose = (lines) => lines) =>
   pages.length === 0
@@ -16871,6 +16888,55 @@ if (mode === "series") {
 // — и в конце каждой слово страницы; слово вписывают в протокол, и без слова
 // каждой страницы печати нет. Текст страницы и слово считает одна функция и
 // здесь, и в своде: слово сходится, только если страница та же.
+if (mode === "bar-read" && process.argv.includes("--stale")) {
+  // Хук среды перед сжатием контекста. Сжатие заменяет прочитанные страницы
+  // пересказом, а слова страниц уже стоят в протоколе, и печать удостоверила
+  // бы чтение, которого в контексте нет. Слова гасятся у протоколов, которые
+  // ещё заполняют: текущего и протоколов перехода. Исходы не трогаются.
+  // Запечатанный протокол не трогается тоже: слово — часть текста, по
+  // которому считана печать, и погашенное рвало бы её; такой протокол
+  // дочитан. Хук не отличает, чей контекст сжат — основной сессии или
+  // субагента (замер `2026-10-13`), и гасит слова при любом сжатии: лишнее
+  // перечитывание дешевле пропущенного.
+  if (!process.stdin.isTTY)
+    try {
+      readFileSync(0);
+    } catch {
+      // Событие среды не нужно: решение принимается по протоколам на диске.
+    }
+  const dir = barTransitionDir();
+  const files = [
+    ...(CONFIG.barProtocol == null
+      ? []
+      : [path.join(BASE, CONFIG.barProtocol)]),
+    ...(dir === null || !existsSync(dir)
+      ? []
+      : readdirSync(dir)
+          .filter((n) => n.endsWith(".md"))
+          .map((n) => path.join(dir, n))),
+  ].filter((f) => existsSync(f));
+  let pages = 0;
+  let touched = 0;
+  for (const f of files) {
+    const body = readFileSync(f, "utf8");
+    const head = barHeaderOf(body);
+    if (head.seal !== null && head.seal !== "нет") continue;
+    const cleared = barWordsClearedOf(body);
+    if (cleared.n === 0) continue;
+    writeFileSync(f, cleared.text);
+    pages += cleared.n;
+    touched += 1;
+  }
+  console.log("=== Слова страниц погашены ===");
+  sayLooked("незапечатанных протоколов с прочитанными страницами", touched);
+  console.log("  погашено слов: " + pages);
+  if (pages > 0)
+    console.log(
+      "  Контекст сжимается: страницы, прочитанные до сжатия, в нём не уцелеют. " +
+        "Позвать `graph.mjs bar` — он назовёт страницы, которые читать заново.",
+    );
+  process.exit(0);
+}
 if (mode === "bar-read") {
   const NEWLINE = String.fromCharCode(10);
   const args = process.argv.slice(3);
@@ -29637,6 +29703,12 @@ if (mode === "verify") {
           "stop --session",
           "начало сессии: режим `stop --session` не зовётся — пауза и след не печатаются",
         ],
+        [
+          "PreCompact",
+          undefined,
+          "bar-read --stale",
+          "перед сжатием: режим `bar-read --stale` не зовётся — слова страниц переживут сжатие, и печать удостоверит чтение, которого в контексте нет",
+        ],
       ];
       for (const [event, tool, call, why] of need)
         if (!calls(event, tool).some((c) => hookCalls(c, call)))
@@ -29692,13 +29764,13 @@ if (mode === "verify") {
     }
   }
   checkHead("Ворота конца хода и страж обхода включены", {
-    n: 3,
+    n: 4,
     unit: "хуков среды",
   });
   console.log(
     gateHooksOff.length
       ? "  не стоит: " + gateHooksOff.length
-      : "  хуки стоят через обёртку: конец хода, вызов Bash, начало сессии",
+      : "  хуки стоят через обёртку: конец хода, вызов Bash, начало сессии, сжатие контекста",
   );
   for (const h of gateHooksOff) console.log("    " + h);
 
