@@ -2095,12 +2095,14 @@ const BAR_FILL_FORMS = {
   model: { from: 6, key: "ПN", cells: ["снятие"] },
   unit: {
     from: 3,
-    key: "СвN (единица)",
+    key: "СвN",
+    note: "свидетель единицы",
     cells: ["фраза", "вопрос один", "граница по смыслу", "сочетания"],
   },
   decl: {
     from: 3,
-    key: "СвN (объявление)",
+    key: "СвN",
+    note: "свидетель объявления",
     cells: [
       "что делает",
       "служит фразе",
@@ -2132,7 +2134,12 @@ const fillOf = (form) => form.cells.map((_, k) => form.from + k);
 const barFillLegend = () => [
   "строка файла ответов — `ключ | клетка | клетка …`; клетка `=` оставляет то, что стоит (клетки, которые поставила машина, перечислены тоже):",
   ...Object.values(BAR_FILL_FORMS).map(
-    (f) => "  " + f.key + " | " + f.cells.join(" | "),
+    (f) =>
+      "  " +
+      f.key +
+      " | " +
+      f.cells.join(" | ") +
+      (f.note === undefined ? "" : "   (" + f.note + ")"),
   ),
 ];
 
@@ -15218,6 +15225,7 @@ const barProcess = ({
     // Идёт после сброса ядра: счёт сброшенного — о правке кода, а этот — о
     // ссылках на строки, которых больше нет.
     let refsGone = 0;
+    const goneKeys = [];
     if (carry !== null) {
       const now = new Map(model.map((m) => [barModelKey(m), m.id]));
       const to = new Map(
@@ -15226,7 +15234,12 @@ const barProcess = ({
       if ([...to].some(([a, b]) => a !== b)) {
         for (const [k, o] of [...carry.said]) {
           const s = modelRefsShifted(o.what ?? "", to);
-          if (s.gone && o.outcome !== "") refsGone += 1;
+          if (s.gone && o.outcome !== "") {
+            refsGone += 1;
+            goneKeys.push(
+              k.endsWith("|") ? k.slice(0, -1) : k.replace("|", "@"),
+            );
+          }
           if (s.gone) carry.said.delete(k);
           else carry.said.set(k, { ...o, what: s.text });
         }
@@ -15285,6 +15298,7 @@ const barProcess = ({
               .length,
       reset,
       refsGone,
+      goneKeys,
       edited,
       moved,
       levelReset: carry !== null && edited.length > 0,
@@ -15774,11 +15788,13 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
         );
         continue;
       }
-      if (partOf.has(abs))
-        holes.push(
-          barQuoted(q) + " назван частями " + partOf.get(abs) + " и " + n,
-        );
-      else partOf.set(abs, n);
+      if (partOf.has(abs)) {
+        // Дважды в одной части — не конфликт частей: файл лежит в ней один.
+        if (partOf.get(abs) !== n)
+          holes.push(
+            barQuoted(q) + " назван частями " + partOf.get(abs) + " и " + n,
+          );
+      } else partOf.set(abs, n);
     }
   });
   const count = table.length;
@@ -16620,7 +16636,10 @@ if (mode === "bar") {
     if (r.refsGone > 0)
       console.log(
         "  исходов со ссылкой на строку модели, которой больше нет, снято: " +
-          r.refsGone,
+          r.refsGone +
+          " — ответить заново: " +
+          r.goneKeys.slice(0, 60).join(", ") +
+          (r.goneKeys.length > 60 ? " и ещё " + (r.goneKeys.length - 60) : ""),
       );
     if (r.levelReset)
       console.log("  итог по уровням сброшен: он о коде, которого больше нет");
@@ -17275,10 +17294,17 @@ if (mode === "bar-fill") {
   });
   const faults = [];
   const seen = new Set();
+  // Предмет в таблице стоит в обратных кавычках, и ключ с ними принимается так
+  // же, как без них: свод пробы `2026-10-13` писал кавычки и получал отказ.
+  const plain = (x) => x.split("`").join("");
+  const plainRows = new Map();
+  for (const [k, v] of rows)
+    if (!plainRows.has(plain(k))) plainRows.set(plain(k), [k, v]);
   for (const { line, n } of asked) {
     const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
-    const key = parts[0];
-    const row = rows.get(key);
+    const [key, row] = rows.has(parts[0])
+      ? [parts[0], rows.get(parts[0])]
+      : (plainRows.get(plain(parts[0])) ?? [parts[0], undefined]);
     if (row === undefined) {
       faults.push("строка " + n + ": ключа «" + key + "» в протоколе нет");
       continue;

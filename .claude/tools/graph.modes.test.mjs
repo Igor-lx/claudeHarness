@@ -11207,8 +11207,8 @@ describe("починки по пробе планки 2026-10-13", () => {
       for (const line of [
         "стр N | слово",
         "ПN | снятие",
-        "СвN (единица) | фраза | вопрос один | граница по смыслу | сочетания",
-        "СвN (объявление) | что делает | служит фразе | имя говорит | упрощает | решение по входам",
+        "СвN | фраза | вопрос один | граница по смыслу | сочетания   (свидетель единицы)",
+        "СвN | что делает | служит фразе | имя говорит | упрощает | решение по входам   (свидетель объявления)",
         "критерий@предмет | исход | адрес | что | судьба",
         "также <находка дословно> | также",
         "уровень@предмет | что на уровне | держится | опора",
@@ -11274,6 +11274,129 @@ describe("починки по пробе планки 2026-10-13", () => {
       tool("bar", "app/zzWide.ts");
       expect(tool("bar", "app/zzWide.ts")).toContain(
         "ключ — «также » и находка дословно: A6-бис — `src/app/zzWide.ts:1` — кандидаты A9-тер",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("`bar-fill` принимает ключ с предметом в обратных кавычках, как он стоит в таблице", () => {
+    const box = seatEmpty("fillticks-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzWide.ts"),
+        "export const zzWide = (width: number): boolean => width > 0;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      const copyAt = path.join(box, "copy.md");
+      fs.copyFileSync(protoAt, copyAt);
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(
+        answersAt,
+        "A1@`app/zzWide.ts` | нет предмета |  | проба |  \nA10@app/zzWide.ts | нет предмета |  | проба |  \n",
+      );
+      const out = execFileSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "bar-fill",
+          answersAt,
+          copyAt,
+        ],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(out).toContain("вписано строк: 2");
+      const text = fs.readFileSync(copyAt, "utf8");
+      expect(text).toMatch(
+        /^\| A1 \| `app\/zzWide\.ts` \|[^|]*\| нет предмета \|/m,
+      );
+      expect(text).toMatch(
+        /^\| A10 \| `app\/zzWide\.ts` \|[^|]*\| нет предмета \|/m,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("файл, названный дважды в одной части правки, не конфликт частей", () => {
+    const box = seatEmpty("partdup-");
+    try {
+      const tool = toolIn(box);
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=t", "-c", "user.email=t@t", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      // Две несвязанные правки — две части; с одной частью раздела нет.
+      const ats = ["zzMath", "zzOther"].map((name) =>
+        path.join(box, "src", "shared", name, name + ".ts"),
+      );
+      for (const at of ats) {
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(
+          at,
+          "export const zzAdd = (a: number, b: number): number => a + b;\n",
+        );
+      }
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      for (const at of ats)
+        fs.writeFileSync(
+          at,
+          "export const zzAdd = (a: number, b: number): number => b + a;\n",
+        );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const lines = fs.readFileSync(protoAt, "utf8").split("\n");
+      const from = lines.findIndex((l) => l.startsWith("## Части правки"));
+      expect(from).toBeGreaterThan(0);
+      const row = lines.findIndex((l, i) => i > from && /^\| 1 \|/.test(l));
+      expect(row).toBeGreaterThan(from);
+      const c = lines[row].split("|");
+      const first = /`[^`]+`/.exec(c[2])?.[0];
+      expect(first).toBeDefined();
+      c[2] = " " + c[2].trim() + ", " + first + " ";
+      lines[row] = c.join("|");
+      fs.writeFileSync(protoAt, lines.join("\n"));
+      expect(tool("bar")).not.toContain("назван частями 1 и 1");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("после пересборки режим называет ключи снятых исходов", () => {
+    const box = seatEmpty("gonekeys-");
+    try {
+      const tool = toolIn(box);
+      const at = path.join(box, "src", "app", "zzGone.ts");
+      fs.writeFileSync(
+        at,
+        "export const zzGone = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzGone.ts");
+      const flagRow = /^\| (П\d+) \| флаг \|/m.exec(
+        fs.readFileSync(protoAt, "utf8"),
+      )?.[1];
+      expect(flagRow).toBeDefined();
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          B1: "чисто |  | " + flagRow + " — довод читается из вызова | ",
+        },
+      });
+      // Строка модели, на которую ссылается ответ, исчезает вместе с флагом.
+      fs.writeFileSync(
+        at,
+        "export const zzGone = (width: number): boolean => width > 0;\n",
+      );
+      const out = tool("bar", "app/zzGone.ts");
+      expect(out).toMatch(
+        /исходов со ссылкой на строку модели, которой больше нет, снято: \d+ — ответить заново: [^\n]*\bB1\b/,
       );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
