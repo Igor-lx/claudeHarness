@@ -11194,4 +11194,50 @@ describe("починки по пробе планки 2026-10-13", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("вывод `bar` называет форму файла ответов, и разбор читает ту же таблицу", () => {
+    const box = seatEmpty("fillforms-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzWide.ts"),
+        "export const zzWide = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n",
+      );
+      const first = tool("bar", "app/zzWide.ts");
+      for (const line of [
+        "стр N | слово",
+        "ПN | снятие",
+        "СвN (единица) | фраза | вопрос один | граница по смыслу | сочетания",
+        "СвN (объявление) | что делает | служит фразе | имя говорит | упрощает | решение по входам",
+        "критерий@предмет | исход | адрес | что | судьба",
+        "также <находка дословно> | также",
+        "уровень@предмет | что на уровне | держится | опора",
+        "путь файла | база | документация | чем это объяснено",
+        "часть N | файлы | что",
+      ])
+        expect(first).toContain("    " + "  " + line);
+      // Строка исхода в названной форме принимается разбором.
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const copyAt = path.join(box, "copy.md");
+      fs.copyFileSync(protoAt, copyAt);
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(answersAt, "B1 | нет предмета |  | проба |  \n");
+      const filled = execFileSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "bar-fill",
+          answersAt,
+          copyAt,
+        ],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(filled).not.toContain("отказ");
+      expect(fs.readFileSync(copyAt, "utf8")).toMatch(
+        /^\| B1 \| [^|]*\| [^|]*\| нет предмета \|/m,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });

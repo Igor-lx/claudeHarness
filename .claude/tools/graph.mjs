@@ -2061,6 +2061,57 @@ const barRowsOf = (body) => {
   }
   return { outcomes, model, levels, base, witnesses, reads, cross };
 };
+/** Файл ответов `bar-fill`: строка `ключ | клетка | клетка …`. Один источник
+ * для разбора файла и для подсказки в выводе `bar`: форму клеток сессия
+ * подбирала по сообщениям об отказах (свод пробы `2026-10-13`: до двадцати
+ * вызовов `bar-fill`, часть — повторы после отказа). `from` — номер первой
+ * заполняемой графы в строке таблицы протокола. */
+const BAR_FILL_FORMS = {
+  page: { from: 2, key: "стр N", cells: ["слово"] },
+  model: { from: 6, key: "ПN", cells: ["снятие"] },
+  unit: {
+    from: 3,
+    key: "СвN (единица)",
+    cells: ["фраза", "вопрос один", "граница по смыслу", "сочетания"],
+  },
+  decl: {
+    from: 3,
+    key: "СвN (объявление)",
+    cells: [
+      "что делает",
+      "служит фразе",
+      "имя говорит",
+      "упрощает",
+      "решение по входам",
+    ],
+  },
+  outcome: {
+    from: 3,
+    key: "критерий@предмет",
+    cells: ["исход", "адрес", "что", "судьба"],
+  },
+  cross: { from: 3, key: "также <находка дословно>", cells: ["также"] },
+  level: {
+    from: 2,
+    key: "уровень@предмет",
+    cells: ["что на уровне", "держится", "опора"],
+  },
+  base: {
+    from: 1,
+    key: "путь файла",
+    cells: ["база", "документация", "чем это объяснено"],
+  },
+  part: { from: 1, key: "часть N", cells: ["файлы", "что"] },
+};
+const fillOf = (form) => form.cells.map((_, k) => form.from + k);
+/** Подсказка о форме файла ответов — строками для вывода `bar`. */
+const barFillLegend = () => [
+  "строка файла ответов — `ключ | клетка | клетка …`; клетка `=` оставляет то, что стоит (клетки, которые поставила машина, перечислены тоже):",
+  ...Object.values(BAR_FILL_FORMS).map(
+    (f) => "  " + f.key + " | " + f.cells.join(" | "),
+  ),
+];
+
 /** Ключи к заполнению — что сессия пишет файлом `bar-fill`, сжато. Протокол
  * читали целиком ради ключей: журнал пробы `2026-10-12` — `104 644` знака
  * чтения на протокол в `74 202`, а строки исходов несли заголовок критерия,
@@ -16609,6 +16660,7 @@ if (mode === "bar") {
     console.log(
       "  Клетки вписывают файлом ответов, а не правкой таблицы: `graph.mjs bar-fill <файл>`.",
     );
+    for (const line of barFillLegend()) console.log("    " + line);
     console.log("");
     console.log(
       "  Ключи к заполнению — протокол целиком ради них читать не нужно; ключ",
@@ -17139,21 +17191,21 @@ if (mode === "bar-fill") {
       /^[0-9]+$/.test(head)
     ) {
       key = "стр " + head;
-      fill = [2];
+      fill = fillOf(BAR_FILL_FORMS.page);
     } else if (
       section === "## Модель предмета" &&
       cells.length === 8 &&
       /^П[0-9]+$/.test(head)
     ) {
       key = head;
-      fill = [6];
+      fill = fillOf(BAR_FILL_FORMS.model);
     } else if (section === "## Свидетели" && /^Св[0-9]+$/.test(head)) {
       key = head;
       fill =
         cells.length === 7
-          ? [3, 4, 5, 6]
+          ? fillOf(BAR_FILL_FORMS.unit)
           : cells.length === 8
-            ? [3, 4, 5, 6, 7]
+            ? fillOf(BAR_FILL_FORMS.decl)
             : null;
     } else if (
       section === "## Исходы" &&
@@ -17163,14 +17215,14 @@ if (mode === "bar-fill") {
     ) {
       const subject = barUnTick(cells[1]).trim();
       key = subject === BAR_NO_SUBJECT ? head : head + "@" + subject;
-      fill = [3, 4, 5, 6];
+      fill = fillOf(BAR_FILL_FORMS.outcome);
     } else if (
       section === BAR_CROSS_TITLE &&
       cells.length === 4 &&
       BAR_CROSS_FINDING.test(head)
     ) {
       key = "также " + head;
-      fill = [3];
+      fill = fillOf(BAR_FILL_FORMS.cross);
     } else if (
       section === "## Итог по уровням" &&
       cells.length === 5 &&
@@ -17178,21 +17230,21 @@ if (mode === "bar-fill") {
     ) {
       const subject = barUnTick(cells[1]).trim();
       key = subject === BAR_NO_SUBJECT ? head : head + "@" + subject;
-      fill = [2, 3, 4];
+      fill = fillOf(BAR_FILL_FORMS.level);
     } else if (
       section === "## База и документация" &&
       cells.length === 4 &&
       head.startsWith(BAR_TICK)
     ) {
       key = barUnTick(head).trim();
-      fill = [1, 2, 3];
+      fill = fillOf(BAR_FILL_FORMS.base);
     } else if (
       section === "## " + PARTS_TITLE &&
       cells.length === 3 &&
       /^[0-9]+$/.test(head)
     ) {
       key = "часть " + head;
-      fill = [1, 2];
+      fill = fillOf(BAR_FILL_FORMS.part);
     }
     if (key !== null && fill !== null) rows.set(key, { at, cells, fill });
   });
