@@ -595,6 +595,30 @@ describe("шапки правил о коде — перечнем словар�
   });
 });
 
+/**
+ * Страница чтения лежит файлом в папке рядом с протоколом, и политика приходит
+ * в контекст вместе с первой прочитанной страницей. Приносит её шапка правила:
+ * без образца папки страниц в шапке страница — файл, который среда не узнаёт.
+ */
+describe("шапки правил называют папку страниц чтения", () => {
+  it("quality.md, quality-scoped.md и code.md несут образец папки страниц", () => {
+    const rules = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "rules",
+    );
+    for (const name of ["quality.md", "quality-scoped.md", "code.md"]) {
+      const head = /^---\n([\s\S]*?)\n---\n/.exec(
+        fs.readFileSync(path.join(rules, name), "utf8"),
+      );
+      expect(head, name).not.toBeNull();
+      expect(head[1], name).toContain(
+        '"**/' + vocabulary.BAR_PAGES_DIR + '/*.md"',
+      );
+    }
+  });
+});
+
 describe("расширения звеньев и линта семени — перечнем словаря", () => {
   it("звено типов читает TypeScript, звено линта — весь код, линт семени разбирает каждое расширение кода", () => {
     const shelf = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");

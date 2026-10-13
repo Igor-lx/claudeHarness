@@ -84,6 +84,7 @@ import {
   inComment,
   isCodePath,
   isDocPath,
+  BAR_PAGES_DIR,
   CODE_EXTENSIONS,
   CODE_FILE,
   TS_FILE,
@@ -10551,7 +10552,7 @@ const policyPageOf = (items) => {
     out.push(
       "Тела критериев — " +
         files.map((f) => barQuoted(f)).join(", ") +
-        ": в контексте по шапке.",
+        ": приходят с этой страницей по шапке политики.",
     );
   if (shared.length > 0)
     out.push(
@@ -16878,7 +16879,7 @@ if (mode === "bar-read") {
     console.log("  пересоберёт его и назовёт страницы.");
     process.exit(1);
   }
-  const pick = args.find((a) => !a.endsWith(".md"));
+  const pick = args.find((a) => !a.endsWith(".md") && a !== "--print");
   const wanted = new Set();
   if (pick === undefined) for (const r of parsed.reads) wanted.add(r.n);
   else
@@ -16890,23 +16891,56 @@ if (mode === "bar-read") {
     console.log("  Страниц в протоколе: " + parsed.reads.length + ".");
     process.exit(1);
   }
-  for (const r of shown) {
+  const blockOf = (r) => {
     const text = pageTextOf(r.spec);
-    console.log(
+    return [
       "=== Страница " + r.n + " из " + parsed.reads.length + ": " + r.spec + " ===",
-    );
-    console.log(text);
-    console.log(
+      text,
       "--- слово страницы " + r.n + ": " + pageWord(was.salt, r.spec, text) + " ---",
-    );
-    console.log("");
+    ].join(NEWLINE);
+  };
+  const wordRule =
+    "Слово каждой прочитанной страницы — в графу «слово» её строки раздела" +
+    NEWLINE +
+    "«Прочитано». Слово снимают, прочитав страницу, а не программой." +
+    NEWLINE;
+  // `--print` — страницы в вывод, как прежде: так их читает проба и тест.
+  if (args.includes("--print")) {
+    for (const r of shown) {
+      console.log(blockOf(r));
+      console.log("");
+    }
+    console.log(wordRule);
+    process.exit(0);
   }
+  // Страницы — файлами рядом с протоколом. Шапки правил о планке и о коде
+  // называют эту папку: страница, открытая инструментом чтения, приносит
+  // политику в контекст, и тела критериев приходят к первой же странице.
+  // Длинный вывод среда прятала в файл сама, и его дочитывали ещё одним
+  // вызовом; код при этом читали второй раз — файлами предмета. Папка
+  // выводима, и в git её нет: она сама себя игнорирует.
+  const dir = path.join(path.dirname(at), BAR_PAGES_DIR);
+  const stem = path.basename(at, ".md");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, ".gitignore"), "*" + NEWLINE);
+  const mine = new RegExp("^" + escapeRe(stem) + "-([0-9]+)\\.md$");
+  for (const name of readdirSync(dir)) {
+    const m = mine.exec(name);
+    if (m !== null && Number(m[1]) > parsed.reads.length)
+      rmSync(path.join(dir, name));
+  }
+  console.log("=== Страницы чтения — файлами ===");
   console.log(
-    "Слово каждой прочитанной страницы — в графу «слово» её строки раздела",
+    "  Читать инструментом Read, по одному файлу: страница, открытая иначе,",
   );
-  console.log(
-    "«Прочитано». Слово снимают, прочитав страницу, а не программой." + NEWLINE,
-  );
+  console.log("  политику в контекст не приносит. Слово — в конце файла.");
+  for (const r of shown) {
+    const file = path.join(dir, stem + "-" + r.n + ".md");
+    writeFileSync(file, blockOf(r) + NEWLINE);
+    console.log("  " + r.n + ". " + file + " — " + r.spec);
+  }
+  console.log("");
+  console.log(wordRule);
   process.exit(0);
 }
 

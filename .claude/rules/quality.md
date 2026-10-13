@@ -4,6 +4,7 @@ paths:
   - "**/*.{css,scss,sass,less,styl}"
   - "**/bar-protocol.md"
   - "**/15-transition-bar/*.md"
+  - "**/bar-pages/*.md"
 ---
 
 # Планка качества — по чему сверяется результат

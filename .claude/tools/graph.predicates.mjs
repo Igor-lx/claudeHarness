@@ -42,6 +42,11 @@ export const STYLE_EXTENSIONS = ["css", "scss", "sass", "less", "styl"];
  * вовсе. Найдено прогоном проб. */
 export const TS_EXTENSIONS = ["ts", "tsx", "mts", "cts"];
 export const CODE_EXTENSIONS = [...TS_EXTENSIONS, "js", "jsx", "mjs", "cjs"];
+/** Папка страниц чтения рядом с протоколом свода. Её образец несут шапки
+ * правил о коде и о планке: страницу открывают инструментом чтения, и среда
+ * кладёт политику в контекст вместе с ней. Тест обвязки сличает шапки с этим
+ * именем. */
+export const BAR_PAGES_DIR = "bar-pages";
 export const STYLE_ALT = STYLE_EXTENSIONS.join("|");
 const CODE_ALT = CODE_EXTENSIONS.join("|");
 /** Код или стиль — альтернатива для образцов, а не готовый образец. */

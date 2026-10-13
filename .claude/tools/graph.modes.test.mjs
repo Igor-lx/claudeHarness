@@ -2703,7 +2703,12 @@ const pageWordsOf = (protoAt) => {
   try {
     out = execFileSync(
       process.execPath,
-      [path.join(box, ".claude", "tools", "graph.mjs"), "bar-read", protoAt],
+      [
+        path.join(box, ".claude", "tools", "graph.mjs"),
+        "bar-read",
+        protoAt,
+        "--print",
+      ],
       { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
   } catch (e) {
@@ -3764,7 +3769,12 @@ describe("ядро по предметам уровня: правка, чтен�
       expect(pages(fs.readFileSync(path.join(dir, "layer--components.md"), "utf8"))).toEqual([]);
       const policy = execFileSync(
         process.execPath,
-        [path.join(box, ".claude", "tools", "graph.mjs"), "bar-read", path.join(dir, "app.md")],
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "bar-read",
+          path.join(dir, "app.md"),
+          "--print",
+        ],
         { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
       );
       for (const id of ["A1", "A5", "A6", "G7"]) expect(policy).toContain("**" + id + ". ");
@@ -4228,7 +4238,7 @@ describe("страница политики", () => {
           ).stdout ?? "",
         );
       tool("bar", "src/app");
-      const pages = tool("bar-read")
+      const pages = tool("bar-read", "--print")
         .split(/^(?==== Страница )/m)
         .filter((p) => p.includes("политика:"));
       expect(pages.length).toBeGreaterThan(0);
@@ -4268,7 +4278,7 @@ describe("страница политики", () => {
           ).stdout ?? "",
         );
       tool("bar", "src/app");
-      const pages = tool("bar-read")
+      const pages = tool("bar-read", "--print")
         .split(/^(?==== Страница )/m)
         .filter((p) => p.includes("политика:"));
       // Файл политики страница называет раз, а не у каждого критерия.
@@ -4278,7 +4288,7 @@ describe("страница политики", () => {
           .filter((l) => l.startsWith("Тела критериев — "));
         expect(pointers.length, page.slice(0, 80)).toBe(1);
         expect(pointers[0]).toMatch(
-          /^Тела критериев — `\.claude\/rules\/quality(?:-scoped)?\.md`(?:, `\.claude\/rules\/quality-scoped\.md`)?: в контексте по шапке\.$/,
+          /^Тела критериев — `\.claude\/rules\/quality(?:-scoped)?\.md`(?:, `\.claude\/rules\/quality-scoped\.md`)?: приходят с этой страницей по шапке политики\.$/,
         );
       }
       const lines = pages.join("").split("\n");
@@ -6042,7 +6052,7 @@ describe("страницы чтения в своде по планке", () => 
       // замеренная беспредметность (A5-бис — парных копий нет) разрывают
       // диапазон, и страница их тел не печатает.
       expect(rows[0][1]).toMatch(/^политика: `A1`–`A5`, `A5-тер`–`A7`, `A9`–/);
-      const first = tool("bar-read", "1");
+      const first = tool("bar-read", "1", "--print");
       expect(first).not.toContain("**A8.");
       expect(first).not.toContain("**A5-бис.");
       // Диапазон — все тела между концами, а не одни концы.
@@ -6056,8 +6066,10 @@ describe("страницы чтения в своде по планке", () => 
         "сосед `app/zzPage.ts`, строки 3–7",
         "сосед `shared/zzText/zzText.ts`, строки 4–5",
       ]);
-      expect(tool("bar-read", "1")).toContain("**A1. Узел отвечает на один вопрос.** (узел)");
-      const page = tool("bar-read", code[0]);
+      expect(tool("bar-read", "1", "--print")).toContain(
+        "**A1. Узел отвечает на один вопрос.** (узел)",
+      );
+      const page = tool("bar-read", code[0], "--print");
       expect(page).toContain("   3 |   return zzTrim(text);");
       const word = /^--- слово страницы \d+: (\S+) ---$/m.exec(page)[1];
       expect(word).toMatch(/^[а-яё]+-[а-яё]+$/);
@@ -6133,7 +6145,7 @@ describe("вывод инструмента в канал доходит цел�
         } catch {
           // Протокол напечатан, печати нет — так и ждут: читать его страницы.
         }
-        const out = execFileSync("sh", ["-c", '"$0" "$1" bar-read | (sleep 2; cat)', process.execPath, graph], {
+        const out = execFileSync("sh", ["-c", '"$0" "$1" bar-read --print | (sleep 2; cat)', process.execPath, graph], {
           cwd: box,
           encoding: "utf8",
           maxBuffer: 64 * 1024 * 1024,
@@ -10667,6 +10679,89 @@ describe("основание печати свода", () => {
       expect(gate.stdout).toContain(
         "основание свода другое: политика качества",
       );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("страницы чтения — файлами", () => {
+  it("страница лежит файлом со словом в конце, папка сама себя игнорирует, лишние файлы снимаются, шапки правил её называют", () => {
+    const box = seatEmpty("bar-pages-");
+    try {
+      const tool = (...args) =>
+        String(
+          spawnSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8" },
+          ).stdout ?? "",
+        );
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8" },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      const note = path.join(box, "src", "shared", "zzNote");
+      fs.mkdirSync(note, { recursive: true });
+      fs.writeFileSync(
+        path.join(note, "zzNote.ts"),
+        "export const zzNote = 1;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "shared/zzNote");
+      const dir = path.join(box, ".context", "bar-pages");
+      const listed = tool("bar-read");
+      expect(listed, listed).toContain("Читать инструментом Read");
+      const pages = [
+        ...fs
+          .readFileSync(protoAt, "utf8")
+          .matchAll(/^\| (\d+) \| ([^|]+) \|  \|$/gm),
+      ].map((m) => m[1]);
+      expect(pages.length).toBeGreaterThan(1);
+      for (const n of pages) {
+        const file = path.join(dir, "bar-protocol-" + n + ".md");
+        expect(listed).toContain(file);
+        // Файл — тот же текст, что даёт `--print`, и слово в конце.
+        const printed = tool("bar-read", n, "--print");
+        const body = fs.readFileSync(file, "utf8");
+        expect(printed).toContain(body);
+        expect(body).toMatch(
+          /\n--- слово страницы \d+: [а-яё]+-[а-яё]+ ---\n$/,
+        );
+      }
+      expect(
+        fs.readFileSync(path.join(dir, "bar-protocol-1.md"), "utf8"),
+      ).toContain("приходят с этой страницей по шапке политики");
+      // Папка выводима: git её не видит и не берёт.
+      expect(
+        git("status", "--porcelain", "--", ".context/bar-pages").stdout,
+      ).toBe("");
+      expect(
+        git("check-ignore", "-q", ".context/bar-pages/bar-protocol-1.md")
+          .status,
+      ).toBe(0);
+      // Файл страницы, которой в протоколе больше нет, снимается.
+      const stale = path.join(
+        dir,
+        "bar-protocol-" + (pages.length + 5) + ".md",
+      );
+      fs.writeFileSync(stale, "старая страница\n");
+      tool("bar-read", "1");
+      expect(fs.existsSync(stale)).toBe(false);
+      expect(fs.existsSync(path.join(dir, "bar-protocol-1.md"))).toBe(true);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
