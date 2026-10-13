@@ -2,7 +2,6 @@
 paths:
   - "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
   - "**/*.{css,scss,sass,less,styl}"
-  - "**/bar-pages/*.md"
 ---
 
 # Работа с кодом — узел, тесты, мутации, парные копии, комментарии

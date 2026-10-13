@@ -127,6 +127,7 @@ import {
   componentsOf,
   hunksOf,
   linesOf,
+  partsPruned,
   partsSectionOf,
   partsTableOf,
   PARTS_TITLE,
@@ -2089,15 +2090,29 @@ const barRowsOf = (body) => {
  * для разбора файла и для подсказки в выводе `bar`: форму клеток сессия
  * подбирала по сообщениям об отказах (свод пробы `2026-10-13`: до двадцати
  * вызовов `bar-fill`, часть — повторы после отказа). `from` — номер первой
- * заполняемой графы в строке таблицы протокола. */
+ * заполняемой графы в строке таблицы протокола; `rule` — что пишут в клетки:
+ * прежде правила лежали только во вводных абзацах протокола, задание пробы
+ * не велело их читать, и свод того же дня взял их двенадцатью срезами
+ * оболочкой и `151` отказом «чисто без опоры». */
 const BAR_FILL_FORMS = {
-  page: { from: 2, key: "стр N", cells: ["слово"] },
-  model: { from: 6, key: "ПN", cells: ["снятие"] },
+  page: {
+    from: 2,
+    key: "стр N",
+    cells: ["слово"],
+    rule: "слово — два слова из последней строки страницы, снятые чтением",
+  },
+  model: {
+    from: 6,
+    key: "ПN",
+    cells: ["снятие"],
+    rule: "снятие — `нет`, `строка N`, `есть: строка N` либо `не нужно: причина`",
+  },
   unit: {
     from: 3,
     key: "СвN",
     note: "свидетель единицы",
     cells: ["фраза", "вопрос один", "граница по смыслу", "сочетания"],
+    rule: "фраза — на какой один вопрос отвечает единица, одним предложением по коду, а не по карте; вопрос один — `да` либо `нет`, при союзе во фразе `да: почему вопрос один`; граница по смыслу — `да` либо `нет`; сочетания — `нет` либо `есть: какие`",
   },
   decl: {
     from: 3,
@@ -2110,38 +2125,93 @@ const BAR_FILL_FORMS = {
       "упрощает",
       "решение по входам",
     ],
+    rule: "что делает — не меньше двух слов; служит фразе, имя говорит, упрощает — `да` либо `нет`; решение по входам — `нет` либо `да: где`",
   },
   outcome: {
     from: 3,
     key: "критерий@предмет",
     cells: ["исход", "адрес", "что", "судьба"],
+    rule: "`чисто` — адрес `—`; в «что» — почему чисто, с номерами строк модели `ПN`, о которых спрашивает ключ (в скобках у ключа ниже), у архитектурного ядра — строкой модели своего уровня, у критерия свидетеля — его номером `СвN`; `нет предмета` — адрес `—`, в «что» — причина; `нашлось` — адрес `путь:строка`, в «что» — что не так, прочие места в конце: «ещё мест: `путь:строка`, `путь:строка`», без пояснений после адреса; судьба находки — `вопрос`, `починено`, `отложено`, на чтении ещё `предложено`, на переходе `долг`; у «чисто» и «нет предмета» судьбы нет — `=`",
   },
-  cross: { from: 3, key: "также <находка дословно>", cells: ["также"] },
+  cross: {
+    from: 3,
+    key: "также <находка дословно>",
+    cells: ["также"],
+    rule: "о каждом кандидате `X` либо `не X` через запятую и любой другой критерий, чьё тело называет то же нарушение, либо `никакие`; находка в ключе — критерий, « для » и предмет в обратных кавычках (у критерия без предмета — без «для»), « — » и основной адрес находки от корня репозитория в обратных кавычках; строки «также» пишут тем же файлом, что исходы: таблицу режим допишет сам",
+  },
   level: {
     from: 2,
     key: "уровень@предмет",
     cells: ["что на уровне", "держится", "опора"],
+    rule: "держится — `да` либо `нет`, открытая находка предмета — `нет`; опора — номера строк модели этого уровня",
   },
   base: {
     from: 1,
     key: "путь файла",
     cells: ["база", "документация", "чем это объяснено"],
+    rule: "база и документация порознь — `правлено` либо `не требуется`; чем это объяснено — правленый файл базы и документ в обратных кавычках либо причина",
   },
-  part: { from: 1, key: "часть N", cells: ["файлы", "что"] },
+  part: {
+    from: 1,
+    key: "часть N",
+    cells: ["файлы", "что"],
+    rule: "файлы — пути в обратных кавычках через запятую; что — сообщение коммита части; часть без файлов и без «что» режим снимает сам",
+  },
 };
 const fillOf = (form) => form.cells.map((_, k) => form.from + k);
 /** Подсказка о форме файла ответов — строками для вывода `bar`. */
 const barFillLegend = () => [
-  "строка файла ответов — `ключ | клетка | клетка …`; клетка `=` оставляет то, что стоит (клетки, которые поставила машина, перечислены тоже):",
-  ...Object.values(BAR_FILL_FORMS).map(
-    (f) =>
-      "  " +
+  "строка файла ответов — `ключ | клетка | клетка …`; клетка `=` оставляет то, что стоит, недостающие клетки в конце строки — тоже `=` (клетки, которые поставила машина, перечислены тоже):",
+  ...Object.values(BAR_FILL_FORMS).flatMap((f) => [
+    "  " +
       f.key +
       " | " +
       f.cells.join(" | ") +
       (f.note === undefined ? "" : "   (" + f.note + ")"),
-  ),
+    "      " + f.rule,
+  ]),
+  "файл ответов пишут инструментом записи файла, а режим зовут отдельной командой: оболочка без подтверждения не исполняет ни `heredoc`, ни перенаправление в переменную",
 ];
+
+/** Дыры протокола группами. Вид дыры — её текст, где переменные слова
+ * (ключ, путь, цитата, номера строк модели, числа) заменены многоточием;
+ * у вида с `BAR_HOLES_GROUP` дырами и больше печатается строка вида с числом
+ * и под ней по дыре её переменные слова, кроме общих всем дырам вида. Свод
+ * пробы `2026-10-13` получил отказ в `237` строк, `151` из них одного вида, и
+ * сгруппировал его сам: скриптом, за пять обращений. Вид с меньшим числом
+ * дыр печатается строками, как прежде. */
+const BAR_HOLES_GROUP = 6;
+const BAR_HOLES_WIDTH = 160;
+const BAR_HOLE_VAR =
+  /`[^`]*`|«[^»]*»|(?<![\p{L}\p{N}])Св[0-9]+(?![\p{N}])|(?<![\p{L}\p{N}])П[0-9]+(?:, П[0-9]+)*(?: и ещё [0-9]+)?(?![\p{N}])|^[A-ZА-Я][0-9]+(?:-[а-яё]+)?(?![\p{L}\p{N}-])|[0-9]+/gu;
+const barHolesGrouped = (holes) => {
+  const kinds = new Map();
+  for (const h of holes) {
+    const kind = h.replace(BAR_HOLE_VAR, "…");
+    kinds.set(kind, [...(kinds.get(kind) ?? []), h]);
+  }
+  const out = [];
+  for (const [kind, list] of kinds) {
+    if (list.length < BAR_HOLES_GROUP) {
+      out.push(...list);
+      continue;
+    }
+    const vars = list.map((h) => h.match(BAR_HOLE_VAR) ?? []);
+    const same = vars[0].map((v, k) => vars.every((x) => x[k] === v));
+    out.push(kind + " — " + list.length + ":");
+    let line = "";
+    for (const v of vars) {
+      const one = v.filter((_, k) => !same[k]).join(" ");
+      if (line !== "" && line.length + one.length + 2 > BAR_HOLES_WIDTH) {
+        out.push("  " + line);
+        line = "";
+      }
+      line = line === "" ? one : line + "; " + one;
+    }
+    if (line !== "") out.push("  " + line);
+  }
+  return out;
+};
 
 /** Ключи к заполнению — что сессия пишет файлом `bar-fill`, сжато. Протокол
  * читали целиком ради ключей: журнал пробы `2026-10-12` — `104 644` знака
@@ -10698,7 +10768,7 @@ const policyPageOf = (items) => {
         ),
       ].join(LF),
     );
-  for (const one of parsed) {
+  parsed.forEach((one, k) => {
     const own = one.forms.filter((f) => !shared.includes(f));
     const common = one.forms.some((f) => shared.includes(f));
     out.push(
@@ -10709,10 +10779,70 @@ const policyPageOf = (items) => {
             FORMS_HEAD +
             own.map((f) => LF + f).join("") +
             (common ? LF + "- и общие формы страницы, выше" : "")
-          : ""),
+          : "") +
+        referencedSectionsOf(items[k].own ?? ""),
     );
-  }
+  });
   return out.join(LF + LF);
+};
+
+/** Разделы других правил, на которые ссылается тело критерия формой
+ * «`файл.md`, раздел «Заголовок»», — текстом на его странице. Правило с
+ * шапкой `paths:` страница по шапке не приносит: прежде шапка `code.md`
+ * называла папку страниц, и свод получал его целиком — `72 000` знаков ради
+ * двух разделов, на которые ссылаются `A16` и `H3`. Правило без шапки лежит
+ * в контексте и так — его раздел не печатается. */
+const REFERENCED_SECTIONS = new Map();
+const referencedSectionsOf = (own) => {
+  if (CONFIG.qualityScope == null) return "";
+  const dir = path.dirname(path.join(BASE, CONFIG.qualityScope.policy));
+  const out = [];
+  for (const m of own.matchAll(/`([a-z][a-z-]*\.md)`, раздел «([^»]+)»/g)) {
+    const [, file, title] = m;
+    if (/^quality(-scoped)?\.md$/.test(file)) continue;
+    const key = file + LF + title;
+    if (!REFERENCED_SECTIONS.has(key)) {
+      const at = path.join(dir, file);
+      const text = existsSync(at) ? readFileSync(at, "utf8") : "";
+      const lines = text.split(/\r?\n/);
+      const head = lines.findIndex(
+        (l) => /^#{2,4} /.test(l) && l.replace(/^#+ /, "") === title,
+      );
+      let section = "";
+      if (/^---\r?\npaths:/.test(text) && head >= 0) {
+        const depth = /^#+/.exec(lines[head])[0].length;
+        let end = head + 1;
+        while (
+          end < lines.length &&
+          !(
+            /^#+ /.test(lines[end]) && /^#+/.exec(lines[end])[0].length <= depth
+          )
+        )
+          end += 1;
+        section = lines
+          .slice(head, end)
+          .join(LF)
+          .replace(/(\n---\s*)+$/, "")
+          .trimEnd();
+      }
+      REFERENCED_SECTIONS.set(key, section);
+    }
+    const section = REFERENCED_SECTIONS.get(key);
+    if (section !== "")
+      out.push(
+        LF +
+          LF +
+          "Раздел " +
+          barQuoted(file) +
+          " «" +
+          title +
+          "» — на него ссылается тело критерия, а сам файл со страницей не приходит:" +
+          LF +
+          LF +
+          section,
+      );
+  }
+  return out.join("");
 };
 
 /** Заголовок критерия — от начала до закрывающих звёздочек и до конца их
@@ -10818,6 +10948,57 @@ const pageTextOf = (spec) => {
   const code = /^(?:код|сосед) `([^`]+)`, строки (.+)$/.exec(spec);
   if (code !== null) return numberedLines(absOfRel(code[1]), rangesOf(code[2]));
   return "страницы такой нет";
+};
+
+/** Что правлено работой на странице кода — строками над её текстом, против
+ * основания работы. Слово считается с текста, а не с этих строк: основание
+ * после коммита всей серии другое, а текст тот же. Свод пробы `2026-10-13`
+ * читал `git diff` поверх страниц — `16 000` знаков ради того, чтобы узнать,
+ * какие строки новые. Снятые строки называются с текстом: на странице их
+ * нет. Правки на странице нет либо файл не правлен — пусто. */
+const pageChangesOf = (spec) => {
+  const code = /^код `([^`]+)`, строки (.+)$/.exec(spec);
+  if (code === null) return "";
+  let diff;
+  try {
+    diff = partDiffOf(absOfRel(code[1]), REPO_AT);
+  } catch {
+    return "";
+  }
+  if (diff.before === null) return "правлено этой работой: файл новый";
+  const ranges = rangesOf(code[2]);
+  const inPage = (n) => ranges.some(([a, b]) => n >= a && n <= b);
+  const added = [];
+  const removed = [];
+  for (const h of diff.hunks) {
+    for (let k = 0; k < h.d; k += 1) if (inPage(h.c + k)) added.push(h.c + k);
+    if (h.b === 0) continue;
+    // Снятое при замене стоит перед первой новой строкой ханка, снятое без
+    // замены — после строки, которую git называет в ханке.
+    const at = h.d === 0 ? h.c : h.c - 1;
+    if (!inPage(at) && !inPage(at + 1)) continue;
+    removed.push(
+      (at === 0 ? "в начале файла" : "после строки " + at) +
+        ":" +
+        diff.oldLines
+          .slice(h.a - 1, h.a - 1 + h.b)
+          .map((l) => LF + "  - " + l.replace(/\r?\n$/, ""))
+          .join(""),
+    );
+  }
+  if (added.length === 0 && removed.length === 0) return "";
+  const spans = [];
+  for (const n of added) {
+    const last = spans[spans.length - 1];
+    if (last !== undefined && n === last[1] + 1) last[1] = n;
+    else spans.push([n, n]);
+  }
+  return [
+    ...(spans.length > 0
+      ? ["правлено этой работой: строки " + rangesText(spans)]
+      : []),
+    ...removed.map((r) => "снято " + r),
+  ].join(LF);
 };
 
 /** Страницы протокола: тела его критериев, полный текст предмета и срезы
@@ -15121,33 +15302,70 @@ const barProcess = ({
       address,
       neighbours,
     });
-  const was = barHeader(at);
-  const accept =
-    was === null
-      ? null
-      : barAcceptOf({
-          was,
-          kind,
-          marks,
-          model,
-          expected,
-          levelSubjects,
-          withBase,
-          repoRoot,
-          changedNow,
-          changedKnown,
-          subjectAbs,
-          neighbours,
-          baseFiles,
-          witnesses,
-          reads,
-          lintRow,
-          checkRow,
-          mapDisputed,
-          anchorBroken,
-          partsOf,
-          ground,
-        });
+  let was = barHeader(at);
+  // Протокол под действующей печатью не трогают: правка её гасит.
+  const sealHeld = (one) =>
+    one !== null &&
+    one.seal !== null &&
+    one.seal !== "нет" &&
+    one.seal === barSealOf(one.body);
+  // Пустая часть — без файлов и без «что» — снимается до приёма: она ничего
+  // не коммитит, а приём отказывал на ней.
+  if (was !== null && !sealHeld(was)) {
+    const pruned = partsPruned(was.body);
+    if (pruned !== null) {
+      writeFileSync(at, pruned);
+      was = barHeader(at);
+    }
+  }
+  const acceptOf = (one) =>
+    barAcceptOf({
+      was: one,
+      kind,
+      marks,
+      model,
+      expected,
+      levelSubjects,
+      withBase,
+      repoRoot,
+      changedNow,
+      changedKnown,
+      subjectAbs,
+      neighbours,
+      baseFiles,
+      witnesses,
+      reads,
+      lintRow,
+      checkRow,
+      mapDisputed,
+      anchorBroken,
+      partsOf,
+      ground,
+    });
+  let accept = was === null ? null : acceptOf(was);
+  // Перекрёстную сверку режим переписывает сам — и принимает протокол заново
+  // в том же вызове. Прежде переписанная таблица уходила отказом «не
+  // сходится», и сессия звала режим ещё раз ради одной этой дыры; ответы
+  // «также», вписанные файлом ответов до таблицы, ждали круга так же.
+  // Ответ о находке, которой нет, снимается и называется.
+  let crossDropped = [];
+  if (
+    accept !== null &&
+    accept.drift === "" &&
+    accept.crossDiffers &&
+    !sealHeld(was)
+  ) {
+    const now = new Set(accept.crossRows.map((r) => r.finding));
+    crossDropped = accept.parsed.cross
+      .filter((r) => r.also.trim() !== "" && !now.has(r.finding))
+      .map((r) => "«также " + r.finding + "»");
+    writeFileSync(
+      at,
+      barCrossWritten(readFileSync(at, "utf8"), accept.crossRows),
+    );
+    was = barHeader(at);
+    accept = acceptOf(was);
+  }
   const parsedWas = accept?.parsed ?? null;
   if (accept === null || accept.drift !== "") {
     // Прежние исходы ПЕРЕНОСЯТСЯ, а не отбрасываются: правка предмета гасит
@@ -15337,6 +15555,7 @@ const barProcess = ({
       holes,
       twice,
       extra,
+      crossDropped,
       blank: expected.filter(
         ({ c, subject }) =>
           (said.get(barKey(c.id, subject))?.outcome ?? "") === "",
@@ -16748,7 +16967,12 @@ if (mode === "bar") {
         "  строка, которой в этом своде нет: " + r.extra.join(", "),
       );
     console.log("  дыр: " + r.holes.length);
-    for (const h of r.holes) console.log("    " + h);
+    for (const h of barHolesGrouped(r.holes)) console.log("    " + h);
+    if (r.crossDropped?.length)
+      console.log(
+        "  ответ «также» о находке, которой нет, снят: " +
+          r.crossDropped.join("; "),
+      );
     console.log("");
     console.log("  Печать не поставлена, пока в протоколе есть дыры.");
     console.log("  Ответы на дыры — файлом: `graph.mjs bar-fill <файл>`.");
@@ -17132,8 +17356,10 @@ if (mode === "bar-read") {
   }
   const blockOf = (r) => {
     const text = pageTextOf(r.spec);
+    const changes = pageChangesOf(r.spec);
     return [
       "=== Страница " + r.n + " из " + parsed.reads.length + ": " + r.spec + " ===",
+      ...(changes === "" ? [] : [changes]),
       text,
       "--- слово страницы " + r.n + ": " + pageWord(was.salt, r.spec, text) + " ---",
     ].join(NEWLINE);
@@ -17170,13 +17396,19 @@ if (mode === "bar-read") {
   }
   console.log("=== Страницы чтения — файлами ===");
   console.log(
-    "  Читать инструментом Read, по одному файлу: страница, открытая иначе,",
+    "  Читать инструментом Read: страница, открытая иначе, политику в",
   );
-  console.log("  политику в контекст не приносит. Слово — в конце файла.");
+  console.log(
+    "  контекст не приносит. Слово — в конце файла. Открывать пачками —",
+  );
+  console.log("  несколько вызовов Read в одном ответе.");
+  // Папка — раз: абсолютный адрес у каждой страницы стоил свода пробы
+  // `2026-10-13` `8 500` знаков вывода, который лежал в контексте до конца.
+  console.log("  папка: " + dir);
   for (const r of shown) {
-    const file = path.join(dir, stem + "-" + r.n + ".md");
-    writeFileSync(file, blockOf(r) + NEWLINE);
-    console.log("  " + r.n + ". " + file + " — " + r.spec);
+    const name = stem + "-" + r.n + ".md";
+    writeFileSync(path.join(dir, name), blockOf(r) + NEWLINE);
+    console.log("  " + name + " — " + r.spec);
   }
   console.log("");
   console.log(wordRule);
@@ -17300,22 +17532,44 @@ if (mode === "bar-fill") {
   const plainRows = new Map();
   for (const [k, v] of rows)
     if (!plainRows.has(plain(k))) plainRows.set(plain(k), [k, v]);
+  // Ответ «также» о находке, которой в таблице ещё нет: таблицу пишет режим
+  // `bar` по исходам, и прежде ответ ждал его вызова — круг ради одной
+  // таблицы. Строка встаёт с пустыми словами и кандидатами; `bar` впишет их
+  // и перенесёт ответ по находке, а ответ о находке, которой нет, снимет и
+  // назовёт. Ключ сверяется с формой находки, а не с исходами: исходы того
+  // же файла ответов ещё не приняты.
+  const fresh = [];
   for (const { line, n } of asked) {
     const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
     const [key, row] = rows.has(parts[0])
       ? [parts[0], rows.get(parts[0])]
       : (plainRows.get(plain(parts[0])) ?? [parts[0], undefined]);
-    if (row === undefined) {
-      faults.push("строка " + n + ": ключа «" + key + "» в протоколе нет");
-      continue;
-    }
     if (seen.has(key)) {
       faults.push("строка " + n + ": ключ «" + key + "» дважды");
       continue;
     }
+    if (
+      row === undefined &&
+      key.startsWith("также ") &&
+      BAR_CROSS_FINDING.test(key.slice("также ".length)) &&
+      parts.length === 2 &&
+      parts[1] !== "" &&
+      parts[1] !== "="
+    ) {
+      seen.add(key);
+      fresh.push({ finding: key.slice("также ".length), also: parts[1] });
+      continue;
+    }
+    if (row === undefined) {
+      faults.push("строка " + n + ": ключа «" + key + "» в протоколе нет");
+      continue;
+    }
     seen.add(key);
+    // Недостающие клетки в конце строки — `=`: строку исхода писали тремя
+    // клетками без судьбы и получали отказ. Лишняя клетка — по-прежнему
+    // отказ: её не к чему отнести.
     const given = parts.slice(1);
-    if (given.length !== row.fill.length) {
+    if (given.length > row.fill.length || given.length === 0) {
       faults.push(
         "строка " +
           n +
@@ -17329,14 +17583,36 @@ if (mode === "bar-fill") {
       continue;
     }
     row.fill.forEach((col, k) => {
-      if (given[k] !== "=") row.cells[col] = given[k];
+      if (k < given.length && given[k] !== "=") row.cells[col] = given[k];
     });
     lines[row.at] = "| " + row.cells.join(" | ") + " |";
   }
   if (faults.length > 0) refuse(...faults);
-  writeFileSync(protocolAt, lines.join(LF));
+  const written =
+    fresh.length === 0
+      ? lines.join(LF)
+      : (() => {
+          const text = lines.join(LF);
+          const have = barRowsOf(text).cross;
+          return barCrossWritten(text, [
+            ...have,
+            ...fresh.map((f) => ({
+              finding: f.finding,
+              what: "",
+              cand: "",
+              also: f.also,
+            })),
+          ]);
+        })();
+  writeFileSync(protocolAt, written);
   console.log("=== Ответы вписаны ===");
   console.log("  вписано строк: " + asked.length + " — " + rel(protocolAt));
+  if (fresh.length > 0)
+    console.log(
+      "  из них «также» о находках, которых в таблице ещё нет: " +
+        fresh.length +
+        " — `bar` впишет слова и кандидатов и перенесёт ответ по находке",
+    );
   console.log("  Дальше — `graph.mjs bar`: он сверит форму и поставит печать.");
   process.exit(0);
 }

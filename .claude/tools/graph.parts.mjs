@@ -44,6 +44,32 @@ export const partsTableOf = (body) => {
   return rows;
 };
 
+/** Таблица частей без пустых строк: часть без файлов и без «что» ничего не
+ * коммитит, а приём отказывал на ней дважды, и сессия снимала её правкой
+ * протокола мимо режима (свод пробы `2026-10-13`). Оставшиеся строки
+ * нумеруются по порядку. Снимать нечего либо не остаётся ни одной непустой
+ * строки — `null`: тогда дыры называет приём. */
+export const partsPruned = (body) => {
+  const rows = partsTableOf(body);
+  if (rows === null) return null;
+  const lines = body.split("\n");
+  const blank = (c) => /^[—-]?$/.test(c ?? "");
+  const empty = (r) => {
+    const cells = cellsOf(lines[r.line - 1].replace(/\r$/, ""));
+    return blank(cells[1]) && blank(cells[2]);
+  };
+  const kept = rows.filter((r) => !empty(r));
+  if (kept.length === rows.length || kept.length === 0) return null;
+  const drop = new Set(rows.filter(empty).map((r) => r.line - 1));
+  kept.forEach((r, k) => {
+    lines[r.line - 1] = lines[r.line - 1].replace(
+      /^\| [^|]*? \|/,
+      "| " + (k + 1) + " |",
+    );
+  });
+  return lines.filter((_, i) => !drop.has(i)).join("\n");
+};
+
 /** Раздел протокола с таблицей частей; строка — файлы и слова «что». */
 export const partsSectionOf = (rows) => [
   "## " + PARTS_TITLE,

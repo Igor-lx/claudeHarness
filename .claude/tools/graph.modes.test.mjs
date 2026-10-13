@@ -3140,9 +3140,15 @@ describe("свод по планке от модели предмета", () => 
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «никакие» вместе с названными критериями");
       also("");
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: находок с пустой графой «также» — 1");
-      // Строку о находке режим дописывает сам, ответ сессии переносится.
+      // Строку о находке режим дописывает сам и принимает протокол заново в
+      // том же вызове: дыра — уже о пустой графе дописанной строки, а не о
+      // том, что таблица не сходится.
       fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^\| B1 — `src\/app\/zzWide\.ts:1` .*\n/m, ""));
-      expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка: таблица не сходится с находками — недостаёт 1");
+      const rewritten = tool("bar", "app/zzWide.ts");
+      expect(rewritten).not.toContain("таблица не сходится");
+      expect(rewritten).toContain(
+        "перекрёстная сверка: находок с пустой графой «также» — 1",
+      );
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^\| B1 — `src\/app\/zzWide\.ts:1` \| [^|]+ \| [^|]* \|\s+\|$/m);
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -4461,7 +4467,7 @@ describe("ответы свода файлом", () => {
         odd < 0 ? "" : filled.split("\n")[odd] + "\n" + wrote[odd],
       ).toBe(-1);
       expect(tool("bar").out).toContain("печать поставлена");
-      // Отказ — целиком: ключа нет, ключ дважды, не то число клеток.
+      // Отказ — целиком: ключа нет, ключ дважды, клеток больше граф.
       const first = answers.split("\n")[0];
       const key = answers
         .split("\n")
@@ -4470,7 +4476,10 @@ describe("ответы свода файлом", () => {
       for (const [bad, why] of [
         ["Z99 | чисто |  |  | ", "ключа «Z99» в протоколе нет"],
         [first + "\n" + first, "дважды"],
-        [key + " | чисто", "клеток 1, а заполняемых граф у «" + key + "» 4"],
+        [
+          key + " | чисто | — | проба |  | лишняя",
+          "клеток 5, а заполняемых граф у «" + key + "» 4",
+        ],
       ]) {
         fs.writeFileSync(protoAt, blank);
         fs.writeFileSync(answersAt, bad + "\n");
@@ -5553,8 +5562,21 @@ describe("признаки, видимые текстом, в модели св�
         pick: Object.fromEntries(asked.map((id) => [id, "нет предмета |  | проба | "])),
       });
       const holes = tool("bar", "components/ZzClock");
+      // Дыра — своей строкой либо в группе вида: строка вида и под ней
+      // критерий с номерами строк модели.
       for (const id of asked)
-        expect(holes).toMatch(new RegExp("^ {4}" + id + ": нет предмета, а в модели он есть: П\\d+", "m"));
+        expect(holes).toMatch(
+          new RegExp(
+            "^ {4}" +
+              id +
+              ": нет предмета, а в модели он есть: П\\d+|^ {6}(?:.*; )?" +
+              id +
+              " П\\d+",
+            "m",
+          ),
+        );
+      if (!/^ {4}H7: нет предмета/m.test(holes))
+        expect(holes).toMatch(/^ {4}…: нет предмета, а в модели он есть: … — \d+:$/m);
       const ids = (sort) =>
         [...read.matchAll(new RegExp("^\\| (П\\d+) \\| " + sort + " \\|", "gm"))].map((m) => m[1]);
       const say = (sort, why) => ids(sort).join(", ") + " — " + why;
@@ -10751,9 +10773,15 @@ describe("страницы чтения — файлами", () => {
           .matchAll(/^\| (\d+) \| ([^|]+) \|  \|$/gm),
       ].map((m) => m[1]);
       expect(pages.length).toBeGreaterThan(1);
+      // Папка — раз, страницы — именами: абсолютный адрес у каждой был
+      // повтором одной и той же папки.
+      expect(listed).toContain("папка: " + dir);
+      expect(listed.split(dir).length - 1).toBe(1);
       for (const n of pages) {
         const file = path.join(dir, "bar-protocol-" + n + ".md");
-        expect(listed).toContain(file);
+        expect(listed).toMatch(
+          new RegExp("^  bar-protocol-" + n + "\\.md — ", "m"),
+        );
         // Файл — тот же текст, что даёт `--print`, и слово в конце.
         const printed = tool("bar-read", n, "--print");
         const body = fs.readFileSync(file, "utf8");
@@ -11036,12 +11064,10 @@ describe("починки по пробе планки 2026-10-13", () => {
           })
           .join("\n"),
       );
-      // Первый проход дописывает недостающую строку и отказывает, второй
-      // спрашивает её ответ.
-      expect(tool("bar", "app/zzWide.ts")).toContain(
-        "режим `bar` переписывает её сам",
-      );
+      // Тот же проход дописывает недостающую строку и сразу спрашивает её
+      // ответ: прежде для этого был нужен второй вызов.
       const open = tool("bar", "app/zzWide.ts");
+      expect(open).not.toContain("режим `bar` переписывает её сам");
       expect(open).toContain(
         "; ключ — «также » и находка дословно: A4 — `src/app/zzWide.ts:1` — кандидаты B1",
       );
@@ -11398,6 +11424,270 @@ describe("починки по пробе планки 2026-10-13", () => {
       expect(out).toMatch(
         /исходов со ссылкой на строку модели, которой больше нет, снято: \d+ — ответить заново: [^\n]*\bB1\b/,
       );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("экономия свода по журналу пробы 2026-10-13", () => {
+  const toolIn =
+    (box) =>
+    (...args) => {
+      try {
+        return execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+      } catch (e) {
+        return String(e.stdout ?? "");
+      }
+    };
+  const gitIn =
+    (box) =>
+    (...args) =>
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "core.hooksPath=",
+          ...args,
+        ],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+  const wide =
+    "export const zzWide = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n";
+
+  it("дыры одного вида печатаются группой: строка вида с числом и переменные слова", () => {
+    const box = seatEmpty("holegroup-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      const core = [
+        "A1-бис",
+        "A1-тер",
+        "A7-бис",
+        "A10",
+        "A15",
+        "B2",
+        "C4",
+        "I2",
+        "I4",
+      ];
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: Object.fromEntries(core.map((id) => [id, "чисто |  | проба | "])),
+      });
+      const out = tool("bar", "app/zzWide.ts");
+      const head =
+        /чисто без опоры на модель своего уровня: назвать строку уровня … — годятся … — ([0-9]+):$/m.exec(
+          out,
+        );
+      expect(head, out).not.toBeNull();
+      expect(Number(head[1])).toBeGreaterThanOrEqual(6);
+      // Каждая дыра вида — своими переменными словами, без повтора текста.
+      expect(out).not.toMatch(
+        /^ {4}A10 для `app\/zzWide\.ts`: чисто без опоры на модель своего уровня/m,
+      );
+      expect(out).toMatch(/^ {6}.*(?<![\p{L}\p{N}-])A10(?![\p{L}\p{N}-])/mu);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("легенда называет словарь клеток, а `bar-fill` считает недостающие клетки в конце строки за `=`", () => {
+    const box = seatEmpty("filltail-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const first = tool("bar", "app/zzWide.ts");
+      for (const rule of [
+        "недостающие клетки в конце строки — тоже `=`",
+        "`чисто` — адрес `—`; в «что» — почему чисто, с номерами строк модели `ПN`",
+        "без пояснений после адреса",
+        "строки «также» пишут тем же файлом, что исходы",
+        "часть без файлов и без «что» режим снимает сам",
+      ])
+        expect(first).toContain(rule);
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const answersAt = path.join(box, "answers.txt");
+      const rowOf = () =>
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .find((line) => /^\| A3 \|/.test(line))
+          .split("|")
+          .map((c) => c.trim());
+      fs.writeFileSync(answersAt, "A3 | нет предмета | — | проба-1 | =\n");
+      tool("bar-fill", answersAt);
+      fs.writeFileSync(answersAt, "A3 | чисто\n");
+      expect(tool("bar-fill", answersAt)).toContain("=== Ответы вписаны ===");
+      const row = rowOf();
+      expect(row[4]).toBe("чисто");
+      expect(row[5]).toBe("—");
+      expect(row[6]).toBe("проба-1");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("строки «также» вписываются тем же файлом, что исходы; ответ о находке, которой нет, снимается и называется", () => {
+    const box = seatEmpty("crossfill-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(
+        answersAt,
+        [
+          "A4 | нашлось | src/app/zzWide.ts:1 | второй довод делит функцию надвое | вопрос",
+          "также A4 — `src/app/zzWide.ts:1` | не B1",
+          "также A4 — `src/app/zzWide.ts:9` | не B1",
+          "",
+        ].join("\n"),
+      );
+      expect(tool("bar-fill", answersAt)).toContain(
+        "из них «также» о находках, которых в таблице ещё нет: 2",
+      );
+      const out = tool("bar", "app/zzWide.ts");
+      expect(out).not.toContain("таблица не сходится");
+      expect(out).not.toContain("находок с пустой графой «также»");
+      expect(out).not.toContain("кандидаты без ответа");
+      expect(out).toContain(
+        "ответ «также» о находке, которой нет, снят: «также A4 — `src/app/zzWide.ts:9`»",
+      );
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /^\| A4 — `src\/app\/zzWide\.ts:1` \| [^|]*надвое[^|]* \| B1 \| не B1 \|$/m,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("часть без файлов и без «что» снимается сама, оставшиеся нумеруются заново", () => {
+    const box = seatEmpty("partprune-");
+    try {
+      const tool = toolIn(box);
+      const git = gitIn(box);
+      const ats = ["zzMath", "zzOther"].map((name) =>
+        path.join(box, "src", "shared", name, name + ".ts"),
+      );
+      for (const at of ats) {
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(
+          at,
+          "export const zzAdd = (a: number, b: number): number => a + b;\n",
+        );
+      }
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      for (const at of ats)
+        fs.writeFileSync(
+          at,
+          "export const zzAdd = (a: number, b: number): number => b + a;\n",
+        );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const ticked = (n) =>
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .find((l) => new RegExp("^\\| " + n + " \\| `").test(l))
+          .split("|")[2]
+          .trim();
+      const all = ticked(1) + ", " + ticked(2);
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(
+        answersAt,
+        "часть 1 | " + all + " | обе правки\nчасть 2 | — | —\n",
+      );
+      tool("bar-fill", answersAt);
+      const out = tool("bar");
+      expect(out).not.toContain("часть 2 пуста");
+      const lines = fs.readFileSync(protoAt, "utf8").split("\n");
+      const from = lines.indexOf("## Части правки");
+      const rows = lines.slice(from + 1).filter((l) => /^\| [0-9]+ \|/.test(l));
+      expect(rows.length).toBe(1);
+      expect(rows[0]).toContain("обе правки");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("страница кода называет правленые и снятые строки над текстом, и слово страницы от них не зависит", () => {
+    const box = seatEmpty("pagediff-");
+    try {
+      const tool = toolIn(box);
+      const git = gitIn(box);
+      const at = path.join(box, "src", "shared", "zzLine", "zzLine.ts");
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      fs.writeFileSync(
+        at,
+        "export const zzA = 1;\nexport const zzB = 2;\nexport const zzC = 3;\n",
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      fs.writeFileSync(at, "export const zzA = 1;\nexport const zzB = 20;\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      const n = /^\| ([0-9]+) \| код `[^`]*zzLine\.ts`/m.exec(
+        fs.readFileSync(protoAt, "utf8"),
+      )?.[1];
+      expect(n).toBeDefined();
+      const before = tool("bar-read", n, "--print");
+      expect(before).toContain("правлено этой работой: строки 2");
+      expect(before).toContain(
+        "снято после строки 1:\n  - export const zzB = 2;\n  - export const zzC = 3;",
+      );
+      const wordOf = (text) =>
+        /--- слово страницы [0-9]+: (\S+) ---/.exec(text)?.[1];
+      git("add", "-A");
+      git("commit", "-qm", "правка", "--no-verify");
+      const after = tool("bar-read", n, "--print");
+      expect(after).not.toContain("правлено этой работой");
+      expect(wordOf(after)).toBe(wordOf(before));
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("страница печатает раздел `code.md`, на который ссылается тело критерия, а шапка `code.md` страниц не называет", () => {
+    const box = seatEmpty("codesec-");
+    try {
+      const tool = toolIn(box);
+      const head = (name) =>
+        fs
+          .readFileSync(path.join(box, ".claude", "rules", name), "utf8")
+          .split("\n---")[0];
+      expect(head("code.md")).not.toContain("bar-pages");
+      expect(head("quality.md")).toContain("**/bar-pages/*.md");
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      tool("bar", "app/zzWide.ts");
+      const pages = tool("bar-read", "--print");
+      for (const piece of [
+        "Раздел `code.md` «Раскладка проекта» — на него ссылается тело критерия",
+        "### Куда кладут новый узел",
+        "Раздел `code.md` «Комментарии: минимум, и по делу» — на него ссылается тело критерия",
+        "### Вход: четыре вопроса, и нужен да на все",
+      ])
+        expect(pages).toContain(piece);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

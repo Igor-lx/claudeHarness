@@ -601,20 +601,27 @@ describe("шапки правил о коде — перечнем словар�
  * без образца папки страниц в шапке страница — файл, который среда не узнаёт.
  */
 describe("шапки правил называют папку страниц чтения", () => {
-  it("quality.md, quality-scoped.md и code.md несут образец папки страниц", () => {
+  // `code.md` образца не несёт: своду из него нужны два раздела, на которые
+  // ссылаются тела `A16` и `H3`, и их печатает страница критерия, а целиком
+  // он лежал бы в каждом обращении свода (разбор журнала пробы `2026-10-13`).
+  it("quality.md и quality-scoped.md несут образец папки страниц, code.md — нет", () => {
     const rules = path.join(
       path.dirname(fileURLToPath(import.meta.url)),
       "..",
       "rules",
     );
-    for (const name of ["quality.md", "quality-scoped.md", "code.md"]) {
+    const pattern = '"**/' + vocabulary.BAR_PAGES_DIR + '/*.md"';
+    for (const [name, carries] of [
+      ["quality.md", true],
+      ["quality-scoped.md", true],
+      ["code.md", false],
+    ]) {
       const head = /^---\n([\s\S]*?)\n---\n/.exec(
         fs.readFileSync(path.join(rules, name), "utf8"),
       );
       expect(head, name).not.toBeNull();
-      expect(head[1], name).toContain(
-        '"**/' + vocabulary.BAR_PAGES_DIR + '/*.md"',
-      );
+      if (carries) expect(head[1], name).toContain(pattern);
+      else expect(head[1], name).not.toContain(pattern);
     }
   });
 });
