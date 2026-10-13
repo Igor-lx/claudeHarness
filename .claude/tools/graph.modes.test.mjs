@@ -5599,6 +5599,19 @@ describe("ссылки на строки модели при пересборк�
         /^\| (П[0-9]+) \| флаг \| `app\/zzRen\/zzB\.ts:1` \|/m.exec(text)?.[1];
       const before = idOf(fs.readFileSync(protoAt, "utf8"));
       expect(before).toBeDefined();
+      // Строка исхода называет строки модели, которые спрашивают её
+      // критерий: «чисто» без них печать не примет.
+      const asks = (text, id) =>
+        new RegExp(
+          "^\\| B1 \\| [^|]*\\| [^|]*спрашивают: (?:[^|]*[ ,])?" +
+            id +
+            "(?![0-9])",
+          "m",
+        ).test(text);
+      expect(asks(fs.readFileSync(protoAt, "utf8"), before)).toBe(true);
+      expect(fs.readFileSync(protoAt, "utf8")).not.toMatch(
+        /^\| B5 \| [^|]*\| [^|]*спрашивают/m,
+      );
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: {
@@ -5618,6 +5631,7 @@ describe("ссылки на строки модели при пересборк�
       const after = idOf(text);
       expect(after).toBeDefined();
       expect(after).not.toBe(before);
+      expect(asks(text, after)).toBe(true);
       expect(text).toMatch(
         new RegExp(
           "^\\| B5 \\|.*имя не говорит, что считают \\(" + after + "\\)",

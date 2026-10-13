@@ -13253,6 +13253,7 @@ const barSkeletonOf = ({
   parts = null,
   guide = null,
   address = null,
+  neighbours = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
@@ -13283,6 +13284,26 @@ const barSkeletonOf = ({
   // тут означала бы работу, которой не существует. Беспредметное на ЭТОМ
   // предмете — тоже: причина при нём замеренная, и переписать её руками
   // никто не мешает.
+  // Какие строки модели спрашивают критерий строки. Выборку даёт словарь
+  // печати: голое «чисто» он отклоняет, называя их, — подсказка не может
+  // разойтись с тем, что потребует приём. Без неё свод читал `BAR_SIGNALS`
+  // в коде инструмента: журнал пробы `2026-10-12`.
+  const modelOfRows = model.map((m) => ({ ...m, release: m.release ?? "" }));
+  const askedTail = (c, subject) => {
+    const fault = barModelFault(
+      [
+        c.id,
+        "чисто",
+        "",
+        kind,
+        barModelCode(barModelFor(modelOfRows, c.level, subject, neighbours)),
+        c.level,
+        "",
+      ].join("|"),
+    );
+    const ids = [...new Set(fault.match(/П[0-9]+/g) ?? [])];
+    return ids.length === 0 ? "" : " · спрашивают: " + ids.join(", ");
+  };
   const outcomeRow = ({ c, subject }) => {
     const none = c.slogan ? "" : noneOf(c, subject);
     // Перенесённый исход ставится, пока машина не знает лучше: лозунг и
@@ -13323,6 +13344,7 @@ const barSkeletonOf = ({
       // ровно там, где нужнее всего.
       (barCoreCriterion(c.id) ? "**ядро.** " : "") +
       c.title +
+      (c.slogan || none !== "" ? "" : askedTail(c, subject)) +
       " | " +
       outcome +
       " | " +
@@ -14708,6 +14730,7 @@ const barProcess = ({
       parts: null,
       guide,
       address,
+      neighbours,
     });
   const was = barHeader(at);
   const accept =
@@ -14857,6 +14880,7 @@ const barProcess = ({
         parts: barPartsRowsOf(partsOf, was),
         guide,
         address,
+        neighbours,
       }),
     );
     return {
