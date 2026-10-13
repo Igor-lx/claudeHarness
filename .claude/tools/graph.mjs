@@ -1948,6 +1948,104 @@ const barRowsOf = (body) => {
   }
   return { outcomes, model, levels, base, witnesses, reads, cross };
 };
+/** Ключи к заполнению — что сессия пишет файлом `bar-fill`, сжато. Протокол
+ * читали целиком ради ключей: журнал пробы `2026-10-12` — `104 644` знака
+ * чтения на протокол в `74 202`, а строки исходов несли заголовок критерия,
+ * который и так в контексте с политикой. Протокол остаётся записью; модель
+ * читают одним вызовом по номерам строк. */
+const barKeysOf = (body) => {
+  const p = barRowsOf(body);
+  const lines = body.split(/\r?\n/);
+  const out = [];
+  const spans = (ns) => {
+    const parts = [];
+    for (const n of [...ns].sort((a, b) => a - b)) {
+      const last = parts[parts.length - 1];
+      if (last !== undefined && n === last[1] + 1) last[1] = n;
+      else parts.push([n, n]);
+    }
+    return parts.map(([a, b]) => (a === b ? a : a + "–" + b)).join(", ");
+  };
+  // Строка ждёт ответа, пока пуста хоть одна её клетка: часть клеток
+  // свидетеля и итога машина ставит сама.
+  const empty = (cells) => cells.some((c) => c.trim() === "");
+  const from = lines.indexOf("## Модель предмета");
+  if (from >= 0) {
+    const next = lines.findIndex((l, i) => i > from && l.startsWith("## "));
+    out.push(
+      "модель предмета — строки " +
+        (from + 1) +
+        "–" +
+        (next < 0 ? lines.length : next) +
+        " протокола",
+    );
+  }
+  const pages = p.reads.filter((r) => r.word.trim() === "").map((r) => r.n);
+  if (pages.length > 0) out.push("слова страниц: стр " + spans(pages));
+  const open = p.model
+    .filter((m) => m.sort === "ресурс" && m.release.trim() === "")
+    .map((m) => m.id);
+  if (open.length > 0) out.push("снятие ресурса: " + open.join(", "));
+  const blank = p.witnesses.filter((w) => empty(w.answers));
+  if (blank.length > 0)
+    out.push(
+      "свидетели: " +
+        blank
+          .map(
+            (w) =>
+              w.id +
+              " " +
+              barQuoted(w.where) +
+              (w.kind === "объявление"
+                ? " " + barQuoted(w.key.split("|")[2])
+                : ""),
+          )
+          .join("; "),
+    );
+  const asked = new Map();
+  for (const l of lines) {
+    const m = /^\| ([^|]+?) \| ([^|]*?) \| [^|]*· спрашивают: ([^|]*?) \|/.exec(
+      l,
+    );
+    if (m) asked.set(barKey(m[1], barSubjectCell(m[2])), m[3]);
+  }
+  const bySubject = new Map();
+  const set = new Map();
+  for (const o of p.outcomes) {
+    if (o.outcome === "лозунг") continue;
+    if (o.outcome === "") {
+      const tail = asked.get(barKey(o.id, o.subject));
+      const list = bySubject.get(o.subject) ?? [];
+      list.push(o.id + (tail === undefined ? "" : " (" + tail + ")"));
+      bySubject.set(o.subject, list);
+    } else {
+      const list = set.get(o.outcome) ?? [];
+      list.push(o.subject === "" ? o.id : o.id + "@" + o.subject);
+      set.set(o.outcome, list);
+    }
+  }
+  for (const [s, list] of bySubject)
+    out.push(
+      "исходы " +
+        (s === "" ? "без предмета" : barQuoted(s)) +
+        ": " +
+        list.join(", "),
+    );
+  for (const [outcome, list] of set)
+    out.push(
+      "исход уже стоит, проверить по телу критерия — " +
+        outcome +
+        ": " +
+        list.join(", "),
+    );
+  const levels = p.levels
+    .filter((l) => empty(l.cells))
+    .map((l) => (l.subject === "" ? l.level : l.level + "@" + l.subject));
+  if (levels.length > 0) out.push("итог по уровням: " + levels.join(", "));
+  const base = [...p.base].filter(([, cells]) => empty(cells)).map(([f]) => f);
+  if (base.length > 0) out.push("база и документация: " + base.join(", "));
+  return out;
+};
 
 /** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
 const seedOfPath = () => {
@@ -16280,6 +16378,15 @@ if (mode === "bar") {
     console.log(
       "  Клетки вписывают файлом ответов, а не правкой таблицы: `graph.mjs bar-fill <файл>`.",
     );
+    console.log("");
+    console.log(
+      "  Ключи к заполнению — протокол целиком ради них читать не нужно; ключ",
+    );
+    console.log(
+      "  исхода — `критерий@предмет`, итога — `уровень@предмет`, свидетеля — `СвN`:",
+    );
+    for (const line of barKeysOf(readFileSync(at, "utf8")))
+      console.log("    " + line);
     process.exit(1);
   }
 

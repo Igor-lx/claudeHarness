@@ -5594,7 +5594,44 @@ describe("ссылки на строки модели при пересборк�
         "export const zzB = (w: number, strict: boolean): number => (strict ? w : 0);\n",
       );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
-      tool("bar", "app/zzRen");
+      const first = tool("bar", "app/zzRen");
+      // Ключи к заполнению — в выводе режима, сжато: протокол целиком ради
+      // них не читают. Номера строк модели ведут на её заголовок.
+      const keys = first.split("Ключи к заполнению")[1] ?? "";
+      expect(keys).toMatch(/^ {4}исходы без предмета: [^\n]*\bB1 \(П[0-9]+\)/m);
+      // Строка единицы ждёт ответа, хотя часть клеток машина поставила.
+      expect(keys).toMatch(
+        /^ {4}свидетели: Св[0-9]+ `app\/zzRen`;[^\n]*Св[0-9]+ `app\/zzRen\/zzB\.ts:1` `zzB`/m,
+      );
+      expect(keys).toMatch(/^ {4}база и документация: app\/zzRen\/zzB\.ts$/m);
+      expect(keys).not.toContain("Булев аргумент");
+      const [, modelFrom] =
+        /модель предмета — строки ([0-9]+)–/.exec(keys) ?? [];
+      expect(
+        fs.readFileSync(protoAt, "utf8").split("\n")[Number(modelFrom) - 1],
+      ).toBe("## Модель предмета");
+      // Ключи из блока принимает `bar-fill` как есть — на копии протокола.
+      const copyAt = path.join(box, "copy.md");
+      fs.copyFileSync(protoAt, copyAt);
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(
+        answersAt,
+        "B1 | нет предмета |  | проба |  \n" +
+          "app/zzRen/zzB.ts | не требуется | не требуется | проба\n",
+      );
+      execFileSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "bar-fill",
+          answersAt,
+          copyAt,
+        ],
+        { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(fs.readFileSync(copyAt, "utf8")).toMatch(
+        /^\| `app\/zzRen\/zzB\.ts` \| не требуется \| не требуется \| проба \|$/m,
+      );
       const idOf = (text) =>
         /^\| (П[0-9]+) \| флаг \| `app\/zzRen\/zzB\.ts:1` \|/m.exec(text)?.[1];
       const before = idOf(fs.readFileSync(protoAt, "utf8"));
