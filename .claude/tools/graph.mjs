@@ -3844,6 +3844,30 @@ const testsFor = (target) => {
   };
 };
 
+/** Названия тестов, называющих файл: `it("…")` и `test("…")` тестов, что его
+ * берут прямо либо по имени. Строка модели о копии перед изменяющим методом
+ * несёт их, чтобы «чисто» по `J9-бис` называло тест, а не файл тестов: свод
+ * пробы `2026-10-13` закрыл копию словами «держат тесты … через соседние
+ * узлы», а тест, закрепляющий неизменность входа, не нашёлся. Название
+ * очищено от знаков, которыми режутся клетки модели, — строка и проверка
+ * видят его одинаково. */
+const TEST_TITLE =
+  /\b(?:it|test)(?:\.(?:only|skip|concurrent))?\(\s*(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+const TEST_TITLES_SHOWN = 20;
+const testTitlesOf = (f) => {
+  const { direct, byName } = testsFor(f);
+  const out = [];
+  for (const t of [...direct, ...byName])
+    for (const m of readFileSync(t, "utf8").matchAll(TEST_TITLE)) {
+      const title = m[2]
+        .replace(/[|;:~`«»\\]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (title !== "" && !out.includes(title)) out.push(title);
+    }
+  return out.slice(0, TEST_TITLES_SHOWN);
+};
+
 /** Кто из тестов доходит до узла по именам и через какие узлы. Граф —
  * `usesOf`: бочка шагом не считается, она только отдаёт. Хранится
  * предшественник, а не только счёт: «гоняет через три узла» без имён этих
@@ -11777,10 +11801,16 @@ const barModelOf = (
     for (const [k, list] of groups) {
       const [sort, mark] = k.split("|");
       list.sort((a, b) => a.line - b.line);
+      const titles = sort === "копия" ? testTitlesOf(f) : [];
       add(
         sort,
         rel(f) + ":" + list[0].line,
-        symptomWhat(sort, mark, list),
+        symptomWhat(sort, mark, list) +
+          (sort !== "копия"
+            ? ""
+            : titles.length === 0
+              ? "; тестов, называющих файл, нет"
+              : "; тесты файла: «" + titles.join("», «") + "»"),
         mark,
         was !== null &&
           list.some((h) => !was.has((lines[h.line - 1] ?? "").trim()))
@@ -12662,6 +12692,13 @@ const barModelOf = (
 
 /** Модель одной строкой для словаря: `П1:вид:пометка:сдвиг;…`. Пометка
  * ресурса — `нет`, когда снятия нет, иначе `есть`. */
+/** Названия тестов из строки модели о копии: `; тесты файла: «а», «б»`. */
+const copyTitlesOf = (what) => {
+  const at = what.indexOf("; тесты файла: ");
+  return at < 0
+    ? []
+    : [...what.slice(at).matchAll(/«([^»]+)»/g)].map((m) => m[1]);
+};
 const barModelCode = (model) =>
   model
     .map(
@@ -12676,7 +12713,8 @@ const barModelCode = (model) =>
             : "есть"
           : m.mark) +
         ":" +
-        m.delta,
+        m.delta +
+        (m.sort === "копия" ? ":" + copyTitlesOf(m.what).join("~") : ""),
     )
     .join(";");
 

@@ -11113,4 +11113,85 @@ describe("починки по пробе планки 2026-10-13", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  it("копия перед сортировкой несёт названия тестов, а «чисто» по `J9-бис` называет одно из них", () => {
+    const box = seatEmpty("copytests-");
+    try {
+      const tool = toolIn(box);
+      const dir = path.join(box, "src", "app", "zzCopy");
+      fs.mkdirSync(path.join(dir, "tests"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "zzCopy.ts"),
+        "export const zzOrdered = (items: number[]): number[] => [...items].sort((a, b) => a - b);\n",
+      );
+      fs.writeFileSync(
+        path.join(dir, "tests", "zzCopy.test.ts"),
+        'import { describe, expect, it } from "vitest";\n\nimport { zzOrdered } from "../zzCopy";\n\ndescribe("zzOrdered", () => {\n  it("puts the smallest first", () => {\n    expect(zzOrdered([2, 1])).toEqual([1, 2]);\n  });\n});\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzCopy");
+      const row = /^\| (П\d+) \| копия \|[^\n]*$/m.exec(
+        fs.readFileSync(protoAt, "utf8"),
+      );
+      expect(row?.[0]).toContain("; тесты файла: «puts the smallest first»");
+      const answer = (what) =>
+        fillBar(protoAt, {
+          release: "не нужно: проба",
+          pick: { "J9-бис": "чисто |  | " + what + " | " },
+        });
+      // Файл тестов вместо теста — не опора.
+      answer(row[1] + " — инвариант держат тесты файла zzCopy.test.ts");
+      expect(tool("bar", "app/zzCopy")).toContain(
+        "J9-бис: чисто, а основание не называет тест, который заметит снос копии, — название из строки модели, в «ёлочках»: " +
+          row[1],
+      );
+      // Название теста из строки — опора.
+      answer(row[1] + " — тест «puts the smallest first» закрепляет порядок");
+      expect(tool("bar", "app/zzCopy")).not.toContain(
+        "J9-бис: чисто, а основание не называет тест",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("копия перед сортировкой в файле без тестов закрыть словом «чисто» нельзя", () => {
+    const box = seatEmpty("copynotests-");
+    try {
+      const tool = toolIn(box);
+      const dir = path.join(box, "src", "app", "zzBare");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "zzBare.ts"),
+        "export const zzOrdered = (items: number[]): number[] => [...items].sort((a, b) => a - b);\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzBare");
+      const row = /^\| (П\d+) \| копия \|[^\n]*$/m.exec(
+        fs.readFileSync(protoAt, "utf8"),
+      );
+      expect(row?.[0]).toContain("; тестов, называющих файл, нет");
+      // Строка «тестов нет» названа тоже: без неё режим спросил бы о ней.
+      const bare = /^\| (П\d+) \| тесты \|/m.exec(
+        fs.readFileSync(protoAt, "utf8"),
+      );
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: {
+          "J9-бис":
+            "чисто |  | " +
+            row[1] +
+            " — копия на месте, " +
+            bare[1] +
+            " — тестов нет | ",
+        },
+      });
+      expect(tool("bar", "app/zzBare")).toContain(
+        "J9-бис: чисто, а тестов, называющих файл, нет — копия ничем не закреплена: " +
+          row[1],
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
