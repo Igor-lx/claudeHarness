@@ -2085,12 +2085,16 @@ const barKeysOf = (body) => {
   const from = lines.indexOf("## Модель предмета");
   if (from >= 0) {
     const next = lines.findIndex((l, i) => i > from && l.startsWith("## "));
+    const last = next < 0 ? lines.length : next;
     out.push(
       "модель предмета — строки " +
         (from + 1) +
         "–" +
-        (next < 0 ? lines.length : next) +
-        " протокола",
+        last +
+        " протокола: один вызов Read с offset " +
+        (from + 1) +
+        " и limit " +
+        (last - from),
     );
   }
   const pages = p.reads.filter((r) => r.word.trim() === "").map((r) => r.n);
@@ -14321,6 +14325,7 @@ const barHolesOf = ({
     return x.who < y.who ? -1 : x.who > y.who ? 1 : 0;
   };
   let crossOpen = 0;
+  const crossOpenRows = [];
   let crossDrift = 0;
   const crossRows = [...findingsAt].sort(byPlace).map((one) => {
     const finding = one.who + " — " + barQuoted(one.keys[0]);
@@ -14339,8 +14344,10 @@ const barHolesOf = ({
     const also = row?.also ?? "";
     if (row !== undefined && (row.what !== what || row.cand !== cand))
       crossDrift += 1;
-    if (also === "") crossOpen += 1;
-    else {
+    if (also === "") {
+      crossOpen += 1;
+      crossOpenRows.push(finding + (cand === "" ? "" : " — кандидаты " + cand));
+    } else {
       const said = new Set();
       let none = false;
       let named = 0;
@@ -14408,7 +14415,8 @@ const barHolesOf = ({
         crossOpen +
         "; о каждом кандидате «X» либо «не X» и любой другой критерий, чьё тело называет это нарушение, либо «" +
         BAR_CROSS_NONE +
-        "»",
+        "»; ключ — «также » и находка дословно: " +
+        crossOpenRows.join("; "),
     );
   // Модель предмета: снятие у каждого ресурса названо, и вердикты с моделью
   // согласны. Правила — в словаре области (`barModelFault`): они про виды
@@ -14554,8 +14562,21 @@ const barHolesOf = ({
                 flat(got.answers[k]).split(";").join(","),
             ];
       });
+      // Файл каждого свидетеля объявления: находка с ответом «плохо» обязана
+      // назвать его адресом либо в «ещё мест:».
+      const spots = mine
+        .filter((w) => w.kind === "объявление")
+        .map((w) => w.id + "=" + w.where.replace(/:[0-9]+$/, ""))
+        .join(";");
       const fault = barWitnessVerdict(
-        [c.id, one.outcome, flat(one.what), code.join(";")].join("|"),
+        [
+          c.id,
+          one.outcome,
+          flat(one.what),
+          code.join(";"),
+          one.addr,
+          spots,
+        ].join("|"),
       );
       if (fault !== "") holes.push(barWho(c.id, subject) + ": " + fault);
     }

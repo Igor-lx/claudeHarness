@@ -10938,3 +10938,179 @@ describe("слова страниц перед сжатием контекста
     }
   }, 120000);
 });
+
+describe("починки по пробе планки 2026-10-13", () => {
+  const toolIn =
+    (box) =>
+    (...args) => {
+      try {
+        return execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+      } catch (e) {
+        return String(e.stdout ?? "");
+      }
+    };
+
+  it("изменяемое модуля спрашивают `M1` и `M2`, как `C10` и `C6`", () => {
+    const box = seatEmpty("modflag-");
+    try {
+      const tool = toolIn(box);
+      fs.mkdirSync(path.join(box, "src", "app", "zzFlag"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzFlag", "zzFlag.ts"),
+        "let zzStarted = false;\nexport const zzStart = (run: () => void): void => {\n  if (zzStarted) return;\n  zzStarted = true;\n  run();\n};\n",
+      );
+      tool("bar", "app/zzFlag");
+      const read = fs.readFileSync(
+        path.join(box, ".context", "bar-protocol.md"),
+        "utf8",
+      );
+      const row = /^\| (П\d+) \| модульное \|/m.exec(read)?.[1];
+      expect(row).toBeDefined();
+      for (const id of ["C10", "C6", "M1", "M2"])
+        expect(read).toMatch(
+          new RegExp(
+            "^\\| " +
+              id +
+              " \\|[^\\n]*спрашивают: (?:[^|]*[ ,])?" +
+              row +
+              "(?![0-9])",
+            "m",
+          ),
+        );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("ключи называют чтение модели одним вызовом, а дыра сверки — находку и кандидатов, которых не надо искать в протоколе", () => {
+    const box = seatEmpty("keys2-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzWide.ts"),
+        "export const zzWide = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const first = tool("bar", "app/zzWide.ts");
+      const [, from, to, offset, limit] =
+        /модель предмета — строки ([0-9]+)–([0-9]+) протокола: один вызов Read с offset ([0-9]+) и limit ([0-9]+)/.exec(
+          first,
+        ) ?? [];
+      expect(offset).toBe(from);
+      // Окно чтения — ровно часть «Модель предмета»: начинается с заголовка и
+      // кончается перед заголовком следующей части.
+      const lines = fs.readFileSync(protoAt, "utf8").split("\n");
+      expect(lines[Number(offset) - 1]).toBe("## Модель предмета");
+      expect(Number(offset) - 1 + Number(limit)).toBe(Number(to));
+      expect(lines[Number(offset) - 1 + Number(limit)].startsWith("## ")).toBe(
+        true,
+      );
+
+      fillBar(protoAt, { release: "не нужно: проба" });
+      // Находка, вписанная в обход помощника, получает свою строку
+      // сверки без ответа: режим спрашивает его и печатает ключ с кандидатами.
+      tool("bar", "app/zzWide.ts");
+      const sealed = fs
+        .readFileSync(protoAt, "utf8")
+        .replace(/^- печать: .*$/m, "- печать: `нет`");
+      fs.writeFileSync(
+        protoAt,
+        sealed
+          .split("\n")
+          .map((line) => {
+            const c = line.split("|");
+            if (c.length !== 9 || c[1].trim() !== "A4") return line;
+            c[4] = " нашлось ";
+            c[5] = " src/app/zzWide.ts:1 ";
+            c[6] = " второй довод делит функцию надвое ";
+            c[7] = " вопрос ";
+            return c.join("|");
+          })
+          .join("\n"),
+      );
+      // Первый проход дописывает недостающую строку и отказывает, второй
+      // спрашивает её ответ.
+      expect(tool("bar", "app/zzWide.ts")).toContain(
+        "режим `bar` переписывает её сам",
+      );
+      const open = tool("bar", "app/zzWide.ts");
+      expect(open).toContain(
+        "; ключ — «также » и находка дословно: A4 — `src/app/zzWide.ts:1` — кандидаты B1",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("находка называет файл каждого свидетеля с ответом «нет»", () => {
+    const box = seatEmpty("witfile-");
+    try {
+      const tool = toolIn(box);
+      const dir = path.join(box, "src", "app", "zzUni");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "zzA.ts"),
+        "export const zzA = (width: number): number => width + 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(dir, "zzB.ts"),
+        "export const zzB = (width: number): number => width * 2;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzUni");
+      // Свидетель объявления в втором файле единицы: «служит фразе» — нет.
+      const proto = fs.readFileSync(protoAt, "utf8");
+      const second = /^\| (Св\d+) \| `app\/zzUni\/zzB\.ts:1` \|/m.exec(
+        proto,
+      )?.[1];
+      expect(second).toBeDefined();
+      fs.writeFileSync(
+        protoAt,
+        proto
+          .split("\n")
+          .map((line) => {
+            if (!line.startsWith("| " + second + " |")) return line;
+            const c = line.split("|");
+            c[5] = " нет ";
+            return c.join("|");
+          })
+          .join("\n"),
+      );
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\nВопрос о `src/app/zzUni/zzA.ts` и `src/app/zzUni/zzB.ts`.\n",
+      );
+      const found = (what) => ({
+        release: "не нужно: проба",
+        pick: {
+          "A1@app/zzUni":
+            "нашлось | src/app/zzUni/zzA.ts:1 | " + what + " | вопрос",
+        },
+      });
+      fillBar(protoAt, found("zzB не служит фразе"));
+      const lost = tool("bar", "app/zzUni");
+      expect(lost).toContain(
+        "A1 для `app/zzUni`: находка не называет файл свидетеля с ответом «плохо»: " +
+          second +
+          " app/zzUni/zzB.ts — вписать в «ещё мест:»",
+      );
+      fillBar(
+        protoAt,
+        found("zzB не служит фразе; ещё мест: `src/app/zzUni/zzB.ts:1`"),
+      );
+      expect(tool("bar", "app/zzUni")).not.toContain(
+        "находка не называет файл свидетеля",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
