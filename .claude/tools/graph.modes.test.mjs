@@ -4990,8 +4990,13 @@ describe("свод на правке — по той же области, что
       const proto = fs.readFileSync(protoAt, "utf8");
       // Отпечатки — одно правленое: их сверяют ворота перед коммитом.
       const head = proto.split("## Прочитано")[0].split("## Модель предмета")[0];
-      expect(head).toContain("| `components/ZzCounter/ZzCounter.tsx` |");
-      expect(head).not.toContain("zzStore.ts");
+      const marksTable = head.slice(head.indexOf("| файл | отпечаток |"));
+      expect(marksTable).toContain("| `components/ZzCounter/ZzCounter.tsx` |");
+      expect(marksTable).not.toContain("zzStore.ts");
+      // Соседи стоят в основании, не в отпечатках предмета.
+      expect(head).toMatch(
+        /^- сосед: `shared\/zzStore\/zzStore\.ts` `[0-9a-f]{12}`$/m,
+      );
       // Соседи — своим предметом ядра узла и слоя.
       expect(proto).toContain("| A1 | `соседи` |");
       expect(proto).toContain("| A5 | `соседи` |");
@@ -10461,4 +10466,209 @@ describe("вид поля настройки — у чисел, строк и с
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+});
+
+describe("основание печати свода", () => {
+  it("сосед, политика и инструмент гасят печать, не теряя ответов; протокол без основания читается как прежде", () => {
+    const box = seatEmpty("bar-ground-");
+    try {
+      const tool = (...args) =>
+        String(
+          spawnSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8" },
+          ).stdout ?? "",
+        );
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8" },
+        );
+      const zone = path.join(box, "src", "shared", "zone");
+      fs.mkdirSync(zone, { recursive: true });
+      fs.writeFileSync(
+        path.join(zone, "a.ts"),
+        'import { bee } from "./b";\nexport const aye = bee + 1;\n',
+      );
+      fs.writeFileSync(path.join(zone, "b.ts"), "export const bee = 1;\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      fs.appendFileSync(
+        path.join(zone, "a.ts"),
+        "export const aye2 = aye + 1;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const read = () => fs.readFileSync(protoAt, "utf8");
+      const count = (word) =>
+        (read().match(new RegExp("\\| " + word + " \\|", "g")) ?? []).length;
+      // Страницы читают заново: слова снимаются со страниц, не с протокола.
+      const reread = () =>
+        fs.writeFileSync(
+          protoAt,
+          read()
+            .split("\n")
+            .map((line) => {
+              const c = line.split("|");
+              return c.length === 5 && /^ \d+ $/.test(c[1])
+                ? "|" + c[1] + "|" + c[2] + "| |"
+                : line;
+            })
+            .join("\n"),
+        );
+      const resealed = () => {
+        fillBar(protoAt, { release: "не нужно: проба" });
+        const out = tool("bar");
+        expect(out, out).toContain("печать поставлена");
+      };
+
+      // Основание записано в шапку при печати.
+      tool("bar");
+      resealed();
+      expect(read()).toMatch(/^- политика: `[0-9a-f]{12}`$/m);
+      expect(read()).toMatch(/^- инструмент: `[0-9a-f]{12}`$/m);
+      expect(read()).toMatch(
+        /^- сосед: `shared\/zone\/b\.ts` `[0-9a-f]{12}`$/m,
+      );
+      expect(tool("bar")).toContain("печать уже стоит");
+
+      // Сосед правлен чужим коммитом: предмет тот же, печати нет, ответы на месте.
+      const clean = count("чисто");
+      const absent = count("нет предмета");
+      expect(clean).toBeGreaterThan(0);
+      fs.writeFileSync(path.join(zone, "b.ts"), "export const bee = 2;\n");
+      git("add", path.join(zone, "b.ts"));
+      git("commit", "-qm", "сосед", "--no-verify");
+      const moved = tool("bar");
+      expect(moved, moved).toContain("протокол напечатан");
+      expect(moved).toContain(
+        "основание свода изменилось: соседи области: shared/zone/b.ts",
+      );
+      expect(moved).toContain("исходы перенесены");
+      expect(moved).not.toContain("печать уже стоит");
+      expect(read()).toContain("- печать: `нет`");
+      expect(count("нет предмета")).toBeGreaterThanOrEqual(absent);
+      expect(count("чисто")).toBeLessThan(clean);
+      // Страница изменившегося соседа несёт прежнее слово — она не прочитана заново.
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const stale = tool("bar");
+      expect(stale, stale).toContain("страница");
+      expect(stale).toContain("сосед `shared/zone/b.ts`");
+      expect(stale).toContain("слово не сходится");
+      reread();
+      resealed();
+      expect(tool("bar")).toContain("печать уже стоит");
+
+      // Правка протокола при том же основании — по-прежнему «правлен».
+      const sealedText = read();
+      fs.appendFileSync(protoAt, "\nправка после печати\n");
+      expect(tool("bar")).toContain("правлен после этого");
+      fs.writeFileSync(protoAt, sealedText);
+
+      // Политика другая: печати нет, ответы перенесены, «чисто» сброшено целиком.
+      fs.appendFileSync(path.join(box, ".claude", "rules", "quality.md"), "\n");
+      const policy = tool("bar");
+      expect(policy, policy).toContain(
+        "основание свода изменилось: политика качества",
+      );
+      expect(policy).toContain("политика другая");
+      expect(policy).toContain("исходы перенесены");
+      expect(count("чисто")).toBe(0);
+      expect(count("нет предмета")).toBeGreaterThan(0);
+      resealed();
+
+      // Инструмент другой: печати нет, «чисто» не сбрасывается.
+      fs.appendFileSync(path.join(box, ".claude", "tools", "graph.mjs"), "\n");
+      const answered = count("чисто") + count("нет предмета");
+      const changed = tool("bar");
+      expect(changed, changed).toContain(
+        "основание свода изменилось: инструмент",
+      );
+      expect(changed).not.toContain("сброшено");
+      expect(count("чисто") + count("нет предмета")).toBe(answered);
+      resealed();
+
+      // Протокол без основания, начатый до него, читается как прежде.
+      const stripped = read().replace(
+        /^- (политика|инструмент|сосед): .*\n/gm,
+        "",
+      );
+      const sealOf = (text) =>
+        createHash("sha1")
+          .update(text.replace(/^- печать: `.*`$/m, "- печать: `нет`"))
+          .digest("hex")
+          .slice(0, 12);
+      fs.writeFileSync(
+        protoAt,
+        stripped.replace(
+          /^- печать: `.*`$/m,
+          "- печать: `" + sealOf(stripped) + "`",
+        ),
+      );
+      expect(tool("bar")).toContain("печать уже стоит");
+      fs.appendFileSync(path.join(box, ".claude", "rules", "quality.md"), "\n");
+      expect(tool("bar")).toContain("печать уже стоит");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 600000);
+
+  it("ворота перед коммитом не признают печать, поставленную при другом основании", () => {
+    const box = seatEmpty("bar-ground-gate-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=u",
+            "-c",
+            "user.email=u@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      fakeCheck(box);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzGround.ts"),
+        "export const zzGround = (n: number): number => n + 1;\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      run("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(run("bar").stdout).toContain("печать поставлена");
+      seriesStaged(box);
+      expect(run("gate").status).toBe(0);
+      fs.appendFileSync(path.join(box, ".claude", "rules", "quality.md"), "\n");
+      const gate = run("gate");
+      expect(gate.status, gate.stdout).toBe(1);
+      expect(gate.stdout).toContain(
+        "основание свода другое: политика качества",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });

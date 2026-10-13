@@ -1530,6 +1530,12 @@ const liveQualityScopes = () => {
     live: [...declared].filter(([, v]) => v.live).map(([k]) => k),
   };
 };
+/** Файлы политики качества: ядро и разделы по применимости. Тела критериев
+ * лежат в них; живой набор и основание печати читают один и тот же адрес. */
+const barPolicyOf = () => {
+  const scoped = path.join(BASE, CONFIG.qualityScope.policy);
+  return { scoped, core: scoped.replace(/quality-scoped.md$/, "quality.md") };
+};
 /** Живой набор критериев: ядро целиком плюс разделы по применимости,
  * объявленные живыми таблицей применимости.
  *
@@ -1538,8 +1544,8 @@ const liveQualityScopes = () => {
  */
 const liveBarCriteria = () => {
   if (CONFIG.qualityScope == null) return null;
-  const policy = path.join(BASE, CONFIG.qualityScope.policy);
-  const core = barCriteria(policy.replace(/quality-scoped.md$/, "quality.md"));
+  const { scoped: policy, core: corePolicy } = barPolicyOf();
+  const core = barCriteria(corePolicy);
   const scope = liveQualityScopes();
   const blind = scope.state !== "прочитано";
   const live = new Set(blind ? [] : scope.live);
@@ -1746,6 +1752,32 @@ const barHeaderOf = (body) => {
       " \\|$",
     "gm",
   );
+  // Основание: политика, инструмент и соседи вне предмета. Протокол, начатый
+  // до него, строк не несёт, и сравнивать ему нечего.
+  const policy = new RegExp(
+    "^- политика: " + BAR_TICK + "([0-9a-f]+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
+  const tool = new RegExp(
+    "^- инструмент: " + BAR_TICK + "([0-9a-f]+)" + BAR_TICK + "$",
+    "m",
+  ).exec(body);
+  const near = new RegExp(
+    "^- сосед: " +
+      BAR_TICK +
+      "([^" +
+      BAR_TICK +
+      "]+)" +
+      BAR_TICK +
+      " " +
+      BAR_TICK +
+      "([^" +
+      BAR_TICK +
+      "]+)" +
+      BAR_TICK +
+      "$",
+    "gm",
+  );
   return {
     body,
     kind: kind === null ? null : kind[1],
@@ -1753,6 +1785,17 @@ const barHeaderOf = (body) => {
     modelRows: modelRows === null ? null : Number(modelRows[1]),
     salt: salt === null ? null : salt[1],
     address: address === null ? null : address[1],
+    ground:
+      policy === null || tool === null
+        ? null
+        : {
+            policy: policy[1],
+            tool: tool[1],
+            near: [...body.matchAll(near)].map((h) => ({
+              file: h[1],
+              mark: h[2],
+            })),
+          },
     marks: [...body.matchAll(rowOf)].map((h) => ({ file: h[1], mark: h[2] })),
   };
 };
@@ -1799,6 +1842,57 @@ const barStoreSwap = ({ at, kind, address }) => {
 };
 const barHeader = (at) =>
   at === null || !existsSync(at) ? null : barHeaderOf(readFileSync(at, "utf8"));
+/** Основание свода — то, на чём стоят его ответы помимо правленого: тела
+ * критериев политики, инструмент, который сверяет форму, и соседи области вне
+ * предмета. Предмет держат отпечатки файлов; основание держит печать от
+ * молчаливого сдвига: хранилище возвращает протокол той же области через
+ * любое число коммитов, и сосед, политика либо инструмент за это время
+ * сменились, а модель этого не показала. Инструментом считаются `graph.mjs` и
+ * `graph.predicates.mjs`: в них словари и правила приёма. */
+const barGroundOf = ({ marks, area }) => {
+  const text = (f) => (existsSync(f) ? readFileSync(f, "utf8") : "");
+  const { scoped, core } = barPolicyOf();
+  const own = new Set(marks.map((m) => m.file));
+  return {
+    policy: barDigest(text(core) + LF + text(scoped)),
+    tool: barDigest(
+      ["graph.mjs", "graph.predicates.mjs"]
+        .map((n) => text(path.join(TOOL_DIR, n)))
+        .join(LF),
+    ),
+    near: barMarks(area.filter((f) => !own.has(rel(f)))),
+  };
+};
+/** Что в основании изменилось против протокола: политика, инструмент, файлы
+ * соседей — изменённые, пришедшие в область и ушедшие из неё. Протокол без
+ * основания либо вызов без него — ничего. */
+const barGroundMovedOf = (was, ground) => {
+  const none = { policy: false, tool: false, files: [] };
+  if (ground === null || was === null || was.ground === null) return none;
+  const before = new Map(was.ground.near.map((m) => [m.file, m.mark]));
+  const now = new Map(ground.near.map((m) => [m.file, m.mark]));
+  return {
+    policy: was.ground.policy !== ground.policy,
+    tool: was.ground.tool !== ground.tool,
+    files: [...new Set([...before.keys(), ...now.keys()])]
+      .filter((f) => before.get(f) !== now.get(f))
+      .sort(),
+  };
+};
+const barGroundTextOf = (moved) =>
+  [
+    ...(moved.policy ? ["политика качества"] : []),
+    ...(moved.tool ? ["инструмент"] : []),
+    ...(moved.files.length > 0
+      ? [
+          "соседи области: " +
+            moved.files.slice(0, 5).join(", ") +
+            (moved.files.length > 5
+              ? " и ещё " + (moved.files.length - 5)
+              : ""),
+        ]
+      : []),
+  ].join("; ");
 
 /** Строки протокола, разобранные: исходы, модель, итог по уровням, база.
  *
@@ -13352,6 +13446,7 @@ const barSkeletonOf = ({
   guide = null,
   address = null,
   neighbours = null,
+  ground = null,
 }) => {
   const said0 = carried?.said ?? new Map();
   const witness0 = carried?.witness ?? new Map();
@@ -13523,6 +13618,15 @@ const barSkeletonOf = ({
     ...(address !== null ? ["- адрес: " + barQuoted(address)] : []),
     "- строк модели от инструмента: " + barQuoted(String(model.length)),
     ...(reads.length ? ["- соль чтения: " + barQuoted(salt)] : []),
+    ...(ground === null
+      ? []
+      : [
+          "- политика: " + barQuoted(ground.policy),
+          "- инструмент: " + barQuoted(ground.tool),
+          ...ground.near.map(
+            (m) => "- сосед: " + barQuoted(m.file) + " " + barQuoted(m.mark),
+          ),
+        ]),
     BAR_NOSEAL,
     "",
     "| файл | отпечаток |",
@@ -14582,6 +14686,7 @@ const barSubjectDriftOf = ({
   baseFiles,
   witnesses,
   reads,
+  ground = null,
 }) => {
   if (was.kind !== kind)
     return (
@@ -14589,6 +14694,11 @@ const barSubjectDriftOf = ({
     );
   if (!barSameMarks(was.marks, marks))
     return "отпечатки предмета другие: правлен код либо сменился сам предмет";
+  // Предмет тот же, а то, на чём стоят ответы, другое: политика, инструмент,
+  // сосед, которого модель в своих строках не показывает.
+  const moved = barGroundMovedOf(was, ground);
+  if (moved.policy || moved.tool || moved.files.length > 0)
+    return "основание свода другое: " + barGroundTextOf(moved);
   // Собранные инструментом строки модели совпадают с тем, что он соберёт
   // сейчас: номер, вид, место, суть, сдвиг, пометка. Снятие — клетка сессии.
   // Сравнение в обе стороны: строки, дописанные сессией, идут после
@@ -14694,6 +14804,7 @@ const barAcceptOf = ({
   mapDisputed = new Set(),
   anchorBroken = new Set(),
   partsOf = null,
+  ground = null,
 }) => {
   const parsed = barRowsOf(was.body);
   const parts = partsOf === null ? null : partsOf(was.body);
@@ -14708,6 +14819,7 @@ const barAcceptOf = ({
     baseFiles,
     witnesses,
     reads,
+    ground,
   });
   // Несвязанных частей больше одной, а таблицы нет — скелет печатают с ней.
   const partsDrift =
@@ -14806,6 +14918,7 @@ const barProcess = ({
   machineRow = null,
   guide = null,
   address = null,
+  ground = null,
 }) => {
   // Инструкцию перехода собирают и тогда, когда протокол не пересобирается:
   // иначе повторный зов режима её не печатал, и адрес в протоколе вёл в
@@ -14855,6 +14968,7 @@ const barProcess = ({
           mapDisputed,
           anchorBroken,
           partsOf,
+          ground,
         });
   const parsedWas = accept?.parsed ?? null;
   if (accept === null || accept.drift !== "") {
@@ -14884,16 +14998,25 @@ const barProcess = ({
       for (const m of marks)
         if (before.get(m.file) !== m.mark) edited.push(m.file);
     }
+    // Основание сдвинулось под тем же предметом: сосед правлен чужим коммитом,
+    // сменилась политика либо инструмент. Ответы переносятся, как при правке
+    // предмета; вердикт о форме целого стоял на соседе, которого больше нет,
+    // и сбрасывается так же. Политика другая — тела критериев не те, по
+    // которым ставилось любое «чисто».
+    const moved = barGroundMovedOf(was, ground);
+    edited.push(...moved.files.filter((f) => !edited.includes(f)));
     let reset = 0;
-    if (carry !== null && edited.length > 0) {
+    if (carry !== null && (edited.length > 0 || moved.policy)) {
       for (const [k, one] of carry.said)
         if (
           one.outcome === "чисто" &&
-          barCoreCriterion(k.slice(0, k.indexOf("|")))
+          (moved.policy || barCoreCriterion(k.slice(0, k.indexOf("|"))))
         ) {
           carry.said.delete(k);
           reset += 1;
         }
+    }
+    if (carry !== null && edited.length > 0) {
       // Итог по уровням — тоже вердикт о форме целого: стоит он на коде,
       // которого больше нет, и пишется заново.
       carry.levelRows = new Map();
@@ -14979,6 +15102,7 @@ const barProcess = ({
         guide,
         address,
         neighbours,
+        ground,
       }),
     );
     return {
@@ -14991,6 +15115,7 @@ const barProcess = ({
       reset,
       refsGone,
       edited,
+      moved,
       levelReset: carry !== null && edited.length > 0,
       lost,
     };
@@ -15740,6 +15865,7 @@ const barInputsOf = async ({
     subjectAbs: area,
     neighbours,
     baseFiles: area.map(rel),
+    ground: barGroundOf({ marks, area }),
     witnesses,
     reads,
     lintRow,
@@ -16303,12 +16429,22 @@ if (mode === "bar") {
           r.carried +
           ", печать снята — предмет или модель изменились",
       );
+    if (r.moved.policy || r.moved.tool || r.moved.files.length > 0)
+      console.log(
+        "  основание свода изменилось: " +
+          barGroundTextOf(r.moved) +
+          " — печать снята; изменившиеся страницы чтения требуют слова заново",
+      );
     if (r.reset > 0)
       console.log(
-        "  «чисто» ядра сброшено: " +
-          r.reset +
-          " — правлен код: " +
-          r.edited.join(", "),
+        r.moved.policy
+          ? "  «чисто» сброшено: " +
+              r.reset +
+              " — политика другая, тела критериев не те, по которым оно ставилось"
+          : "  «чисто» ядра сброшено: " +
+              r.reset +
+              " — правлен код: " +
+              r.edited.join(", "),
       );
     if (r.refsGone > 0)
       console.log(
