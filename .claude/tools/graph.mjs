@@ -20923,9 +20923,21 @@ if (mode === "verify") {
     // риск, статус. `TODO` внутри его пункта — это работа внутри работы, мимо
     // всей этой формы. Найдено пробой: исключение было написано по файлу, а его
     // причина относилась только к одной из двух сетей.
+    // Свод — доктрина плюс правила проекта (`glossary.md`), и маркер в прозе
+    // свода запрещён целиком: файлы доктрины входят в корпус наравне с
+    // правилами проекта. Обоснования, справочники и скиллы полки в него не
+    // входят — свод они не составляют.
+    const doctrineAt = shelfAt("rules");
+    const doctrineDocs =
+      doctrineAt === null || !existsSync(doctrineAt)
+        ? []
+        : readdirSync(doctrineAt)
+            .filter((n) => n.endsWith(".md"))
+            .map((n) => path.join(doctrineAt, n));
     for (const rp of [
       ...baseDocs.map((n) => path.join(BASE, n)),
       ...CONFIG.rulesManifest.rules.map((r) => path.join(BASE, r)),
+      ...doctrineDocs,
     ]) {
       if (!existsSync(rp)) continue;
       const lines = readFileSync(rp, "utf8").split(NEWLINE);

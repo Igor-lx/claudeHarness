@@ -8307,6 +8307,29 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it("маркер отложенной работы в прозе доктрины красит сверку так же, как в правилах проекта; описание маркера в кавычках — нет", () => {
+    const box = seatEmpty("marker-doctrine-");
+    try {
+      const parked = () =>
+        verifyIn(box).get("Найденное — исправлено, а не отложено");
+      const at = path.join(box, ".claude", "rules", "code.md");
+      const clean = fs.readFileSync(at, "utf8");
+      expect(parked()).toBeUndefined();
+      fs.appendFileSync(at, "\nМаркер `ПОТОМ` описан в кавычках.\n");
+      expect(parked()).toBeUndefined();
+      fs.appendFileSync(at, "\nПОТОМ разобрать.\n");
+      expect(parked()).toEqual([
+        expect.stringMatching(
+          /\.claude\/rules\/code\.md:\d+ — маркер отложенной работы в тексте$/,
+        ),
+      ]);
+      fs.writeFileSync(at, clean);
+      expect(parked()).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("форма вопроса разработчику судится своей сверкой: вопрос без граф и вопрос, помеченный закрытым, красят её, а не сверку про корпус", () => {
     const box = seatEmpty("voprosy-forma-");
     try {
