@@ -456,13 +456,14 @@ it, each with its own question:
 
 ## Status
 
-**v0.1.0: functionally complete; in the tuning phase.** Everything described here is
+**v0.2.0: functionally complete; in the tuning phase.** Everything described here is
 in place and working: the quality bar and the seal, the graph and the
 knowledge base, the gates, seating and the transition, the self-checks. The
 architecture and the concept are settled and will not change. Current work is
 on how well it all works: tuning, fixing defects and testing - every
 criterion of the bar has a planted defect, and probes measure whether the bar
-pass catches it. Details of the rules, the checks and the tool's output may
+pass catches it: all judgement criteria have been probed, and repeated runs on
+existing code confirm the catch criterion by criterion. Details of the rules, the checks and the tool's output may
 still change between versions.
 
 ## License
