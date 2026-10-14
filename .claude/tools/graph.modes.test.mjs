@@ -8597,6 +8597,65 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it("образец в ограде кода не запись для сверок ссылок на разделы, парности обещаний и новых якорей", () => {
+    const box = seatEmpty("fence-readers-");
+    try {
+      const get = (name) => verifyIn(box).get(name);
+      // Сверка новых якорей читает дифф против последнего коммита.
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          [
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@l",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8" },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const idioms = path.join(box, ".context", "10-idioms.md");
+      const sample = "См. раздел «Нет такого раздела» и `src/app/App.tsx:3`.\n";
+      fs.appendFileSync(idioms, "\n```\n" + sample + "```\n");
+      expect(get("Ссылки на разделы")).toBeUndefined();
+      expect(get("Новые якоря — с цитатой")).toBeUndefined();
+      fs.appendFileSync(idioms, "\n" + sample);
+      expect(get("Ссылки на разделы")).toEqual([
+        expect.stringContaining("«Нет такого раздела»"),
+      ]);
+      expect(get("Новые якоря — с цитатой")).toEqual([
+        expect.stringContaining("App.tsx:3` — якорь без цитаты"),
+      ]);
+      fs.writeFileSync(
+        idioms,
+        fs.readFileSync(idioms, "utf8").split("\n```\n")[0] + "\n",
+      );
+      const inv = path.join(box, ".context", "07-invariants.md");
+      const invClean = fs.readFileSync(inv, "utf8");
+      const heading = "## Обещания обвязки, которые не держит машина\n";
+      expect(invClean).toContain(heading);
+      fs.writeFileSync(
+        inv,
+        invClean.replace(heading, heading + "\n```\nДержится: ничем\n```\n"),
+      );
+      expect(get("Обещания без опоры собираются сводкой")).toBeUndefined();
+      fs.writeFileSync(
+        inv,
+        invClean.replace(heading, heading + "\nДержится: ничем\n"),
+      );
+      expect(get("Обещания без опоры собираются сводкой")).toEqual([
+        expect.stringContaining("«Держится» без «Сломается»"),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("ворота стенда вне собранного стенда отказывают одной строкой, а не претензией к каждой посадке", () => {
     const box = seatEmpty("stand-not-");
     try {

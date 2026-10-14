@@ -20828,16 +20828,19 @@ if (mode === "verify") {
         "git ls-files --others --exclude-standard -z -- .context",
         { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
       );
-      for (const one of zList(fresh))
+      for (const one of zList(fresh)) {
+        const added = readFileSync(path.join(REPO, one), "utf8").split(NEWLINE);
         diff +=
           NEWLINE +
           "+++ b/" +
           one +
           NEWLINE +
-          readFileSync(path.join(REPO, one), "utf8")
-            .split(NEWLINE)
-            .map((l) => "+" + l)
-            .join(NEWLINE);
+          "@@ -0,0 +1," +
+          added.length +
+          " @@" +
+          NEWLINE +
+          added.map((l) => "+" + l).join(NEWLINE);
+      }
     } catch {
       newAnchorsChecked = false;
     }
@@ -20855,15 +20858,40 @@ if (mode === "verify") {
         : norm(path.relative(REPO, barTransitionDir())) + "/";
     if (diff !== null) {
       let file = "";
+      // Строки ограды кода — показанный образец, якорь в нём не запись. Какие
+      // строки файла внутри ограды, берётся из его нынешнего текста, а номер
+      // добавленной строки — из заголовка куска диффа.
+      let fenced = new Set();
+      let at = 0;
       for (const line of diff.split(NEWLINE)) {
         if (line.startsWith("+++ b/")) {
           // Имя с пробелом git закрывает табуляцией.
           file = line.slice(6).replace(/\t$/, "");
+          fenced = new Set();
+          const here = path.join(REPO, file);
+          if (existsSync(here)) {
+            let open = false;
+            readFileSync(here, "utf8")
+              .split(NEWLINE)
+              .forEach((l, i) => {
+                const mark = /^\s*(```|~~~)/.test(l);
+                if (mark || open) fenced.add(i + 1);
+                if (mark) open = !open;
+              });
+          }
+          continue;
+        }
+        const hunk = /^@@ -\S+ \+(\d+)/.exec(line);
+        if (hunk !== null) {
+          at = Number(hunk[1]);
           continue;
         }
         if (file === barFile) continue;
         if (barDir !== null && file.startsWith(barDir)) continue;
         if (!line.startsWith("+") || line.startsWith("+++")) continue;
+        const lineNo = at;
+        at += 1;
+        if (fenced.has(lineNo)) continue;
         const body = line.slice(1);
         NEW_ANCHOR.lastIndex = 0;
         let m;
@@ -21450,7 +21478,8 @@ if (mode === "verify") {
       return norms.length ? norms : all;
     };
     for (const [name, at] of sources) {
-      const body = readFileSync(at, "utf8");
+      // Образец ссылки в ограде кода — показанная форма, а не адрес.
+      const body = unfenced(readFileSync(at, "utf8"));
       REF_RE.lastIndex = 0;
       let m;
       while ((m = REF_RE.exec(body)) !== null) {
@@ -22945,7 +22974,8 @@ if (mode === "verify") {
     if (!existsSync(at))
       mutePromises.push(`файла нет: ${CONFIG.promises.file}`);
     else {
-      const lines = readFileSync(at, "utf8").split(NEWLINE);
+      // Образец записи в ограде кода не запись: парность считается по тексту.
+      const lines = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
       const from = lines.findIndex((l) => l.trim() === CONFIG.promises.heading);
       promiseRows = lines.filter((l) => /^\s*Держится:/.test(l)).length;
       if (from < 0)
