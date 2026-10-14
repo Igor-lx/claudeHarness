@@ -29,13 +29,16 @@ import { sandboxPackages } from "./graph.seat.mjs";
 
 const norm = (p) => p.split(path.sep).join("/");
 
-/** Папка git проекта: там лежат отметки и вывод красной части. */
+/** Папка git проекта: там лежат отметки и вывод красной части. Зовущие
+ * ловят отказ (проекта без git ещё нет), поэтому `stderr` git не наследуется:
+ * иначе «fatal: not a git repository» ложился в отчёт режима. */
 export const gitDirOf = (repoRoot) =>
   path.resolve(
     repoRoot,
     execFileSync("git", ["rev-parse", "--git-common-dir"], {
       cwd: repoRoot,
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim(),
   );
 

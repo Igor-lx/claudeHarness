@@ -67,16 +67,16 @@ export const turnKind = (calls) => {
   return [...kinds].join("+");
 };
 
-/** Отказ среды начинается с её фразы; слова «permission» и «denied» в
- * середине — вывод самой команды, и отказом разрешений он не является. */
+/** Фразы, которыми среда отказывает вызову до запуска: разрешение, запрет,
+ * блокировка, классификатор режима без вердикта. Каждая взята из настоящих
+ * журналов; слова «permission» и «denied» в середине текста — вывод самой
+ * команды, и отказом среды он не является. */
+const ENV_REFUSAL =
+  /^(?:This (?:Bash )?command\b|Claude requested permissions|Permission (?:to use|for this)\b|Parser skipped|Redirect target|The server-side auto mode classifier|<tool_use_error>Blocked:)/;
+
 const failureOf = (text) => {
   if (/^(?:(?:Pre|Post)ToolUse\b|Hook\b)/.test(text)) return "hook";
-  if (
-    /^(?:This (?:Bash )?command\b|Claude requested permissions|Permission to use\b|Parser skipped|Redirect target)/.test(
-      text,
-    )
-  )
-    return "permission";
+  if (ENV_REFUSAL.test(text)) return "permission";
   return "error";
 };
 
@@ -217,7 +217,7 @@ export const costLines = (cost) => {
     "  чтений протокола (Read и срезы оболочкой): " + cost.protocolReads,
   );
   out.push(
-    "  отказы: разрешений " +
+    "  отказы: среды " +
       cost.refusals.permission +
       ", хука " +
       cost.refusals.hook +
@@ -280,7 +280,7 @@ export const costLines = (cost) => {
       percent(cost.base, cost.reread) +
       " %`), чтений протокола `" +
       cost.protocolReads +
-      "`, отказов разрешений `" +
+      "`, отказов среды `" +
       cost.refusals.permission +
       "`",
   );

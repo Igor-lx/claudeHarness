@@ -104,17 +104,49 @@ describe("расход свода: вызовы, скачки и отказы", 
     ]);
   });
 
-  it("отказ разрешений и отказ хука считаются порознь", () => {
+  it("отказ среды и отказ хука считаются порознь", () => {
     expect(cost.refusals).toEqual({ permission: 1, hook: 1, error: 0 });
   });
 
-  it("слова «permission» и «denied» в середине вывода команды отказом разрешений не являются", () => {
+  it("слова «permission» и «denied» в середине вывода команды отказом среды не являются", () => {
     const run = costOf([
       said("m1", 1000, 1, [use("t1", "Bash", { command: "npm test" })]),
       got("t1", "Exit code 1\nEACCES: permission denied, open 'x'", true),
       said("m2", 1100, 1, [{ type: "text", text: "-" }]),
     ]);
     expect(run.refusals).toEqual({ permission: 0, hook: 0, error: 1 });
+  });
+
+  it("все фразы отказов среды из настоящих журналов считаются отказами среды, прочие ошибки — нет", () => {
+    const refused = [
+      "Permission for this command was denied by a built-in Claude Code safety check, not by the user.",
+      "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Git Destructive].",
+      "The server-side auto mode classifier gave no verdict (error), so auto mode cannot determine the safety of Bash.",
+      "<tool_use_error>Blocked: sleep 60 followed by another command.",
+      "This Bash command contains multiple operations. The following part requires approval: cd /",
+      "This command requires approval",
+      "Claude requested permissions to read from /tmp/x, but you haven't granted it yet.",
+      "Parser skipped input between top-level statements",
+      "Redirect target concatenation contains $/` — unanalyzable gap or substitution",
+    ];
+    const other = [
+      "<tool_use_error>Error: No such tool available: Grep.",
+      "Exit code 1\nPermission denied (publickey).",
+      "File does not exist.",
+    ];
+    const run = (texts) =>
+      costOf(
+        texts.flatMap((text, i) => [
+          said("m" + i, 1000 + i, 1, [use("t" + i, "Bash", { command: "x" })]),
+          got("t" + i, text, true),
+        ]),
+      ).refusals;
+    expect(run(refused)).toEqual({
+      permission: refused.length,
+      hook: 0,
+      error: 0,
+    });
+    expect(run(other)).toEqual({ permission: 0, hook: 0, error: other.length });
   });
 
   it("обращения по видам: чтение протокола, запись вне базы, ответ без вызовов; доля — от перечитывания", () => {
@@ -169,7 +201,7 @@ describe("расход свода: печать", () => {
     expect(text).toContain(
       "стартовый контекст: 1 000 × 4 = 4 000 (6 % перечитывания)",
     );
-    expect(text).toContain("отказы: разрешений 1, хука 1, прочих ошибок 0");
+    expect(text).toContain("отказы: среды 1, хука 1, прочих ошибок 0");
     expect(text).toContain(
       "обращение 1: +20 000 после Read:протокол, Bash:bar",
     );
@@ -177,7 +209,7 @@ describe("расход свода: печать", () => {
 
   it("готовая строка для замеров держит числа в обратных кавычках", () => {
     expect(text).toContain(
-      "`4` обращений, перечитывание `65 100` токенов, стартовый контекст `1 000` (`6 %`), чтений протокола `3`, отказов разрешений `1`",
+      "`4` обращений, перечитывание `65 100` токенов, стартовый контекст `1 000` (`6 %`), чтений протокола `3`, отказов среды `1`",
     );
   });
 });

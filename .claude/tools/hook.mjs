@@ -73,8 +73,10 @@ const recordAt = () => {
 // След стража: время и начало команды на каждом вызове Bash. Ворота перед
 // коммитом и сверка базы, запущенные сессией, требуют его свежим — так видно,
 // что хуки проекта в ней исполняются. Пишет обёртка, а не режим: след о том,
-// что хук исполнился, а здоров ли инструмент — её же ответ ниже.
-if (isGuard) {
+// что хук исполнился, а здоров ли инструмент — её же ответ ниже. Событие без
+// команды (чтение файла) следа не пишет: оно затёрло бы команду коммита, по
+// которой ворота узнают последний вызов Bash.
+if (isGuard && typeof said.tool_input?.command === "string") {
   const dir = gitDir();
   if (dir !== null)
     try {
@@ -82,9 +84,7 @@ if (isGuard) {
         path.join(dir, "claude-harness-guard.json"),
         JSON.stringify({
           at: new Date().toISOString(),
-          command: String(
-            said.tool_input?.command ?? said.tool_input?.file_path ?? "",
-          ).slice(0, 200),
+          command: said.tool_input.command.slice(0, 200),
         }) + "\n",
       );
     } catch {

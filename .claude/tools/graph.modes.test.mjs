@@ -856,6 +856,38 @@ describe("обёртка хуков держит, когда инструмен�
       "const mode = process.argv[2];\nawait new Promise(() => setInterval(() => {}, 60000));",
     );
 
+  it("чтение файла не затирает след стража: ворота коммита видят команду коммита, а не путь", () => {
+    const box = seatEmpty("sled-");
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: box });
+      const traceAt = path.join(box, ".git", "claude-harness-guard.json");
+      ask(box, ["guard", "--hook"], bash("git commit -m x"));
+      const commit = JSON.parse(fs.readFileSync(traceAt, "utf8"));
+      expect(commit.command).toBe("git commit -m x");
+      const read = ask(box, ["guard", "--hook"], {
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: path.join(box, "src", "app", "App.tsx") },
+      });
+      expect(read.status).toBe(0);
+      expect(JSON.parse(fs.readFileSync(traceAt, "utf8"))).toEqual(commit);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("обёртка не зависит от инструмента и настройки: она импортирует только встроенные модули", () => {
+    const source = fs.readFileSync(path.join(TOOL_DIR, "hook.mjs"), "utf8");
+    const loaded = [
+      ...source.matchAll(
+        /^(?:import|export)\b[^;]*?\bfrom\s+"([^"]+)"|^import\s+"([^"]+)"/gm,
+      ),
+    ].map((m) => m[1] ?? m[2]);
+    expect(loaded.length).toBeGreaterThan(0);
+    expect(loaded.filter((one) => !one.startsWith("node:"))).toEqual([]);
+    expect(source).not.toMatch(/\bimport\s*\(/);
+  });
+
   it("сломанная настройка, отсутствующий инструмент, падение режима — у каждого хука", () => {
     const box = seatEmpty("obertka-");
     try {
@@ -11910,6 +11942,35 @@ describe("расход сессии свода: режим `bar-probe --cost`", 
       const empty = run(["--session=empty"], env);
       expect(empty.status).toBe(1);
       expect(empty.stdout).toContain("нет ни одного обращения модели");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("git без репозитория не шумит в отчёте режима", () => {
+  it("отметки серии в папке без git читаются как пустые, и stderr чист", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "nogit-"));
+    try {
+      const series = path.join(TOOL_DIR, "graph.series.mjs");
+      const run = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import { readMarks } from ${JSON.stringify(series)};` +
+            "console.log(JSON.stringify(readMarks(process.argv[1])));",
+          box,
+        ],
+        {
+          encoding: "utf8",
+          cwd: box,
+          env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(box) },
+        },
+      );
+      expect(run.status).toBe(0);
+      expect(run.stdout.trim()).toBe('{"base":null,"trees":{}}');
+      expect(run.stderr).toBe("");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
