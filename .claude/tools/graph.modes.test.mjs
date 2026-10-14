@@ -8234,6 +8234,35 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it(".nvmrc обязан сходиться с engines манифеста: ниже нижней границы красит «Диапазон среды объявлен», частичная версия подходит", () => {
+    const box = seatEmpty("nvmrc-");
+    try {
+      const range = () => verifyIn(box).get("Диапазон среды объявлен");
+      const pin = (text) => write(box, ".nvmrc", text);
+      pin("22.23.2\n");
+      expect(range()).toBeUndefined();
+      // Часть версии сравнивается по названным частям: «22» подходит.
+      for (const fine of [
+        "22",
+        "v22.23.2",
+        "22.30.1",
+        "lts/*",
+        "# заметка\n22.23.2",
+      ]) {
+        pin(fine + "\n");
+        expect(range(), fine).toBeUndefined();
+      }
+      for (const low of ["18", "22.20.0", "22.23.1", "v22.22"]) {
+        pin(low + "\n");
+        expect(range(), low).toEqual([
+          expect.stringMatching(/^\.nvmrc называет /),
+        ]);
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("заявленный вложенный файл правил обязан нести путь до корневого от своей папки", () => {
     const box = seatEmpty("vlozhennye-pravila-");
     try {

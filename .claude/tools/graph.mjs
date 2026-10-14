@@ -22210,6 +22210,38 @@ if (mode === "verify") {
     const high =
       want === null ? null : (/(?:^|\s)<\s*([\d.]+)/.exec(want)?.[1] ?? null);
     const now = process.version;
+    // `.nvmrc` — вторая запись той же версии (`close.md`, «Воспроизводимость и
+    // скорость петли»): разойдясь с `engines`, она ставит разработчику среду,
+    // на которой числа базовой линии не снимались. Сравнивается по числу
+    // названных в ней частей: «22» подходит к «>=22.23.2», «22.20» — нет.
+    const nvmAt = path.join(path.dirname(at), ".nvmrc");
+    const nvmLine = existsSync(nvmAt)
+      ? (readFileSync(nvmAt, "utf8")
+          .split(NEWLINE)
+          .map((l) => l.trim())
+          .find((l) => l !== "" && !l.startsWith("#")) ?? null)
+      : null;
+    const nvmParts =
+      nvmLine === null
+        ? null
+        : (/^v?(\d+(?:\.\d+){0,2})$/
+            .exec(nvmLine)?.[1]
+            .split(".")
+            .map(Number) ?? null);
+    const nvmCmp = (bound) => {
+      const y = parts(bound);
+      for (let i = 0; i < nvmParts.length; i++)
+        if (nvmParts[i] !== (y[i] ?? 0)) return nvmParts[i] - (y[i] ?? 0);
+      return 0;
+    };
+    const nvmDrift =
+      nvmParts === null
+        ? null
+        : low !== null && nvmCmp(low) < 0
+          ? `.nvmrc называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
+          : high !== null && nvmCmp(high) >= 0
+            ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
+            : null;
     const say =
       want === null
         ? "    диапазон версии не объявлен — переносимость держится на памяти"
@@ -22232,6 +22264,8 @@ if (mode === "verify") {
       console.log(
         "    переносимость держится на памяти. Объявить `engines` в манифесте",
       );
+    console.log("  расхождений с .nvmrc: " + (nvmDrift === null ? 0 : 1));
+    if (nvmDrift !== null) console.log("    " + nvmDrift);
     {
       checkHead("Версия среды (предупреждение, прогон не роняет)", {
         n: envUndeclared ? 0 : 1,
