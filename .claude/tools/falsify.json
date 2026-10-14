@@ -681,6 +681,16 @@
       "append": "Константа `NO_SUCH_CONSTANT` тут ни при чём."
     },
     {
+      "section": "Ограда кода в прозе закрыта",
+      "file": ".context/10-idioms.md",
+      "append": "```\nОграда без пары."
+    },
+    {
+      "section": "Имя сверки в тексте полки есть среди сверок",
+      "file": ".claude/rules/code.md",
+      "append": "Сверка «Такой сверки нет» тут ни при чём."
+    },
+    {
       "section": "Документы названы в указателе",
       "file": "docs/CONVENTIONS.md",
       "copyTo": "docs/НЕНАЗВАННЫЙ.md"

@@ -5170,6 +5170,8 @@ const CHECK_SECTIONS = [
   "Имена из кода в тексте",
   "Числа в прозе базы",
   "Имена констант в тексте",
+  "Имя сверки в тексте полки есть среди сверок",
+  "Ограда кода в прозе закрыта",
   "Таблица базы не разорвана комментарием",
   "Тесты лежат в `tests/`",
   "Объявленный состав папок и радиусы",
@@ -21586,7 +21588,8 @@ if (mode === "verify") {
         inline,
         ...rest.slice(0, wrapped < 0 ? rest.length : wrapped),
       ].join("");
-      if (words.trim() === "") skillDrift.push(`в шапке нет описания: ${name}`);
+      if (words.replace(/["'\s]/g, "") === "")
+        skillDrift.push(`в шапке нет описания: ${name}`);
     }
     for (const [name] of listed) {
       if (!onDisk.includes(name)) {
@@ -26172,6 +26175,91 @@ if (mode === "verify") {
   });
   console.log(`  нет в исходниках: ${goneNames.length}`);
   for (const g of goneNames) console.log("    " + g);
+
+  // Имя сверки в тексте полки есть среди сверок.
+  //
+  // Сверку переименовывают, а проза о ней остаётся: «сверка «Старое имя»» в
+  // инструкции посадки отсылала к сверке, которой уже нет под этим именем, и
+  // читатель не находил её ни в таблице, ни в выводе. Находит ссылку только
+  // чтение. Спрашивается дословное имя в кавычках-ёлочках сразу после слова
+  // «сверка»; допустимо и начало имени до скобки пометки («Версия среды»).
+  // Таблица сверок не читается: её строки описывают сверки фразами, и фраза в
+  // кавычках там не ссылка. Ограда кода не читается: показанный образец.
+  const goneChecks = [];
+  let checkMentions = 0;
+  if (SHELF !== null && existsSync(SHELF)) {
+    const known = CHECK_SECTIONS.map((n) => n.toLowerCase());
+    const proseOf = (dir) =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return proseOf(full);
+        return e.name.endsWith(".md") && e.name !== "checks.md" ? [full] : [];
+      });
+    for (const at of proseOf(SHELF)) {
+      unfenced(readFileSync(at, "utf8"))
+        .split(NEWLINE)
+        .forEach((line, i) => {
+          for (const m of line.matchAll(/сверк[а-яё]*\s+«([^»]+)»/gi)) {
+            checkMentions += 1;
+            const named = m[1].trim().toLowerCase();
+            if (!known.some((n) => n === named || n.startsWith(named + " (")))
+              goneChecks.push(`${rel0(at)}:${i + 1} — «${m[1].trim()}»`);
+          }
+        });
+    }
+  }
+  checkHead("Имя сверки в тексте полки есть среди сверок", {
+    n: checkMentions,
+    unit: "названий сверок в прозе полки",
+  });
+  console.log(`  нет среди сверок: ${goneChecks.length}`);
+  for (const g of goneChecks) console.log("    " + g);
+
+  // Ограда кода в прозе закрыта.
+  //
+  // Читатели прозы пропускают ограды кода (`unfenced`), и открытая, но не
+  // закрытая ограда считается длящейся до конца файла: всё ниже неё выпадает
+  // из каждой сверки текста — маркеры, счета, формы записей — без признака в
+  // выводе. Ограда без пары также ломает показ на странице. Спрашивается то
+  // же правило, по которому читатели пропускают: строка, начинающаяся с трёх
+  // обратных кавычек или трёх тильд, открывает и закрывает.
+  const openFences = [];
+  let fencedFiles = 0;
+  {
+    const prose = new Set();
+    for (const name of existsSync(BASE) ? readdirSync(BASE) : [])
+      if (name.endsWith(".md")) prose.add(path.join(BASE, name));
+    for (const r of CONFIG.rulesManifest?.rules ?? [])
+      if (existsSync(path.join(BASE, r))) prose.add(path.join(BASE, r));
+    const walkProse = (dir) =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return walkProse(full);
+        return e.name.endsWith(".md") ? [full] : [];
+      });
+    if (SHELF !== null && existsSync(SHELF))
+      for (const at of walkProse(SHELF)) prose.add(at);
+    for (const at of prose) {
+      fencedFiles += 1;
+      let openedAt = 0;
+      readFileSync(at, "utf8")
+        .split(NEWLINE)
+        .forEach((line, i) => {
+          if (!/^\s*(```|~~~)/.test(line)) return;
+          openedAt = openedAt === 0 ? i + 1 : 0;
+        });
+      if (openedAt !== 0)
+        openFences.push(
+          `${rel0(at)}:${openedAt} — ограда открыта и не закрыта`,
+        );
+    }
+  }
+  checkHead("Ограда кода в прозе закрыта", {
+    n: fencedFiles,
+    unit: "файлов прозы",
+  });
+  console.log(`  не закрыто: ${openFences.length}`);
+  for (const g of openFences) console.log("    " + g);
 
   // Таблица базы не разорвана комментарием.
   //

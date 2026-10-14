@@ -8438,12 +8438,75 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(drift()).toEqual(["в шапке нет описания: task"]);
       rewrite((t) => t.replace(/^description:.*$/m, "description:"));
       expect(drift()).toEqual(["в шапке нет описания: task"]);
+      rewrite((t) => t.replace(/^description:.*$/m, 'description: ""'));
+      expect(drift()).toEqual(["в шапке нет описания: task"]);
       rewrite((t) =>
         t.replace(/^description:.*$/m, "description: >\n  Начать задачу."),
       );
       expect(drift()).toBeUndefined();
       fs.writeFileSync(at, clean);
       expect(drift()).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("имя сверки в прозе полки должно быть среди сверок: переименованное краснит, начало имени до скобки и образец в ограде — нет", () => {
+    const box = seatEmpty("check-name-");
+    try {
+      const at = path.join(box, ".claude", "rules", "code.md");
+      const clean = fs.readFileSync(at, "utf8");
+      const gone = () =>
+        verifyIn(box).get("Имя сверки в тексте полки есть среди сверок");
+      expect(gone()).toBeUndefined();
+      fs.appendFileSync(at, "\nСверка «Версия среды» названа началом имени.\n");
+      expect(gone()).toBeUndefined();
+      fs.appendFileSync(
+        at,
+        "\n```\nСверка «Такой сверки нет» показана.\n```\n",
+      );
+      expect(gone()).toBeUndefined();
+      fs.appendFileSync(at, "\nСверка «Такой сверки нет» названа.\n");
+      expect(gone()).toEqual([
+        expect.stringMatching(/rules\/code\.md:\d+ — «Такой сверки нет»$/),
+      ]);
+      fs.writeFileSync(at, clean);
+      expect(gone()).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("ограда кода без пары называется, потому что прячет всё ниже себя от сверок прозы; закрытая и тильдовая — нет", () => {
+    const box = seatEmpty("fence-open-");
+    try {
+      const at = path.join(box, ".context", "10-idioms.md");
+      const clean = fs.readFileSync(at, "utf8");
+      const open = () => verifyIn(box).get("Ограда кода в прозе закрыта");
+      const parked = () =>
+        verifyIn(box).get("Найденное — исправлено, а не отложено");
+      expect(open()).toBeUndefined();
+      fs.appendFileSync(at, "\n```\nобразец\n```\n\n~~~\nобразец\n~~~\n");
+      expect(open()).toBeUndefined();
+      fs.appendFileSync(
+        at,
+        "\n```\nобразец без закрытия\n\nПОТОМ разобрать.\n",
+      );
+      expect(open()).toEqual([
+        expect.stringMatching(
+          /10-idioms\.md:\d+ — ограда открыта и не закрыта$/,
+        ),
+      ]);
+      // Пока ограда не закрыта, маркер под ней сверка маркеров не видит.
+      expect(parked()).toBeUndefined();
+      fs.writeFileSync(at, clean + "\n~~~\nобразец без закрытия\n");
+      expect(open()).toEqual([
+        expect.stringMatching(
+          /10-idioms\.md:\d+ — ограда открыта и не закрыта$/,
+        ),
+      ]);
+      fs.writeFileSync(at, clean);
+      expect(open()).toBeUndefined();
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
