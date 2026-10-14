@@ -8380,6 +8380,30 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it("ворота стенда вне собранного стенда отказывают одной строкой, а не претензией к каждой посадке", () => {
+    const box = seatEmpty("stand-not-");
+    try {
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const run = spawnSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "bar-probe",
+          "--stand-check",
+        ],
+        { cwd: box, encoding: "utf8", env },
+      );
+      expect(run.status, run.stdout).toBe(1);
+      expect(run.stdout).toContain("Это не собранный стенд");
+      expect(run.stdout).toContain("--stand-build");
+      expect(run.stdout).not.toContain("не прошли ворота");
+      expect(run.stdout.split("\n").length).toBeLessThan(12);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("протокол прошлой работы в новую не переносится; ушедшая строка модели пересобирает протокол", () => {
     const box = seatEmpty("ministend-perenos-");
     try {

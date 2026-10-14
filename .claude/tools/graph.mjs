@@ -8333,6 +8333,28 @@ if (mode === "bar-probe") {
   // сам себя пачками без общих файлов; посадка, не вместившаяся в пачку,
   // сажается одна, и не вместившаяся одна — тоже находка.
   if (process.argv.includes("--stand-check")) {
+    // Ворота идут внутри собранного стенда. Вне его посадки не встают на
+    // чужой проект, и режим печатал бы по претензии на каждую из них вместо
+    // одного отказа.
+    const standAt = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "bar-stand.json",
+    );
+    const lacking = existsSync(standAt)
+      ? Object.keys(
+          JSON.parse(readFileSync(standAt, "utf8")).files ?? {},
+        ).filter((f) => !existsSync(path.join(projectRoot, f)))
+      : [];
+    if (lacking.length > 0) {
+      console.log("=== Ворота стенда ===");
+      console.log(
+        `  Это не собранный стенд: нет ${lacking.length} его файлов, например ${lacking.slice(0, 3).join(", ")}.`,
+      );
+      console.log(
+        "  Собрать: bar-probe --stand-build <пустая папка>; ворота зовут внутри неё.",
+      );
+      process.exit(1);
+    }
     const env = { ...process.env };
     delete env.CLAUDE_CODE_CHILD_SESSION;
     const bin = (name) => path.join(projectRoot, "node_modules", ".bin", name);
