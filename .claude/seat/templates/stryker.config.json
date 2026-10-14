@@ -10,8 +10,9 @@
   "coverageAnalysis": "perTest",
   "ignorePatterns": [".claude"],
   "mutate": [
-    "src/components/**/*.ts",
-    "src/components/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "!src/**/*.d.ts",
     "!src/**/tests/**",
     "!src/**/*.test.*"
   ],
