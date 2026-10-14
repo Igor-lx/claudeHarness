@@ -2862,6 +2862,15 @@ const unfenced = (text) => {
     .join(EOL);
 };
 
+/** Проза файла так, как её читают сверки: текст без оград кода.
+ *
+ * Единственный вход для чтения прозы базы, правил и полки. Прежде каждая
+ * сверка читала файл сама, и правило «образец в ограде — не запись» чинилось
+ * по месту: восемь находок одного класса за четыре прогона проб, по одной на
+ * каждого читателя, до которого доходила проба.
+ */
+const proseOf = (at) => unfenced(readFileSync(at, "utf8"));
+
 /** Строковые литералы исходника — разбором, а не парами кавычек по тексту.
  *
  * Апостроф в комментарии — «Prettier's job», «React's act» — для образца,
@@ -6736,9 +6745,7 @@ if (mode === "open") {
     );
     for (const name of base) {
       // Образец в ограде кода — показ формы, а не открытая запись.
-      const lines = unfenced(readFileSync(path.join(BASE, name), "utf8")).split(
-        NEWLINE,
-      );
+      const lines = proseOf(path.join(BASE, name)).split(NEWLINE);
       lines.forEach((line, i) => {
         if (!test(line)) return;
         count++;
@@ -12966,7 +12973,7 @@ const barModelOf = (
         const was = new Set(
           (headTextOf(f) ?? "").split(LF).map((line) => line.trim()),
         );
-        unfenced(readFileSync(f, "utf8"))
+        proseOf(f)
           .split(LF)
           .forEach((line, i) => {
             if (!/^\s*([-*+]|[0-9]+[.)])\s+\S/.test(line)) return;
@@ -19540,7 +19547,7 @@ if (mode === "verify") {
     }
     // Строка витрины — пункт списка в документе с именем витрины.
     for (const f of docFiles.filter((one) => /(^|\/)FEATURES\.md$/.test(one))) {
-      const lines = unfenced(readFileSync(f, "utf8")).split(NEWLINE);
+      const lines = proseOf(f).split(NEWLINE);
       lines.forEach((line, i) => {
         if (/^\s*([-*+]|[0-9]+[.)])\s+\S/.test(line) && !/\bREQ-[0-9]+\b/.test(line))
           showcaseBare.push(rel(f) + ":" + (i + 1));
@@ -20640,7 +20647,7 @@ if (mode === "verify") {
       // пункты отложенного одним из четырёх сканеров, которым он нужен, —
       // этот при заведении пропустили. Соседнее семя, список вопросов,
       // обошло тот же класс иначе: приводит образец цитатой, а не разметкой.
-      const todoText = unfenced(readFileSync(todoPath, "utf8"));
+      const todoText = proseOf(todoPath);
       todoLooked = todoText
         .split(NEWLINE)
         .filter((l) => /^#{2,}\s+\d+\./.test(l)).length;
@@ -20687,7 +20694,7 @@ if (mode === "verify") {
       malformedQuestions.push(`файла нет: ${shown}`);
     } else {
       // Пример формы в ограде кода вопросом не является и нарушением формы тоже.
-      const text = unfenced(readFileSync(at, "utf8"));
+      const text = proseOf(at);
       const lines = text.split(NEWLINE);
       const heads = [];
       lines.forEach((line, i) => {
@@ -20747,9 +20754,7 @@ if (mode === "verify") {
     const todoPath = path.join(BASE, CONFIG.todo);
     if (existsSync(todoPath)) {
       const numbers = new Set();
-      for (const line of unfenced(readFileSync(todoPath, "utf8")).split(
-        NEWLINE,
-      )) {
+      for (const line of proseOf(todoPath).split(NEWLINE)) {
         const head = /^#{2,}\s+(\d+)\./.exec(line);
         if (head !== null) numbers.add(head[1]);
       }
@@ -20776,7 +20781,7 @@ if (mode === "verify") {
       scan.push([CONFIG.todo, todoPath]);
       for (const [name, full] of scan) {
         const selfRef = full === todoPath;
-        unfenced(readFileSync(full, "utf8"))
+        proseOf(full)
           .split(NEWLINE)
           .forEach((line, i) => {
             if (!selfRef && !NAMES.test(line)) return;
@@ -21000,7 +21005,7 @@ if (mode === "verify") {
     ]) {
       if (!existsSync(rp)) continue;
       // Ограда кода — пример, как и обратные кавычки: маркер в ней описан.
-      const lines = unfenced(readFileSync(rp, "utf8")).split(NEWLINE);
+      const lines = proseOf(rp).split(NEWLINE);
       lines.forEach((line, i) => {
         const bare = line.replace(/`[^`]*`/g, " ");
         if (CODE_MARK.test(bare))
@@ -21481,7 +21486,7 @@ if (mode === "verify") {
     };
     for (const [name, at] of sources) {
       // Образец ссылки в ограде кода — показанная форма, а не адрес.
-      const body = unfenced(readFileSync(at, "utf8"));
+      const body = proseOf(at);
       REF_RE.lastIndex = 0;
       let m;
       while ((m = REF_RE.exec(body)) !== null) {
@@ -22977,7 +22982,7 @@ if (mode === "verify") {
       mutePromises.push(`файла нет: ${CONFIG.promises.file}`);
     else {
       // Образец записи в ограде кода не запись: парность считается по тексту.
-      const lines = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      const lines = proseOf(at).split(NEWLINE);
       const from = lines.findIndex((l) => l.trim() === CONFIG.promises.heading);
       promiseRows = lines.filter((l) => /^\s*Держится:/.test(l)).length;
       if (from < 0)
@@ -24347,9 +24352,7 @@ if (mode === "verify") {
       const index = path.basename(at);
       for (const name of doctrine) {
         if (name === index) continue;
-        const body = unfenced(
-          readFileSync(path.join(doctrineDir, name), "utf8"),
-        );
+        const body = proseOf(path.join(doctrineDir, name));
         for (const para of body.split(/\r?\n\s*\r?\n/)) {
           const one = para.split(/\r?\n/).join(" ");
           for (const m of one.matchAll(
@@ -24445,7 +24448,7 @@ if (mode === "verify") {
       // слова полной.
       const glossaryAt = shelfAt("rules/glossary.md");
       if (glossaryAt !== null && existsSync(glossaryAt)) {
-        const rows = unfenced(readFileSync(glossaryAt, "utf8")).split(NEWLINE);
+        const rows = proseOf(glossaryAt).split(NEWLINE);
         let seen = null;
         rows.forEach((line, i) => {
           if (!line.trimStart().startsWith("|")) {
@@ -25074,9 +25077,7 @@ if (mode === "verify") {
     })(norm(REPO));
     linkFiles = mdFiles.length;
     for (const f of mdFiles) {
-      for (const m of unfenced(readFileSync(f, "utf8")).matchAll(
-        /\]\(([^)\s]+)\)/g,
-      )) {
+      for (const m of proseOf(f).matchAll(/\]\(([^)\s]+)\)/g)) {
         const spec = m[1];
         // Внешние адреса, якоря внутри страницы, плейсхолдеры и абсолютные
         // пути к делу не относятся: первое не наше, остальное не адрес файла.
@@ -25115,9 +25116,7 @@ if (mode === "verify") {
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
     const dir = norm(path.dirname(at));
-    for (const hit of unfenced(readFileSync(at, "utf8")).matchAll(
-      /`([^`\n]+)`/g,
-    )) {
+    for (const hit of proseOf(at).matchAll(/`([^`\n]+)`/g)) {
       let tok = hit[1].trim();
       if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
       tok = tok.replace(/[:#].*$/, "");
@@ -25293,7 +25292,7 @@ if (mode === "verify") {
     };
     const SEPARATOR = /^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/;
     for (const [name, at] of docSources) {
-      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      const rows = proseOf(at).split(NEWLINE);
       for (let i = 0; i + 1 < rows.length; i += 1) {
         if (!rows[i].trimStart().startsWith("|")) continue;
         if (!SEPARATOR.test(rows[i + 1])) continue;
@@ -25366,7 +25365,7 @@ if (mode === "verify") {
     for (const [name, at, fromShelf] of docSources) {
       if (policy.has(norm(at))) continue;
       if (fromShelf !== true && !rulesMine.has(norm(at))) continue;
-      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      const rows = proseOf(at).split(NEWLINE);
       // Единица — абзац: заголовок ёлочками законно переносится на строку ниже.
       for (let i = 0; i < rows.length;) {
         if (rows[i].trim() === "") {
@@ -25577,12 +25576,12 @@ if (mode === "verify") {
     const home = norm(path.join(BASE, file));
     const atHome =
       existsSync(home) &&
-      unfenced(readFileSync(home, "utf8"))
+      proseOf(home)
         .split(NEWLINE)
         .some((line) => line.trim() === head.trim());
     for (const [name, at] of docSources) {
       if (norm(at) === home || fromTemplates(at)) continue;
-      unfenced(readFileSync(at, "utf8"))
+      proseOf(at)
         .split(NEWLINE)
         .forEach((line, i) => {
           if (line.trim() === head.trim())
@@ -25628,7 +25627,7 @@ if (mode === "verify") {
       .filter((e) => statSync(path.join(SHELF, e)).isDirectory())
       .sort();
     for (const [name, at] of docSources) {
-      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      const rows = proseOf(at).split(NEWLINE);
       const units = [];
       let unit = null;
       rows.forEach((line, i) => {
@@ -25984,9 +25983,7 @@ if (mode === "verify") {
     ([, , fromShelf]) => fromShelf !== true,
   );
   for (const [name, at] of nameSources)
-    for (const [i, line] of unfenced(readFileSync(at, "utf8"))
-      .split(NEWLINE)
-      .entries())
+    for (const [i, line] of proseOf(at).split(NEWLINE).entries())
       for (const span of line.split(BACKTICK).filter((_, k) => k % 2 === 1)) {
         const tok = span.trim();
         if (!CAMEL_NAME.test(tok) || fileStems.has(tok)) continue;
@@ -26013,9 +26010,7 @@ if (mode === "verify") {
     // Имя ищется ВНУТРИ кода-спана, а не «в кавычках целиком»: база пишет и
     // `NAME`, и `NAME = 400`, и вторая форма при сверке по целому спану
     // молча не проверялась бы — на ней проверка и попалась при фальсификации.
-    for (const span of unfenced(readFileSync(at, "utf8")).matchAll(
-      /`([^`\n]+)`/g,
-    )) {
+    for (const span of proseOf(at).matchAll(/`([^`\n]+)`/g)) {
       // Только СОСТАВНОЕ имя, и не часть имени файла. Односложные заглавные
       // слова в тексте — это `CLAUDE.md`, `LOCALAPPDATA`, `PIPESTATUS`: имена
       // не из исходников, и проверять их здесь значило бы шуметь. Подчёркивание
@@ -26155,9 +26150,7 @@ if (mode === "verify") {
     if (name === CONFIG.barProtocol) continue;
     let inBaseline = false;
     // Образец в ограде кода — не запись базы: счёт в нём показан, а не заявлен.
-    for (const [i, line] of unfenced(
-      readFileSync(path.join(BASE, name), "utf8"),
-    )
+    for (const [i, line] of proseOf(path.join(BASE, name))
       .split(NEWLINE)
       .entries()) {
       if (/^##\s/.test(line))
@@ -26192,7 +26185,7 @@ if (mode === "verify") {
     if (IN_WORKSHOP && existsSync(path.join(REPO_AT, "README.md")))
       own.push(path.join(REPO_AT, "README.md"));
     for (const at of own) {
-      const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+      const rows = proseOf(at).split(NEWLINE);
       shelfNumLines += rows.length;
       rows.forEach((line, i) => {
         const bare = outsideTicks(line).replace(NUMBERING, " ");
@@ -26230,10 +26223,10 @@ if (mode === "verify") {
   let checkMentions = 0;
   if (SHELF !== null && existsSync(SHELF)) {
     const known = CHECK_SECTIONS.map((n) => n.toLowerCase());
-    const proseOf = (dir) =>
+    const namedProseFiles = (dir) =>
       readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
         const full = path.join(dir, e.name);
-        if (e.isDirectory()) return proseOf(full);
+        if (e.isDirectory()) return namedProseFiles(full);
         return e.name.endsWith(".md") && e.name !== "checks.md" ? [full] : [];
       });
     // Проза проекта цитирует сверки тем же словом: графа «чем держится» записи
@@ -26251,8 +26244,8 @@ if (mode === "verify") {
     // номер строки считается по смещению. Список имён после одного слова
     // («А» и «Б») читается весь; запись без буквы («…») — образец, а не имя.
     const named = /сверк[а-яё]*\s+(«[^»]+»(?:\s*(?:,|и|или)\s*«[^»]+»)*)/gi;
-    for (const at of new Set([...proseOf(SHELF), ...projectProse])) {
-      const text = unfenced(readFileSync(at, "utf8"));
+    for (const at of new Set([...namedProseFiles(SHELF), ...projectProse])) {
+      const text = proseOf(at);
       for (const m of text.matchAll(named)) {
         const line = text.slice(0, m.index).split(NEWLINE).length;
         for (const one of m[1].matchAll(/«([^»]+)»/g)) {
@@ -26339,7 +26332,7 @@ if (mode === "verify") {
       existsSync(mapAt)
     ) {
       const seatMap = readJson(mapAt, {});
-      const text = unfenced(readFileSync(doc, "utf8"));
+      const text = proseOf(doc);
       const from = text.indexOf(NEWLINE + "## Файлы");
       const upTo = text.indexOf(NEWLINE + "## ", from + 1);
       const section =
@@ -26418,7 +26411,7 @@ if (mode === "verify") {
     }
   }
   for (const at of tornFiles) {
-    const lines = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+    const lines = proseOf(at).split(NEWLINE);
     for (let i = 1; i < lines.length; i += 1) {
       if (!lines[i].trim().startsWith("<!--")) continue;
       if (!lines[i - 1].trim().startsWith("|")) continue;
@@ -27815,7 +27808,7 @@ if (mode === "verify") {
     const shelfSide = new Set(shelfProse().map(([, full]) => full));
     for (const [where, full] of [...shelfProse(), ...baseProse]) {
       runnableLooked += 1;
-      const flat = unfenced(readFileSync(full, "utf8"));
+      const flat = proseOf(full);
       const fromShelf = shelfSide.has(full);
       const names = fromShelf ? scripts : ownScripts;
       const packs = fromShelf ? deps : ownDeps;
@@ -28196,7 +28189,7 @@ if (mode === "verify") {
         for (const e of seatMap.copy ?? []) {
           const seedAt = shelfAt(e.from);
           if (seedAt === null || !existsSync(seedAt)) continue;
-          const seed = unfenced(readFileSync(seedAt, "utf8")).split(NEWLINE);
+          const seed = proseOf(seedAt).split(NEWLINE);
           const claim = [];
           for (let i = 0; i < seed.length; i += 1) {
             if (seed[i].trim() !== OPEN) continue;
@@ -28228,7 +28221,7 @@ if (mode === "verify") {
           // пока счёт шёл по файлам, прогон печатал «осмотрено 5» над
           // списком из 36 находок. Найдено больше, чем осмотрено, —
           // отличить здоровье от слепоты по такому числу нельзя вовсе.
-          const rows = unfenced(readFileSync(at, "utf8")).split(NEWLINE);
+          const rows = proseOf(at).split(NEWLINE);
           emptyLooked += rows.length;
           if (frameLives) continue;
           for (let i = 0; i < rows.length; i += 1) {
@@ -30976,9 +30969,7 @@ if (mode === "verify") {
     const lines = [];
     for (const name of readdirSync(BASE)) {
       if (!name.endsWith(".md")) continue;
-      lines.push(
-        ...unfenced(readFileSync(path.join(BASE, name), "utf8")).split(NEWLINE),
-      );
+      lines.push(...proseOf(path.join(BASE, name)).split(NEWLINE));
     }
     {
       for (const line of lines) {
