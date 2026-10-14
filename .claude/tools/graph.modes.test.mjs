@@ -8011,8 +8011,34 @@ describe("номер записи в заголовке не счёт", () => {
       const said = () =>
         (verifyIn(box).get("Числа в прозе базы") ?? []).join("\n");
       expect(said()).toBe("");
+      fs.appendFileSync(todo, "\n```\nОсталось 11 файлов.\n```\n");
+      expect(said()).toBe("");
       fs.appendFileSync(todo, "\nОсталось 10 файлов.\n");
       expect(said()).toContain("02-todo.md");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+describe("сводка открытого собирает записи, а не образцы в ограде", () => {
+  it("«не закреплено» и «Держится: ничем» в ограде кода в сводку не попадают, те же строки вне ограды — попадают", () => {
+    const box = seatEmpty("open-fence-");
+    try {
+      const idioms = path.join(box, ".context", "10-idioms.md");
+      const open = () =>
+        execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "open"],
+          { cwd: box, encoding: "utf8" },
+        );
+      const sample = "Поломка: не закреплено тестом.\nДержится: ничем\n";
+      fs.appendFileSync(idioms, "\n```\n" + sample + "```\n");
+      expect(open()).not.toContain("10-idioms.md");
+      fs.appendFileSync(idioms, "\n" + sample);
+      const said = open();
+      expect(said).toContain("не закреплено тестом");
+      expect(said).toContain("Держится: ничем");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -8317,6 +8343,8 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(parked()).toBeUndefined();
       fs.appendFileSync(at, "\nМаркер `ПОТОМ` описан в кавычках.\n");
       expect(parked()).toBeUndefined();
+      fs.appendFileSync(at, "\n```\nПОТОМ: пример разметки\n```\n");
+      expect(parked()).toBeUndefined();
       fs.appendFileSync(at, "\nПОТОМ разобрать.\n");
       expect(parked()).toEqual([
         expect.stringMatching(
@@ -8369,6 +8397,12 @@ describe("находки мини-стенда: факты, долг, отлож
           "заголовок не по форме «## Вопрос N. …»: " + head,
         ]);
       }
+      // Пример формы в ограде кода — не вопрос и не нарушение формы.
+      fs.writeFileSync(
+        questionsAt,
+        clean + "\n```\n## Вопрос 5: пример формы\n```\n",
+      );
+      expect(form()).toBeUndefined();
       fs.writeFileSync(
         questionsAt,
         clean +

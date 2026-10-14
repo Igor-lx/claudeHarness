@@ -6732,7 +6732,10 @@ if (mode === "open") {
       (n) => n.endsWith(".md") && n !== "README.md",
     );
     for (const name of base) {
-      const lines = readFileSync(path.join(BASE, name), "utf8").split(NEWLINE);
+      // Образец в ограде кода — показ формы, а не открытая запись.
+      const lines = unfenced(readFileSync(path.join(BASE, name), "utf8")).split(
+        NEWLINE,
+      );
       lines.forEach((line, i) => {
         if (!test(line)) return;
         count++;
@@ -20678,7 +20681,8 @@ if (mode === "verify") {
     if (!existsSync(at)) {
       malformedQuestions.push(`файла нет: ${shown}`);
     } else {
-      const text = readFileSync(at, "utf8");
+      // Пример формы в ограде кода вопросом не является и нарушением формы тоже.
+      const text = unfenced(readFileSync(at, "utf8"));
       const lines = text.split(NEWLINE);
       const heads = [];
       lines.forEach((line, i) => {
@@ -20962,7 +20966,8 @@ if (mode === "verify") {
       ...doctrineDocs,
     ]) {
       if (!existsSync(rp)) continue;
-      const lines = readFileSync(rp, "utf8").split(NEWLINE);
+      // Ограда кода — пример, как и обратные кавычки: маркер в ней описан.
+      const lines = unfenced(readFileSync(rp, "utf8")).split(NEWLINE);
       lines.forEach((line, i) => {
         const bare = line.replace(/`[^`]*`/g, " ");
         if (CODE_MARK.test(bare))
@@ -26092,7 +26097,10 @@ if (mode === "verify") {
     // пару без выхода.
     if (name === CONFIG.barProtocol) continue;
     let inBaseline = false;
-    for (const [i, line] of readFileSync(path.join(BASE, name), "utf8")
+    // Образец в ограде кода — не запись базы: счёт в нём показан, а не заявлен.
+    for (const [i, line] of unfenced(
+      readFileSync(path.join(BASE, name), "utf8"),
+    )
       .split(NEWLINE)
       .entries()) {
       if (/^##\s/.test(line))
