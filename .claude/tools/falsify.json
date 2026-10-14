@@ -738,8 +738,14 @@
     {
       "section": "Ворота конца хода и страж обхода включены",
       "file": ".claude/settings.json",
-      "find": "\"matcher\": \"Bash\"",
+      "find": "\"matcher\": \"Bash|Read\"",
       "replace": "\"matcher\": \"Edit\""
+    },
+    {
+      "section": "Ворота конца хода и страж обхода включены",
+      "file": ".claude/settings.json",
+      "find": "\"matcher\": \"Bash|Read\"",
+      "replace": "\"matcher\": \"Bash\""
     },
     {
       "section": "Ворота конца хода и страж обхода включены",

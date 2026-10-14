@@ -82,7 +82,9 @@ if (isGuard) {
         path.join(dir, "claude-harness-guard.json"),
         JSON.stringify({
           at: new Date().toISOString(),
-          command: String(said.tool_input?.command ?? "").slice(0, 200),
+          command: String(
+            said.tool_input?.command ?? said.tool_input?.file_path ?? "",
+          ).slice(0, 200),
         }) + "\n",
       );
     } catch {

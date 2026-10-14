@@ -503,6 +503,139 @@ describe("страж обхода ворот", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  const askRead = (cwd, file, window = {}, wrapper = false) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(cwd, ".claude", "tools", wrapper ? "hook.mjs" : "graph.mjs"),
+        "guard",
+        "--hook",
+      ],
+      {
+        cwd,
+        encoding: "utf8",
+        input: JSON.stringify({
+          tool_name: "Read",
+          tool_input: { file_path: file, ...window },
+        }),
+      },
+    );
+  /** Протокол, в котором модель занимает строки 6–10. */
+  const protocolText = [
+    "# Протокол",
+    "",
+    "## Прочитано",
+    "| 1 | стр | слово |",
+    "",
+    "## Модель предмета",
+    "",
+    "П1",
+    "П2",
+    "",
+    "## Исходы",
+    "| A1 | чисто |",
+    "",
+  ].join("\n");
+  const boxWith = (files) => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "strazh-"));
+    fs.cpSync(TOOL_DIR, path.join(box, ".claude", "tools"), {
+      recursive: true,
+    });
+    for (const [name, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(box, ".context", name)), {
+        recursive: true,
+      });
+      fs.writeFileSync(path.join(box, ".context", name), text);
+    }
+    return box;
+  };
+
+  it("отказывает в чтении протокола вне окна модели и называет окно; окно, другие файлы и протокол перехода проходят", () => {
+    const box = boxWith({
+      "bar-protocol.md": protocolText,
+      "15-transition-bar/node--app.md": protocolText,
+      "other.md": protocolText,
+    });
+    try {
+      const at = (name) => path.join(box, ".context", name);
+      for (const window of [
+        {},
+        { offset: 1, limit: 5 },
+        { offset: 6, limit: 6 },
+      ]) {
+        const stopped = askRead(box, at("bar-protocol.md"), window);
+        expect(stopped.status, JSON.stringify(window)).toBe(2);
+        expect(stopped.stderr).toContain("offset 6 и limit 5");
+        expect(stopped.stderr).toContain("graph.mjs bar");
+      }
+      for (const window of [
+        { offset: 6, limit: 5 },
+        { offset: 7, limit: 3 },
+      ])
+        expect(askRead(box, at("bar-protocol.md"), window).status).toBe(0);
+      expect(askRead(box, at("other.md")).status).toBe(0);
+      expect(askRead(box, at("15-transition-bar/node--app.md")).status).toBe(0);
+      expect(
+        askRead(box, path.join(box, ".claude", "tools", "hook.mjs")).status,
+      ).toBe(0);
+      // Мимо обёртки и через неё отказ тот же: среда держит вызов кодом `2`.
+      const wrapped = askRead(box, at("bar-protocol.md"), {}, true);
+      expect(wrapped.status).toBe(2);
+      expect(wrapped.stderr).toContain("offset 6 и limit 5");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("протокол оболочкой не читается: срез, поиск и вывод называют окно; прочие команды проходят", () => {
+    const box = boxWith({ "bar-protocol.md": protocolText });
+    try {
+      for (const command of [
+        "cat .context/bar-protocol.md",
+        "sed -n 6,10p .context/bar-protocol.md",
+        "grep -n A1 .context/bar-protocol.md",
+        "cd .context && head -5 bar-protocol.md",
+      ]) {
+        const stopped = ask(box, command);
+        expect(stopped.status, command).toBe(2);
+        expect(stopped.stderr).toContain(
+          "протокол свода оболочкой не читается",
+        );
+        expect(stopped.stderr).toContain("offset 6 и limit 5");
+      }
+      for (const fine of [
+        "ls .context",
+        "node .claude/tools/graph.mjs bar",
+        "cat .context/bar-protocol.md.bak",
+        "git status --short -- .context/bar-protocol.md",
+      ])
+        expect(ask(box, fine).status, fine).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("протокола нет в проекте либо имя файла другое по настройке — страж берёт имя оттуда", () => {
+    const box = boxWith({ "svod.md": protocolText });
+    try {
+      const config = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        config,
+        'export const BASE = "x";\nexport const CONFIG = { barProtocol: "svod.md" };\n',
+      );
+      const at = (name) => path.join(box, ".context", name);
+      expect(askRead(box, at("svod.md")).status).toBe(2);
+      expect(ask(box, "cat .context/svod.md").status).toBe(2);
+      // Умолчательное имя при другой настройке стражу не предмет.
+      expect(ask(box, "cat .context/bar-protocol.md").status).toBe(0);
+      fs.rmSync(config);
+      expect(askRead(box, at("svod.md")).status).toBe(0);
+      expect(askRead(box, at("bar-protocol.md")).status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 /**
@@ -654,6 +787,19 @@ describe("хуки обвязки стоят и исполнимы из любо
       );
       expect(said(GATES)).toContain("мимо обёртки");
       expect(said(GATES)).not.toContain("не от каталога проекта");
+      fs.writeFileSync(at, seed);
+      expect(seed).toContain('"matcher": "Bash|Read"');
+      fs.writeFileSync(
+        at,
+        seed.replace('"matcher": "Bash|Read"', '"matcher": "Bash"'),
+      );
+      expect(said(GATES)).toContain("вызов Read");
+      fs.writeFileSync(
+        at,
+        seed.replace('"matcher": "Bash|Read"', '"matcher": "Edit"'),
+      );
+      expect(said(GATES)).toContain("вызов Bash");
+      expect(said(GATES)).toContain("вызов Read");
       fs.writeFileSync(at, seed);
       const wrapper = path.join(box, ".claude", "tools", "hook.mjs");
       fs.renameSync(wrapper, wrapper + ".hidden");

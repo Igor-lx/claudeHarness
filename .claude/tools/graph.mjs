@@ -26,6 +26,8 @@ import {
   classifyRun,
   gitHookBypass,
   pageReadByShell,
+  protocolReadByShell,
+  BAR_PROTOCOL_FILE,
   sandboxEscape,
   barRowFault,
   barMorePlacesOf,
@@ -122,6 +124,12 @@ import {
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
+// Страж протокола свода: окно модели предмета и вердикт чтению.
+import {
+  modelWindowOf,
+  protocolReadFault,
+  protocolShellFault,
+} from "./graph.guard.mjs";
 // Части правки: таблица в протоколе свода, связность, записи и наложение.
 import {
   applyParts,
@@ -359,20 +367,56 @@ const sayLooked = (unit, n) => {
 
 const mode = process.argv[2];
 
-// Страж обхода ворот. Хук среды зовёт его на КАЖДЫЙ вызов Bash, поэтому он
-// отвечает до настройки проекта и обхода дерева: те стоят долей секунды и
-// растут с проектом. С ключом `--hook` читает событие среды и останавливает
-// вызов кодом `2` — текст из stderr среда отдаёт модели; без ключа судит
-// команду из довода. Коммит мимо ворот остаётся разработчику: он делает его
-// сам, если так решил.
+// Страж обхода ворот и чтения протокола свода. Хук среды зовёт его на КАЖДЫЙ
+// вызов Bash и Read, поэтому он отвечает до настройки проекта и обхода дерева:
+// те стоят долей секунды и растут с проектом. С ключом `--hook` читает событие
+// среды и останавливает вызов кодом `2` — текст из stderr среда отдаёт модели;
+// без ключа судит команду из довода. Коммит мимо ворот остаётся разработчику:
+// он делает его сам, если так решил.
+
+/** Отказ чтению протокола свода: `Read` вне окна модели предмета либо
+ * команда оболочки, что показывает протокол; пустая строка — можно. Имя файла
+ * протокола берётся из настройки проекта, не грузится она — умолчание. Файла
+ * протокола нет — стражу нечего беречь. */
+const protocolFault = async (read, command) => {
+  if (read === null && !/\.md\b/.test(command)) return "";
+  let name = BAR_PROTOCOL_FILE;
+  try {
+    const { CONFIG: loaded } = await import("../../.context/graph.config.mjs");
+    name = loaded?.barProtocol ?? BAR_PROTOCOL_FILE;
+  } catch {
+    // Настройки нет — страж идёт с умолчанием.
+  }
+  const at = path.join(
+    fileURLToPath(new URL("../../.context/", import.meta.url)),
+    name,
+  );
+  let text;
+  try {
+    text = readFileSync(at, "utf8");
+  } catch {
+    return "";
+  }
+  if (read !== null) {
+    if (path.resolve(String(read.file_path ?? "")) !== path.resolve(at))
+      return "";
+    const number = (v) => (v == null ? NaN : Number(v));
+    return protocolReadFault(text, number(read.offset), number(read.limit));
+  }
+  const reader = protocolReadByShell(command, path.basename(name));
+  return reader === "" ? "" : protocolShellFault(reader, text);
+};
+
 if (mode === "guard") {
   const hook = process.argv.includes("--hook");
   let command = "";
+  let read = null;
   if (hook && !process.stdin.isTTY)
     try {
       const said = JSON.parse(readFileSync(0, "utf8"));
       if (said?.tool_name === "Bash")
         command = String(said?.tool_input?.command ?? "");
+      if (said?.tool_name === "Read") read = said?.tool_input ?? {};
     } catch {
       // Вход не разбирается — значит это не команда, и судить нечего.
     }
@@ -381,17 +425,10 @@ if (mode === "guard") {
   // Страница свода, прочитанная оболочкой, шапку правил не будит: тела
   // критериев в контекст не придут.
   const page = pageReadByShell(command);
+  const protocol = await protocolFault(read, command);
   if (hook) {
-    if (why === "" && page === "") process.exit(0);
-    if (why === "")
-      process.stderr.write(
-        "Обвязка: страница свода читается инструментом Read, а не `" +
-          page +
-          "`.\n" +
-          "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанная оболочкой страница её не приносит, и свод судил бы по заголовкам.\n" +
-          "Список страниц печатает `node .claude/tools/graph.mjs bar-read`; открыть файл из списка — Read.\n",
-      );
-    else
+    if (why === "" && page === "" && protocol === "") process.exit(0);
+    if (why !== "")
       process.stderr.write(
         "Обвязка: команда снимает ворота перед коммитом (" +
           why +
@@ -399,6 +436,15 @@ if (mode === "guard") {
           "Коммит с кодом идёт через ворота: свод по планке `node .claude/tools/graph.mjs bar`, печать, затем обычный `git commit`.\n" +
           "Коммит мимо ворот делает разработчик сам, если так решил.\n",
       );
+    else if (page !== "")
+      process.stderr.write(
+        "Обвязка: страница свода читается инструментом Read, а не `" +
+          page +
+          "`.\n" +
+          "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанная оболочкой страница её не приносит, и свод судил бы по заголовкам.\n" +
+          "Список страниц печатает `node .claude/tools/graph.mjs bar-read`; открыть файл из списка — Read.\n",
+      );
+    else process.stderr.write(protocol);
     process.exit(2);
   }
   console.log("=== Страж обхода ворот ===");
@@ -409,7 +455,13 @@ if (mode === "guard") {
       ? "  чтения страниц свода оболочкой нет"
       : "    чтение страницы свода: " + page,
   );
-  process.exit(why === "" && page === "" ? 0 : 1);
+  console.log(
+    protocol === ""
+      ? "  чтения протокола свода оболочкой нет"
+      : "    чтение протокола свода: " +
+          protocol.split(String.fromCharCode(10))[0],
+  );
+  process.exit(why === "" && page === "" && protocol === "" ? 0 : 1);
 }
 
 // Посадка и стенд проб собираются до настройки проекта: в мастерской обвязки
@@ -2277,21 +2329,18 @@ const barKeysOf = (body) => {
   // Строка ждёт ответа, пока пуста хоть одна её клетка: часть клеток
   // свидетеля и итога машина ставит сама.
   const empty = (cells) => cells.some((c) => c.trim() === "");
-  const from = lines.indexOf("## Модель предмета");
-  if (from >= 0) {
-    const next = lines.findIndex((l, i) => i > from && l.startsWith("## "));
-    const last = next < 0 ? lines.length : next;
+  const window = modelWindowOf(body);
+  if (window !== null)
     out.push(
       "модель предмета — строки " +
-        (from + 1) +
+        window.offset +
         "–" +
-        last +
+        (window.offset + window.limit - 1) +
         " протокола: один вызов Read с offset " +
-        (from + 1) +
+        window.offset +
         " и limit " +
-        (last - from),
+        window.limit,
     );
-  }
   const pages = p.reads.filter((r) => r.word.trim() === "").map((r) => r.n);
   if (pages.length > 0) out.push("слова страниц: стр " + spans(pages));
   const open = p.model
@@ -30179,6 +30228,12 @@ if (mode === "verify") {
           "вызов Bash: режим `guard --hook` не зовётся — коммит мимо ворот проходит без вопроса",
         ],
         [
+          "PreToolUse",
+          "Read",
+          "guard --hook",
+          "вызов Read: режим `guard --hook` не зовётся — протокол свода читают целиком, и каждое следующее обращение платит за него снова; образец записи стража — `Bash|Read`",
+        ],
+        [
           "SessionStart",
           undefined,
           "stop --session",
@@ -30245,13 +30300,13 @@ if (mode === "verify") {
     }
   }
   checkHead("Ворота конца хода и страж обхода включены", {
-    n: 4,
+    n: 5,
     unit: "хуков среды",
   });
   console.log(
     gateHooksOff.length
       ? "  не стоит: " + gateHooksOff.length
-      : "  хуки стоят через обёртку: конец хода, вызов Bash, начало сессии, сжатие контекста",
+      : "  хуки стоят через обёртку: конец хода, вызов Bash, вызов Read, начало сессии, сжатие контекста",
   );
   for (const h of gateHooksOff) console.log("    " + h);
 

@@ -47,6 +47,8 @@ export const CODE_EXTENSIONS = [...TS_EXTENSIONS, "js", "jsx", "mjs", "cjs"];
  * кладёт политику в контекст вместе с ней. Тест обвязки сличает шапки с этим
  * именем. */
 export const BAR_PAGES_DIR = "bar-pages";
+/** Имя файла протокола свода, когда настройка проекта его не называет. */
+export const BAR_PROTOCOL_FILE = "bar-protocol.md";
 export const STYLE_ALT = STYLE_EXTENSIONS.join("|");
 const CODE_ALT = CODE_EXTENSIONS.join("|");
 /** Код или стиль — альтернатива для образцов, а не готовый образец. */
@@ -5600,6 +5602,32 @@ export const PREDICATE_CASES = [
     "cat <<'EOF'" + NEWLINE + ".context/bar-pages/x.md" + NEWLINE + "EOF",
     "",
   ],
+  // --- protocolReadByShell: чтение протокола свода командой оболочки ---
+  ["protocolReadByShell", "cat .context/bar-protocol.md", "cat"],
+  ["protocolReadByShell", "sed -n 1,50p .context/bar-protocol.md", "sed"],
+  ["protocolReadByShell", "head -80 /tmp/x/.context/bar-protocol.md", "head"],
+  ["protocolReadByShell", "grep -n A1 .context/bar-protocol.md", "grep"],
+  ["protocolReadByShell", "rg A1 .context/bar-protocol.md", "rg"],
+  ["protocolReadByShell", "awk 'NR>3' .context/bar-protocol.md", "awk"],
+  ["protocolReadByShell", "cat < .context/bar-protocol.md", "cat"],
+  ["protocolReadByShell", "cd .context && cat bar-protocol.md", "cat"],
+  ["protocolReadByShell", 'bash -c "tail .context/bar-protocol.md"', "tail"],
+  ["protocolReadByShell", "FOO=1 /usr/bin/cat .context/bar-protocol.md", "cat"],
+  ["protocolReadByShell", "ls .context && wc -l .context/bar-protocol.md", ""],
+  ["protocolReadByShell", "cat .context/bar-pages/bar-protocol-1.md", ""],
+  ["protocolReadByShell", "cat .context/15-transition-bar/node--app.md", ""],
+  ["protocolReadByShell", "cat .context/bar-protocol.md.bak", ""],
+  ["protocolReadByShell", "cat .context/my-bar-protocol.md", ""],
+  ["protocolReadByShell", "node .claude/tools/graph.mjs bar", ""],
+  [
+    "protocolReadByShell",
+    "node .claude/tools/graph.mjs bar-fill .context/bar-protocol.md",
+    "",
+  ],
+  ["protocolReadByShell", "git status --short -- .context/bar-protocol.md", ""],
+  ["protocolReadByShell", "echo cat .context/bar-protocol.md", ""],
+  ["protocolReadByShell", 'git commit -m "cat .context/bar-protocol.md"', ""],
+  ["protocolReadByShell", "cat src/app/App.tsx", ""],
   // --- применимость разделов планки: свидетели предмета -------------------
   ["scopeKindsOfLine", "const x = 1;", ""],
   ["scopeKindsOfLine", "fetch(url).then((r) => r.json());", "K/сеть;L/ожидание ответа"],
@@ -6189,64 +6217,55 @@ export const gitHookBypass = (command) => {
   return "";
 };
 
-/** Чтение страницы свода командой оболочки — имя команды, иначе пустая строка.
- *
- * Страницы чтения лежат файлами в папке `bar-pages`, и политику в контекст
- * приносит шапка правила, когда файл открыт инструментом чтения. `cat`,
- * `head`, `sed` и им подобные страницу покажут, а шапку не разбудят: тела
- * критериев не придут, и свод судит по заголовкам. Страж останавливает
- * команду, которая читает содержимое файла из этой папки; `ls`, `rm`, `git` и
- * прочее, что содержимого не читает, он пропускает. Разбирается оболочка, а
- * не подстрока, как у `gitHookBypass`; умышленный обход (шаблон имени,
- * `node -e`) страж не ловит — он стоит против привычки. */
-export const pageReadByShell = (command) => {
-  const READERS = new Set([
-    "cat",
-    "head",
-    "tail",
-    "sed",
-    "awk",
-    "gawk",
-    "less",
-    "more",
-    "bat",
-    "nl",
-    "tac",
-    "od",
-    "xxd",
-    "hexdump",
-    "strings",
-    "cut",
-    "sort",
-    "uniq",
-    "grep",
-    "egrep",
-    "fgrep",
-    "rg",
-    "ag",
-    "type",
-    "get-content",
-    "gc",
-  ]);
-  const inPages = (w) =>
-    w
-      .replace(/\\/g, "/")
-      .split("/")
-      .some((part) => part === BAR_PAGES_DIR);
+/** Команды оболочки, что показывают содержимое файла. */
+const SHELL_READERS = new Set([
+  "cat",
+  "head",
+  "tail",
+  "sed",
+  "awk",
+  "gawk",
+  "less",
+  "more",
+  "bat",
+  "nl",
+  "tac",
+  "od",
+  "xxd",
+  "hexdump",
+  "strings",
+  "cut",
+  "sort",
+  "uniq",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "ag",
+  "type",
+  "get-content",
+  "gc",
+]);
+
+/** Чтение файла командой оболочки — имя читающей команды, иначе пустая
+ * строка. Довод, названный файлом, выбирает `touches`. Разбирается оболочка,
+ * а не подстрока, как у `gitHookBypass`; команда внутри `sh -c` и `eval` — та
+ * же команда. */
+const shellReadOf = (command, touches) => {
   const check = (ws) => {
     let k = 0;
     while (k < ws.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[k])) k += 1;
     const head = ws[k];
     if (head === undefined) return "";
-    if (head === "eval") return pageReadByShell(ws.slice(k + 1).join(" "));
+    if (head === "eval") return shellReadOf(ws.slice(k + 1).join(" "), touches);
     if (/^(?:.*\/)?(?:ba|z|da)?sh$/.test(head)) {
       const at = ws.indexOf("-c", k + 1);
       return at < 0 || ws[at + 1] === undefined
         ? ""
-        : pageReadByShell(ws[at + 1]);
+        : shellReadOf(ws[at + 1], touches);
     }
     const name = head.replace(/^.*\//, "").toLowerCase();
-    return READERS.has(name) && ws.slice(k + 1).some(inPages) ? name : "";
+    return SHELL_READERS.has(name) && ws.slice(k + 1).some(touches) ? name : "";
   };
   for (const ws of shellCommandsOf(command)) {
     const why = check(ws);
@@ -6254,6 +6273,33 @@ export const pageReadByShell = (command) => {
   }
   return "";
 };
+
+/** Чтение страницы свода командой оболочки — имя команды, иначе пустая строка.
+ *
+ * Страницы чтения лежат файлами в папке `bar-pages`, и политику в контекст
+ * приносит шапка правила, когда файл открыт инструментом чтения. `cat`,
+ * `head`, `sed` и им подобные страницу покажут, а шапку не разбудят: тела
+ * критериев не придут, и свод судит по заголовкам. Страж останавливает
+ * команду, которая читает содержимое файла из этой папки; `ls`, `rm`, `git` и
+ * прочее, что содержимого не читает, он пропускает. Умышленный обход (шаблон
+ * имени, `node -e`) страж не ловит — он стоит против привычки. */
+export const pageReadByShell = (command) =>
+  shellReadOf(command, (w) =>
+    w
+      .replace(/\\/g, "/")
+      .split("/")
+      .some((part) => part === BAR_PAGES_DIR),
+  );
+
+/** Чтение протокола свода командой оболочки — имя команды, иначе пустая
+ * строка. `name` — имя файла протокола из настройки проекта.
+ *
+ * Из протокола сессии нужна модель предмета, и её берёт `Read` с границами из
+ * вывода `bar`; срез оболочкой обходил бы границу, которую страж держит у
+ * `Read`. Страницы чтения (`bar-pages/bar-protocol-1.md`) и протоколы перехода
+ * (`node--…`, `layer--…`, `app.md`) носят другие имена и стражу не предмет. */
+export const protocolReadByShell = (command, name = BAR_PROTOCOL_FILE) =>
+  shellReadOf(command, (w) => w.replace(/\\/g, "/").split("/").pop() === name);
 
 /** Красен ли прогон — по НАПЕЧАТАННОМУ, а не по перечню имён.
  *
