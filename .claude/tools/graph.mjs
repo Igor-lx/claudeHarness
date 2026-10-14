@@ -26321,8 +26321,18 @@ if (mode === "verify") {
         .filter((t) => /^\.context\/[^/]+$/.test(t))
         .map((t) => t.slice(".context/".length));
       const made = seatMap.baseFilesNotSeeded?.files ?? [];
-      baseTableLooked = new Set([...rows, ...seeded, ...made]).size;
-      if (from >= 0) {
+      baseTableLooked = rows.length;
+      // Таблица, которой не нашли, не «сошлась»: разбор вхолостую печатал бы
+      // ноль расхождений. Раздел переименовали или строки перестали быть
+      // строками таблицы — это и называется.
+      if (from < 0 || rows.length === 0)
+        baseTableDrift.push(
+          "в `base.md` не найден раздел «Файлы» с таблицей, строки которой начинаются файлом в обратных кавычках",
+        );
+      else {
+        for (const f of new Set(rows))
+          if (rows.indexOf(f) !== rows.lastIndexOf(f))
+            baseTableDrift.push(`строка ${f} в таблице \`base.md\` повторена`);
         for (const f of seeded)
           if (!rows.includes(f))
             baseTableDrift.push(
@@ -26343,7 +26353,7 @@ if (mode === "verify") {
   }
   checkHead("Таблица файлов базы сходится с семенами", {
     n: baseTableLooked,
-    unit: "файлов таблицы и семян",
+    unit: "строк таблицы файлов базы",
   });
   console.log(`  расхождений: ${baseTableDrift.length}`);
   for (const g of baseTableDrift) console.log("    " + g);

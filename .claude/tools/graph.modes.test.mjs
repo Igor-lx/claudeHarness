@@ -8575,6 +8575,22 @@ describe("находки мини-стенда: факты, долг, отлож
         ]),
       );
       fs.writeFileSync(map, mapClean);
+      // Раздел переименован: таблицы не нашли, а не «расхождений нет».
+      fs.writeFileSync(doc, clean.replace("\n## Файлы\n", "\n## Состав\n"));
+      expect(drift()).toEqual([
+        expect.stringContaining("не найден раздел «Файлы»"),
+      ]);
+      // Строка повторена.
+      fs.writeFileSync(
+        doc,
+        clean.replace(/^(\| `02-todo\.md` \|.*)$/m, "$1\n$1"),
+      );
+      expect(drift()).toEqual([
+        expect.stringContaining(
+          "строка 02-todo.md в таблице `base.md` повторена",
+        ),
+      ]);
+      fs.writeFileSync(doc, clean);
       expect(drift()).toBeUndefined();
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
