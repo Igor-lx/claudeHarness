@@ -8472,6 +8472,26 @@ describe("находки мини-стенда: факты, долг, отлож
       ]);
       fs.writeFileSync(at, clean);
       expect(gone()).toBeUndefined();
+      // Проза перенесена по ширине: слово и имя на разных строках, имя
+      // перенесено внутри, два имени после одного слова.
+      for (const [said, shown] of [
+        ["Сверка\n«Такой сверки нет» держит.", "Такой сверки нет"],
+        ["Сверка «Такой\nсверки нет» держит.", "Такой сверки нет"],
+        [
+          "Сверки «Покрытие карты» и «Такой сверки нет» держат.",
+          "Такой сверки нет",
+        ],
+      ]) {
+        fs.writeFileSync(at, clean + "\n" + said + "\n");
+        expect(gone(), said).toEqual([
+          expect.stringMatching(new RegExp(" — «" + shown + "»$")),
+        ]);
+      }
+      // Запись без буквы в кавычках — образец формы, а не имя.
+      fs.writeFileSync(at, clean + "\nСверка «…» названа образцом.\n");
+      expect(gone()).toBeUndefined();
+      fs.writeFileSync(at, clean);
+      expect(gone()).toBeUndefined();
       // Запись базы называет сверку тем же словом, и её имя стареет так же.
       const record = path.join(box, ".context", "10-idioms.md");
       const recordClean = fs.readFileSync(record, "utf8");

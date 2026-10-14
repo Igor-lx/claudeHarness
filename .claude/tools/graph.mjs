@@ -26206,17 +26206,24 @@ if (mode === "verify") {
         .map((r) => path.join(BASE, r))
         .filter((r) => existsSync(r)),
     ];
+    // Проза перенесена по ширине: слово «сверка» и её имя в кавычках стоят на
+    // разных строках, а имя бывает перенесено внутри. Читается текст целиком,
+    // номер строки считается по смещению. Список имён после одного слова
+    // («А» и «Б») читается весь; запись без буквы («…») — образец, а не имя.
+    const named = /сверк[а-яё]*\s+(«[^»]+»(?:\s*(?:,|и|или)\s*«[^»]+»)*)/gi;
     for (const at of new Set([...proseOf(SHELF), ...projectProse])) {
-      unfenced(readFileSync(at, "utf8"))
-        .split(NEWLINE)
-        .forEach((line, i) => {
-          for (const m of line.matchAll(/сверк[а-яё]*\s+«([^»]+)»/gi)) {
-            checkMentions += 1;
-            const named = m[1].trim().toLowerCase();
-            if (!known.some((n) => n === named || n.startsWith(named + " (")))
-              goneChecks.push(`${rel0(at)}:${i + 1} — «${m[1].trim()}»`);
-          }
-        });
+      const text = unfenced(readFileSync(at, "utf8"));
+      for (const m of text.matchAll(named)) {
+        const line = text.slice(0, m.index).split(NEWLINE).length;
+        for (const one of m[1].matchAll(/«([^»]+)»/g)) {
+          const name = one[1].replace(/\s+/g, " ").trim();
+          if (!/\p{L}/u.test(name)) continue;
+          checkMentions += 1;
+          const low = name.toLowerCase();
+          if (!known.some((n) => n === low || n.startsWith(low + " (")))
+            goneChecks.push(`${rel0(at)}:${line} — «${name}»`);
+        }
+      }
     }
   }
   checkHead("Имя сверки в тексте есть среди сверок", {
