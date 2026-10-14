@@ -5231,6 +5231,7 @@ const CHECK_SECTIONS = [
   "Объявленный долг не больше фактического",
   "План перехода не потерялся",
   "Форма отчёта посадки без слов обвязки",
+  "Вопросы записаны по форме",
   "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
@@ -21097,14 +21098,31 @@ if (mode === "verify") {
       })(norm(REPO));
     }
     const heads = [];
+    const rootRules = norm(path.join(REPO, "CLAUDE.md"));
     for (const one of CONFIG.rulesManifest.rules) {
       const at = path.join(BASE, one);
       if (!existsSync(at)) {
         unclassified.push(`нет файла правил: ${one}`);
         continue;
       }
-      for (const line of readFileSync(at, "utf8").split(NEWLINE))
+      const body = readFileSync(at, "utf8");
+      for (const line of body.split(NEWLINE))
         if (line.startsWith("## ")) heads.push(line.slice(3).trim());
+      // Вложенный файл грузится один, без корневого, и без пути до него
+      // читается как весь свод правил (`base.md`, раздел «Правила,
+      // действующие только в одной папке»).
+      const here = norm(at);
+      if (
+        here !== rootRules &&
+        path.basename(here) === "CLAUDE.md" &&
+        existsSync(rootRules)
+      ) {
+        const back = norm(path.relative(path.dirname(here), rootRules));
+        if (!body.includes(back))
+          unclassified.push(
+            `вложенный файл правил не указывает на корневой: ${one} — нет пути ${back}`,
+          );
+      }
     }
     if (tableAt === null) {
       // классификация не заявлена — сверять нечего
@@ -30528,6 +30546,21 @@ if (mode === "verify") {
   console.log("  слов обвязки в форме: " + reportJargon.length);
   for (const r of reportJargon) console.log("    " + r);
 
+  // Форма судится своей секцией: секция списка — предупреждение, и строка в
+  // четыре пробела под её заголовком прогон не роняет. Прежде ошибка формы
+  // печаталась под сверкой про корпус, и читающий искал слепоту сверок там,
+  // где сломан вопрос.
+  checkHead("Вопросы записаны по форме", {
+    n: questionsSeen,
+    unit: "вопросов в списках",
+  });
+  console.log(
+    CONFIG.questions == null
+      ? "  список вопросов не заявлен"
+      : `  нарушений формы: ${malformedQuestions.length}`,
+  );
+  for (const q of malformedQuestions) console.log("    " + q);
+
   checkHead(
     "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
     {
@@ -30755,7 +30788,6 @@ if (mode === "verify") {
         String(looked.n) +
         "». Считать осмотренное, а не брать длину у чужого помощника",
     );
-  for (const q of malformedQuestions) console.log("    сломана форма: " + q);
 
   // Судит НАПЕЧАТАННОЕ, а не перечень имён: перечень старел молча, и сверка,
   // забытая в нём, печатала находки при зелёном прогоне.

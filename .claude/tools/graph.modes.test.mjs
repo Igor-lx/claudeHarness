@@ -8234,6 +8234,79 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it("заявленный вложенный файл правил обязан нести путь до корневого от своей папки", () => {
+    const box = seatEmpty("vlozhennye-pravila-");
+    try {
+      const section = () =>
+        verifyIn(box).get("Разделы правил классифицированы");
+      edit(
+        box,
+        ".context/graph.config.mjs",
+        '    rules: ["../CLAUDE.md"],',
+        '    rules: ["../CLAUDE.md", "../src/app/CLAUDE.md"],',
+      );
+      write(
+        box,
+        "src/app/CLAUDE.md",
+        "# Правила папки\n\nЧитают как весь свод.\n",
+      );
+      expect(section()).toEqual([
+        "вложенный файл правил не указывает на корневой: ../src/app/CLAUDE.md — нет пути ../../CLAUDE.md",
+      ]);
+      // Путь от другой папки — не указатель: сверка ждёт путь от папки файла.
+      write(
+        box,
+        "src/app/CLAUDE.md",
+        "# Правила папки\n\nКорень: ../CLAUDE.md\n",
+      );
+      expect(section()).toHaveLength(1);
+      write(
+        box,
+        "src/app/CLAUDE.md",
+        "# Правила папки\n\nКорень: [CLAUDE.md](../../CLAUDE.md)\n",
+      );
+      expect(section()).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("форма вопроса разработчику судится своей сверкой: вопрос без граф и вопрос, помеченный закрытым, красят её, а не сверку про корпус", () => {
+    const box = seatEmpty("voprosy-forma-");
+    try {
+      const questionsAt = path.join(box, ".context", "13-questions.md");
+      const form = () => verifyIn(box).get("Вопросы записаны по форме");
+      const corpus = () =>
+        verifyIn(box).get("Каждая сверка называет свой корпус");
+      const clean = fs.readFileSync(questionsAt, "utf8");
+      expect(form()).toBeUndefined();
+      fs.appendFileSync(
+        questionsAt,
+        "\n## Вопрос 1. Проба\n\n**Задан:** проба.\n",
+      );
+      expect(form()).toEqual([
+        "«Проба» — нет граф: Что решить, Последствие отсутствия ответа",
+      ]);
+      expect(corpus()).toBeUndefined();
+      fs.writeFileSync(
+        questionsAt,
+        clean +
+          "\n## Вопрос 2. Проба (закрыто)\n\n**Задан:** проба.\n\n**Что решить.** проба.\n\n**Последствие отсутствия ответа.** проба.\n",
+      );
+      expect(form()).toEqual([
+        "помечен закрытым, а не удалён: Проба (закрыто)",
+      ]);
+      fs.writeFileSync(
+        questionsAt,
+        clean +
+          "\n## Вопрос 3. Проба\n\n**Задан:** проба.\n\n**Что решить.** проба.\n\n**Последствие отсутствия ответа.** проба.\n",
+      );
+      expect(form()).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("протокол прошлой работы в новую не переносится; ушедшая строка модели пересобирает протокол", () => {
     const box = seatEmpty("ministend-perenos-");
     try {

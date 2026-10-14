@@ -146,6 +146,11 @@
       "append": "## Вопрос 900. Проба\n\n**Задан:** пробой.\n\n**Что решить.** Ничего.\n\n**Последствие отсутствия ответа.** Нет."
     },
     {
+      "section": "Вопросы записаны по форме",
+      "file": ".context/13-questions.md",
+      "append": "## Вопрос 901. Проба формы\n\n**Задан:** пробой."
+    },
+    {
       "section": "Списки исключений не разрослись (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
       "find": "  docPathExceptions: [],",
@@ -668,6 +673,23 @@
       "section": "Разделы правил классифицированы",
       "file": "CLAUDE.md",
       "copyTo": "src/CLAUDE.md"
+    },
+    {
+      "section": "Разделы правил классифицированы",
+      "own": true,
+      "edits": [
+        {
+          "create": {
+            "path": "src/CLAUDE.md",
+            "text": "# Вложенные правила\n\nЭтот файл читают как весь свод правил."
+          }
+        },
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "    rules: [\"../CLAUDE.md\"],",
+          "replace": "    rules: [\"../CLAUDE.md\", \"../src/CLAUDE.md\"],"
+        }
+      ]
     },
     {
       "section": "Исключения сверок используются",
