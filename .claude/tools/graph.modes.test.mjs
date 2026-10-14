@@ -12460,3 +12460,182 @@ describe("git без репозитория не шумит в отчёте ре
     }
   });
 });
+
+/**
+ * Матрица читателей прозы: свойства, которыми обязана обладать каждая сверка,
+ * читающая прозу базы, правил и полки. Прежде каждое свойство чинилось у одного
+ * читателя, до которого доходила проба, и класс возвращался с соседним: восемь
+ * находок «образец в ограде — не запись» за четыре прогона проб. Здесь свойство
+ * спрашивается сразу у всех сверок и во всех видах прозы, и новая сверка
+ * попадает под него сама.
+ */
+describe("матрица читателей прозы", () => {
+  const reds = (box) =>
+    new Set(
+      [...verifyIn(box)].flatMap(([section, lines]) =>
+        lines.map((line) => section + " | " + line),
+      ),
+    );
+  const added = (before, after) => [...after].filter((r) => !before.has(r));
+  // Имя собрано из частей: целиком в тексте теста оно считалось бы живым.
+  const ghost = ["zzAbsent", "Nowhere"].join("");
+  // Образец форм, каждая из которых вне ограды краснит свою сверку.
+  const SAMPLE = [
+    "ПОТОМ разобрать.",
+    "В проекте 42 файла.",
+    "Это анкер окна.",
+    "См. раздел «Нет такого раздела».",
+    "Держит это сверка «Такой сверки нет».",
+    "Гарантия REQ-9 обещана.",
+    "Имя `" + ghost + "` и константа `NO_SUCH_CONSTANT`.",
+    "Файл `src/ghost/none.ts` и [документ](docs/ghost-none.md).",
+    "Узел `src/app/App.tsx:3` без цитаты.",
+    "## Вопрос 5: образец",
+    "- `?` гипотеза без проверки",
+    "Держится: ничем",
+    "| `src/ghost/none.ts` | призрак | нет | нет |",
+  ].join("\n");
+  // Сверки, для которых ограда — предмет, а не образец: бюджет доктрины
+  // считает знаки файла целиком, и любая добавленная строка его двигает.
+  const RAW = ["Доктрина в бюджете"];
+  const KINDS = [
+    ".context/10-idioms.md",
+    ".context/05-flows.md",
+    ".context/07-invariants.md",
+    "CLAUDE.md",
+    ".claude/rules/code.md",
+    ".claude/rules/entry.md",
+    ".claude/rationale/loop.md",
+    ".claude/seat/seat.md",
+    ".claude/tools/graph.md",
+    ".claude/README.md",
+    ".claude/skills/audit/SKILL.md",
+  ];
+  const boxWithGit = (prefix) => {
+    const box = seatEmpty(prefix);
+    const git = (...args) =>
+      spawnSync(
+        "git",
+        [
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@l",
+          "-c",
+          "core.hooksPath=",
+          ...args,
+        ],
+        { cwd: box, encoding: "utf8" },
+      );
+    git("init", "-q");
+    git("add", "-A");
+    git("commit", "-qm", "посадка", "--no-verify");
+    return box;
+  };
+
+  it("образец в ограде кода не краснит ни одной сверки ни в одном виде прозы, а вне ограды краснит", () => {
+    const box = boxWithGit("matrix-fence-");
+    try {
+      const before = reds(box);
+      const leaks = [];
+      for (const rel of KINDS) {
+        const at = path.join(box, rel);
+        const clean = fs.readFileSync(at, "utf8");
+        fs.writeFileSync(at, clean + "\n```\n" + SAMPLE + "\n```\n");
+        for (const red of added(before, reds(box)))
+          if (!RAW.some((name) => red.startsWith(name + " | ")))
+            leaks.push(rel + " → " + red);
+        fs.writeFileSync(at, clean);
+      }
+      expect(leaks).toEqual([]);
+      // Образец настоящий: вне ограды он краснит, и не одну сверку.
+      const at = path.join(box, ".context", "10-idioms.md");
+      fs.appendFileSync(at, "\n" + SAMPLE + "\n");
+      const sections = new Set(
+        added(before, reds(box)).map((red) => red.split(" | ")[0]),
+      );
+      expect(sections.size).toBeGreaterThanOrEqual(8);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 900000);
+
+  it("имя в «ёлочках», перенесённое на следующую строку, читается ссылками на разделы и на сверки", () => {
+    const box = seatEmpty("matrix-wrap-");
+    try {
+      const at = path.join(box, ".context", "10-idioms.md");
+      const clean = fs.readFileSync(at, "utf8");
+      for (const [said, section] of [
+        ["См. раздел\n«Нет такого раздела».", "Ссылки на разделы"],
+        ["См. раздел «Нет такого\nраздела».", "Ссылки на разделы"],
+        [
+          "Держит сверка\n«Такой сверки нет».",
+          "Имя сверки в тексте есть среди сверок",
+        ],
+        [
+          "Держит сверка «Такой\nсверки нет».",
+          "Имя сверки в тексте есть среди сверок",
+        ],
+      ]) {
+        fs.writeFileSync(at, clean + "\n" + said + "\n");
+        expect(verifyIn(box).get(section), said).toEqual([
+          expect.stringMatching(/Нет такого раздела|Такой сверки нет/),
+        ]);
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("объявленная таблица, которой не нашли под её шапкой, называется, а не печатает ноль", () => {
+    const box = seatEmpty("matrix-tables-");
+    try {
+      const cfg = fs.readFileSync(
+        path.join(box, ".context", "graph.config.mjs"),
+        "utf8",
+      );
+      // Объявленные шапки берутся из настройки, а не списком в тесте:
+      // новая таблица попадает сюда сама. Файл шапки ищется среди прозы,
+      // которую сверки читают; шапки, которой в свежей посадке нет, не спрашивают.
+      const headings = [
+        ...cfg.matchAll(
+          /^\s+(?:heading|memoHeading|listHeading|orderHeading):\s*\n?\s*"([^"]+)",/gm,
+        ),
+      ].map((m) => m[1]);
+      const files = [
+        ".context/01-facts.md",
+        ".context/05-flows.md",
+        ".context/07-invariants.md",
+        ".context/16-findings.md",
+        ".claude/tools/checks.md",
+        ".claude/rules/entry.md",
+        ".claude/rules/base.md",
+        ".claude/skills/README.md",
+      ];
+      const before = reds(box);
+      const blind = [];
+      let asked = 0;
+      for (const heading of [...headings, "## Файлы"])
+        for (const rel of files) {
+          const at = path.join(box, rel);
+          const clean = fs.readFileSync(at, "utf8");
+          const line = clean
+            .split("\n")
+            .find((l) => l.trim() === heading.trim());
+          if (line === undefined) continue;
+          asked += 1;
+          const renamed = line.startsWith("|")
+            ? line.replace("| ", "| Иное ")
+            : line + " иначе";
+          fs.writeFileSync(at, clean.replace(line, renamed));
+          if (added(before, reds(box)).length === 0)
+            blind.push(rel + ": " + heading);
+          fs.writeFileSync(at, clean);
+        }
+      expect(blind).toEqual([]);
+      expect(asked).toBeGreaterThanOrEqual(8);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 900000);
+});

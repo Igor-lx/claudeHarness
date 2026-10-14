@@ -24273,7 +24273,7 @@ if (mode === "verify") {
         `шаблона правил нет: ${CONFIG.doctrineReading.template}`,
       );
     else {
-      const lines = readFileSync(at, "utf8").split(NEWLINE);
+      const lines = proseOf(at).split(NEWLINE);
       // Раздел — от объявленного заголовка до следующего заголовка того же
       // уровня. Не найден — расхождение, а не пустой разбор: пустой печатался
       // бы нулём, и выключение читалось бы как здоровье.
@@ -24290,7 +24290,6 @@ if (mode === "verify") {
       };
       const list = section(CONFIG.doctrineReading.listHeading);
       const order = section(CONFIG.doctrineReading.orderHeading);
-      doctrineListed = list.length;
       if (list === null)
         doctrineDrift.push(
           `раздела нет: ${CONFIG.doctrineReading.listHeading}`,
@@ -24307,6 +24306,8 @@ if (mode === "verify") {
         doctrineDir !== null && existsSync(doctrineDir)
           ? readdirSync(doctrineDir).filter((n) => n.endsWith(".md"))
           : [];
+      doctrineListed =
+        list === null ? 0 : doctrine.filter((n) => list.includes(n)).length;
       for (const name of doctrine) {
         if (list !== null && !list.includes(name))
           doctrineDrift.push(`не назван в списке правил: ${name}`);
@@ -24549,7 +24550,7 @@ if (mode === "verify") {
     const ratAt = shelfAt("rationale");
     const rulesAt = shelfAt("rules");
     const headsOf = (at, from) =>
-      readFileSync(at, "utf8")
+      proseOf(at)
         .split(NEWLINE)
         .filter((l) => new RegExp("^#{" + from + ",}\\s").test(l))
         .map((l) => l.replace(/^#+\s*/, "").trim());
