@@ -84,6 +84,12 @@
       "replace": ""
     },
     {
+      "section": "Скиллы проекта",
+      "file": ".claude/skills/task/SKILL.md",
+      "find": "description: Начать задачу",
+      "replace": "summary: Начать задачу"
+    },
+    {
       "section": "Шаблон правил заполнен",
       "file": "CLAUDE.md",
       "append": "<НЕЗАПОЛНЕННОЕ МЕСТО>"

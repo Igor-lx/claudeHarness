@@ -8414,6 +8414,41 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it("шапка скилла судится целиком: без имени, с чужим именем, без признака вызова и без описания сверка «Скиллы проекта» краснеет, а описание на следующих строках — законно", () => {
+    const box = seatEmpty("skill-head-");
+    try {
+      const at = path.join(box, ".claude", "skills", "task", "SKILL.md");
+      const clean = fs.readFileSync(at, "utf8");
+      const drift = () => verifyIn(box).get("Скиллы проекта");
+      const rewrite = (change) => {
+        const next = change(clean);
+        expect(next).not.toBe(clean);
+        fs.writeFileSync(at, next);
+      };
+      expect(drift()).toBeUndefined();
+      rewrite((t) => t.replace(/^name:.*\n/m, ""));
+      expect(drift()).toEqual(["в шапке нет имени: task"]);
+      rewrite((t) => t.replace(/^name:.*$/m, "name: other"));
+      expect(drift()).toEqual([
+        "имя в шапке не совпадает с папкой: task ≠ other",
+      ]);
+      rewrite((t) => t.replace(/^user-invocable:.*\n/m, ""));
+      expect(drift()).toEqual(["не вызываем по имени: task"]);
+      rewrite((t) => t.replace(/^description:.*\n/m, ""));
+      expect(drift()).toEqual(["в шапке нет описания: task"]);
+      rewrite((t) => t.replace(/^description:.*$/m, "description:"));
+      expect(drift()).toEqual(["в шапке нет описания: task"]);
+      rewrite((t) =>
+        t.replace(/^description:.*$/m, "description: >\n  Начать задачу."),
+      );
+      expect(drift()).toBeUndefined();
+      fs.writeFileSync(at, clean);
+      expect(drift()).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("ворота стенда вне собранного стенда отказывают одной строкой, а не претензией к каждой посадке", () => {
     const box = seatEmpty("stand-not-");
     try {

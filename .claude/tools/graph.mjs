@@ -21573,6 +21573,20 @@ if (mode === "verify") {
         );
       if (!head.some((l) => /^user-invocable:\s*true\s*$/.test(l)))
         skillDrift.push(`не вызываем по имени: ${name}`);
+      // Описание — единственное, по чему окружение подбирает скилл к задаче;
+      // без него скилл вызывается только по имени (`environment.md`).
+      const descAt = head.findIndex((l) => /^description:/.test(l));
+      const rest = descAt < 0 ? [] : head.slice(descAt + 1);
+      const wrapped = rest.findIndex((l) => !/^\s/.test(l));
+      const inline =
+        descAt < 0
+          ? ""
+          : head[descAt].replace(/^description:\s*[>|]?[-+]?/, "");
+      const words = [
+        inline,
+        ...rest.slice(0, wrapped < 0 ? rest.length : wrapped),
+      ].join("");
+      if (words.trim() === "") skillDrift.push(`в шапке нет описания: ${name}`);
     }
     for (const [name] of listed) {
       if (!onDisk.includes(name)) {
