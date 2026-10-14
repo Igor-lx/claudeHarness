@@ -24382,7 +24382,10 @@ if (mode === "verify") {
         SHELF !== null && existsSync(SHELF) ? shelfCode(SHELF) : [],
       );
       for (const f of [...corpus, ...commentOnly]) {
-        const rows = readFileSync(f, "utf8").split(NEWLINE);
+        // Образец в ограде кода показывает слово, а не употребляет его: проза
+        // читается без оград, код полки — как был, по комментариям.
+        const raw = readFileSync(f, "utf8");
+        const rows = (commentOnly.has(f) ? raw : unfenced(raw)).split(NEWLINE);
         for (let i = 0; i < rows.length; i += 1) {
           const line = rows[i].trim();
           if (commentOnly.has(f) && !/^(?:\/\/|\/\*|\*|#)/.test(line)) continue;

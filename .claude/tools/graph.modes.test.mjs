@@ -10901,6 +10901,12 @@ describe("синоним термина словаря во всей прозе 
       for (const rel of ["rationale/loop.md", "tools/graph.md", "state/todo.md", "README.md"]) {
         const at = path.join(box, ".claude", rel);
         const was = fs.readFileSync(at, "utf8");
+        // Показанное в ограде кода слово не употреблено.
+        fs.writeFileSync(
+          at,
+          was + "\n```\nПравило без ловца не держится.\n```\n",
+        );
+        expect(said()).toEqual([]);
         fs.writeFileSync(at, was + "\nПравило без ловца не держится.\n");
         expect(said().join("\n")).toContain(".claude/" + rel);
         fs.writeFileSync(at, was);
