@@ -8457,7 +8457,7 @@ describe("находки мини-стенда: факты, долг, отлож
       const at = path.join(box, ".claude", "rules", "code.md");
       const clean = fs.readFileSync(at, "utf8");
       const gone = () =>
-        verifyIn(box).get("Имя сверки в тексте полки есть среди сверок");
+        verifyIn(box).get("Имя сверки в тексте есть среди сверок");
       expect(gone()).toBeUndefined();
       fs.appendFileSync(at, "\nСверка «Версия среды» названа началом имени.\n");
       expect(gone()).toBeUndefined();
@@ -8471,6 +8471,15 @@ describe("находки мини-стенда: факты, долг, отлож
         expect.stringMatching(/rules\/code\.md:\d+ — «Такой сверки нет»$/),
       ]);
       fs.writeFileSync(at, clean);
+      expect(gone()).toBeUndefined();
+      // Запись базы называет сверку тем же словом, и её имя стареет так же.
+      const record = path.join(box, ".context", "10-idioms.md");
+      const recordClean = fs.readFileSync(record, "utf8");
+      fs.appendFileSync(record, "\nДержит это сверка «Такой сверки нет».\n");
+      expect(gone()).toEqual([
+        expect.stringMatching(/10-idioms\.md:\d+ — «Такой сверки нет»$/),
+      ]);
+      fs.writeFileSync(record, recordClean);
       expect(gone()).toBeUndefined();
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
