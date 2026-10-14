@@ -2849,17 +2849,55 @@ const unfenced = (text) => {
   // Перевод строки литералом: помощник объявлен выше общей константы, и
   // обращение к ней здесь падало бы на загрузке модуля.
   const EOL = String.fromCharCode(10);
-  let fenced = false;
-  return text
-    .split(EOL)
-    .map((line) => {
-      if (/^\s*(```|~~~)/.test(line)) {
-        fenced = !fenced;
-        return "";
-      }
-      return fenced ? "" : line;
-    })
-    .join(EOL);
+  // Конец строки CRLF читается как LF: образцы сверок кончаются строкой, и
+  // возврат каретки перед ней обнулял разбор. Само расхождение называет
+  // сверка «Концы строк рабочего дерева сходятся с объявленными».
+  const lines = text.split(EOL).map((line) => line.replace(/\r$/, ""));
+  const fenced = fencedLines(lines);
+  return lines.map((line, i) => (fenced[i] ? "" : line)).join(EOL);
+};
+
+/** Ограды кода в строках прозы — по правилам CommonMark, одни на все сверки.
+ *
+ * Открывает ограду строка из трёх и более одинаковых знаков — обратных кавычек
+ * либо тильд; закрывает строка того же знака, не короче открывающей и без
+ * текста после. Незакрытая длится до конца файла. Прежде любая строка из трёх
+ * знаков переключала ограду, и образец ограды внутри ограды — четыре кавычки
+ * с тремя внутри, тильды внутри кавычек, строка с языком — выпускал свою
+ * середину в каждую сверку; правило жило в шести местах по-своему.
+ */
+const fenceSpans = (lines) => {
+  const spans = [];
+  let open = null;
+  lines.forEach((line, i) => {
+    const m = /^\s*(`{3,}|~{3,})(.*)/.exec(line);
+    if (m === null) return;
+    const [, mark, rest] = m;
+    if (open === null) {
+      // Строка сведений об ограде из кавычек кавычек не несёт: иначе это
+      // код в строке, а не ограда.
+      if (mark[0] === "`" && rest.includes("`")) return;
+      open = { from: i, char: mark[0], size: mark.length };
+    } else if (
+      mark[0] === open.char &&
+      mark.length >= open.size &&
+      rest.trim() === ""
+    ) {
+      spans.push({ from: open.from, to: i, closed: true });
+      open = null;
+    }
+  });
+  if (open !== null)
+    spans.push({ from: open.from, to: lines.length - 1, closed: false });
+  return spans;
+};
+
+/** Для каждой строки — лежит ли она в ограде, строки самой ограды включая. */
+const fencedLines = (lines) => {
+  const fenced = lines.map(() => false);
+  for (const { from, to } of fenceSpans(lines))
+    for (let i = from; i <= to; i += 1) fenced[i] = true;
+  return fenced;
 };
 
 /** Проза файла так, как её читают сверки: текст без оград кода.
@@ -9386,13 +9424,10 @@ const layerTables = () => {
     if (!name.endsWith(".md") || name === "README.md") continue;
     let inRules = false;
     let inIsolation = false;
-    let fenced = false;
-    for (const line of readFileSync(path.join(BASE, name), "utf8").split(LF)) {
-      if (/^\s*(```|~~~)/.test(line)) {
-        fenced = !fenced;
-        continue;
-      }
-      if (fenced) continue;
+    const lines = readFileSync(path.join(BASE, name), "utf8").split(LF);
+    const fenced = fencedLines(lines);
+    for (const [i, line] of lines.entries()) {
+      if (fenced[i]) continue;
       if (line.startsWith("#")) {
         inRules = RULES_HEAD.test(line);
         if (inRules) out.rulesHeadSeen = true;
@@ -19014,8 +19049,8 @@ if (mode === "verify") {
     // примера, и правила для несуществующих слоёв проверялись на настоящем
     // коде. Пример, ставший правилом, — худший вид записи: он выглядит
     // документацией и работает как объявление.
-    let fenced = false;
     const lines = readFileSync(path.join(BASE, name), "utf8").split(NEWLINE);
+    const fenced = fencedLines(lines);
     // Единица каталога — АБЗАЦ, а не строка. Адрес стоит в одной строке
     // («**что нельзя** (`файл:строка`)»), а пометка названа словами в соседней
     // («Решено: комментарий «…»»), и так написаны почти все записи. Обратная
@@ -19030,11 +19065,7 @@ if (mode === "verify") {
       i = j + 1;
     }
     for (const [lineAt, line] of lines.entries()) {
-      if (/^\s*(```|~~~)/.test(line)) {
-        fenced = !fenced;
-        continue;
-      }
-      if (fenced) continue;
+      if (fenced[lineAt]) continue;
       const head = HEAD_RE.exec(line);
       if (head !== null) {
         const token = head[1];
@@ -20876,16 +20907,12 @@ if (mode === "verify") {
           file = line.slice(6).replace(/\t$/, "");
           fenced = new Set();
           const here = path.join(REPO, file);
-          if (existsSync(here)) {
-            let open = false;
-            readFileSync(here, "utf8")
-              .split(NEWLINE)
-              .forEach((l, i) => {
-                const mark = /^\s*(```|~~~)/.test(l);
-                if (mark || open) fenced.add(i + 1);
-                if (mark) open = !open;
-              });
-          }
+          if (existsSync(here))
+            fencedLines(readFileSync(here, "utf8").split(NEWLINE)).forEach(
+              (inFence, i) => {
+                if (inFence) fenced.add(i + 1);
+              },
+            );
           continue;
         }
         const hunk = /^@@ -\S+ \+(\d+)/.exec(line);
@@ -21991,7 +22018,7 @@ if (mode === "verify") {
     else if (!existsSync(tableAt)) scopeDrift.push("файла таблицы нет");
     else {
       const sections = new Map();
-      for (const line of readFileSync(policyAt, "utf8").split(NEWLINE)) {
+      for (const line of proseOf(policyAt).split(NEWLINE)) {
         const h = /^## ([K-U])\.\s+(.+)$/.exec(line);
         if (h !== null) sections.set(h[1], h[2].trim());
       }
@@ -26273,8 +26300,8 @@ if (mode === "verify") {
   // закрытая ограда считается длящейся до конца файла: всё ниже неё выпадает
   // из каждой сверки текста — маркеры, счета, формы записей — без признака в
   // выводе. Ограда без пары также ломает показ на странице. Спрашивается то
-  // же правило, по которому читатели пропускают: строка, начинающаяся с трёх
-  // обратных кавычек или трёх тильд, открывает и закрывает.
+  // же правило, по которому читатели пропускают (`fenceSpans`): ограду,
+  // открытую четырьмя кавычками, три не закрывают.
   const openFences = [];
   let fencedFiles = 0;
   {
@@ -26293,16 +26320,12 @@ if (mode === "verify") {
       for (const at of walkProse(SHELF)) prose.add(at);
     for (const at of prose) {
       fencedFiles += 1;
-      let openedAt = 0;
-      readFileSync(at, "utf8")
-        .split(NEWLINE)
-        .forEach((line, i) => {
-          if (!/^\s*(```|~~~)/.test(line)) return;
-          openedAt = openedAt === 0 ? i + 1 : 0;
-        });
-      if (openedAt !== 0)
+      const open = fenceSpans(readFileSync(at, "utf8").split(NEWLINE)).find(
+        (span) => !span.closed,
+      );
+      if (open !== undefined)
         openFences.push(
-          `${rel0(at)}:${openedAt} — ограда открыта и не закрыта`,
+          `${rel0(at)}:${open.from + 1} — ограда открыта и не закрыта`,
         );
     }
   }
@@ -30819,19 +30842,16 @@ if (mode === "verify") {
       // Форма — блок в тройных кавычках, где стоит её первая строка.
       let from = -1;
       let to = -1;
-      for (let i = 0; i < lines.length; i += 1) {
-        if (!lines[i].startsWith("```")) continue;
-        let shut = i + 1;
-        while (shut < lines.length && !lines[shut].startsWith("```")) shut += 1;
+      for (const span of fenceSpans(lines))
         if (
-          lines.slice(i, shut).some((l) => l.includes("ПОСАДКА НЕ ЗАВЕРШЕНА"))
+          lines
+            .slice(span.from, span.to)
+            .some((l) => l.includes("ПОСАДКА НЕ ЗАВЕРШЕНА"))
         ) {
-          from = i;
-          to = shut;
+          from = span.from;
+          to = span.to;
           break;
         }
-        i = shut;
-      }
       if (banned.length === 0)
         reportJargon.push(
           "перечень слов в правиле не найден: спрашивать нечем",

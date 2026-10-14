@@ -12502,6 +12502,7 @@ describe("матрица читателей прозы", () => {
     ".context/10-idioms.md",
     ".context/05-flows.md",
     ".context/07-invariants.md",
+    ".context/00-map.md",
     "CLAUDE.md",
     ".claude/rules/code.md",
     ".claude/rules/entry.md",
@@ -12533,20 +12534,39 @@ describe("матрица читателей прозы", () => {
     return box;
   };
 
-  it("образец в ограде кода не краснит ни одной сверки ни в одном виде прозы, а вне ограды краснит", () => {
+  // Формы ограды по CommonMark. Закрывает ограду строка того же знака, не
+  // короче открывающей и без текста после: каждая форма ниже ломала чтение,
+  // которое считало любую строку из трёх знаков переключателем.
+  const FENCES = {
+    "три кавычки": (s) => "```\n" + s + "\n```",
+    "три тильды": (s) => "~~~\n" + s + "\n~~~",
+    "ограда в пункте списка": (s) =>
+      "- пункт\n\n  ```\n" +
+      s
+        .split("\n")
+        .map((l) => "  " + l)
+        .join("\n") +
+      "\n  ```",
+    "четыре кавычки с тремя внутри": (s) => "````md\n```\n" + s + "\n```\n````",
+    "тильды внутри кавычек": (s) => "```\n~~~\n" + s + "\n~~~\n```",
+    "строка с языком внутри ограды": (s) => "```\n```md\n" + s + "\n```",
+  };
+
+  it("образец в ограде кода не краснит ни одной сверки ни в одном виде прозы и ни в одной форме ограды, а вне ограды краснит", () => {
     const box = boxWithGit("matrix-fence-");
     try {
       const before = reds(box);
       const leaks = [];
-      for (const rel of KINDS) {
-        const at = path.join(box, rel);
-        const clean = fs.readFileSync(at, "utf8");
-        fs.writeFileSync(at, clean + "\n```\n" + SAMPLE + "\n```\n");
-        for (const red of added(before, reds(box)))
-          if (!RAW.some((name) => red.startsWith(name + " | ")))
-            leaks.push(rel + " → " + red);
-        fs.writeFileSync(at, clean);
-      }
+      for (const [form, fence] of Object.entries(FENCES))
+        for (const rel of KINDS) {
+          const at = path.join(box, rel);
+          const clean = fs.readFileSync(at, "utf8");
+          fs.writeFileSync(at, clean + "\n" + fence(SAMPLE) + "\n");
+          for (const red of added(before, reds(box)))
+            if (!RAW.some((name) => red.startsWith(name + " | ")))
+              leaks.push(form + ": " + rel + " → " + red);
+          fs.writeFileSync(at, clean);
+        }
       expect(leaks).toEqual([]);
       // Образец настоящий: вне ограды он краснит, и не одну сверку.
       const at = path.join(box, ".context", "10-idioms.md");
@@ -12558,7 +12578,63 @@ describe("матрица читателей прозы", () => {
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  }, 900000);
+  }, 1800000);
+
+  it("проза в CRLF называется сверкой концов строк, а другие читатели её не роняют", () => {
+    const box = boxWithGit("matrix-crlf-");
+    try {
+      const before = reds(box);
+      const prose = (dir) =>
+        fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory())
+            return e.name === ".git" || e.name === "node_modules"
+              ? []
+              : prose(full);
+          return e.name.endsWith(".md") ? [full] : [];
+        });
+      for (const at of prose(box))
+        fs.writeFileSync(
+          at,
+          fs.readFileSync(at, "utf8").replace(/\r?\n/g, "\r\n"),
+        );
+      const sections = new Set(
+        added(before, reds(box)).map((red) => red.split(" | ")[0]),
+      );
+      // Рецепты краснеют по делу: якорь рецепта записан с LF, и в семени
+      // с CRLF его не найти.
+      expect([...sections].sort()).toEqual(
+        [
+          "Концы строк рабочего дерева сходятся с объявленными",
+          "Рецепт находит место в свежей посадке",
+        ].sort(),
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("незакрытая ограда называется своей сверкой, и образец под ней не краснит других", () => {
+    const box = seatEmpty("matrix-open-");
+    try {
+      const before = reds(box);
+      const at = path.join(box, ".context", "10-idioms.md");
+      const clean = fs.readFileSync(at, "utf8");
+      // Вторая форма закрыта короче, чем открыта: по CommonMark это не
+      // закрытие, и ограда длится до конца файла.
+      for (const open of ["```\n" + SAMPLE, "````\n" + SAMPLE + "\n```"]) {
+        fs.writeFileSync(at, clean + "\n" + open + "\n");
+        const sections = new Set(
+          added(before, reds(box)).map((red) => red.split(" | ")[0]),
+        );
+        expect([...sections], open.slice(0, 4)).toEqual([
+          "Ограда кода в прозе закрыта",
+        ]);
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 
   it("имя в «ёлочках», перенесённое на следующую строку, читается ссылками на разделы и на сверки", () => {
     const box = seatEmpty("matrix-wrap-");
