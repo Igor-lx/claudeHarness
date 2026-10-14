@@ -15,7 +15,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
@@ -120,6 +120,8 @@ import {
   sandboxManifests,
   sandboxPackages,
 } from "./graph.seat.mjs";
+// Расход сессии свода: разбор журнала `claude -p`.
+import { costLines, costOf, journalOf } from "./graph.cost.mjs";
 // Части правки: таблица в протоколе свода, связность, записи и наложение.
 import {
   applyParts,
@@ -420,6 +422,47 @@ if (
     toolDir: path.dirname(fileURLToPath(import.meta.url)),
     argv: process.argv.slice(2),
   });
+
+// Расход сессии свода читает журнал и настройки проекта не знает, поэтому идёт
+// до неё. Журнал — путь довода либо `--session=<uuid>` из папки журналов.
+if (mode === "bar-probe" && process.argv.includes("--cost")) {
+  const rest = process.argv.slice(3);
+  const session =
+    rest.find((a) => a.startsWith("--session="))?.slice("--session=".length) ??
+    null;
+  const projects = path.join(
+    process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude"),
+    "projects",
+  );
+  const journal =
+    rest.find((a) => !a.startsWith("--")) ??
+    (session !== null && existsSync(projects)
+      ? (readdirSync(projects)
+          .map((d) => path.join(projects, d, session + ".jsonl"))
+          .find((f) => existsSync(f)) ?? null)
+      : null);
+  console.log("=== Расход сессии свода ===");
+  if (journal === null || !existsSync(journal)) {
+    sayLooked("журналов", 0);
+    console.log(
+      "  Журнал не найден: дай путь довода либо --session=<uuid> сессии `claude -p`" +
+        " (журнал лежит в <папка настроек>/projects/<папка>/<uuid>.jsonl).",
+    );
+    process.exit(1);
+  }
+  const { records, skipped } = journalOf(readFileSync(journal, "utf8"));
+  const cost = costOf(records);
+  sayLooked("обращений журнала", cost.turns);
+  console.log("  журнал: " + journal.split(path.sep).join("/"));
+  if (cost.turns === 0) {
+    console.log("  В журнале нет ни одного обращения модели: считать нечего.");
+    process.exit(1);
+  }
+  if (skipped > 0)
+    console.log("  строк журнала, что не разобрались: " + skipped);
+  for (const line of costLines(cost)) console.log(line);
+  process.exit(0);
+}
 
 if (mode === "env") {
   const here = path.dirname(fileURLToPath(import.meta.url));

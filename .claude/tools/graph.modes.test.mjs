@@ -11693,3 +11693,79 @@ describe("экономия свода по журналу пробы 2026-10-13"
     }
   }, 300000);
 });
+
+describe("расход сессии свода: режим `bar-probe --cost`", () => {
+  const record = (id, ctx, parts) =>
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        id,
+        usage: {
+          input_tokens: ctx,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          output_tokens: 1,
+        },
+        content: parts,
+      },
+    });
+  const journal = [
+    record("m1", 1000, [
+      {
+        type: "tool_use",
+        id: "t1",
+        name: "Read",
+        input: { file_path: "/p/.context/bar-protocol.md" },
+      },
+    ]),
+    record("m2", 1500, [{ type: "text", text: "готово" }]),
+  ].join("\n");
+  const run = (args, env = {}) =>
+    spawnSync(process.execPath, [TOOL, "bar-probe", "--cost", ...args], {
+      cwd: os.tmpdir(),
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+    });
+
+  it("журнал по пути: печатает обращения, перечитывание и строку для замеров, код ноль", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "cost-"));
+    try {
+      const at = path.join(box, "j.jsonl");
+      fs.writeFileSync(at, journal);
+      const said = run([at]);
+      expect(said.status).toBe(0);
+      expect(said.stdout).toContain("осмотрено обращений журнала: 2");
+      expect(said.stdout).toContain("перечитывание: 2 500 токенов контекста");
+      expect(said.stdout).toContain(
+        "чтений протокола (Read и срезы оболочкой): 1",
+      );
+      expect(said.stdout).toContain(
+        "`2` обращений, перечитывание `2 500` токенов",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
+  it("журнал по номеру сессии ищется в папке журналов; нет журнала или нет обращений — код один", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "cost-"));
+    try {
+      const dir = path.join(box, "projects", "-some-sandbox");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "abc-123.jsonl"), journal);
+      fs.writeFileSync(path.join(dir, "empty.jsonl"), '{"type":"user"}\n');
+      const env = { CLAUDE_CONFIG_DIR: box };
+      const found = run(["--session=abc-123"], env);
+      expect(found.status).toBe(0);
+      expect(found.stdout).toContain("осмотрено обращений журнала: 2");
+      const missing = run(["--session=zzz"], env);
+      expect(missing.status).toBe(1);
+      expect(missing.stdout).toContain("Журнал не найден");
+      const empty = run(["--session=empty"], env);
+      expect(empty.status).toBe(1);
+      expect(empty.stdout).toContain("нет ни одного обращения модели");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
