@@ -697,6 +697,23 @@
       ]
     },
     {
+      "section": "Разделы правил классифицированы",
+      "own": true,
+      "edits": [
+        {
+          "create": {
+            "path": "src/CLAUDE.md",
+            "text": "# Вложенные правила\n\nКорень: ../../CLAUDE.md"
+          }
+        },
+        {
+          "file": ".context/graph.config.mjs",
+          "find": "    rules: [\"../CLAUDE.md\"],",
+          "replace": "    rules: [\"../CLAUDE.md\", \"../src/CLAUDE.md\"],"
+        }
+      ]
+    },
+    {
       "section": "Исключения сверок используются",
       "file": ".context/graph.config.mjs",
       "find": "  corpusOutside: null,",

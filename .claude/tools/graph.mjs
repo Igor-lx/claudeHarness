@@ -21129,8 +21129,13 @@ if (mode === "verify") {
         path.basename(here) === "CLAUDE.md" &&
         existsSync(rootRules)
       ) {
+        // Путь читается как путь: подстрока «../../CLAUDE.md» содержит
+        // «../CLAUDE.md», но ведёт выше корня.
         const back = norm(path.relative(path.dirname(here), rootRules));
-        if (!body.includes(back))
+        const points = [...body.matchAll(/[^\s()[\]`"'<>|]*CLAUDE\.md/g)].some(
+          (m) => norm(path.resolve(path.dirname(here), m[0])) === rootRules,
+        );
+        if (!points)
           unclassified.push(
             `вложенный файл правил не указывает на корневой: ${one} — нет пути ${back}`,
           );

@@ -8260,6 +8260,13 @@ describe("находки мини-стенда: факты, долг, отлож
         "# Правила папки\n\nКорень: ../CLAUDE.md\n",
       );
       expect(section()).toHaveLength(1);
+      // Путь глубже нужного содержит верный как подстроку, но ведёт выше корня.
+      write(
+        box,
+        "src/app/CLAUDE.md",
+        "# Правила папки\n\nКорень: ../../../CLAUDE.md\n",
+      );
+      expect(section()).toHaveLength(1);
       write(
         box,
         "src/app/CLAUDE.md",
