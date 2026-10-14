@@ -19527,7 +19527,9 @@ if (mode === "verify") {
         .map((e) => norm(path.join(BASE, e))),
     ].filter((f) => !skip.has(norm(f)));
     for (const f of [...new Set(quoting)]) {
-      const lines = readFileSync(f, "utf8").split(NEWLINE);
+      // Образец в ограде кода документа — показанная форма, не ссылка.
+      const raw = readFileSync(f, "utf8");
+      const lines = (f.endsWith(".md") ? unfenced(raw) : raw).split(NEWLINE);
       lines.forEach((line, i) => {
         for (const m of line.matchAll(/\bREQ-[0-9]+\b/g))
           if (!seenIds.has(m[0]))
@@ -25982,7 +25984,9 @@ if (mode === "verify") {
     ([, , fromShelf]) => fromShelf !== true,
   );
   for (const [name, at] of nameSources)
-    for (const [i, line] of readFileSync(at, "utf8").split(NEWLINE).entries())
+    for (const [i, line] of unfenced(readFileSync(at, "utf8"))
+      .split(NEWLINE)
+      .entries())
       for (const span of line.split(BACKTICK).filter((_, k) => k % 2 === 1)) {
         const tok = span.trim();
         if (!CAMEL_NAME.test(tok) || fileStems.has(tok)) continue;
@@ -26009,7 +26013,9 @@ if (mode === "verify") {
     // Имя ищется ВНУТРИ кода-спана, а не «в кавычках целиком»: база пишет и
     // `NAME`, и `NAME = 400`, и вторая форма при сверке по целому спану
     // молча не проверялась бы — на ней проверка и попалась при фальсификации.
-    for (const span of readFileSync(at, "utf8").matchAll(/`([^`\n]+)`/g)) {
+    for (const span of unfenced(readFileSync(at, "utf8")).matchAll(
+      /`([^`\n]+)`/g,
+    )) {
       // Только СОСТАВНОЕ имя, и не часть имени файла. Односложные заглавные
       // слова в тексте — это `CLAUDE.md`, `LOCALAPPDATA`, `PIPESTATUS`: имена
       // не из исходников, и проверять их здесь значило бы шуметь. Подчёркивание

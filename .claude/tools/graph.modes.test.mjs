@@ -8656,6 +8656,38 @@ describe("находки мини-стенда: факты, долг, отлож
     }
   }, 180000);
 
+  it("образец в ограде кода не запись для сверок номера гарантии, имени из кода и имени константы", () => {
+    const box = seatEmpty("fence-names-");
+    try {
+      const get = (name) => verifyIn(box).get(name);
+      const notes = path.join(box, ".context", "08-tests.md");
+      // Имя собрано из частей: целиком в тексте теста оно считалось бы живым,
+      // ведь тест лежит в тех же исходниках, что проверяет сверка.
+      const ghost = ["zzAbsent", "Nowhere"].join("");
+      const sample =
+        "Гарантия REQ-9, имя `" + ghost + "`, константа `NO_SUCH_CONSTANT`.\n";
+      fs.appendFileSync(notes, "\n```\n" + sample + "```\n");
+      for (const name of [
+        "Гарантия держится тестом",
+        "Имена из кода в тексте",
+        "Имена констант в тексте",
+      ])
+        expect(get(name), name).toBeUndefined();
+      fs.appendFileSync(notes, "\n" + sample);
+      expect(get("Гарантия держится тестом")).toEqual([
+        expect.stringContaining("REQ-9: в таблице такой нет"),
+      ]);
+      expect(get("Имена из кода в тексте")).toEqual([
+        expect.stringContaining(ghost),
+      ]);
+      expect(get("Имена констант в тексте")).toEqual([
+        expect.stringContaining("NO_SUCH_CONSTANT"),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("ворота стенда вне собранного стенда отказывают одной строкой, а не претензией к каждой посадке", () => {
     const box = seatEmpty("stand-not-");
     try {
