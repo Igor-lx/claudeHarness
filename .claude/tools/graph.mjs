@@ -5172,6 +5172,7 @@ const CHECK_SECTIONS = [
   "Имена констант в тексте",
   "Имя сверки в тексте есть среди сверок",
   "Ограда кода в прозе закрыта",
+  "Таблица файлов базы сходится с семенами",
   "Таблица базы не разорвана комментарием",
   "Тесты лежат в `tests/`",
   "Объявленный состав папок и радиусы",
@@ -26278,6 +26279,74 @@ if (mode === "verify") {
   });
   console.log(`  не закрыто: ${openFences.length}`);
   for (const g of openFences) console.log("    " + g);
+
+  // Таблица файлов базы сходится с семенами.
+  //
+  // Таблица в `rules/base.md` решает, куда записать новое, и обещает, когда
+  // файл появляется. Две её строки обещали файлы, которых посадка не кладёт и
+  // ни один проект не видел, а перечень семян с таблицей ничто не сверяло.
+  // Спрашивается в обе стороны: семя в `.context/` без строки таблицы и строка
+  // без семени, если файл не назван в `baseFilesNotSeeded` карты посадки —
+  // там файлы, которые создаёт работа.
+  const baseTableDrift = [];
+  let baseTableLooked = 0;
+  {
+    const doc = shelfAt("rules/base.md");
+    const mapAt = shelfAt("seat/map.json");
+    if (
+      doc !== null &&
+      mapAt !== null &&
+      existsSync(doc) &&
+      existsSync(mapAt)
+    ) {
+      const seatMap = readJson(mapAt, {});
+      const text = unfenced(readFileSync(doc, "utf8"));
+      const from = text.indexOf(NEWLINE + "## Файлы");
+      const upTo = text.indexOf(NEWLINE + "## ", from + 1);
+      const section =
+        from < 0 ? "" : text.slice(from, upTo < 0 ? undefined : upTo);
+      const rows = [...section.matchAll(/^\| `([^`]+)` \|/gm)].map((m) => m[1]);
+      // Семена лежат не только в `copy`: состояние и порядок приезжают, когда
+      // предмет найден в коде (`onSubject`), план перехода — на переходе.
+      const targets = [];
+      const walk = (node) => {
+        if (Array.isArray(node)) node.forEach(walk);
+        else if (node !== null && typeof node === "object") {
+          if (typeof node.to === "string") targets.push(node.to);
+          Object.values(node).forEach(walk);
+        }
+      };
+      walk(seatMap);
+      const seeded = [...new Set(targets)]
+        .filter((t) => /^\.context\/[^/]+$/.test(t))
+        .map((t) => t.slice(".context/".length));
+      const made = seatMap.baseFilesNotSeeded?.files ?? [];
+      baseTableLooked = new Set([...rows, ...seeded, ...made]).size;
+      if (from >= 0) {
+        for (const f of seeded)
+          if (!rows.includes(f))
+            baseTableDrift.push(
+              `семя ${f} посадка кладёт, а в таблице \`base.md\` строки о нём нет`,
+            );
+        for (const f of rows)
+          if (!seeded.includes(f) && !made.includes(f))
+            baseTableDrift.push(
+              `строка ${f} в таблице \`base.md\` есть, а семени нет и среди созданных работой (\`baseFilesNotSeeded\`) он не назван`,
+            );
+        for (const f of made)
+          if (!rows.includes(f))
+            baseTableDrift.push(
+              `${f} назван в \`baseFilesNotSeeded\`, а строки о нём в таблице \`base.md\` нет`,
+            );
+      }
+    }
+  }
+  checkHead("Таблица файлов базы сходится с семенами", {
+    n: baseTableLooked,
+    unit: "файлов таблицы и семян",
+  });
+  console.log(`  расхождений: ${baseTableDrift.length}`);
+  for (const g of baseTableDrift) console.log("    " + g);
 
   // Таблица базы не разорвана комментарием.
   //

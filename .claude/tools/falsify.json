@@ -681,6 +681,12 @@
       "append": "Константа `NO_SUCH_CONSTANT` тут ни при чём."
     },
     {
+      "section": "Таблица файлов базы сходится с семенами",
+      "file": ".claude/rules/base.md",
+      "find": "| `02-todo.md` |",
+      "replace": "| `02-todo-нет.md` |"
+    },
+    {
       "section": "Ограда кода в прозе закрыта",
       "file": ".context/10-idioms.md",
       "append": "```\nОграда без пары."
