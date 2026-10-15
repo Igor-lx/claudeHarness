@@ -3230,3 +3230,46 @@ describe("снимок без временной папки", () => {
     }
   }, 300000);
 });
+
+describe("форматтер проекта в форме CommonJS", () => {
+  it("сверка семян берёт его целиком и называет неряшливое семя, а не ошибку загрузки", () => {
+    const box = seatEmpty("prettier-cjs-");
+    try {
+      // Заглушка повторяет форму `prettier` 2: загрузчик распознаёт из неё
+      // одно имя `format`, а `resolveConfig` есть только у `default`.
+      const pkg = path.join(box, "node_modules", "prettier");
+      fs.mkdirSync(pkg, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkg, "package.json"),
+        JSON.stringify({
+          name: "prettier",
+          version: "2.8.8",
+          main: "index.js",
+        }),
+      );
+      fs.writeFileSync(
+        path.join(pkg, "index.js"),
+        [
+          "const api = {",
+          "  resolveConfig: async () => null,",
+          '  check: (source) => !source.includes("   ="),',
+          "  format: (source) => source,",
+          "};",
+          "module.exports = api;",
+          "module.exports.format = api.format;",
+        ].join("\n"),
+      );
+      fs.writeFileSync(
+        path.join(box, ".claude", "seat", "templates", "zzRough.ts.seed"),
+        "export const zzRough   =    1",
+      );
+      expect(verifyIn(box).get("Семена приезжают отформатированными")).toEqual([
+        expect.stringMatching(
+          /^\.claude\/seat\/templates\/zzRough\.ts\.seed — в проекте/,
+        ),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

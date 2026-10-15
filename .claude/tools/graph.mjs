@@ -2469,7 +2469,12 @@ const prettierHere = async () => {
         "prettier",
       );
       const mod = await import(pathToFileURL(at).href);
-      PRETTIER_HERE = typeof mod.format === "function" ? mod : mod.default;
+      // Пакет CommonJS отдаёт целиком только `default`: именованных имён
+      // загрузчик распознаёт не все, и у `prettier` 2 без `resolveConfig`
+      // сверка семян краснела на каждом семени. Найдено пробой по холодному
+      // контуру.
+      PRETTIER_HERE =
+        typeof mod.default?.format === "function" ? mod.default : mod;
       return PRETTIER_HERE;
     } catch {
       if (path.dirname(dir) === dir) return PRETTIER_HERE;
