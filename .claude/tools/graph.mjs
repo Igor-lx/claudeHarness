@@ -8864,10 +8864,23 @@ if (mode === "bar-probe") {
       if (chosen.length === 0)
         notPlanted("Ни один критерий пачки не вместился: " + unfit.join(", ") + ".");
     }
-    const id = String(Date.now()).slice(-8);
-    const box = path.join(systemTemp(), "bar-probe-" + id);
+    // Песочница занимается атомарно, а не стирается: номер — время в
+    // миллисекундах, и два запуска в одну миллисекунду (параллельные файлы
+    // тестов) стирали друг другу песочницу посреди git.
+    let seq = Number(String(Date.now()).slice(-8));
+    let box = null;
+    while (box === null) {
+      const at = path.join(systemTemp(), "bar-probe-" + seq);
+      try {
+        mkdirSync(at);
+        box = at;
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        seq += 1;
+      }
+    }
+    const id = String(seq);
     const mark = path.join(systemTemp(), "bar-probe-" + id + ".plant.json");
-    rmSync(box, { recursive: true, force: true });
     sandboxTree(projectRoot, box);
     sandboxPackages(
       path.join(projectRoot, "node_modules"),

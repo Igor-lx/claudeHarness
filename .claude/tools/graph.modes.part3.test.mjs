@@ -3329,3 +3329,67 @@ describe("временную папку системы берут через о�
     expect(systemTemp()).toBe(os.tmpdir());
   });
 });
+
+describe("песочница пробы планки занимается, а не стирается", () => {
+  it("занятый номер обходится, чужая песочница с тем же номером цела", () => {
+    const box = seatEmpty("probaclaim-");
+    // Номера — время в миллисекундах: сторожа занимают ближайшие секунды,
+    // как их занял бы параллельный запуск.
+    const from = Number(String(Date.now()).slice(-8));
+    const guards = [];
+    const made = [];
+    try {
+      for (let k = 0; k < 20000; k += 1) {
+        const at = path.join(os.tmpdir(), "bar-probe-" + (from + k));
+        if (fs.existsSync(at)) continue;
+        fs.mkdirSync(at);
+        fs.writeFileSync(path.join(at, "чужое"), "");
+        guards.push(at);
+      }
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      fs.writeFileSync(
+        probes,
+        JSON.stringify({
+          plants: [
+            {
+              criterion: "H7",
+              why: "проба номера",
+              into: [{ text: "export const zzNarrow = () => 1;" }],
+            },
+          ],
+          covers: [{ text: "export const zzShield = () => 1;" }],
+        }),
+      );
+      let out = "";
+      try {
+        out = execFileSync(
+          process.execPath,
+          [
+            path.join(box, ".claude", "tools", "graph.mjs"),
+            "bar-probe",
+            "--existing",
+            "--seed=1",
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      } catch (e) {
+        out = String(e.stdout ?? "");
+      }
+      const sandbox = /песочница: (.+)/.exec(out)?.[1]?.trim();
+      const id = /bar-probe (\d+)/.exec(out)?.[1];
+      expect(sandbox, out).toBeDefined();
+      made.push(
+        sandbox,
+        path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json"),
+      );
+      expect(guards).not.toContain(sandbox);
+      expect(
+        guards.filter((at) => !fs.existsSync(path.join(at, "чужое"))),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      for (const one of [...guards, ...made])
+        fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 300000);
+});
