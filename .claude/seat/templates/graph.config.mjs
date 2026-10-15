@@ -638,6 +638,7 @@ export const CONFIG = {
     "@eslint-react/eslint-plugin": "5.24.2",
     "eslint-plugin-jsx-a11y-x": "0.2.0",
     "eslint-plugin-sonarjs": "4.2.2",
+    "@stryker-mutator/core": "10.0.0",
   },
   /** Звенья обязательной цепочки проверок: чем каждое исполняется и есть ли для
    * него шаблон настройки на полке.
