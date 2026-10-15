@@ -20272,6 +20272,44 @@ if (mode === "verify") {
             settingsDrift.push(
               `${kind}: ${entry} — есть в семени, нет в общем файле проекта`,
             );
+    // И строки ПРОЕКТА слияние не снимает (`seat/seat.md`, шаг 5). Пока стоит
+    // флаг посадки, прежний вид файла лежит в последнем коммите. Семя,
+    // положенное поверх файла проекта, снимало его запрет без признака: сверка
+    // выше спрашивала только строки семени. Найдено пробой по холодному
+    // контуру. Крючки обвязки прежней формы заменяют семенными, и они не
+    // спрашиваются; свои крючки проекта — спрашиваются.
+    if (shared !== null && seatingIsUp()) {
+      const at = path.join(BASE, CONFIG.settingsProject);
+      let was = null;
+      try {
+        was = JSON.parse(headTextOf(at) ?? "null");
+      } catch {
+        was = null;
+      }
+      const hooksOf = (parsed) =>
+        Object.entries(parsed?.hooks ?? {}).flatMap(([event, groups]) =>
+          (groups ?? []).flatMap((group) =>
+            (group?.hooks ?? [])
+              .map((h) => [h.command, ...(h.args ?? [])].join(" "))
+              .filter((call) => !call.includes(".claude/tools/"))
+              .map((call) => `${event}: ${call}`),
+          ),
+        );
+      if (was !== null) {
+        for (const kind of kinds)
+          for (const entry of (was.permissions?.[kind] ?? []).map(same))
+            if (!shared[kind].includes(entry))
+              settingsDrift.push(
+                `${kind}: ${entry} — было в файле проекта до посадки, слияние его сняло`,
+              );
+        const hooksNow = new Set(hooksOf(JSON.parse(readFileSync(at, "utf8"))));
+        for (const hook of hooksOf(was))
+          if (!hooksNow.has(hook))
+            settingsDrift.push(
+              `крючок ${hook} — был в файле проекта до посадки, слияние его сняло`,
+            );
+      }
+    }
     // Обратная сторона, и она НЕ роняет прогон. Проект наживает разрешения по
     // ходу работы, и большая часть из них законно проектная — свои скрипты,
     // свои пути, свои службы. Но часть общая, и семя о ней не узнаёт ничем:

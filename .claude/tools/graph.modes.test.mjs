@@ -12715,3 +12715,59 @@ describe("матрица читателей прозы", () => {
     }
   }, 900000);
 });
+
+describe("посадка не снимает строк проекта из его настроек среды", () => {
+  it("пока стоит флаг посадки, снятые запрет, разрешение и свой крючок проекта названы; после — снимать законно", () => {
+    const box = seatEmpty("seat-keeps-settings-");
+    const git = (...args) =>
+      spawnSync(
+        "git",
+        [
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@l",
+          "-c",
+          "core.hooksPath=",
+          ...args,
+        ],
+        { cwd: box, encoding: "utf8" },
+      );
+    try {
+      const at = path.join(box, ".claude", "settings.json");
+      const seed = fs.readFileSync(at, "utf8");
+      const own = JSON.parse(seed);
+      own.permissions.deny.push("Bash(terraform destroy *)");
+      own.permissions.allow.push("Bash(make preview *)");
+      own.hooks.Notification = [
+        {
+          hooks: [{ type: "command", command: "notify-send", args: ["done"] }],
+        },
+      ];
+      fs.writeFileSync(at, JSON.stringify(own, null, 2) + "\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "проект со своими настройками", "--no-verify");
+      const lost = () => verifyIn(box).get("Разрешения среды") ?? [];
+      expect(lost()).toEqual([]);
+      // Слияние, которое положило семя поверх файла проекта.
+      fs.writeFileSync(at, seed);
+      expect(lost()).toEqual([
+        expect.stringMatching(/^deny: Bash\(terraform destroy \*\) — было/),
+        expect.stringMatching(/^allow: Bash\(make preview \*\) — было/),
+        expect.stringMatching(
+          /^крючок Notification: notify-send done — был в файле/,
+        ),
+      ]);
+      // Посадка закончена — строку снимает разработчик, и это законно.
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfg,
+        fs.readFileSync(cfg, "utf8").replace("seating: 1,", "seating: 0,"),
+      );
+      expect(lost()).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
