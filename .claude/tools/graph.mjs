@@ -16,7 +16,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
@@ -122,6 +122,7 @@ import {
   runSeat,
   sandboxManifests,
   sandboxPackages,
+  systemTemp,
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
@@ -6503,7 +6504,7 @@ if (mode === "handoff") {
   // быть, и тогда снимок не проверен — он удаляется, как любой непроверенный.
   let probe = null;
   try {
-    probe = mkdtempSync(path.join(tmpdir(), "handoff-probe-"));
+    probe = mkdtempSync(path.join(systemTemp(), "handoff-probe-"));
     // Проба сажает тем же порядком, что и посадка: своя копия порядка уже
     // расходилась с ним, и снимок переставал собираться.
     layShelf(claudeAt, probe);
@@ -8502,7 +8503,7 @@ if (mode === "bar-probe") {
             );
         continue;
       }
-      const box = path.join(tmpdir(), "bar-probe-" + id);
+      const box = path.join(systemTemp(), "bar-probe-" + id);
       const mark = box + ".plant.json";
       const record = JSON.parse(readFileSync(mark, "utf8"));
       const placed = new Set(record.plants.map((one) => one.number));
@@ -8864,8 +8865,8 @@ if (mode === "bar-probe") {
         notPlanted("Ни один критерий пачки не вместился: " + unfit.join(", ") + ".");
     }
     const id = String(Date.now()).slice(-8);
-    const box = path.join(tmpdir(), "bar-probe-" + id);
-    const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
+    const box = path.join(systemTemp(), "bar-probe-" + id);
+    const mark = path.join(systemTemp(), "bar-probe-" + id + ".plant.json");
     rmSync(box, { recursive: true, force: true });
     sandboxTree(projectRoot, box);
     sandboxPackages(
@@ -9135,7 +9136,7 @@ if (mode === "bar-probe") {
     judged.includes(path.sep) || judged.includes("/")
       ? path.basename(norm(judged)).replace(/^bar-probe-/, "")
       : judged;
-  const mark = path.join(tmpdir(), "bar-probe-" + id + ".plant.json");
+  const mark = path.join(systemTemp(), "bar-probe-" + id + ".plant.json");
   if (!existsSync(mark)) {
     console.log("=== Пробы с таким номером нет ===");
     console.log("  Ожидалась запись: " + norm(mark));

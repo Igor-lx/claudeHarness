@@ -1,5 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  accessSync,
+  constants,
   cpSync,
   existsSync,
   mkdirSync,
@@ -10,7 +12,25 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+
+/** Временная папка системы, годная для записи, — либо ошибка, которая её
+ * называет. Режимы, заводящие там песочницу, брали её каждый сам и при
+ * негодной папке падали сырым стеком, а `handoff` оставлял непроверенный
+ * снимок. Найдено пробой по холодному контуру. */
+export const systemTemp = () => {
+  const dir = tmpdir();
+  try {
+    accessSync(dir, constants.W_OK);
+    if (!statSync(dir).isDirectory()) throw new Error("это не папка");
+  } catch (e) {
+    throw new Error(
+      `временная папка системы недоступна: ${dir} (${e.code ?? e.message}) — задать TMPDIR`,
+    );
+  }
+  return dir;
+};
 
 /** Манифесты установленных пакетов — и только они.
  *

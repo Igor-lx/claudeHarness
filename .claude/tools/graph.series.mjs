@@ -21,11 +21,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { applyParts } from "./graph.parts.mjs";
-import { sandboxPackages } from "./graph.seat.mjs";
+import { sandboxPackages, systemTemp } from "./graph.seat.mjs";
 
 const norm = (p) => p.split(path.sep).join("/");
 
@@ -141,7 +140,7 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
     return trees.map((t) => ({ ...t, code: 0, was: true }));
   }
   const dir = path.join(
-    tmpdir(),
+    systemTemp(),
     "graph-series-" + randomBytes(4).toString("hex"),
   );
   // Признак сессии в копии не нужен: цепочка судит дерево, а не сессию.

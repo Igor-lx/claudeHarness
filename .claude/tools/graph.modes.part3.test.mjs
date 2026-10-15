@@ -3231,7 +3231,7 @@ describe("снимок без временной папки", () => {
       );
       expect(run.status).toBe(1);
       expect(run.stdout).toContain("СНИМОК НЕ СОБРАН");
-      expect(run.stdout).toContain("mkdtemp");
+      expect(run.stdout).toContain("временная папка системы недоступна");
       expect(fs.existsSync(snap)).toBe(false);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
@@ -3280,4 +3280,52 @@ describe("форматтер проекта в форме CommonJS", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+});
+
+describe("временную папку системы берут через один помощник", () => {
+  it("код инструмента зовёт tmpdir() только в systemTemp, а негодную папку помощник называет", async () => {
+    // Обёртка хуков — исключение: она пишет файл, а не заводит песочницу, и
+    // запись у неё уже под перехватом с названной причиной.
+    const own = new Set(["graph.seat.mjs", "hook.mjs"]);
+    const strays = fs
+      .readdirSync(TOOL_DIR)
+      .filter(
+        (n) =>
+          n.endsWith(".mjs") &&
+          !n.includes(".test.") &&
+          !n.startsWith("graph.modes.") &&
+          !own.has(n),
+      )
+      .flatMap((n) =>
+        fs
+          .readFileSync(path.join(TOOL_DIR, n), "utf8")
+          .split("\n")
+          .map((line, i) => [n + ":" + (i + 1), line])
+          .filter(([, line]) => /\btmpdir\(\)/.test(line))
+          .map(([at]) => at),
+      );
+    expect(strays).toEqual([]);
+    const { systemTemp } = await import("./graph.seat.mjs");
+    const was = process.env.TMPDIR;
+    const notDir = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "tmp-")),
+      "file",
+    );
+    fs.writeFileSync(notDir, "");
+    try {
+      process.env.TMPDIR = notDir;
+      expect(() => systemTemp()).toThrow(
+        new RegExp(
+          "временная папка системы недоступна: " +
+            notDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+            ".*TMPDIR",
+        ),
+      );
+    } finally {
+      if (was === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = was;
+      fs.rmSync(path.dirname(notDir), { recursive: true, force: true });
+    }
+    expect(systemTemp()).toBe(os.tmpdir());
+  });
 });
