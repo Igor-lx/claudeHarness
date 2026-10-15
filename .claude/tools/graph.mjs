@@ -2457,18 +2457,24 @@ let PRETTIER_HERE;
 const prettierHere = async () => {
   if (PRETTIER_HERE !== undefined) return PRETTIER_HERE;
   PRETTIER_HERE = null;
-  try {
-    const { createRequire } = await import("node:module");
-    const { pathToFileURL } = await import("node:url");
-    const at = createRequire(path.join(REPO_AT, "package.json")).resolve(
-      "prettier",
-    );
-    const mod = await import(pathToFileURL(at).href);
-    PRETTIER_HERE = typeof mod.format === "function" ? mod : mod.default;
-  } catch {
-    PRETTIER_HERE = null;
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  // Разрешение идёт от корня проекта, а не нашлось — от папок выше, как у
+  // `npx`. В песочнице фальсификации пакеты лежат одними манифестами, и
+  // разрешение застревало на манифесте без кода: сверка семян объявляла
+  // «форматтера нет» и не краснела на своём рецепте.
+  for (let dir = REPO_AT; ; dir = path.dirname(dir)) {
+    try {
+      const at = createRequire(path.join(dir, "package.json")).resolve(
+        "prettier",
+      );
+      const mod = await import(pathToFileURL(at).href);
+      PRETTIER_HERE = typeof mod.format === "function" ? mod : mod.default;
+      return PRETTIER_HERE;
+    } catch {
+      if (path.dirname(dir) === dir) return PRETTIER_HERE;
+    }
   }
-  return PRETTIER_HERE;
 };
 /** Правка — ОДНО ЛИШЬ приведение формата: прежнее содержимое, пропущенное
  * через форматтер проекта с его настройками, даёт ровно новое.
@@ -29598,49 +29604,43 @@ if (mode === "verify") {
       };
       look(seedDir);
       if (found.length === 0) seedFmtSaid = "семян с суффиксом нет";
-      else
-        try {
-          // Список исключений ПРОЕКТА сюда не допускается: семена лежат в
-          // папке обвязки, а проект её из форматтера исключает — её файлы
-          // форматирует мастерская. Форматтер, прочитав этот список, молча
-          // пропускал каждое семя и отвечал «расходится: 0». Замерено
-          // фальсификацией стенда: посаженное неряшливое семя прошло чистым.
-          // Путь к несуществующему файлу заменяет список пустым; путь
-          // относительный и латиницей — команда идёт через оболочку.
-          execFileSync(
-            "npx",
-            [
-              "prettier",
-              "--check",
-              "--parser",
-              "typescript",
-              "--ignore-path",
-              norm(
-                path.relative(
-                  path.join(BASE, ".."),
-                  path.join(seedDir, ".no-ignore-list"),
-                ),
-              ),
-              ...found,
-            ],
-            {
-              cwd: path.join(BASE, ".."),
-              encoding: "utf8",
-              shell: true,
-              stdio: ["ignore", "pipe", "pipe"],
-            },
-          );
-          seedFmtSaid = "семян проверено: " + found.length + ", расходится: 0";
-        } catch (e) {
-          const out = String(e.stdout ?? "") + String(e.stderr ?? "");
-          if (/not (found|recognized)|ENOENT|Cannot find/i.test(out))
+      else {
+        // Форматтер проекта зовётся в процессе, а не через `npx`: запуск
+        // `npx` стоил около `400` мс на каждый прогон сверки, а сама
+        // проверка — десятки. Список исключений проекта сюда не попадает
+        // по построению: проект исключает папку обвязки из форматтера, и,
+        // прочитав его список, проверка пропускала каждое семя и отвечала
+        // «расходится: 0» — замерено фальсификацией стенда.
+        const prettier = await prettierHere();
+        if (prettier === null)
+          seedFmtSaid =
+            "форматтера нет — сверить нечем, и это не поломка: звено формата в проекте может быть неприменимо";
+        else {
+          for (const at of found) {
+            const shown = norm(path.relative(path.join(BASE, ".."), at));
+            try {
+              const options = (await prettier.resolveConfig(at)) ?? {};
+              const body = readFileSync(at, "utf8");
+              if (
+                !(await prettier.check(body, {
+                  ...options,
+                  parser: "typescript",
+                }))
+              )
+                roughSeeds.push(shown);
+            } catch (e) {
+              roughSeeds.push(
+                shown +
+                  " — не разбирается: " +
+                  String(e.message).split(NEWLINE)[0],
+              );
+            }
+          }
+          if (roughSeeds.length === 0)
             seedFmtSaid =
-              "форматтера нет — сверить нечем, и это не поломка: звено формата в проекте может быть неприменимо";
-          else
-            for (const line of out.split(NEWLINE))
-              if (/\.seed\s*$/.test(line))
-                roughSeeds.push(line.replace(/^\[[^\]]*\]\s*/, "").trim());
+              "семян проверено: " + found.length + ", расходится: 0";
         }
+      }
     }
   }
   // Семя настройки не должно называть файл, которого посадка не кладёт.
