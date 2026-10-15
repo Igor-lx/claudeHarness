@@ -203,10 +203,37 @@ describe("испытательная посадка одной командой"
       expect(fs.readlinkSync(pkg)).toBe(linked);
       expect(fs.existsSync(path.join(dest, "package-lock.json"))).toBe(false);
       expect(seatIn(dest, "--shop").stdout).toContain("на свежую посадку");
+      const self = spawnSync(
+        process.execPath,
+        [path.join(dest, ".claude", "tools", "graph.mjs"), "seat", dest],
+        { cwd: dest, encoding: "utf8" },
+      );
+      expect(self.status, self.stdout).toBe(1);
+      expect(self.stdout).toContain("Полка сажается сама в себя");
     } finally {
       fs.rmSync(path.dirname(dest), { recursive: true, force: true });
     }
   }, 300000);
+
+  // Живой проект с обвязкой выглядит как посадка: `.git` и `graph.mjs`.
+  // Повторный вызов стёр бы в его `.claude/` всё, чего нет на полке.
+  it("в чужой проект с обвязкой не садится и его файлов не стирает", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "seat-alien-"));
+    try {
+      fs.mkdirSync(path.join(dest, ".git"));
+      fs.mkdirSync(path.join(dest, ".claude", "tools"), { recursive: true });
+      fs.mkdirSync(path.join(dest, ".claude", "agents"));
+      fs.writeFileSync(path.join(dest, ".claude", "tools", "graph.mjs"), "\n");
+      const own = path.join(dest, ".claude", "agents", "reviewer.md");
+      fs.writeFileSync(own, "свой агент\n");
+      const run = seatIn(dest);
+      expect(run.status, run.stdout).toBe(1);
+      expect(run.stdout).toContain("нет метки claude-seat");
+      expect(fs.readFileSync(own, "utf8")).toBe("свой агент\n");
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
 
   // Магазин лежит данными и собирается поверх посадки: правка семян роняет
   // его без правки его файлов.

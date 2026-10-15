@@ -94,6 +94,10 @@ export const sandboxPackages = (from, to) => {
 
 const norm = (p) => p.split(path.sep).join("/");
 
+/** Метка посадки в папке git: её ставит первый вызов `seat`, и только с ней
+ * повторный вызов вправе стирать в `.claude/`. */
+const SEAT_MARKER = "claude-seat";
+
 const walkFiles = (root, rel = ".", out = []) => {
   for (const e of readdirSync(path.join(root, rel), { withFileTypes: true })) {
     const r = path.join(rel, e.name);
@@ -178,12 +182,16 @@ export const runSeat = ({ toolDir, argv }) => {
   if (existsSync(target) && !statSync(target).isDirectory())
     refuse("Это файл, а не папка: " + norm(target));
   const busy = existsSync(target) && readdirSync(target).length > 0;
-  const seated =
-    existsSync(path.join(target, ".git")) &&
-    existsSync(path.join(target, ".claude", "tools", "graph.mjs"));
-  if (busy && (stand || !seated))
+  // По `.git` и `graph.mjs` живой проект с обвязкой от посадки не отличить.
+  const marker = path.join(target, ".git", SEAT_MARKER);
+  if (busy && path.resolve(target, ".claude") === path.resolve(shelf))
+    refuse("Полка сажается сама в себя: " + norm(target));
+  if (busy && (stand || !existsSync(marker)))
     refuse(
-      "Папка не пуста" + (stand ? "" : " и не посадка") + ": " + norm(target),
+      "Папка не пуста" +
+        (stand ? "" : " и не посадка этой команды — нет метки " + SEAT_MARKER) +
+        ": " +
+        norm(target),
     );
   if (busy && shop)
     refuse(
@@ -283,6 +291,7 @@ export const runSeat = ({ toolDir, argv }) => {
       made.push("пакеты: установлены `npm@11 install`");
     }
     git("init", "-q");
+    writeFileSync(marker, norm(shelf) + "\n");
     git("add", "-A");
     git("commit", "-qm", "seat");
     const base = git("rev-parse", "HEAD");
