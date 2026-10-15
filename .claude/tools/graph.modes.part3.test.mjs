@@ -1109,13 +1109,21 @@ describe("окно свежести и залежавшееся не молча�
       expect(none.out).toContain("пометка: нет");
       expect(none.code).not.toBe(0);
       expect(none.out).not.toContain("early.txt");
-      git("commit", "-qam", "fix: zz\n\nProbe-run: hot; не поместилось: ничего");
+      git(
+        "commit",
+        "-qam",
+        "fix: zz\n\nProbe-run: hot; классов: 1, сведено: 1, не сведено: 0; не поместилось: ничего",
+      );
       fs.writeFileSync(path.join(repo, "later.txt"), "1\n");
       git("add", "-A");
       git("commit", "-qm", "later");
       fs.writeFileSync(path.join(repo, "cold.txt"), "1\n");
       git("add", "-A");
-      git("commit", "-qm", "fix: zz\n\nProbe-run: cold; не поместилось: ничего");
+      git(
+        "commit",
+        "-qm",
+        "fix: zz\n\nProbe-run: cold; классов: 1, сведено: 1, не сведено: 0; не поместилось: ничего",
+      );
       fs.writeFileSync(path.join(repo, "later.txt"), "2\n");
       // Окно — от пометки своей оси: чужая его не сдвигает, правка после
       // пометки и незакоммиченная — в нём, правка до пометки — нет.
