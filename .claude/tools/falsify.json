@@ -1438,6 +1438,20 @@
       ]
     },
     {
+      "section": "Ворота перед коммитом установлены",
+      "edits": [
+        {
+          "file": ".claude/hooks/git/pre-commit",
+          "copyTo": ".claude/hooks/git/zz-hook"
+        },
+        {
+          "file": ".claude/seat/map.json",
+          "find": "\"hooks\": [\"pre-commit\", \"prepare-commit-msg\"]",
+          "replace": "\"hooks\": [\"pre-commit\", \"prepare-commit-msg\", \"zz-hook\"]"
+        }
+      ]
+    },
+    {
       "section": "Мутационный прогон исполним",
       "edits": [
         {
