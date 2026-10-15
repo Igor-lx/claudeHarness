@@ -58,6 +58,30 @@ afterAll(() => {
   for (const [name, body] of baseWas)
     fs.writeFileSync(path.join(BASE_DIR, name), body);
 });
+// Правило раскладки держит этот тест, а не справочник: тест из корня
+// посадки, положенный в часть, шёл бы параллельно с хуками базы выше.
+describe("корень посадки трогают только тесты этого файла", () => {
+  it("ни одна часть тестов режимов не обращается к корню посадки", () => {
+    const root = /TOOL_DIR, "\.\.", "\.\."|\bSUBJECT\b|\bBASE_DIR\b/;
+    const offenders = fs
+      .readdirSync(TOOL_DIR)
+      .filter(
+        (n) =>
+          /^graph\.modes\..+\.test\.mjs$/.test(n) &&
+          !n.endsWith(".root.test.mjs"),
+      )
+      .flatMap((n) =>
+        fs
+          .readFileSync(path.join(TOOL_DIR, n), "utf8")
+          .split("\n")
+          .map((line, i) => [n + ":" + (i + 1), line])
+          .filter(([, line]) => root.test(line))
+          .map(([at]) => at),
+      );
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("режимы инструмента запускаются", () => {
   it("инструмент назвал свои режимы", () => {
     expect(modes.length, "список режимов не прочитан").toBeGreaterThan(0);
