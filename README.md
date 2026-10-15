@@ -456,7 +456,7 @@ it, each with its own question:
 
 ## Status
 
-**v0.2.0: functionally complete; in the tuning phase.** Everything described here is
+**v0.2.1: functionally complete; in the tuning phase.** Everything described here is
 in place and working: the quality bar and the seal, the graph and the
 knowledge base, the gates, seating and the transition, the self-checks. The
 architecture and the concept are settled and will not change. Current work is
