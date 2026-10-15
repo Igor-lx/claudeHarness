@@ -2887,18 +2887,31 @@ describe("матрица читателей прозы", () => {
     const box = boxWithGit("matrix-fence-");
     try {
       const before = reds(box);
-      const leaks = [];
-      for (const [form, fence] of Object.entries(FENCES))
-        for (const rel of KINDS) {
-          const at = path.join(box, rel);
-          const clean = fs.readFileSync(at, "utf8");
-          fs.writeFileSync(at, clean + "\n" + fence(SAMPLE) + "\n");
-          for (const red of added(before, reds(box)))
-            if (!RAW.some((name) => red.startsWith(name + " | ")))
-              leaks.push(form + ": " + rel + " → " + red);
-          fs.writeFileSync(at, clean);
-        }
-      expect(leaks).toEqual([]);
+      // Все формы ограды — одним прогоном на вид прозы, а за ними часовой без
+      // ограды: его красное обязано стоять. Форма, которая по ошибке длится до
+      // конца файла, прячет часового, и пропажа видна; утечка — лишняя строка.
+      // Шестьдесят шесть прогонов сверки стоили `158` с, одиннадцать — шестую часть.
+      const sentinel = "Часовой: сверка «Часового нет»";
+      const fenced = Object.values(FENCES)
+        .map((fence) => fence(SAMPLE))
+        .join("\n\n");
+      const unexpected = [];
+      for (const rel of KINDS) {
+        const at = path.join(box, rel);
+        const clean = fs.readFileSync(at, "utf8");
+        fs.writeFileSync(at, clean + "\n" + fenced + "\n\n" + sentinel + "\n");
+        const now = added(before, reds(box)).filter(
+          (red) => !RAW.some((name) => red.startsWith(name + " | ")),
+        );
+        const watch = now.filter((red) => red.includes("«Часового нет»"));
+        if (watch.length !== 1)
+          unexpected.push(rel + ": часовой краснеет " + watch.length + " раз");
+        for (const red of now)
+          if (!red.includes("«Часового нет»"))
+            unexpected.push(rel + " → " + red);
+        fs.writeFileSync(at, clean);
+      }
+      expect(unexpected).toEqual([]);
       // Образец настоящий: вне ограды он краснит, и не одну сверку.
       const at = path.join(box, ".context", "10-idioms.md");
       fs.appendFileSync(at, "\n" + SAMPLE + "\n");
@@ -2909,7 +2922,7 @@ describe("матрица читателей прозы", () => {
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
-  }, 1800000);
+  }, 900000);
 
   it("проза в CRLF называется сверкой концов строк, а другие читатели её не роняют", () => {
     const box = boxWithGit("matrix-crlf-");
