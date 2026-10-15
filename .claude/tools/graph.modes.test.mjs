@@ -12771,3 +12771,31 @@ describe("посадка не снимает строк проекта из ег
     }
   }, 300000);
 });
+
+describe("испорченный реестр мутаций", () => {
+  it("называется сверкой, режим замеров встаёт на нём и не переписывает его", () => {
+    const box = seatEmpty("spoiled-ledger-");
+    try {
+      const at = path.join(box, ".context", "mutation-ledger.json");
+      // Обрубленная запись: так выглядит прерванный прогон.
+      const torn =
+        '{\n  "src/app/App.tsx": { "killed": 4, "alive": 1, "hash": "ab';
+      fs.writeFileSync(at, torn);
+      expect(verifyIn(box).get("Файл, написанный обвязкой, читается")).toEqual([
+        expect.stringMatching(
+          /^mutation-ledger\.json — не разбирается как JSON: .*Вернуть из истории git/,
+        ),
+      ]);
+      const run = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "mutated"],
+        { cwd: box, encoding: "utf8" },
+      );
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain("Реестр мутационных замеров не читается");
+      expect(fs.readFileSync(at, "utf8")).toBe(torn);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
