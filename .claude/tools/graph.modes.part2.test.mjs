@@ -2437,6 +2437,18 @@ describe("семя рядом с затеняющим конфигом и пак
       const green = verifyIn(box);
       expect(green.get("Один предмет — один файл настройки")).toBeUndefined();
       expect(green.get("Пакет платформы не второй ответ")).toBeUndefined();
+
+      // Другое имя — любое, которое читает сам форматтер, и поле манифеста.
+      fs.writeFileSync(path.join(box, ".prettierrc.yaml"), "semi: false\n");
+      pkg.prettier = { semi: false };
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2));
+      const twins = (
+        verifyIn(box).get("Один предмет — один файл настройки") ?? []
+      ).join("\n");
+      expect(twins).toContain(".prettierrc.json и .prettierrc.yaml");
+      expect(twins).toContain(
+        ".prettierrc.json и поле `prettier` в package.json",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

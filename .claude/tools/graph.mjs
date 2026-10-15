@@ -8,6 +8,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -122,8 +123,13 @@ import {
   runSeat,
   sandboxManifests,
   sandboxPackages,
+  claimSandbox,
+  runTool,
   SEAT_MARKER,
   systemTemp,
+  toolVersion,
+  verifiedOf,
+  versionCmp,
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
@@ -541,56 +547,23 @@ if (mode === "env") {
     sayLooked("объявленных версий", 0);
     process.exit(0);
   }
-  const block = readFileSync(seed, "utf8");
-  const declared = block.slice(block.indexOf("verifiedVersions: {"));
   // Корпус — сами объявленные версии: их считает тот же разбор семени,
   // которым сверяются орудия. Настройки проекта здесь нет — режим среды идёт
   // до неё.
-  sayLooked(
-    "объявленных версий",
-    [...declared.slice(0, declared.indexOf("},")).matchAll(/: "/g)].length,
-  );
-  const pick = (name) => {
-    const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(declared);
-    return hit === null ? null : hit[1];
-  };
-  const older = (have, need) => {
-    const a = String(have)
-      .replace(/^[^0-9]*/, "")
-      .split(".")
-      .map(Number);
-    const b = String(need).split(".").map(Number);
-    for (let i = 0; i < 3; i += 1) {
-      const x = a[i] ?? 0;
-      const y = b[i] ?? 0;
-      if (x !== y) return x < y;
-    }
-    return false;
-  };
-  const ask = (name) => {
-    if (name === "node") return process.versions.node;
-    try {
-      return execFileSync(name, ["--version"], {
-        encoding: "utf8",
-        shell: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-    } catch {
-      return null;
-    }
-  };
+  const declared = verifiedOf(readFileSync(seed, "utf8"));
+  sayLooked("объявленных версий", Object.keys(declared).length);
   const low = [];
   const seen = [];
   for (const name of ["node", "npm"]) {
-    const need = pick(name);
+    const need = declared[name] ?? null;
     if (need === null) continue;
-    const have = ask(name);
+    const have = toolVersion(name);
     if (have === null) {
       low.push({ name, have: "не отвечает", need, how: "поставить" });
       continue;
     }
     seen.push(name + " " + have + " (нужно " + need + ")");
-    if (older(have, need))
+    if (versionCmp(have, need) < 0)
       low.push({
         name,
         have,
@@ -988,16 +961,13 @@ if (mode === "types" || mode === "lint") {
     process.exit(2);
   }
   const bin = path.join(BASE, "..", "node_modules", ".bin");
-  const run = spawnSync(command[0], command.slice(1), {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    shell: process.platform === "win32",
+  const run = runTool(command[0], command.slice(1), {
     env: {
       ...process.env,
       PATH: bin + path.delimiter + (process.env.PATH ?? ""),
     },
   });
-  const said = (run.stdout ?? "") + (run.stderr ?? "");
+  const said = run.out;
   const plain = said.replace(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
   const found = wrap.count(plain);
   const debt = debtOf(mode);
@@ -1005,9 +975,9 @@ if (mode === "types" || mode === "lint") {
     console.log("=== " + wrap.title + " ===");
     sayLooked(wrap.unit, found);
   };
-  if (run.error !== undefined) {
+  if (run.error !== null) {
     head();
-    console.log("  команда не запустилась: " + run.error.message);
+    console.log("  команда " + run.error);
     process.exit(1);
   }
   const setup = wrap.setup(plain, run.status);
@@ -5483,7 +5453,10 @@ if (mode === "falsify") {
   const retargeted = new Set(projectRecipes.map((r) => r.section));
   sayLooked("рецептов опровержения", recipes.length);
   const REPO_ROOT = REPO_AT;
-  const tmp = path.join(REPO_ROOT, ".проба-сверок");
+  // Папка песочниц одна — её знают игнорирование и обход дерева, — а
+  // песочница в ней своя у каждого прогона.
+  const sandboxes = path.join(REPO_ROOT, ".проба-сверок");
+  const { at: tmp } = claimSandbox(sandboxes, "");
 
   // Разбор вывода и разбор исхода живут в словаре области: это чистые
   // функции, и держит их набор тестов, а не одноразовая фальсификация.
@@ -5517,7 +5490,6 @@ if (mode === "falsify") {
     }
   };
 
-  rmSync(tmp, { recursive: true, force: true });
   sandboxTree(REPO_ROOT, tmp);
   sandboxManifests(
     path.join(REPO_ROOT, "node_modules"),
@@ -6088,6 +6060,11 @@ if (mode === "falsify") {
     }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
+    try {
+      rmdirSync(sandboxes);
+    } catch (e) {
+      if (e.code !== "ENOTEMPTY" && e.code !== "ENOENT") throw e;
+    }
   }
 
   // Долг считается от ОБЪЯВЛЕННОГО списка сверок, а не от напечатанных секций.
@@ -6397,15 +6374,10 @@ if (mode === "handoff") {
   const envNeeds = (() => {
     const at = shelfAt("seat/templates/graph.config.mjs");
     if (at === null || !existsSync(at)) return null;
-    const body = readFileSync(at, "utf8");
-    const block = body.slice(body.indexOf("verifiedVersions: {"));
-    const pick = (name) => {
-      const hit = new RegExp(name + ':\\s*"([^"]+)"').exec(block);
-      return hit === null ? null : hit[1];
-    };
+    const declared = verifiedOf(readFileSync(at, "utf8"));
     const named = [
-      ["node", pick("node")],
-      ["npm", pick("npm")],
+      ["node", declared.node ?? null],
+      ["npm", declared.npm ?? null],
     ].filter(([, v]) => v !== null);
     return named.length === 0
       ? null
@@ -8546,31 +8518,28 @@ if (mode === "bar-probe") {
         .stdout.split("\n")
         .filter((line) => line !== "" && !/^(?:D.|.D) /.test(line))
         .map((line) => line.slice(3));
-      const tsc = spawnSync(bin("tsc"), ["--noEmit", "-p", "."], {
-        cwd: box,
-        encoding: "utf8",
-      });
-      for (const m of (tsc.stdout + tsc.stderr).matchAll(
+      const tsc = runTool(bin("tsc"), ["--noEmit", "-p", "."], { cwd: box });
+      if (tsc.error !== null)
+        failed.push(theBatch + " — компилятор " + tsc.error);
+      for (const m of tsc.out.matchAll(
         /^(.+?)\([0-9]+,[0-9]+\): error (TS[0-9]+: .*)$/gm,
       ))
         failed.push(whose(m[1]) + " — компилятор: " + m[2]);
       const lintable = changed.filter((f) => /\.[cm]?[jt]sx?$/.test(f));
       if (lintable.length > 0) {
-        const lint = spawnSync(
+        const lint = runTool(
           bin("eslint"),
           ["-f", "json", "--no-warn-ignored", ...lintable],
-          {
-            cwd: box,
-            encoding: "utf8",
-            maxBuffer: 1 << 26,
-          },
+          { cwd: box },
         );
         let report = null;
         try {
           report = JSON.parse(lint.stdout);
         } catch {
           failed.push(
-            theBatch + " — линт не отработал: " + lint.stderr.trim().split("\n")[0],
+            theBatch +
+              " — линт не отработал: " +
+              (lint.error ?? lint.stderr.trim().split("\n")[0]),
           );
         }
         for (const one of report ?? [])
@@ -8585,30 +8554,32 @@ if (mode === "bar-probe") {
                 String(m.message).replace(/\s+/g, " ").trim(),
             );
       }
-      const pretty = spawnSync(
+      const pretty = runTool(
         bin("prettier"),
         ["--list-different", ...changed],
         {
           cwd: box,
-          encoding: "utf8",
         },
       );
+      if (pretty.error !== null)
+        failed.push(theBatch + " — формат " + pretty.error);
       for (const f of pretty.stdout.split("\n").filter(Boolean))
         failed.push(whose(f) + " — формат");
       const out = box + ".tests.json";
-      spawnSync(
+      const vitest = runTool(
         bin("vitest"),
         ["run", "--reporter=json", "--outputFile=" + out],
-        {
-          cwd: box,
-          encoding: "utf8",
-        },
+        { cwd: box },
       );
       const tests = existsSync(out)
         ? JSON.parse(readFileSync(out, "utf8"))
         : null;
       if (tests === null)
-        failed.push(theBatch + " — тесты не отработали");
+        failed.push(
+          theBatch +
+            " — тесты не отработали" +
+            (vitest.error ? ": " + vitest.error : ""),
+        );
       for (const file of tests?.testResults ?? []) {
         if (
           file.status === "failed" &&
@@ -8866,22 +8837,7 @@ if (mode === "bar-probe") {
       if (chosen.length === 0)
         notPlanted("Ни один критерий пачки не вместился: " + unfit.join(", ") + ".");
     }
-    // Песочница занимается атомарно, а не стирается: номер — время в
-    // миллисекундах, и два запуска в одну миллисекунду (параллельные файлы
-    // тестов) стирали друг другу песочницу посреди git.
-    let seq = Number(String(Date.now()).slice(-8));
-    let box = null;
-    while (box === null) {
-      const at = path.join(systemTemp(), "bar-probe-" + seq);
-      try {
-        mkdirSync(at);
-        box = at;
-      } catch (e) {
-        if (e.code !== "EEXIST") throw e;
-        seq += 1;
-      }
-    }
-    const id = String(seq);
+    const { at: box, id } = claimSandbox(systemTemp(), "bar-probe-");
     const mark = path.join(systemTemp(), "bar-probe-" + id + ".plant.json");
     sandboxTree(projectRoot, box);
     sandboxPackages(
@@ -20404,19 +20360,6 @@ if (mode === "verify") {
   // совпадает». Найдено пробой по холодному контуру.
   const notInstalled = [];
   if (CONFIG.verifiedVersions != null) {
-    const older = (have, need) => {
-      const a = String(have)
-        .replace(/^[^0-9]*/, "")
-        .split(".")
-        .map(Number);
-      const b = String(need).split(".").map(Number);
-      for (let i = 0; i < 3; i += 1) {
-        const x = a[i] ?? 0;
-        const y = b[i] ?? 0;
-        if (x !== y) return x < y;
-      }
-      return false;
-    };
     // Версия установленного: у `node` она своя, у МЕНЕДЖЕРА ПАКЕТОВ —
     // спрашивается у него самого, у пакета — из его манифеста.
     //
@@ -20425,18 +20368,7 @@ if (mode === "verify") {
     // падает собственной ошибкой, где про версию нет ни слова. Посадка при этом
     // встаёт, а причина выглядит дефектом проекта.
     const installed = (name) => {
-      if (name === "node") return process.versions.node;
-      if (name === "npm") {
-        try {
-          return execFileSync("npm", ["--version"], {
-            encoding: "utf8",
-            shell: true,
-            stdio: ["ignore", "pipe", "ignore"],
-          }).trim();
-        } catch {
-          return null;
-        }
-      }
+      if (name === "node" || name === "npm") return toolVersion(name);
       const at = path.join(BASE, "..", "node_modules", name, "package.json");
       if (!existsSync(at)) return null;
       return JSON.parse(readFileSync(at, "utf8")).version;
@@ -20452,11 +20384,11 @@ if (mode === "verify") {
         notInstalled.push(name);
         continue;
       }
-      if (older(have, want))
+      if (versionCmp(have, want) < 0)
         oldVersions.push(
           `${name} ${have} — НИЖЕ проверенной связки (${want}): поведение неизвестно`,
         );
-      else if (older(want, have))
+      else if (versionCmp(have, want) > 0)
         oldVersions.push(
           `${name} ${have} — ВЫШЕ проверенной связки (${want}): сам по себе исправен, совместимость связки не мерена`,
         );
@@ -22426,14 +22358,6 @@ if (mode === "verify") {
     const want = existsSync(at)
       ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
       : null;
-    const parts = (v) => v.replace(/^v/, "").split(".").map(Number);
-    const cmp = (a, b) => {
-      const x = parts(a);
-      const y = parts(b);
-      for (let i = 0; i < 3; i++)
-        if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
-      return 0;
-    };
     const low =
       want === null ? null : (/(?:^|\s)>=\s*([\d.]+)/.exec(want)?.[1] ?? null);
     const high =
@@ -22457,12 +22381,7 @@ if (mode === "verify") {
             .exec(nvmLine)?.[1]
             .split(".")
             .map(Number) ?? null);
-    const nvmCmp = (bound) => {
-      const y = parts(bound);
-      for (let i = 0; i < nvmParts.length; i++)
-        if (nvmParts[i] !== (y[i] ?? 0)) return nvmParts[i] - (y[i] ?? 0);
-      return 0;
-    };
+    const nvmCmp = (bound) => versionCmp(nvmLine, bound, nvmParts.length);
     const nvmDrift =
       nvmParts === null
         ? null
@@ -22476,9 +22395,9 @@ if (mode === "verify") {
         ? "    диапазон версии не объявлен — переносимость держится на памяти"
         : low === null && high === null
           ? `    диапазон «${want}» записан формой, которой разбор не знает`
-          : low !== null && cmp(now, low) < 0
+          : low !== null && versionCmp(now, low) < 0
             ? `    версия НИЖЕ объявленной: ${now} при «${want}»`
-            : high !== null && cmp(now, high) >= 0
+            : high !== null && versionCmp(now, high) >= 0
               ? `    версия ВЫШЕ объявленной: ${now} при «${want}»`
               : null;
     // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
@@ -28786,6 +28705,17 @@ if (mode === "verify") {
           if (existsSync(path.join(REPO, other)))
             twinConfigs.push(
               e.to + " и " + other + " — один предмет, два файла настройки",
+            );
+        // Поле манифеста — то же другое имя: prettier читает настройку и из
+        // `package.json`.
+        const manifestAt = path.join(REPO, "package.json");
+        if (e.inManifest !== undefined && existsSync(manifestAt))
+          if (Object.hasOwn(readJson(manifestAt, {}), e.inManifest))
+            twinConfigs.push(
+              e.to +
+                " и поле `" +
+                e.inManifest +
+                "` в package.json — один предмет, два места настройки",
             );
       }
       // Затеняющий файл — другой случай: сборка в одном, тесты в другом, и

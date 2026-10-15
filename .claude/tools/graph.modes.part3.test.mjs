@@ -3393,3 +3393,149 @@ describe("песочница пробы планки занимается, а н
     }
   }, 300000);
 });
+
+/**
+ * Песочницу прогона занимают, а не стирают: falsify, bar-probe и серия брали
+ * её под одним и тем же либо угадываемым именем, и два запуска стирали друг
+ * другу папку посреди работы. Механизм один — его и бьём всеми случаями.
+ */
+describe("песочницу прогона занимают одним помощником", () => {
+  it("занятое обходит, чужое не стирает, снятого родителя заводит заново", async () => {
+    const { claimSandbox } = await import("./graph.seat.mjs");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "claim-"));
+    try {
+      const parent = path.join(root, "sandboxes");
+      const from = 1000;
+      fs.mkdirSync(parent);
+      for (let k = 0; k < 50; k += 1) {
+        fs.mkdirSync(path.join(parent, "p-" + (from + k)));
+        fs.writeFileSync(path.join(parent, "p-" + (from + k), "чужое"), "1");
+      }
+      const first = claimSandbox(parent, "p-", from);
+      const second = claimSandbox(parent, "p-", from);
+      expect(first.at).not.toBe(second.at);
+      expect(Number(first.id)).toBe(from + 50);
+      expect(Number(second.id)).toBe(from + 51);
+      expect(fs.readdirSync(first.at)).toEqual([]);
+      for (let k = 0; k < 50; k += 1)
+        expect(
+          fs.existsSync(path.join(parent, "p-" + (from + k), "чужое")),
+        ).toBe(true);
+      const gone = path.join(root, "removed");
+      const third = claimSandbox(gone, "");
+      expect(path.dirname(third.at)).toBe(gone);
+      expect(fs.statSync(third.at).isDirectory()).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Сравнение версий записано один раз: копий было четыре, и направление не
+ * держала ни одна проверка — перевёрнутое, оно пропускало старую машину с
+ * «годится». Бьём помощник таблицей случаев и режим среды — обеими сторонами.
+ */
+describe("версии сравнивает один помощник, и направление закреплено", () => {
+  it("ниже, равно, выше, короткая форма, приставка, хвост; связка — внутри блока", async () => {
+    const { versionCmp, verifiedOf } = await import("./graph.seat.mjs");
+    const sign = (a, b, depth) => Math.sign(versionCmp(a, b, depth));
+    expect(sign("22.22.2", "22.23.2")).toBe(-1);
+    expect(sign("22.23.2", "22.23.2")).toBe(0);
+    expect(sign("23.0.0", "22.23.2")).toBe(1);
+    expect(sign("10.9.7", "11.0.0")).toBe(-1);
+    expect(sign("v22", "22.0.0")).toBe(0);
+    expect(sign("11.0.0-pre", "11.0.0")).toBe(0);
+    expect(sign("11.0.1-pre", "11.0.0")).toBe(1);
+    expect(sign("22", "22.23.2", 1)).toBe(0);
+    expect(sign("21", "22.23.2", 1)).toBe(-1);
+    expect(
+      verifiedOf(
+        'x\n  verifiedVersions: {\n    npm: "11.0.0",\n    "react-dom": "19.3.0",\n  },\n  other: {\n    node: "1.0.0",\n  },\n',
+      ),
+    ).toEqual({ npm: "11.0.0", "react-dom": "19.3.0" });
+  });
+
+  it("режим среды: связка выше машины — остановка, ниже — годится", () => {
+    const box = seatEmpty("env-dir-");
+    try {
+      const seed = path.join(
+        box,
+        ".claude",
+        "seat",
+        "templates",
+        "graph.config.mjs",
+      );
+      const text = fs.readFileSync(seed, "utf8");
+      const envWith = (node, npm) => {
+        fs.writeFileSync(
+          seed,
+          text
+            .replace(/(\n {4}node: ")[^"]+"/, `$1${node}"`)
+            .replace(/(\n {4}npm: ")[^"]+"/, `$1${npm}"`),
+        );
+        return spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "env"],
+          { cwd: box, encoding: "utf8" },
+        );
+      };
+      const above = envWith(
+        Number(process.versions.node.split(".")[0]) + 1 + ".0.0",
+        "999.0.0",
+      );
+      expect(above.status, above.stdout).toBe(1);
+      expect(above.stdout).toContain("Посадка не начата");
+      const below = envWith("1.0.0", "1.0.0");
+      expect(below.status, below.stdout).toBe(0);
+      expect(below.stdout).toContain("годится: сажать можно");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Внешняя команда запускается одним помощником: места без поправки на
+ * Windows не находили `npm.cmd` и бинарники пакетов, а не запустившаяся
+ * команда печатала «код 1» с пустым журналом либо падала на сложении
+ * `undefined`. Бьём помощник и держим, что мимо него запусков нет.
+ */
+describe("внешнюю команду запускает один помощник", () => {
+  it("мимо него зовут только git и сам node", () => {
+    const strays = [];
+    for (const name of fs.readdirSync(TOOL_DIR)) {
+      if (!name.endsWith(".mjs") || name.includes(".test.")) continue;
+      if (name.startsWith("graph.modes.")) continue;
+      const text = fs.readFileSync(path.join(TOOL_DIR, name), "utf8");
+      for (const m of text.matchAll(
+        /\b(spawnSync|execFileSync|execSync)\(\s*([^,)]+)/g,
+      )) {
+        const first = m[2].trim();
+        if (first === '"git"' || first === "process.execPath") continue;
+        if (m[1] === "execSync" && first.startsWith('"git ')) continue;
+        // сам помощник
+        if (name === "graph.seat.mjs" && first === "command") continue;
+        strays.push(name + ": " + m[1] + "(" + first + ")");
+      }
+    }
+    expect(strays).toEqual([]);
+  });
+
+  it("на win32 идёт через оболочку, не запустившаяся называет причину", async () => {
+    const { runTool } = await import("./graph.seat.mjs");
+    // Через оболочку `$HOME` раскрывается, без неё приходит как есть.
+    const home = { env: { ...process.env, HOME: "/zz-home" } };
+    expect(runTool("echo", ["$HOME"], home, "win32").stdout.trim()).toBe(
+      "/zz-home",
+    );
+    expect(runTool("echo", ["$HOME"], home, "linux").stdout.trim()).toBe(
+      "$HOME",
+    );
+    const none = runTool("zz-no-such-tool", ["x"]);
+    expect(none.status).toBe(null);
+    expect(none.error).toContain("zz-no-such-tool");
+    expect(none.error).toContain("ENOENT");
+    expect(none.out).toBe("");
+  });
+});

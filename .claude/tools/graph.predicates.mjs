@@ -5559,6 +5559,45 @@ export const PREDICATE_CASES = [
   ["gitHookBypass", "bash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
   ["gitHookBypass", "zsh -c \"git commit --no-verify -m x\"", "commit --no-verify"],
   ["gitHookBypass", "/bin/dash -c \"git commit --no-verify -m x\"", "commit --no-verify"],
+  // однозначное начало длинного ключа git принимает за весь ключ
+  ["gitHookBypass", "git commit --no-veri -m x", "commit --no-verify"],
+  ["gitHookBypass", "git commit --no-verif -m x", "commit --no-verify"],
+  ["gitHookBypass", "git commit --no-ver -m x", ""],
+  ["gitHookBypass", "git commit --no-verbose -m x", ""],
+  ["gitHookBypass", "git commit --no-edit --amend", ""],
+  ["gitHookBypass", "git commit --mess -n", ""],
+  ["gitHookBypass", "git commit --message=-n --no-veri", "commit --no-verify"],
+  // настройка через среду — тот же `-c`
+  [
+    "gitHookBypass",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x",
+    "env core.hooksPath",
+  ],
+  [
+    "gitHookBypass",
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x",
+    "env core.hooksPath",
+  ],
+  [
+    "gitHookBypass",
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hookspath GIT_CONFIG_VALUE_0=/x && git commit -m x",
+    "env core.hooksPath",
+  ],
+  [
+    "gitHookBypass",
+    "GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/x'\" git commit -m x",
+    "env core.hooksPath",
+  ],
+  [
+    "gitHookBypass",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=.claude/hooks/git git commit -m x",
+    "",
+  ],
+  [
+    "gitHookBypass",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit -m x",
+    "",
+  ],
   // --- pageReadByShell: чтение страницы свода командой оболочки ---
   ["pageReadByShell", "cat .context/bar-pages/bar-protocol-1.md", "cat"],
   ["pageReadByShell", "head -50 .context/bar-pages/bar-protocol-2.md", "head"],
@@ -6112,12 +6151,55 @@ export const gitHookBypass = (command) => {
       "--trailer",
       "--pathspec-from-file",
     ]);
+    // git принимает однозначное начало длинного ключа: `--no-veri` — тот же
+    // `--no-verify`, `--mess` — тот же `--message`. Список нужен целиком,
+    // чтобы неоднозначное начало осталось неоднозначным, как у git.
+    const LONG = [
+      ...LONG_TAKES,
+      "--no-verify",
+      "--verify",
+      "--verbose",
+      "--no-verbose",
+      "--quiet",
+      "--all",
+      "--amend",
+      "--no-post-rewrite",
+      "--dry-run",
+      "--edit",
+      "--no-edit",
+      "--include",
+      "--interactive",
+      "--patch",
+      "--only",
+      "--reset-author",
+      "--signoff",
+      "--no-signoff",
+      "--status",
+      "--no-status",
+      "--gpg-sign",
+      "--no-gpg-sign",
+      "--short",
+      "--branch",
+      "--porcelain",
+      "--long",
+      "--null",
+      "--untracked-files",
+      "--ahead-behind",
+      "--pathspec-file-nul",
+    ];
+    const longOf = (w) => {
+      const name = w.split("=")[0];
+      if (LONG.includes(name)) return name;
+      const hit = LONG.filter((one) => one.startsWith(name));
+      return hit.length === 1 ? hit[0] : name;
+    };
     for (let a = 0; a < args.length; a += 1) {
       const w = args[a];
       if (w === "--") break;
-      if (w === "--no-verify") return "commit --no-verify";
       if (w.startsWith("--")) {
-        if (LONG_TAKES.has(w)) a += 1;
+        const full = longOf(w);
+        if (full === "--no-verify") return "commit --no-verify";
+        if (LONG_TAKES.has(full) && !w.includes("=")) a += 1;
         continue;
       }
       if (!w.startsWith("-") || w === "-") continue;
@@ -6181,9 +6263,39 @@ export const gitHookBypass = (command) => {
     "--attr-source",
   ]);
   const OVERRIDE = /^core\.hookspath=(.*)$/i;
+  // Настройка git через среду — тот же `-c`: `GIT_CONFIG_KEY_n` с
+  // `GIT_CONFIG_VALUE_n` и `GIT_CONFIG_PARAMETERS`, перед командой, через
+  // `env` или `export`.
+  const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
+  const envBypass = (words) => {
+    const set = new Map();
+    for (const w of words) {
+      const hit = ASSIGN.exec(w);
+      if (hit !== null) set.set(hit[1], hit[2]);
+    }
+    for (const [name, value] of set) {
+      const key = /^GIT_CONFIG_KEY_(\d+)$/.exec(name);
+      if (key !== null && value.toLowerCase() === "core.hookspath") {
+        const to = set.get("GIT_CONFIG_VALUE_" + key[1]);
+        if (to === undefined || !own(to)) return "env core.hooksPath";
+      }
+      if (name === "GIT_CONFIG_PARAMETERS" && /core\.hookspath/i.test(value)) {
+        const to = /core\.hookspath'?\s*=\s*'?([^']*)/i.exec(value)?.[1];
+        if (to === undefined || !own(to)) return "env core.hooksPath";
+      }
+    }
+    return "";
+  };
   const check = (ws) => {
     let k = 0;
-    while (k < ws.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[k])) k += 1;
+    while (k < ws.length && ASSIGN.test(ws[k])) k += 1;
+    if (ws[k] === "env" || ws[k] === "export") {
+      k += 1;
+      while (k < ws.length && (ASSIGN.test(ws[k]) || ws[k].startsWith("-")))
+        k += 1;
+    }
+    const viaEnv = envBypass(ws.slice(0, k));
+    if (viaEnv !== "") return viaEnv;
     const head = ws[k];
     if (head === undefined) return "";
     // Команда внутри оболочки и `eval` — та же команда.

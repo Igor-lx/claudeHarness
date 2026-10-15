@@ -17,5 +17,10 @@ export default defineConfig({
     setupFiles: ["./src/tests/setup.ts"],
     // Harness tests have their own command: the default would collect them.
     include: ["src/**/*.test.{ts,tsx}"],
+    // Without `include`, a module no test imports stays out of the report.
+    coverage: {
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/tests/**"],
+    },
   },
 });

@@ -32,6 +32,103 @@ export const systemTemp = () => {
   return dir;
 };
 
+/** Запуск внешней команды — один на инструмент. На Windows менеджер пакетов
+ * и их бинарники — файлы `.cmd`, и без оболочки их не найти. Не запустившаяся
+ * команда называет причину в `error`, а вывод всегда строка: прежде места
+ * без этой поправки печатали «код 1» с пустым журналом либо падали на
+ * сложении `undefined`. */
+export const runTool = (
+  command,
+  args,
+  opts = {},
+  platform = process.platform,
+) => {
+  const run = spawnSync(command, args, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    shell: platform === "win32",
+    ...opts,
+  });
+  const stdout = String(run.stdout ?? "");
+  const stderr = String(run.stderr ?? "");
+  return {
+    status: run.error === undefined ? run.status : null,
+    stdout,
+    stderr,
+    out: stdout + stderr,
+    error:
+      run.error === undefined
+        ? null
+        : "не запустилась: " +
+          command +
+          " (" +
+          (run.error.code ?? run.error.message) +
+          ")",
+  };
+};
+
+/** Сравнение версий — одно на инструмент. Отрицательное — первая ниже.
+ * Сравниваются первые `depth` частей; приставка `v` и хвост `-pre`
+ * отбрасываются. */
+export const versionCmp = (a, b, depth = 3) => {
+  const parts = (v) =>
+    String(v)
+      .replace(/^[^0-9]*/, "")
+      .split(".")
+      .map((one) => parseInt(one, 10) || 0);
+  const x = parts(a);
+  const y = parts(b);
+  for (let i = 0; i < depth; i += 1) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+};
+
+/** Проверенная связка из текста семени настройки: имя → версия. Читается
+ * внутри своего блока, а не до конца файла. */
+export const verifiedOf = (text) => {
+  const from = text.indexOf("verifiedVersions: {");
+  if (from < 0) return {};
+  const block = text.slice(from, text.indexOf("}", from));
+  return Object.fromEntries(
+    [...block.matchAll(/^\s*"?([^\s":]+)"?:\s*"([^"]+)"/gm)].map((m) => [
+      m[1],
+      m[2],
+    ]),
+  );
+};
+
+/** Версия установленного орудия среды: у `node` — своя, у прочих —
+ * ответ `--version`; молчание — `null`. */
+export const toolVersion = (name) => {
+  if (name === "node") return process.versions.node;
+  const run = runTool(name, ["--version"]);
+  return run.status === 0 ? run.stdout.trim() : null;
+};
+
+/** Песочница прогона под номером, занятая атомарно: два запуска одного режима
+ * в одну миллисекунду стирали друг другу папку посреди работы. Занятый номер
+ * обходится, чужая папка не стирается. */
+export const claimSandbox = (
+  parent,
+  prefix,
+  from = Number(String(Date.now()).slice(-8)),
+) => {
+  for (let seq = from; ; ) {
+    const at = path.join(parent, prefix + seq);
+    try {
+      mkdirSync(at);
+      return { at, id: String(seq) };
+    } catch (e) {
+      // Родителя снял соседний прогон, уходя: завести и повторить номер.
+      if (e.code === "ENOENT") mkdirSync(parent, { recursive: true });
+      else if (e.code === "EEXIST") seq += 1;
+      else throw e;
+    }
+  }
+};
+
 /** Манифесты установленных пакетов — и только они.
  *
  * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и
@@ -262,21 +359,14 @@ export const runSeat = ({ toolDir, argv }) => {
       sandboxPackages(from, path.join(target, "node_modules"));
       made.push("пакеты: ссылкой на " + norm(from));
     } else {
-      const install = spawnSync(
+      const install = runTool(
         "npx",
         ["-y", "npm@11", "install", "--no-audit", "--no-fund"],
-        {
-          cwd: target,
-          encoding: "utf8",
-          env,
-          shell: process.platform === "win32",
-        },
+        { cwd: target, env },
       );
       if (install.status !== 0) {
         rmSync(target, { recursive: true, force: true });
-        const said = (
-          String(install.stderr ?? "") + String(install.stdout ?? "")
-        )
+        const said = (install.error ?? install.stderr + install.stdout)
           .trim()
           .split("\n")
           .slice(-3);

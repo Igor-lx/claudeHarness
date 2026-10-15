@@ -215,6 +215,43 @@ describe("испытательная посадка одной командой"
     }
   }, 300000);
 
+  // Скрипты, которые посадка пишет в манифест вне связки `check`, не
+  // исполняет ни одна проверка: покрытие печатало `100%` при модуле без
+  // тестов, сборку не запускал никто. `dev` и `preview` не завершаются сами.
+  it("скрипты семени вне связки: сборка собирается, покрытие видит модуль без тестов", () => {
+    const dest = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "seat-scripts-")),
+      "p",
+    );
+    try {
+      const made = seatIn(dest);
+      expect(made.status, made.stdout).toBe(0);
+      const untested = path.join(dest, "src", "shared", "zz", "zzUntested.ts");
+      fs.mkdirSync(path.dirname(untested), { recursive: true });
+      fs.writeFileSync(
+        untested,
+        "export const zzUntested = (n: number): number => n + 1;\n",
+      );
+      const npm = (script) =>
+        spawnSync("npm", ["run", script], { cwd: dest, encoding: "utf8" });
+      const build = npm("build");
+      expect(build.status, build.stdout + build.stderr).toBe(0);
+      const coverage = npm("test:coverage");
+      expect(coverage.status, coverage.stdout + coverage.stderr).toBe(0);
+      const report = JSON.parse(
+        fs.readFileSync(
+          path.join(dest, "coverage", "coverage-final.json"),
+          "utf8",
+        ),
+      );
+      expect(Object.keys(report).some((f) => f.endsWith("zzUntested.ts"))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(path.dirname(dest), { recursive: true, force: true });
+    }
+  }, 300000);
+
   // Живой проект с обвязкой выглядит как посадка: `.git` и `graph.mjs`.
   // Повторный вызов стёр бы в его `.claude/` всё, чего нет на полке.
   it("в чужой проект с обвязкой не садится и его файлов не стирает", () => {
@@ -1110,4 +1147,77 @@ describe("проба планки: выбор, пачка, вид файла и 
       fs.rmSync(dest, { recursive: true, force: true });
     }
   }, 240000);
+});
+
+
+/**
+ * Другие имена настройки в карте посадки — тот список, который читает сам
+ * пакет, а не набранный руками: у карты не было `.prettierrc.yaml`, и семя
+ * легло рядом с проектным, перебив его без единой красной сверки.
+ */
+describe("другие имена настройки в карте — те, что читает сам пакет", () => {
+  it("prettier, eslint, stryker, vite и vitest: каждое имя пакета есть в карте", async () => {
+    const modules = path.join(TOOL_DIR, "..", "..", "node_modules");
+    const map = JSON.parse(
+      fs.readFileSync(path.join(TOOL_DIR, "..", "seat", "map.json"), "utf8"),
+    );
+    const namesOf = (to) => {
+      const e = map.copy.find((one) => one.to === to);
+      return new Set([e.to, ...(e.alsoKnownAs ?? []), ...(e.shadowedBy ?? [])]);
+    };
+    const strings = (file, re) =>
+      new Set(
+        [...fs.readFileSync(path.join(modules, file), "utf8").matchAll(re)].map(
+          (m) => m[1],
+        ),
+      );
+    const missing = [];
+    const need = (to, names) => {
+      // Пустой разбор пакета прошёл бы вхолостую.
+      expect([...names].length, to).toBeGreaterThan(0);
+      const have = namesOf(to);
+      for (const n of names) if (!have.has(n)) missing.push(to + ": " + n);
+    };
+    need(
+      ".prettierrc.json",
+      strings(
+        "prettier/index.mjs",
+        /"(\.prettierrc(?:\.[a-z0-9]+)?|prettier\.config\.[a-z]+)"/g,
+      ),
+    );
+    need(
+      "eslint.config.mjs",
+      strings(
+        "eslint/lib/config/config-loader.js",
+        /"(eslint\.config\.[a-z]+)"/g,
+      ),
+    );
+    const { SUPPORTED_CONFIG_FILE_NAMES } = await import(
+      path.join(
+        modules,
+        "@stryker-mutator/core/dist/src/config/config-file-formats.js",
+      )
+    );
+    need("stryker.config.json", SUPPORTED_CONFIG_FILE_NAMES);
+    const viteDist = path.join(modules, "vite", "dist", "node", "chunks");
+    const viteNames = new Set();
+    for (const f of fs.readdirSync(viteDist))
+      for (const m of fs
+        .readFileSync(path.join(viteDist, f), "utf8")
+        .matchAll(/"(vite\.config\.[a-z]+)"/g))
+        viteNames.add(m[1]);
+    need("vite.config.ts", viteNames);
+    const vitestDist = path.join(modules, "vitest", "dist", "chunks");
+    const vitestNames = [];
+    for (const f of fs.readdirSync(vitestDist)) {
+      const hit = /const CONFIG_EXTENSIONS = \[([^\]]+)\]/.exec(
+        fs.readFileSync(path.join(vitestDist, f), "utf8"),
+      );
+      if (hit !== null)
+        for (const m of hit[1].matchAll(/"([^"]+)"/g))
+          vitestNames.push("vitest.config" + m[1]);
+    }
+    need("vite.config.ts", vitestNames);
+    expect(missing).toEqual([]);
+  });
 });

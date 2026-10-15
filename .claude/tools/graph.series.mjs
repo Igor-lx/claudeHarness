@@ -11,7 +11,7 @@
  * Деревья собираются через временный индекс: рабочее дерево и индекс
  * проекта серия не трогает, кроме ключа `--stage`, который кладёт в индекс
  * ровно дерево части. */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -24,7 +24,12 @@ import {
 import path from "node:path";
 
 import { applyParts } from "./graph.parts.mjs";
-import { sandboxPackages, systemTemp } from "./graph.seat.mjs";
+import {
+  claimSandbox,
+  runTool,
+  sandboxPackages,
+  systemTemp,
+} from "./graph.seat.mjs";
 
 const norm = (p) => p.split(path.sep).join("/");
 
@@ -139,10 +144,7 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
     writeMarks(repoRoot, marks);
     return trees.map((t) => ({ ...t, code: 0, was: true }));
   }
-  const dir = path.join(
-    systemTemp(),
-    "graph-series-" + randomBytes(4).toString("hex"),
-  );
+  const { at: dir } = claimSandbox(systemTemp(), "graph-series-");
   // Признак сессии в копии не нужен: цепочка судит дерево, а не сессию.
   const env = { ...process.env };
   delete env.CLAUDE_CODE_CHILD_SESSION;
@@ -171,11 +173,9 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
         continue;
       }
       git(["read-tree", "-u", "--reset", t.tree], dir);
-      const run = spawnSync(command[0], command.slice(1), {
+      const run = runTool(command[0], command.slice(1), {
         cwd: dir,
         env: { ...env, [SERIES_PART]: t.part + "/" + trees.length },
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
       });
       const code = run.status ?? 1;
       if (code === 0) marks.trees[t.tree] = { part: t.part, code: 0 };
@@ -185,7 +185,7 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
           "graph-series-" + t.part + ".log",
         );
         mkdirSync(path.dirname(log), { recursive: true });
-        writeFileSync(log, String(run.stdout ?? "") + String(run.stderr ?? ""));
+        writeFileSync(log, run.error ?? run.out);
         out.push({ ...t, code, log });
         stopped = true;
         continue;
