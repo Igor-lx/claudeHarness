@@ -115,7 +115,7 @@ export const claimSandbox = (
   prefix,
   from = Number(String(Date.now()).slice(-8)),
 ) => {
-  for (let seq = from; ; ) {
+  for (let seq = from; ;) {
     const at = path.join(parent, prefix + seq);
     try {
       mkdirSync(at);
