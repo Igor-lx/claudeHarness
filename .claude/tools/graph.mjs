@@ -6494,8 +6494,11 @@ if (mode === "handoff") {
   // внутри репозитория, давал пробе чужую историю git, и сверка отказывала по
   // причинам, которых у получателя не будет. Найдено пробой по холодному
   // контуру.
-  const probe = mkdtempSync(path.join(tmpdir(), "handoff-probe-"));
+  // Папка пробы заводится внутри проверки: временной папки на машине может не
+  // быть, и тогда снимок не проверен — он удаляется, как любой непроверенный.
+  let probe = null;
   try {
+    probe = mkdtempSync(path.join(tmpdir(), "handoff-probe-"));
     // Проба сажает тем же порядком, что и посадка: своя копия порядка уже
     // расходилась с ним, и снимок переставал собираться.
     layShelf(claudeAt, probe);
@@ -6539,7 +6542,7 @@ if (mode === "handoff") {
     rmSync(root, { recursive: true, force: true });
     process.exitCode = 1;
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    if (probe !== null) rmSync(probe, { recursive: true, force: true });
   }
   process.exit(process.exitCode ?? 0);
 }

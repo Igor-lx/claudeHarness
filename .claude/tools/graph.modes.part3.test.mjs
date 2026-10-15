@@ -3206,3 +3206,27 @@ describe("снимок внутри репозитория", () => {
     }
   }, 300000);
 });
+
+describe("снимок без временной папки", () => {
+  it("не собран, назван причиной и удалён, а не оставлен непроверенным", () => {
+    const box = seatEmpty("handoff-no-tmp-");
+    try {
+      const snap = path.join(box, "snap");
+      const run = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "handoff", snap],
+        {
+          cwd: box,
+          encoding: "utf8",
+          env: { ...process.env, TMPDIR: path.join(box, "нет-такой-папки") },
+        },
+      );
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain("СНИМОК НЕ СОБРАН");
+      expect(run.stdout).toContain("mkdtemp");
+      expect(fs.existsSync(snap)).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
