@@ -20365,6 +20365,10 @@ if (mode === "verify") {
   // прогон, останавливающий работу из-за минорной версии, начнут гонять реже, и
   // тогда он перестанет ловить то, ради чего заведён.
   const oldVersions = [];
+  // Неустановленное не сравнивается, и прежде пропускалось без слова: чистый
+  // клон без пакетов печатал «осмотрено» всех объявленных и «связка
+  // совпадает». Найдено пробой по холодному контуру.
+  const notInstalled = [];
   if (CONFIG.verifiedVersions != null) {
     const older = (have, need) => {
       const a = String(have)
@@ -20410,7 +20414,10 @@ if (mode === "verify") {
     // ушёл на мажор вперёд.
     for (const [name, want] of Object.entries(CONFIG.verifiedVersions)) {
       const have = installed(name);
-      if (have === null) continue;
+      if (have === null) {
+        notInstalled.push(name);
+        continue;
+      }
       if (older(have, want))
         oldVersions.push(
           `${name} ${have} — НИЖЕ проверенной связки (${want}): поведение неизвестно`,
@@ -20423,9 +20430,13 @@ if (mode === "verify") {
   }
 
   checkHead("Версии установленного (предупреждение, прогон не роняет)", {
-    n: Object.keys(CONFIG.verifiedVersions ?? {}).length,
-    unit: "объявленных версий",
+    n: Object.keys(CONFIG.verifiedVersions ?? {}).length - notInstalled.length,
+    unit: "установленных из объявленных версий",
   });
+  if (notInstalled.length > 0)
+    console.log(
+      `  не установлено, не сравнивалось: ${notInstalled.length} — ${notInstalled.join(", ")}. Пакеты не поставлены`,
+    );
   console.log(
     CONFIG.verifiedVersions == null
       ? "  проверенная связка не объявлена"

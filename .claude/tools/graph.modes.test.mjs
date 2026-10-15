@@ -12799,3 +12799,32 @@ describe("испорченный реестр мутаций", () => {
     }
   }, 300000);
 });
+
+describe("сверка версий в чистом клоне", () => {
+  it("называет неустановленные пакеты и не числит их осмотренными", () => {
+    const box = seatEmpty("no-packages-");
+    try {
+      const run = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"],
+        { cwd: box, encoding: "utf8" },
+      );
+      const head = run.stdout.split(
+        "=== Версии установленного (предупреждение, прогон не роняет) ===",
+      )[1];
+      const looked =
+        /осмотрено установленных из объявленных версий: (\d+)/.exec(head);
+      const missing = /не установлено, не сравнивалось: (\d+) — /.exec(head);
+      expect(missing).not.toBeNull();
+      // Объявленные версии — строки блока `verifiedVersions` настройки.
+      const declared = fs
+        .readFileSync(path.join(box, ".context", "graph.config.mjs"), "utf8")
+        .match(/verifiedVersions: \{([^}]*)\}/)[1]
+        .split("\n")
+        .filter((line) => /^\s*["'\w@/.-]+["']?:/.test(line)).length;
+      expect(Number(looked[1]) + Number(missing[1])).toBe(declared);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
