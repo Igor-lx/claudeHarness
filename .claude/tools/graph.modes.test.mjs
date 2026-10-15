@@ -12828,3 +12828,37 @@ describe("сверка версий в чистом клоне", () => {
     }
   }, 300000);
 });
+
+describe("снимок внутри репозитория", () => {
+  it("собирается: проверочная посадка не видит чужой истории git", () => {
+    const box = seatEmpty("handoff-inside-");
+    const git = (...args) =>
+      spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@l", ...args], {
+        cwd: box,
+        encoding: "utf8",
+      });
+    try {
+      git("init", "-q");
+      git("config", "core.hooksPath", ".claude/hooks/git");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const run = spawnSync(
+        process.execPath,
+        [
+          path.join(box, ".claude", "tools", "graph.mjs"),
+          "handoff",
+          path.join(box, "snap"),
+        ],
+        { cwd: box, encoding: "utf8" },
+      );
+      expect(run.stdout).not.toContain("СНИМОК НЕ СОБРАН");
+      expect(run.status).toBe(0);
+      expect(fs.existsSync(path.join(box, "snap", ".claude"))).toBe(true);
+      expect(fs.existsSync(path.join(box, "snap", ".проба-посадки"))).toBe(
+        false,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
