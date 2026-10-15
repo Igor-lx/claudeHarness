@@ -94,9 +94,10 @@ export const sandboxPackages = (from, to) => {
 
 const norm = (p) => p.split(path.sep).join("/");
 
-/** Метка посадки в папке git: её ставит первый вызов `seat`, и только с ней
- * повторный вызов вправе стирать в `.claude/`. */
-const SEAT_MARKER = "claude-seat";
+/** Метка посадки в папке git: её ставит первый вызов `seat`. Только с ней
+ * повторный вызов вправе стирать в `.claude/`, и по ней сверки описания полки
+ * узнают испытательную посадку. */
+export const SEAT_MARKER = "claude-seat";
 
 const walkFiles = (root, rel = ".", out = []) => {
   for (const e of readdirSync(path.join(root, rel), { withFileTypes: true })) {
