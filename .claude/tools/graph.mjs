@@ -2437,7 +2437,29 @@ const barKeysOf = (body) => {
   if (levels.length > 0) out.push("итог по уровням: " + levels.join(", "));
   const base = [...p.base].filter(([, cells]) => empty(cells)).map(([f]) => f);
   if (base.length > 0) out.push("база и документация: " + base.join(", "));
+  const parts = barPartsLineOf(body);
+  if (parts !== null) out.push(parts);
   return out;
+};
+/** Таблица частей одной строкой. Её сессия заполняет, а протокол вне окна
+ * модели читать нельзя: без этой строки — в ключах и при отказе о частях —
+ * её правили вслепую, по отказам (восьмой прогон пробы `2026-10-16`). */
+const barPartsLineOf = (body) => {
+  const parts = partsTableOf(body);
+  if (parts === null || parts.length === 0) return null;
+  return (
+    "таблица частей (ключ — `часть N`): " +
+    parts
+      .map(
+        (r) =>
+          r.n +
+          " — " +
+          r.files.map(barQuoted).join(", ") +
+          " — " +
+          (r.what === "" ? "«что» пусто" : r.what),
+      )
+      .join("; ")
+  );
 };
 
 /** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
@@ -17319,6 +17341,10 @@ if (mode === "bar") {
       );
     console.log("  дыр: " + r.holes.length);
     for (const h of barHolesGrouped(r.holes)) console.log("    " + h);
+    const partsLine = r.holes.some((h) => /част/.test(h))
+      ? barPartsLineOf(barHeader(at)?.body ?? "")
+      : null;
+    if (partsLine !== null) console.log("  " + partsLine);
     if (r.crossDropped?.length)
       console.log(
         "  ответ «также» о находке, которой нет, снят: " +

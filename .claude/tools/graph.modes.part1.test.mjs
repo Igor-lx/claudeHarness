@@ -3185,10 +3185,16 @@ describe("части правки", () => {
             /^ {4}(част|файл |запись |зависимости|раскладка)/.test(l),
           )
           .map((l) => l.trim());
-      expect(partHoles(bar())).toEqual([
+      const listed = bar();
+      expect(partHoles(listed)).toEqual([
         "часть 1: графа «что» пуста — из неё сообщение коммита части",
         "часть 2: графа «что» пуста — из неё сообщение коммита части",
       ]);
+      // Таблицу частей сессия видит в ключах: протокол вне окна модели
+      // читать нельзя.
+      expect(listed).toContain(
+        "таблица частей (ключ — `часть N`): 1 — `shared/zza/zza.ts` — «что» пусто; 2 — `shared/zzb/zzb.ts` — «что» пусто",
+      );
       const fill = (edit) =>
         fs.writeFileSync(protoAt, edit(fs.readFileSync(protoAt, "utf8")));
       fill((p) =>
