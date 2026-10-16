@@ -2547,6 +2547,17 @@
         "значок",
         "путь"
       ]
+    },
+    {
+      "criterion": "J11",
+      "why": "при неудаче сохранения правленый текст откатывается к исходному, а тест гарантии «никогда» проверяет один пример, где текст не правили",
+      "patch": [
+        {
+          "path": "src/components/NoteForm/NoteForm.tsx",
+          "find": "    setProblem(outcome === \"saved\" ? null : \"saveFailed\");\n",
+          "replace": "    setProblem(outcome === \"saved\" ? null : \"saveFailed\");\n    if (outcome === \"failed\" && body !== initial.body) setBody(initial.body);\n"
+        }
+      ]
     }
   ],
   "covers": [

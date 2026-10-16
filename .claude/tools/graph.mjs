@@ -40,6 +40,7 @@ import {
   resourceKindsIn,
   barSubjectFlags,
   barCoreCriterion,
+  testEnumeratesInputs,
   barModelFault,
   barRestsOn,
   barLevelFault,
@@ -13001,6 +13002,31 @@ const barModelOf = (
             ? "изменено"
             : "",
       );
+    // «Никогда» обещает про любой вход, а тест без перебора проверяет один:
+    // чем доказано остальное, спрашивают у самой гарантии. Тест, которого по
+    // имени нет, держит сверка «Гарантия держится тестом», не эта строка.
+    for (const g of over) {
+      if (g.kind !== "никогда" || g.testPath === null || g.testName === null)
+        continue;
+      const t = guaranteeAbs(g.testPath);
+      const block =
+        t === null ? null : testBlockOf(readFileSync(t, "utf8"), g.testName);
+      if (block === null || testEnumeratesInputs(block)) continue;
+      add(
+        "гарантия",
+        rel0(at) + ":" + g.line,
+        g.id +
+          " (никогда): " +
+          g.what +
+          " — тест " +
+          g.testPath +
+          " «" +
+          g.testName +
+          "» входов не перебирает: чем доказано «ни при каком входе»",
+        "никогда без перебора",
+        "",
+      );
+    }
     if (change) {
       const holders = (f) =>
         guaranteesOver([f])

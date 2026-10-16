@@ -602,6 +602,59 @@ describe("гарантия поведения держится тестом", ()
     }
   }, 240000);
 
+  it("гарантия «никогда» с тестом без перебора входов — строка модели с вопросом J11", () => {
+    const box = seatEmpty("garant-never-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const put = putIn(box);
+      badge(put);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const rowsOf = () => {
+        if (fs.existsSync(protoAt)) fs.rmSync(protoAt);
+        tool("bar", "components/ZzBadge/ZzBadge.tsx");
+        return fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .filter((l) => l.includes("| никогда без перебора |"));
+      };
+      promise(box, [ROW.replace("| должно |", "| никогда |")]);
+      const rows = rowsOf();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toContain(
+        "REQ-1 (никогда): на значке видна подпись — тест components/ZzBadge/tests/ZzBadge.test.tsx «zz badge shows its label» входов не перебирает",
+      );
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /^\| J11 \|[^\n]*спрашивают: [^\n]*П\d+/m,
+      );
+      // Тест перебирает входы — вопроса нет.
+      put(
+        "src/components/ZzBadge/tests/ZzBadge.test.tsx",
+        'import { it } from "vitest";\nimport { ZzBadge } from "../ZzBadge";\n\nit("zz badge shows its label", () => {\n  for (const label of ["x", ""]) ZzBadge({ label });\n});\n',
+      );
+      expect(rowsOf()).toHaveLength(0);
+      // Род «должно» вопроса не задаёт.
+      badge(put);
+      const flows = path.join(box, ".context", "05-flows.md");
+      fs.writeFileSync(
+        flows,
+        fs.readFileSync(flows, "utf8").replace("| никогда |", "| должно |"),
+      );
+      expect(rowsOf()).toHaveLength(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("гарантия области и новая возможность — строками модели и вопросами J11 и J12", () => {
     const box = seatEmpty("garant-bar-");
     try {
