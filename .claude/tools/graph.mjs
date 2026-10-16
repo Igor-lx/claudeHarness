@@ -2244,7 +2244,7 @@ const BAR_FILL_FORMS = {
     from: 3,
     key: "критерий@предмет",
     cells: ["исход", "адрес", "что", "судьба"],
-    rule: "`чисто` — адрес `—`; в «что» — почему чисто, с номерами строк модели `ПN`, о которых спрашивает ключ (в скобках у ключа ниже), у архитектурного ядра — строкой модели своего уровня, у критерия свидетеля — его номером `СвN`; `нет предмета` — адрес `—`, в «что» — причина; `нашлось` — адрес `путь:строка`, в «что» — что не так, прочие места в конце: «ещё мест: `путь:строка`, `путь:строка`», без пояснений после адреса; судьба находки — `вопрос`, `починено`, `отложено`, на чтении ещё `предложено`, на переходе `долг`; у «чисто» и «нет предмета» судьбы нет — `=`",
+    rule: "`чисто` — адрес `—`; в «что» — почему чисто, со всем, что ключ называет в скобках ниже: строку `ПN` — своим номером, не диапазоном, свидетеля `СвN` — номером, из «одна из» — хотя бы одну; `нет предмета` — адрес `—`, в «что» — причина; `нашлось` — адрес `путь:строка`, в «что» — что не так, прочие места в конце: «ещё мест: `путь:строка`, `путь:строка`», без пояснений после адреса; судьба находки — `вопрос`, `починено`, `отложено`, на чтении ещё `предложено`, на переходе `долг`; у «чисто» и «нет предмета» судьбы нет — `=`",
   },
   cross: {
     from: 3,
@@ -2274,7 +2274,7 @@ const BAR_FILL_FORMS = {
     from: 3,
     key: BAR_CORE_KEY + "предмет",
     cells: ["исход", "что"],
-    rule: "одна строка на все ещё пустые исходы ядра этого предмета: исход — `чисто` либо `нет предмета`, адрес режим ставит `—`, «что» — как у строки исхода; находку пачкой не ставят; строка `критерий@предмет` того же файла важнее пачечной",
+    rule: "одна строка на все ещё пустые исходы ядра этого предмета: исход — `чисто` либо `нет предмета`, адрес режим ставит `—`, «что» — как у строки исхода и называет всё, что в скобках у ключей этого предмета; находку пачкой не ставят; строка `критерий@предмет` того же файла важнее пачечной",
   },
 };
 const fillOf = (form) => form.cells.map((_, k) => form.from + k);
@@ -2389,10 +2389,18 @@ const barKeysOf = (body) => {
     );
   const asked = new Map();
   for (const l of lines) {
-    const m = /^\| ([^|]+?) \| ([^|]*?) \| [^|]*· спрашивают: ([^|]*?) \|/.exec(
-      l,
-    );
-    if (m) asked.set(barKey(m[1], barSubjectCell(m[2])), m[3]);
+    const m =
+      /^\| ([^|]+?) \| ([^|]*?) \| [^|]*?((?: · (?:спрашивают|одна из): [^|·]*?)+) \|/.exec(
+        l,
+      );
+    if (m)
+      asked.set(
+        barKey(m[1], barSubjectCell(m[2])),
+        m[3]
+          .replace(/^ · /, "")
+          .replace(/^спрашивают: /, "")
+          .replace(/ · /g, "; "),
+      );
   }
   const bySubject = new Map();
   const set = new Map();
@@ -14069,20 +14077,61 @@ const barSkeletonOf = ({
   // разойтись с тем, что потребует приём. Без неё свод читал `BAR_SIGNALS`
   // в коде инструмента: журнал пробы `2026-10-12`.
   const modelOfRows = model.map((m) => ({ ...m, release: m.release ?? "" }));
+  // Требования приёма к «чисто» — все, а не первое: приём называет одно
+  // требование за раз, и подсказка по первому отказу оставляла строку своего
+  // уровня и свидетелей на следующий круг `bar`. Восьмой прогон пробы
+  // `2026-10-16`: `23` обращения `bar` и `bar-fill` из `52`. Подсказку
+  // считают те же функции, что принимают ответ, поэтому разойтись им не с чем.
   const askedTail = (c, subject) => {
-    const fault = barModelFault(
-      [
-        c.id,
-        "чисто",
-        "",
-        kind,
-        barModelCode(barModelFor(modelOfRows, c.level, subject, neighbours)),
-        c.level,
-        "",
-      ].join("|"),
+    const code = barModelCode(
+      barModelFor(modelOfRows, c.level, subject, neighbours),
     );
-    const ids = [...new Set(fault.match(/П[0-9]+/g) ?? [])];
-    return ids.length === 0 ? "" : " · спрашивают: " + ids.join(", ");
+    const columns = WITNESS_COLUMNS[c.id];
+    const mine =
+      columns === undefined
+        ? []
+        : witnesses.filter(
+            (w) =>
+              subject === "" || (subject !== BAR_AREA && w.unit === subject),
+          );
+    // Ответ свидетеля ещё не дан: нейтральный, ни «плохо», ни машинный.
+    const witnessCode = mine
+      .flatMap((w) => {
+        const k = columns.find(([sort]) => sort === w.kind)?.[1];
+        if (k === undefined) return [];
+        const auto = (w.auto ?? [])[k] ?? "";
+        return [w.id + ":" + w.kind + ":" + (auto === "" ? "?" : auto)];
+      })
+      .join(";");
+    const named = [];
+    const oneOf = [];
+    let what = "";
+    for (let step = 0; step < 8; step += 1) {
+      const fault =
+        barModelFault(
+          [c.id, "чисто", what, kind, code, c.level, ""].join("|"),
+        ) ||
+        (columns === undefined
+          ? ""
+          : barWitnessVerdict(
+              [c.id, "чисто", what, witnessCode, "", ""].join("|"),
+            ));
+      if (fault === "") break;
+      const found = fault.match(/(?:П|Св)[0-9]+(?:–(?:П|Св)?[0-9]+)?/g) ?? [];
+      // «Годятся» — любая одна из названных: подсказка называет их все, а
+      // дальше считает названной первую.
+      const fresh = fault.includes("годятся")
+        ? found.slice(0, 1)
+        : found.filter((t) => !named.includes(t));
+      if (fault.includes("годятся")) oneOf.push(found.join(", "));
+      else named.push(...fresh);
+      if (fresh.length === 0) break;
+      what = [...named, ...oneOf.map((g) => g.split(", ")[0])].join(", ");
+    }
+    return (
+      (named.length === 0 ? "" : " · спрашивают: " + named.join(", ")) +
+      oneOf.map((g) => " · одна из: " + g).join("")
+    );
   };
   const outcomeRow = ({ c, subject }) => {
     const none = c.slogan ? "" : noneOf(c, subject);

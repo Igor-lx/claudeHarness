@@ -825,8 +825,13 @@ describe("ссылки на строки модели при пересборк�
           "m",
         ).test(text);
       expect(asks(fs.readFileSync(protoAt, "utf8"), before)).toBe(true);
+      // Строк модели у B5 нет, а свидетель, которого «чисто» обязано назвать,
+      // есть: подсказка называет и его.
       expect(fs.readFileSync(protoAt, "utf8")).not.toMatch(
-        /^\| B5 \| [^|]*\| [^|]*спрашивают/m,
+        /^\| B5 \| [^|]*\| [^|]*спрашивают: [^|]*П[0-9]/m,
+      );
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /^\| B5 \| [^|]*\| [^|]*спрашивают: Св[0-9]+/m,
       );
       fillBar(protoAt, {
         release: "не нужно: проба",

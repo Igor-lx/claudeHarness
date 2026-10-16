@@ -2570,7 +2570,7 @@ describe("экономия свода по журналу пробы 2026-10-13"
       const first = tool("bar", "app/zzWide.ts");
       for (const rule of [
         "недостающие клетки в конце строки — тоже `=`",
-        "`чисто` — адрес `—`; в «что» — почему чисто, с номерами строк модели `ПN`",
+        "`чисто` — адрес `—`; в «что» — почему чисто, со всем, что ключ называет в скобках",
         "без пояснений после адреса",
         "строки «также» пишут тем же файлом, что исходы",
         "часть без файлов и без «что» режим снимает сам",
@@ -2678,6 +2678,37 @@ describe("экономия свода по журналу пробы 2026-10-13"
       const out = tool("bar", "app/zzWide.ts");
       expect(out).not.toContain("печать поставлена");
       expect(out).toContain("чисто без опоры на модель своего уровня");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("ключи называют все требования приёма: пачечная строка, назвавшая всё из скобок, принята с первого круга", () => {
+    const box = seatEmpty("corebatchkeys-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const first = tool("bar", "app/zzWide.ts");
+      const keys = /^ {4}исходы `app\/zzWide\.ts`: (.*)$/m.exec(first);
+      expect(keys, first).not.toBeNull();
+      // Свидетель единицы и строка своего уровня — в скобках сразу, а не
+      // следующим отказом.
+      expect(keys[1]).toMatch(/A1 \([^)]*Св[0-9]+/);
+      expect(keys[1]).toMatch(/A1-бис \(одна из: П[0-9]+/);
+      const named = [
+        ...new Set(keys[1].match(/(?:П|Св)[0-9]+(?:–Св[0-9]+)?/g)),
+      ];
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(
+        answersAt,
+        "ядро@app/zzWide.ts | чисто | по ключам: " + named.join(", ") + "\n",
+      );
+      tool("bar-fill", answersAt);
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const out = tool("bar", "app/zzWide.ts");
+      expect(out).not.toMatch(/для `app\/zzWide\.ts`: чисто без опоры/);
+      expect(out).not.toMatch(/для `app\/zzWide\.ts`: чисто, а /);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
