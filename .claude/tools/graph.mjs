@@ -47,6 +47,7 @@ import {
   barDeltaFault,
   barWitnessFault,
   barWitnessVerdict,
+  plantInExisting,
   bareCodeOf,
   commentlessOf,
   closeOf,
@@ -8419,10 +8420,21 @@ if (mode === "bar-probe") {
     console.log("  Ожидался файл: " + norm(at));
     process.exit(1);
   }
-  // Два рода посадки: новым файлом (`create`) и в существующий код
-  // (`into`). Флаг сужает выбор до одного рода — серия замеров одного рода
-  // иначе зависела бы от того, что выпало.
-  const kindOf = (p) => (p.into !== undefined ? "в существующем коде" : "новым файлом");
+  // Два рода посадки: новым файлом и в существующий код — правкой его
+  // (`into`, `patch`). Флаг сужает выбор до одного рода — серия замеров
+  // одного рода иначе зависела бы от того, что выпало.
+  const kindOf = (p) =>
+    plantInExisting(
+      [
+        p.into === undefined ? "" : "into",
+        p.create === undefined ? "" : "create",
+        p.patch === undefined ? "" : "patch",
+      ]
+        .filter(Boolean)
+        .join("+"),
+    )
+      ? "в существующем коде"
+      : "новым файлом";
   const only = process.argv.includes("--existing")
     ? "в существующем коде"
     : process.argv.includes("--new")

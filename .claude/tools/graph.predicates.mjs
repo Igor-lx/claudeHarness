@@ -2619,6 +2619,17 @@ export const barWitnessVerdict = (row) => {
   return "";
 };
 
+/** Сажает ли посадка пробы планки в существующий код — по её виду: `into`,
+ * `create`, `patch` через плюс. Новым файлом — посадка, которая кладёт файл и
+ * не сажает в существующий; правка без нового файла (`patch`) стоит среди
+ * обычной правки и по роду — в существующем коде. Прежде всё, что не `into`,
+ * шло «новым файлом»: посадка `235` правкой формы считалась верхней границей
+ * доли. */
+export const plantInExisting = (shape) => {
+  const has = new Set((shape ?? "").split("+").filter(Boolean));
+  return has.has("into") || (has.has("patch") && !has.has("create"));
+};
+
 /** Называет ли текст адрес ЦЕЛИКОМ, а не как начало другого адреса.
  *
  * Вход — `адрес|текст`. Папка засчитывается с косой на конце и без неё.
@@ -5001,6 +5012,11 @@ export const PREDICATE_CASES = [
   ["barMorePlacesOf", "два источника; ещё мест: `shared/a.ts:8`, `app/b.tsx:9`", "shared/a.ts:8,app/b.tsx:9"],
   ["barMorePlacesOf", "линт: r — x; ещё нарушений `2`: src/a.ts:3, src/b.ts:4", "src/a.ts:3,src/b.ts:4"],
   ["barMorePlacesOf", "два источника номера страницы", ""],
+  // --- plantInExisting: род посадки пробы планки ---
+  ["plantInExisting", "into", true],
+  ["plantInExisting", "patch", true],
+  ["plantInExisting", "create", false],
+  ["plantInExisting", "create+patch", false],
   ["barMorePlacesOf", "x; ещё мест: `a.ts:2` — тоже", "a.ts:2` — тоже"],
   // --- barRowFault: строка протокола свода по планке ---
   ["barRowFault", "на изменение|чисто|||", ""],
