@@ -1,3 +1,21 @@
+---
+paths:
+  - "**/.context/02-todo.md"
+  - "**/.context/03-graph.md"
+  - "**/.context/04-state.md"
+  - "**/.context/05-flows.md"
+  - "**/.context/06-timing.md"
+  - "**/.context/07-invariants.md"
+  - "**/.context/08-tests.md"
+  - "**/.context/09-decisions.md"
+  - "**/.context/10-idioms.md"
+  - "**/.context/13-questions.md"
+  - "**/.context/14-probes.md"
+  - "**/.context/15-transition.md"
+  - "**/.context/16-findings.md"
+  - "**/bar-protocol.md"
+---
+
 # База знаний — формы записи
 
 Применяется в момент, когда **пишут в базу**. Что такое база, из каких файлов
