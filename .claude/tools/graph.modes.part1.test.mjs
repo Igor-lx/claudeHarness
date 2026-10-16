@@ -110,6 +110,94 @@ describe("ворота конца хода", () => {
     }
   }, 180000);
 
+  it("сосед либо политика сменились после печати — ход не кончается, вернули — кончается", () => {
+    const box = seatEmpty("stop-ground-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=stop",
+            "-c",
+            "user.email=stop@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [graph, ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const hook = () =>
+        spawnSync(process.execPath, [graph, "stop", "--hook"], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      const nearAt = path.join(box, "src", "shared", "zzBase", "zzBase.ts");
+      fs.mkdirSync(path.dirname(nearAt), { recursive: true });
+      fs.writeFileSync(
+        nearAt,
+        "export const zzBase = (n: number): number => n + 1;\n",
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzUse.ts"),
+        'import { zzBase } from "../shared/zzBase/zzBase";\n\nexport const zzUse = (n: number): number => zzBase(n) * 2;\n',
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(
+        "- сосед: `shared/zzBase/zzBase.ts`",
+      );
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain("печать поставлена");
+      expect(hook().status).toBe(0);
+      // Сосед сменился чужим коммитом под запечатанным сводом: в предмет он
+      // не входит, правка в рабочем дереве та же.
+      const near = fs.readFileSync(nearAt, "utf8");
+      const commitNear = (text) => {
+        fs.writeFileSync(nearAt, text);
+        git("add", nearAt);
+        git("commit", "-qm", "сосед", "--no-verify");
+      };
+      commitNear(near.replace("n + 1", "n + 2"));
+      const moved = hook();
+      expect(moved.status).toBe(2);
+      expect(moved.stderr).toContain(
+        "основание свода сменилось после печати — соседи области: shared/zzBase/zzBase.ts",
+      );
+      commitNear(near);
+      expect(hook().status).toBe(0);
+      // Политика качества сменилась.
+      const policyAt = path.join(box, ".claude", "rules", "quality.md");
+      const policy = fs.readFileSync(policyAt, "utf8");
+      fs.writeFileSync(policyAt, policy + "\n");
+      const ruled = hook();
+      expect(ruled.status).toBe(2);
+      expect(ruled.stderr).toContain(
+        "основание свода сменилось после печати — политика качества",
+      );
+      fs.writeFileSync(policyAt, policy);
+      expect(hook().status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("без git начало сессии говорит, что ворота правку не проверяют", () => {
     const box = seatEmpty("stop-bez-git-");
     try {

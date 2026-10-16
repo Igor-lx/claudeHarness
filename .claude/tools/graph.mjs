@@ -1972,10 +1972,9 @@ const barHeader = (at) =>
  * любое число коммитов, и сосед, политика либо инструмент за это время
  * сменились, а модель этого не показала. Инструментом считаются `graph.mjs` и
  * `graph.predicates.mjs`: в них словари и правила приёма. */
-const barGroundOf = ({ marks, area }) => {
+const barGroundDigests = () => {
   const text = (f) => (existsSync(f) ? readFileSync(f, "utf8") : "");
   const { scoped, core } = barPolicyOf();
-  const own = new Set(marks.map((m) => m.file));
   return {
     policy: barDigest(text(core) + LF + text(scoped)),
     tool: barDigest(
@@ -1983,8 +1982,38 @@ const barGroundOf = ({ marks, area }) => {
         .map((n) => text(path.join(TOOL_DIR, n)))
         .join(LF),
     ),
+  };
+};
+const barGroundOf = ({ marks, area }) => {
+  const own = new Set(marks.map((m) => m.file));
+  return {
+    ...barGroundDigests(),
     near: barMarks(area.filter((f) => !own.has(rel(f)))),
   };
+};
+/** Основание протокола против нынешнего, по отпечаткам из его шапки: модель
+ * не пересобирается, поэтому годится для конца хода. Сосед, пришедший в
+ * область после свода, отсюда не виден — его видит приём в воротах перед
+ * коммитом. Пустая строка — основание то же либо протокол его не несёт. */
+const barGroundFault = (body) => {
+  const was = body === null ? null : barHeaderOf(body);
+  if (was === null || was.ground === null) return "";
+  // Обратная склейка `rel`: путь от корня исходников либо от репозитория.
+  // `barAbsOf` здесь не годится — конец хода исполняется раньше, чем она
+  // объявлена.
+  const absOf = (file) =>
+    existsSync(path.join(ROOT, file))
+      ? path.join(ROOT, file)
+      : path.join(BASE, "..", file);
+  const moved = barGroundMovedOf(was, {
+    ...barGroundDigests(),
+    near: was.ground.near.map((m) => ({
+      file: m.file,
+      mark: barMarks([absOf(m.file)])[0].mark,
+    })),
+  });
+  const said = barGroundTextOf(moved);
+  return said === "" ? "" : "основание свода сменилось после печати — " + said;
 };
 /** Что в основании изменилось против протокола: политика, инструмент, файлы
  * соседей — изменённые, пришедшие в область и ушедшие из неё. Протокол без
@@ -7111,7 +7140,8 @@ if (mode === "stop") {
     CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
   const body =
     protoAt !== null && existsSync(protoAt) ? readFileSync(protoAt, "utf8") : null;
-  const fault = want.length === 0 ? "" : barCoverFault(want, body);
+  const fault =
+    want.length === 0 ? "" : barCoverFault(want, body) || barGroundFault(body);
   const paused = state.pause?.digest === digest && want.length > 0;
   const day = (iso) => String(iso ?? "").slice(0, 10);
 
