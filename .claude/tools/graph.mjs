@@ -15531,7 +15531,42 @@ const barPartsRowsOf = (partsOf, was) => {
   const old = was === null ? null : partsTableOf(was.body);
   if (proposal.length < 2 && (old === null || old.length < 2)) return null;
   const subject = new Set(proposal.flat().map(rel));
-  const rows = (old ?? [])
+  // Связь, появившаяся после раскладки, — импорт между частями или запись
+  // базы, названная файлами двух частей, — сливает части машиной, а не
+  // отказом: раскладка и есть компоненты связи, и слияние по связи — её
+  // работа. Прежде отказ «слить части» приходил на записях, которые сессия
+  // пишет после раскладки: восьмой прогон пробы `2026-10-16`, четыре отказа.
+  const merged = (() => {
+    if (old === null || old.length < 2) return old;
+    const top = old.map((_, i) => i);
+    const find = (i) => (top[i] === i ? i : (top[i] = find(top[i])));
+    const join = (a, b) => {
+      if (a >= 0 && b >= 0) top[find(b)] = find(a);
+    };
+    for (const group of partsOf(was.body).joins)
+      for (const n of group.slice(1))
+        if (old[n - 1] !== undefined && old[group[0] - 1] !== undefined)
+          join(group[0] - 1, n - 1);
+    for (const comp of proposal) {
+      const homes = comp
+        .map(rel)
+        .map((q) => old.findIndex((r) => r.files.includes(q)))
+        .filter((i) => i >= 0);
+      for (const i of homes.slice(1)) join(homes[0], i);
+    }
+    const rowsAt = new Map();
+    old.forEach((r, i) => {
+      const t = find(i);
+      const into = rowsAt.get(t);
+      if (into === undefined) rowsAt.set(t, { ...r, files: [...r.files] });
+      else {
+        into.files.push(...r.files);
+        into.what = [into.what, r.what].filter((w) => w !== "").join("; ");
+      }
+    });
+    return [...rowsAt.values()];
+  })();
+  const rows = (merged ?? [])
     .map((r) => ({
       files: r.files.filter((q) => subject.has(q) || !CODE_OR_STYLE.test(q)),
       what: r.what,
@@ -16283,6 +16318,9 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     holes: [],
     partOf: new Map(),
     splits: new Map(),
+    // Номера частей, которые одна запись базы называет вместе: скелет
+    // сливает их сам, как компоненты связи.
+    joins: [],
   };
   if (table === null) return out;
   const holes = out.holes;
@@ -16431,6 +16469,7 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
       const key = side + s;
       if (said.has(key)) return;
       said.add(key);
+      if (one.length > 1) out.joins.push(one);
       holes.push(
         "запись " +
           barQuoted(where + ":" + (s + 1)) +

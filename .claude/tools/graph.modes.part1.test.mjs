@@ -3210,15 +3210,10 @@ describe("части правки", () => {
       );
       expect(partHoles(bar())).toEqual([]);
       git("checkout", "-q", "--", ".context/10-idioms.md");
-      // Конфиг вне частей, запись о двух частях, зависимости в двух частях.
+      // Конфиг вне частей, зависимости в двух частях.
       fs.appendFileSync(path.join(box, ".prettierrc.json"), "\n");
-      fs.appendFileSync(
-        path.join(box, ".context", "10-idioms.md"),
-        "\nОба: `src/shared/zza/zza.ts` и `src/shared/zzb/zzb.ts`.\n",
-      );
       expect(partHoles(bar())).toEqual([
         "файл `.prettierrc.json` не отнесён к части — назвать его в графе «файлы» нужной части",
-        "запись `.context/10-idioms.md:1` называет файлы частей 1 и 2 — слить части",
       ]);
       fs.appendFileSync(path.join(box, "package.json"), "\n");
       put("package-lock.json", "{}\n");
@@ -3237,24 +3232,33 @@ describe("части правки", () => {
       bar();
       expect(partHoles(bar())).toEqual([
         "зависимости меняют части 1 и 2 — слить части либо разнести правки по разным пачкам",
-        "запись `.context/10-idioms.md:1` называет файлы частей 1 и 2 — слить части",
       ]);
-      // Связь, появившаяся после разметки, разрезает компоненту — дыра со связью.
       fs.rmSync(path.join(box, "package-lock.json"));
-      git("checkout", "-q", "--", "package.json", ".context/10-idioms.md");
+      git("checkout", "-q", "--", "package.json");
       fill((p) =>
         p
           .replace(", `package.json` | add zza |", " | add zza |")
           .replace(", `package-lock.json` | add zzb |", " | add zzb |"),
       );
+      // Связь, появившаяся после раскладки, — запись базы о файлах двух
+      // частей либо импорт между ними — сливает части машиной: отказа «слить
+      // части» нет, строка таблицы одна, слова обеих частей в ней.
+      fs.appendFileSync(
+        path.join(box, ".context", "10-idioms.md"),
+        "\nОба: `src/shared/zza/zza.ts` и `src/shared/zzb/zzb.ts`.\n",
+      );
+      const merged = bar();
+      expect(merged).not.toContain("слить части");
+      expect(rows()).toBe(1);
+      expect(fs.readFileSync(protoAt, "utf8")).toContain("add zza; add zzb");
+      git("checkout", "-q", "--", ".context/10-idioms.md");
       put(
         "src/shared/zzb/zzb.ts",
         'import { zza } from "../zza/zza";\n\nexport const zzb = zza;\n',
       );
-      bar();
-      expect(partHoles(bar())).toContain(
-        "части 1 и 2 связаны: импорт между shared/zza/zza.ts и shared/zzb/zzb.ts — слить части",
-      );
+      expect(bar()).not.toContain("слить части");
+      // Одна компонента и одна строка — раздела частей нет: одна часть.
+      expect(rows()).toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
