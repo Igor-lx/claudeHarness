@@ -2164,6 +2164,11 @@ const barRowsOf = (body) => {
   }
   return { outcomes, model, levels, base, witnesses, reads, cross };
 };
+/** Ключ пачечной строки ядра: один ответ на все пустые исходы ядра предмета.
+ * Без неё сессия писала генератор на одинаковые «чисто» — `13` обращений
+ * из `51` седьмого прогона пробы. */
+const BAR_CORE_KEY = "ядро@";
+const BAR_CORE_OUTCOMES = ["чисто", "нет предмета"];
 /** Файл ответов `bar-fill`: строка `ключ | клетка | клетка …`. Один источник
  * для разбора файла и для подсказки в выводе `bar`: форму клеток сессия
  * подбирала по сообщениям об отказах (свод пробы `2026-10-13`: до двадцати
@@ -2234,6 +2239,12 @@ const BAR_FILL_FORMS = {
     key: "часть N",
     cells: ["файлы", "что"],
     rule: "файлы — пути в обратных кавычках через запятую; что — сообщение коммита части; часть без файлов и без «что» режим снимает сам",
+  },
+  core: {
+    from: 3,
+    key: BAR_CORE_KEY + "предмет",
+    cells: ["исход", "что"],
+    rule: "одна строка на все ещё пустые исходы ядра этого предмета: исход — `чисто` либо `нет предмета`, адрес режим ставит `—`, «что» — как у строки исхода; находку пачкой не ставят; строка `критерий@предмет` того же файла важнее пачечной",
   },
 };
 const fillOf = (form) => form.cells.map((_, k) => form.from + k);
@@ -15761,6 +15772,23 @@ const barProcess = ({
     onBase: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "база").length,
     onSession: clean.filter(({ c, subject }) => restsOn(said.get(barKey(c.id, subject))) === "сессия").length,
     catalog: clean.filter(({ c }) => BAR_CATALOG_CRITERIA.includes(c.id)).length,
+    // «Чисто» ядра, чьё основание дословно повторено у другого критерия ядра
+    // того же предмета: пачечная строка либо скрипт сессии, — ответ одной
+    // строкой на единицу, а не по критерию.
+    batched: (() => {
+      const core = clean.filter(
+        ({ c, subject }) => subject !== "" && barCoreCriterion(c.id),
+      );
+      const reasonOf = ({ c, subject }) =>
+        subject + "|" + (said.get(barKey(c.id, subject))?.what ?? "");
+      const count = new Map();
+      for (const one of core)
+        count.set(reasonOf(one), (count.get(reasonOf(one)) ?? 0) + 1);
+      return {
+        core: core.length,
+        same: core.filter((one) => count.get(reasonOf(one)) > 1).length,
+      };
+    })(),
     // «Чисто» на вопросе модели — со строкой, о которой критерий спрашивает,
     // либо при признаке, который не встал: тогда ответ стоит на том, что
     // распознаватель ничего не нашёл, и на формах вне держателя.
@@ -17208,6 +17236,13 @@ if (mode === "bar") {
             : ""),
       ).join("; "),
   );
+  console.log(
+    "  «чисто» ядра по предметам: " +
+      r.reading.batched.core +
+      "; из них одним основанием на несколько критериев предмета: " +
+      r.reading.batched.same +
+      " — ответ пачкой, а не по критерию",
+  );
   if (r.reading.catalog > 0)
     console.log(
       "  «чисто» о целом по каталогам: " +
@@ -17717,9 +17752,70 @@ if (mode === "bar-fill") {
   // и перенесёт ответ по находке, а ответ о находке, которой нет, снимет и
   // назовёт. Ключ сверяется с формой находки, а не с исходами: исходы того
   // же файла ответов ещё не приняты.
+  // Пачечные строки ядра раскрываются до обычных: строка `критерий@предмет`
+  // того же файла пишет поверх и потому побеждает. Раскрываются только
+  // пустые исходы — машинный и прежний ответ не трогаются; приём в `bar`
+  // судит раскрытую строку так же, как ручную.
+  let batched = 0;
+  for (const { line, n } of asked) {
+    const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
+    if (!parts[0].startsWith(BAR_CORE_KEY)) continue;
+    const subject = plain(parts[0].slice(BAR_CORE_KEY.length)).trim();
+    if (seen.has(BAR_CORE_KEY + subject)) {
+      faults.push("строка " + n + ": ключ «" + parts[0] + "» дважды");
+      continue;
+    }
+    seen.add(BAR_CORE_KEY + subject);
+    const [outcome, what] = [parts[1] ?? "", parts[2] ?? ""];
+    if (
+      parts.length !== 3 ||
+      !BAR_CORE_OUTCOMES.includes(outcome) ||
+      what === "" ||
+      what === "="
+    ) {
+      faults.push(
+        "строка " +
+          n +
+          ": пачечная строка — `" +
+          BAR_CORE_KEY +
+          "предмет | исход | что`, исход — `" +
+          BAR_CORE_OUTCOMES.join("` либо `") +
+          "`; находку ставят строкой критерия, с адресом",
+      );
+      continue;
+    }
+    const mine = [...rows].filter(([k]) => {
+      const at = k.indexOf("@");
+      return (
+        at > 0 &&
+        plain(k.slice(at + 1)).trim() === subject &&
+        barCoreCriterion(k.slice(0, at))
+      );
+    });
+    if (mine.length === 0) {
+      faults.push(
+        "строка " +
+          n +
+          ": у предмета «" +
+          subject +
+          "» строк ядра в протоколе нет",
+      );
+      continue;
+    }
+    const [col] = fillOf(BAR_FILL_FORMS.outcome);
+    for (const [, row] of mine) {
+      if (row.cells[col] !== "") continue;
+      row.cells[col] = outcome;
+      row.cells[col + 1] = "—";
+      row.cells[col + 2] = what;
+      lines[row.at] = "| " + row.cells.join(" | ") + " |";
+      batched += 1;
+    }
+  }
   const fresh = [];
   for (const { line, n } of asked) {
     const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
+    if (parts[0].startsWith(BAR_CORE_KEY)) continue;
     const [key, row] = rows.has(parts[0])
       ? [parts[0], rows.get(parts[0])]
       : (plainRows.get(plain(parts[0])) ?? [parts[0], undefined]);
@@ -17786,6 +17882,10 @@ if (mode === "bar-fill") {
   writeFileSync(protocolAt, written);
   console.log("=== Ответы вписаны ===");
   console.log("  вписано строк: " + asked.length + " — " + rel(protocolAt));
+  if (batched > 0)
+    console.log(
+      "  из них раскрыто пачечными строками ядра: " + batched + " исходов",
+    );
   if (fresh.length > 0)
     console.log(
       "  из них «также» о находках, которых в таблице ещё нет: " +

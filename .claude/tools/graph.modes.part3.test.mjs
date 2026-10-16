@@ -13,6 +13,7 @@ import {
   verifyIn,
   sectionOf,
   fillBar,
+  barRowsCited,
   fakeCheck,
   seriesStaged,
 } from "./graph.modes.shared.mjs";
@@ -2539,6 +2540,91 @@ describe("экономия свода по журналу пробы 2026-10-13"
       expect(row[4]).toBe("чисто");
       expect(row[5]).toBe("—");
       expect(row[6]).toBe("проба-1");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("пачечная строка ядра раскрывается на пустые исходы ядра предмета, частная строка и прежний ответ важнее, находку пачкой не ставят", () => {
+    const box = seatEmpty("corebatch-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      const all = barRowsCited(fs.readFileSync(protoAt, "utf8"));
+      const answersAt = path.join(box, "answers.txt");
+      const rowOf = (id, subject) =>
+        fs
+          .readFileSync(protoAt, "utf8")
+          .split("\n")
+          .find((l) => l.startsWith("| " + id + " | `" + subject + "` |"))
+          .split("|")
+          .map((c) => c.trim());
+      // Находку пачкой не ставят: отказ, протокол прежний.
+      const blank = fs.readFileSync(protoAt, "utf8");
+      fs.writeFileSync(answersAt, "ядро@app/zzWide.ts | нашлось | проба\n");
+      expect(tool("bar-fill", answersAt)).toContain(
+        "находку ставят строкой критерия",
+      );
+      expect(fs.readFileSync(protoAt, "utf8")).toBe(blank);
+      // Прежний ответ пачка не трогает.
+      fs.writeFileSync(
+        answersAt,
+        "A2@app/zzWide.ts | чисто | — | " + all + " прежний\n",
+      );
+      tool("bar-fill", answersAt);
+      fs.writeFileSync(
+        answersAt,
+        [
+          "ядро@`app/zzWide.ts` | чисто | " + all + " пачкой",
+          "A10@app/zzWide.ts | чисто | — | " + all + " частная",
+          "ядро@app | чисто | " + all + " пачкой слоя",
+          "",
+        ].join("\n"),
+      );
+      expect(tool("bar-fill", answersAt)).toMatch(
+        /раскрыто пачечными строками ядра: [0-9]+ исходов/,
+      );
+      expect(rowOf("A1-бис", "app/zzWide.ts").slice(4, 7)).toEqual([
+        "чисто",
+        "—",
+        all + " пачкой",
+      ]);
+      expect(rowOf("A10", "app/zzWide.ts")[6]).toBe(all + " частная");
+      expect(rowOf("A2", "app/zzWide.ts")[6]).toBe(all + " прежний");
+      expect(rowOf("A5", "app")[6]).toBe(all + " пачкой слоя");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const out = tool("bar", "app/zzWide.ts");
+      expect(out).toContain("печать поставлена");
+      const same =
+        /из них одним основанием на несколько критериев предмета: ([0-9]+)/.exec(
+          out,
+        );
+      expect(same, out).not.toBeNull();
+      expect(Number(same[1])).toBeGreaterThan(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("пачечная строка ядра без строки модели своего уровня получает тот же отказ, что ручная", () => {
+    const box = seatEmpty("corebatchbare-");
+    try {
+      const tool = toolIn(box);
+      fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzWide.ts");
+      const answersAt = path.join(box, "answers.txt");
+      fs.writeFileSync(
+        answersAt,
+        "ядро@app/zzWide.ts | чисто | проба без опоры\n",
+      );
+      tool("bar-fill", answersAt);
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const out = tool("bar", "app/zzWide.ts");
+      expect(out).not.toContain("печать поставлена");
+      expect(out).toContain("чисто без опоры на модель своего уровня");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
