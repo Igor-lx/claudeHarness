@@ -17391,6 +17391,23 @@ if (mode === "bar") {
     console.log(
       "  Клетки вписывают файлом ответов, а не правкой таблицы: `graph.mjs bar-fill <файл>`.",
     );
+    // Запись карты, которую опровергает код, правят до ответов, по порядку
+    // петли: правка карты меняет модель и снимает ответы, стоящие на ней, —
+    // десятый прогон пробы ответил заново `27` исходов.
+    const mapArea = new Set(barRowsOf(readFileSync(at, "utf8")).base.keys());
+    const mapAhead = [
+      ...new Set(
+        (checks?.get("Запись карты не спорит с кодом")?.lines ?? []).flatMap(
+          (line) => [...sourceNamedIn(line)].map(rel),
+        ),
+      ),
+    ].filter((f) => mapArea.has(f));
+    if (mapAhead.length > 0)
+      console.log(
+        "  Сначала база: запись карты спорит с кодом — " +
+          mapAhead.map(barQuoted).join(", ") +
+          ". Поправить строки карты до ответов: правка карты меняет модель и снимает ответы, стоящие на ней.",
+      );
     for (const line of barKeysFileOf(at)) console.log("  " + line);
     process.exit(1);
   }

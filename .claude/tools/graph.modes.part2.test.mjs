@@ -2666,7 +2666,11 @@ describe("запись карты не спорит с кодом", () => {
       git("add", "-A");
       git("commit", "-qm", "своё", "--no-verify");
       fs.appendFileSync(code, "export const zzStep = 1;\n");
-      bar();
+      // Спор записи с кодом назван сразу, до ответов: правка карты потом
+      // сняла бы ответы, стоящие на модели.
+      expect(bar()).toContain(
+        "Сначала база: запись карты спорит с кодом — `app/zzCounter.ts`.",
+      );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       const proto = fs.readFileSync(protoAt, "utf8");
       const row = /^\| `app\/zzCounter\.ts` \| {2}\| {2}\| {2}\|$/m;
