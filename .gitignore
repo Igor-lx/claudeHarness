@@ -1,0 +1,3 @@
+# Settings travel as a seed, not as files: .claude/seat/seat.md, step 5.
+/.claude/settings.json
+/.claude/settings.local.json

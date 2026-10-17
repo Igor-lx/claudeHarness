@@ -2805,6 +2805,28 @@ describe("долг перехода: список, держатель, отст�
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  it("без плана перехода: пока стоит флаг посадки, проект не назван родившимся под обвязкой", () => {
+    const box = seatEmpty("bezplana-");
+    try {
+      const said = () =>
+        execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "transition"],
+          { cwd: box, encoding: "utf8" },
+        );
+      expect(said()).toContain("посадка не завершена");
+      expect(said()).not.toContain("родился под обвязкой");
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfg,
+        fs.readFileSync(cfg, "utf8").replace("seating: 1,", "seating: 0,"),
+      );
+      expect(said()).toContain("родился под обвязкой");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
 });
 
 /**
@@ -4316,6 +4338,97 @@ describe("призрак в базе назван с номером строки
           expect(l, section).toMatch(/^00-map\.md:\d+: src\/app\/zzGone\.ts/);
         expect(new Set(lines).size, section).toBe(2);
       }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * `tsc -p .` называет папку, а не файл, — самая частая форма скрипта сборки.
+ * Папка читалась как файл, и сверка базы падала стеком на трети пути: сверки
+ * после неё не исполнялись. Найдено посадкой руками в живой проект.
+ */
+describe("конфиг компилятора, названный папкой", () => {
+  it("скрипт `tsc -p .` не роняет сверку, а строгость его конфига названа по файлу", () => {
+    const box = seatEmpty("tsc-papka-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts.typecheck = "tsc -p .";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const tsAt = path.join(box, "tsconfig.json");
+      fs.writeFileSync(
+        tsAt,
+        fs
+          .readFileSync(tsAt, "utf8")
+          .replace('"strict": true', '"strict": false'),
+      );
+      const run = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+        { cwd: box, encoding: "utf8" },
+      );
+      expect(run.stderr).not.toContain("EISDIR");
+      expect(run.stdout).toMatch(/сверок: \d+/);
+      expect(
+        verifyIn(box).get("Строгость компилятора там, где проверяются типы"),
+      ).toEqual([
+        expect.stringMatching(
+          /^tsconfig\.json — звено типов проверяет по нему/,
+        ),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Область сбора тестов называет тесты проекта. Семя пишет её от корня `src`,
+ * и в проекте с другим корнем оно ложилось целиком: раннер не находил ни
+ * одного теста, а сверка отвечала «расхождений: 0». Найдено посадкой руками
+ * в живой проект с корнем `lib`.
+ */
+describe("тест проекта вне области сбора раннера", () => {
+  it("тест вне `include` назван, тест под перечнем `{ts,tsx}` и подготовка прогона — нет", () => {
+    const box = seatEmpty("oblast-sbora-");
+    try {
+      const SECTION = "Настройка сборки знает про тесты";
+      const tests = path.join(box, "src", "app", "tests");
+      fs.mkdirSync(tests, { recursive: true });
+      fs.writeFileSync(
+        path.join(tests, "zzIn.test.tsx"),
+        'import { it } from "vitest";\nit("in", () => {});\n',
+      );
+      expect(verifyIn(box).get(SECTION)).toBeUndefined();
+      fs.writeFileSync(
+        path.join(tests, "zzOut.spec.ts"),
+        'import { it } from "vitest";\nit("out", () => {});\n',
+      );
+      expect(verifyIn(box).get(SECTION)).toEqual([
+        "vite.config.ts — тест проекта src/app/tests/zzOut.spec.ts вне области сбора `include`: раннер его не соберёт",
+      ]);
+      // Секция, записанная без пробела, — та же секция.
+      const conf = path.join(box, "vite.config.ts");
+      fs.writeFileSync(
+        conf,
+        fs.readFileSync(conf, "utf8").replace("test: {", "test:{"),
+      );
+      expect(verifyIn(box).get(SECTION)).toEqual([
+        "vite.config.ts — тест проекта src/app/tests/zzOut.spec.ts вне области сбора `include`: раннер его не соберёт",
+      ]);
+      // Образец от точки — тот же образец.
+      fs.writeFileSync(
+        conf,
+        fs
+          .readFileSync(conf, "utf8")
+          .replace('include: ["src/', 'include: ["./src/'),
+      );
+      expect(fs.readFileSync(conf, "utf8")).toContain('include: ["./src/');
+      expect(verifyIn(box).get(SECTION)).toEqual([
+        "vite.config.ts — тест проекта src/app/tests/zzOut.spec.ts вне области сбора `include`: раннер его не соберёт",
+      ]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

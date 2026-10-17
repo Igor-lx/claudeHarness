@@ -4,7 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BAR_CUTS, BAR_SIGNALS, isToolModule } from "./graph.predicates.mjs";
+import {
+  BAR_CUTS,
+  BAR_SIGNALS,
+  commentRunsOf,
+  isToolModule,
+} from "./graph.predicates.mjs";
 import {
   TOOL_DIR,
   TOOL,
@@ -1442,6 +1447,32 @@ describe("синоним термина словаря во всей прозе 
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+});
+
+/**
+ * Потолок ряда комментария взят из образца в `code.md`: «ровно столько слов».
+ * Образец переписали по-английски, а описание числа в инструменте
+ * пересказывало прежнюю русскую редакцию в десять слов — число и образец
+ * сверяло только внимание. Найдено прогоном проб по холодной оси.
+ */
+describe("потолок ряда комментария равен образцу из свода", () => {
+  it("слов в образце code.md — счётом самой сверки — столько, сколько в потолке", () => {
+    const code = fs.readFileSync(
+      path.join(TOOL_DIR, "..", "rules", "code.md"),
+      "utf8",
+    );
+    const after = code.slice(
+      code.indexOf("Образец, от которого взят потолок ряда"),
+    );
+    const sample = /```\n(\/\/[^\n]+)\n```/.exec(after)?.[1];
+    expect(sample).toBeDefined();
+    const [kind, , words] = commentRunsOf(sample + "\n", false).split(":");
+    expect(kind).toBe("line");
+    const ceiling = /const COMMENT_RUN_WORDS = (\d+);/.exec(
+      fs.readFileSync(TOOL, "utf8"),
+    )?.[1];
+    expect(Number(words)).toBe(Number(ceiling));
+  });
 });
 
 describe("скиллы цитируют то, что печатают режимы", () => {

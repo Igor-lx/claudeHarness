@@ -79,6 +79,14 @@ describe("ворота конца хода", () => {
       expect(stopped.stderr).toContain("app/zzStop.ts");
       tool("stop", "--pause", "жду ответа о границе");
       expect(hook().status).toBe(0);
+      expect(tool("stop", "--session")).toContain(
+        "незаконченная работа — жду ответа о границе",
+      );
+      // Правки между сессиями не стало — пауза ни о чём, и начало сессии
+      // о ней молчит.
+      fs.renameSync(at, at + ".off");
+      expect(tool("stop", "--session")).toBe("");
+      fs.renameSync(at + ".off", at);
       // Правка после паузы: пауза о прежнем виде, ход снова не кончается.
       fs.writeFileSync(at, "export const zzStop = 2;\n");
       expect(hook().status).toBe(2);

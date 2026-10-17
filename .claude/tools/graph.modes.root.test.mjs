@@ -149,6 +149,43 @@ describe("режимы инструмента запускаются", () => {
  * перестал собираться — молча, до первой сборки руками, после десятков
  * коммитов. Замерено посадками руками.
  */
+/**
+ * Проверенная связка объявлена полем `verifiedVersions` семени настройки, а
+ * README мастерской и обвязки повторяют её числа прозой. Поле правят — проза
+ * остаётся прежней без признака: её не читает ни одна сверка, README
+ * мастерской лежит вне `.claude`. Найдено прогоном проб по холодной оси.
+ * Мастерскую называет метка посадки: тесты обвязки идут на посадке режима
+ * `seat`, и она пишет в метку адрес полки.
+ */
+describe("проверенная связка в README названа теми же числами", () => {
+  it("каждая версия поля есть в README мастерской; версия среды — в README обвязки", async () => {
+    const root = path.join(TOOL_DIR, "..", "..");
+    const mark = path.join(root, ".git", "claude-seat");
+    expect(
+      fs.existsSync(mark),
+      "тесты обвязки идут на посадке режима seat: нет метки " + mark,
+    ).toBe(true);
+    const shelf = fs.readFileSync(mark, "utf8").trim();
+    const { CONFIG } = await import(
+      path.join(TOOL_DIR, "..", "seat", "templates", "graph.config.mjs")
+    );
+    const versions = Object.entries(CONFIG.verifiedVersions);
+    expect(versions.length).toBeGreaterThan(0);
+    for (const name of ["README.md", "README.ru.md"]) {
+      const text = fs.readFileSync(path.join(shelf, "..", name), "utf8");
+      for (const [pkg, version] of versions)
+        expect(text.includes(version), name + ": " + pkg + " " + version).toBe(
+          true,
+        );
+    }
+    const own = fs.readFileSync(path.join(TOOL_DIR, "..", "README.md"), "utf8");
+    expect(own).toContain("`" + CONFIG.verifiedVersions.node + "`");
+    expect(own).toContain(
+      "npm `" + CONFIG.verifiedVersions.npm.split(".")[0] + "`",
+    );
+  });
+});
+
 describe("снимок обвязки собирается", () => {
   it("handoff во временную папку отдаёт код 0 и сажается в пустую", () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), "snimok-"));
@@ -160,6 +197,11 @@ describe("снимок обвязки собирается", () => {
       });
       expect(out).toContain("СНИМОК СОБРАН");
       expect(out).toContain("сверка базы — код 0");
+      const memo = fs.readFileSync(path.join(box, "ЧИТАТЬ-ПЕРВЫМ.md"), "utf8");
+      const named = [...memo.matchAll(/`(\.claude\/[^`]+)`/g)].map((m) => m[1]);
+      expect(named.length).toBeGreaterThan(0);
+      for (const one of named)
+        expect(fs.existsSync(path.join(box, one)), one).toBe(true);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

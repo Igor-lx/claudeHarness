@@ -1392,6 +1392,14 @@ const runnerConfigNames = () => {
     ? []
     : [...entry.shadowedBy, entry.to, ...(entry.alsoKnownAs ?? [])];
 };
+/** Секция тестов настройки раннера — от её начала до конца файла, либо `null`.
+ * Опознаётся по форме, а не по написанию: `test:{` без пробела форматтер
+ * проекта не обязан править, и точное `test: {` такую секцию не видело —
+ * четыре сверки отвечали о ней как о несуществующей. */
+const testSectionOf = (body) => {
+  const m = /(?:^|[\s,{])["']?test["']?\s*:\s*\{/.exec(body);
+  return m === null ? null : body.slice(m.index);
+};
 /** Конфиг звена, который лежит в проекте под любым своим именем: затеняющим,
  * семенным, другим именем того же предмета — из карты посадки; `null` — не
  * лежит ни под одним. Имена собирали три сверки порознь, и одна не собирала
@@ -1823,15 +1831,30 @@ const globsToTest = (globs) => {
             i += 1;
           }
         } else out += "[^/]*";
+      } else if (ch === "{" && glob.indexOf("}", i) > i) {
+        // Перечень `{ts,tsx}` — частая форма области раннера.
+        const end = glob.indexOf("}", i);
+        out +=
+          "(?:" +
+          glob
+            .slice(i + 1, end)
+            .split(",")
+            .map((part) => toRe(part).source.slice(1, -1))
+            .join("|") +
+          ")";
+        i = end;
       } else if (".+^${}()|[]\\?".includes(ch)) out += "\\" + ch;
       else out += ch;
     }
     return new RegExp("^" + out + "$");
   };
-  const yes = globs.filter((g) => !g.startsWith("!")).map(toRe);
+  // `./src/**` и `src/**` — один образец у раннера и мутаций, а путь файла
+  // приходит без точки: с ней образец не совпадал ни с чем.
+  const bare = (g) => g.replace(/^(?:\.\/)+/, "");
+  const yes = globs.filter((g) => !g.startsWith("!")).map((g) => toRe(bare(g)));
   const no = globs
     .filter((g) => g.startsWith("!"))
-    .map((g) => toRe(g.slice(1)));
+    .map((g) => toRe(bare(g.slice(1))));
   return (f) => yes.some((r) => r.test(f)) && !no.some((r) => r.test(f));
 };
 
@@ -3508,10 +3531,11 @@ const seatingIsUp = () => CONFIG.seating != null && CONFIG.seating !== 0;
 
 /** Потолок слитного ряда двух косых, В СЛОВАХ.
  *
- * Число не выдумано. Свод документации приводит собственный образец
- * хорошего комментария — «счётчик читает цикл повтора, поэтому он обязан
- * пережить ранний выход», — и слов в нём ровно столько. Потолок равен
- * образцу, который свод уже объявил правильным.
+ * Число не выдумано: свод приводит образец хорошего комментария
+ * (`code.md`, раздел «Комментарии: минимум, и по делу»), и слов в нём ровно
+ * столько. Образец здесь не повторяется: прежде тут стояла его русская
+ * редакция в десять слов, а потолок держался английской. Сходство числа с
+ * образцом держит тест обвязки.
  *
  * Мера — слово, а не строка: строка это формат, и порог по строкам зависел
  * бы от ширины поля форматтера.
@@ -3738,7 +3762,15 @@ const typeCheckOptions = () => {
       }
     }
   }
-  const optionsOf = (at, seen = new Set()) => {
+  // `-p` и ссылка называют конфиг и файлом, и папкой: `tsc -p .` — самая
+  // частая форма, и папка, прочитанная как файл, роняла сверку базы стеком на
+  // трети пути. Найдено посадкой руками в живой проект.
+  const tsconfigAt = (named) =>
+    existsSync(named) && statSync(named).isDirectory()
+      ? path.join(named, "tsconfig.json")
+      : named;
+  const optionsOf = (named, seen = new Set()) => {
+    const at = tsconfigAt(named);
     if (seen.has(at) || !existsSync(at)) return null;
     seen.add(at);
     const parsed = parseJsonc(readFileSync(at, "utf8"));
@@ -3755,7 +3787,9 @@ const typeCheckOptions = () => {
   const configs = new Set();
   for (const [dir, body] of calls) {
     const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
-    configs.add(path.resolve(dir, p === null ? "tsconfig.json" : p[1]));
+    configs.add(
+      tsconfigAt(path.resolve(dir, p === null ? "tsconfig.json" : p[1])),
+    );
   }
   const out = [];
   for (const at of configs) {
@@ -3764,9 +3798,7 @@ const typeCheckOptions = () => {
     const refs = got.parsed.references ?? [];
     if (got.parsed.compilerOptions == null && refs.length)
       for (const r of refs) {
-        let to = path.resolve(path.dirname(at), r.path);
-        if (existsSync(to) && statSync(to).isDirectory())
-          to = path.join(to, "tsconfig.json");
+        const to = tsconfigAt(path.resolve(path.dirname(at), r.path));
         const opts = optionsOf(to)?.options;
         if (opts != null) out.push([to, opts]);
       }
@@ -5018,6 +5050,14 @@ const debtLine = (row) =>
     .trim() +
   " — сейчас: " +
   row.now.replace(/`/g, "");
+
+/** Почему плана перехода нет. Пока стоит флаг посадки, живому проекту файл
+ * ещё не положен: «родился под обвязкой» тут неправда, и следующая сессия
+ * спросила бы со старого кода как с нового. */
+const noTransitionWhy = () =>
+  seatingIsUp()
+    ? "плана перехода нет, и посадка не завершена: живому проекту файл перехода кладёт она, вместе с объявленным долгом"
+    : "перехода нет: проект родился под обвязкой либо переход закончен";
 
 const printTransition = () => {
   const steps = transitionOpen();
@@ -6495,9 +6535,7 @@ if (mode === "transition") {
   const said = printTransition();
   const alsoSaid = printFindings();
   if (!said && !alsoSaid)
-    console.log(
-      "Перехода нет: проект родился под обвязкой либо переход закончен.",
-    );
+    console.log(noTransitionWhy().replace(/^./, (c) => c.toUpperCase()) + ".");
   process.exit(0);
 }
 
@@ -6669,7 +6707,8 @@ if (mode === "handoff") {
       "",
       "- собран: " + stamp,
       "- файлов: " + copied.length,
-      "- проверен посадкой в пустую папку: см. вывод сборки",
+      "- проверен посадкой в пустую папку: снимок, не прошедший проверку,",
+      "  сборка удаляет — раз он лежит, проверку он прошёл",
       "",
       "---",
       "",
@@ -7385,7 +7424,19 @@ if (mode === "stop") {
       said.push(
         "репозитория нет либо git недоступен — ворота конца хода и перед коммитом правку не проверяют",
       );
-    if (state.pause != null)
+    // Между сессиями правку могли закоммитить мимо ворот, откатить или
+    // накрыть сводом: пауза и след о ней тогда ни о чём, и печатать их —
+    // звать сессию к работе, которой нет. Правило то же, что у конца хода.
+    if (want.length === 0 || fault === "") {
+      if (state.pause != null || state.trace != null || state.blocks != null) {
+        state.pause = null;
+        state.trace = null;
+        state.blocks = null;
+        save();
+      }
+    }
+    // Пауза о прежнем виде правки ни о чём: о нынешнем скажет строка ниже.
+    if (paused && fault !== "")
       said.push(
         "незаконченная работа — " +
           state.pause.reason +
@@ -23231,7 +23282,7 @@ if (mode === "verify") {
           if (!existsSync(at)) continue;
           viteSeen.add(name);
           const body = readFileSync(at, "utf8");
-          if (!body.includes("test: {")) continue;
+          if (testSectionOf(body) === null) continue;
           if (body.includes("vitest/config")) continue;
           // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
           // типы — замерено компилятором на такой настройке. Для старших
@@ -23274,7 +23325,7 @@ if (mode === "verify") {
             .map((n) => path.join(BASE, "..", n))
             .filter((at) => existsSync(at))
             .map((at) => readFileSync(at, "utf8"))
-            .find((body) => body.includes("test: {"));
+            .find((body) => testSectionOf(body) !== null);
           viteLooked += 1;
           if (
             runnerConf !== undefined &&
@@ -23320,15 +23371,55 @@ if (mode === "verify") {
         if (!existsSync(at)) continue;
         viteSeen.add(name);
         const body = readFileSync(at, "utf8");
-        const from = body.indexOf("test: {");
-        if (from < 0) continue;
-        const lists = [
-          ...body.slice(from).matchAll(/include:\s*\[([^\]]*)\]/g),
-        ].map((m) => m[1]);
+        const section = testSectionOf(body);
+        if (section === null) continue;
+        const lists = [...section.matchAll(/include:\s*\[([^\]]*)\]/g)].map(
+          (m) => m[1],
+        );
         if (lists.some((l) => l.includes(".claude")))
           viteDrift.push(
             name +
               " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
+          );
+      }
+      // Область сбора называет тесты проекта. Семя пишет её от корня `src`, и в
+      // проекте с другим корнем, у которого своего конфига раннера не было,
+      // оно ложилось целиком: раннер не находил ни одного теста, а сверка
+      // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
+      // корнем `lib`. Область — первый список строк в секции тестов до
+      // покрытия: у покрытия своя.
+      for (const name of runnerConfigNames()) {
+        const at = path.join(BASE, "..", name);
+        if (!existsSync(at)) continue;
+        const body = readFileSync(at, "utf8");
+        const section = testSectionOf(body);
+        if (section === null) continue;
+        const cut = section.search(/\bcoverage\s*:/);
+        const globs = [
+          ...(cut < 0 ? section : section.slice(0, cut)).matchAll(
+            /include:\s*\[([^\]]*)\]/g,
+          ),
+        ]
+          .map((m) => [...m[1].matchAll(/["']([^"']+)["']/g)].map((g) => g[1]))
+          .find((list) => list.length > 0);
+        if (globs === undefined) continue;
+        const collected = globsToTest(globs);
+        // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
+        // лежит в папке тестов, но тестом не является.
+        const lost = files
+          .filter((f) => TEST_SUFFIX.test(f))
+          .map((f) => norm(path.relative(path.join(BASE, ".."), f)))
+          .filter((k) => !collected(k));
+        for (const k of lost.slice(0, 5))
+          viteDrift.push(
+            name +
+              " — тест проекта " +
+              k +
+              " вне области сбора `include`: раннер его не соберёт",
+          );
+        if (lost.length > 5)
+          viteDrift.push(
+            name + " — и ещё тестов вне области сбора: " + (lost.length - 5),
           );
       }
       checkHead("Настройка сборки знает про тесты", {
@@ -31326,7 +31417,7 @@ if (mode === "verify") {
   });
   console.log(
     CONFIG.transition == null
-      ? "  перехода нет: проект родился под обвязкой либо переход закончен"
+      ? "  " + noTransitionWhy()
       : transitionDrift.length
         ? "  расхождений: " + transitionDrift.length
         : "  шагов знания открыто: " +
