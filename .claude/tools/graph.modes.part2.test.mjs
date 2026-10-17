@@ -774,18 +774,25 @@ describe("ссылки на строки модели при пересборк�
       );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       const first = tool("bar", "app/zzRen");
-      // Ключи к заполнению — в выводе режима, сжато: протокол целиком ради
-      // них не читают. Номера строк модели ведут на её заголовок.
-      const keys = first.split("Ключи к заполнению")[1] ?? "";
-      expect(keys).toMatch(/^ {4}исходы без предмета: [^\n]*\bB1 \(П[0-9]+\)/m);
+      // Ключи к заполнению — файлом рядом со страницами, сжато: протокол
+      // целиком ради них не читают, а длинный вывод среда режет посередине.
+      // В выводе — окно модели и путь к файлу; номера строк модели ведут на
+      // её заголовок.
+      const keysAt = /ключи к заполнению — файлом, открыть Read: (.+)$/m.exec(
+        first,
+      )?.[1];
+      expect(keysAt, first).toBeDefined();
+      const keys = fs.readFileSync(keysAt, "utf8");
+      expect(keys).toMatch(/^- исходы без предмета[^\n]*\bB1 \(П[0-9]+\)/m);
       // Строка единицы ждёт ответа, хотя часть клеток машина поставила.
       expect(keys).toMatch(
-        /^ {4}свидетели: Св[0-9]+ `app\/zzRen`;[^\n]*Св[0-9]+ `app\/zzRen\/zzB\.ts:1` `zzB`/m,
+        /^- свидетели: Св[0-9]+ `app\/zzRen`;[^\n]*Св[0-9]+ `app\/zzRen\/zzB\.ts:1` `zzB`/m,
       );
-      expect(keys).toMatch(/^ {4}база и документация: app\/zzRen\/zzB\.ts$/m);
+      expect(keys).toMatch(/^- база и документация: app\/zzRen\/zzB\.ts$/m);
       expect(keys).not.toContain("Булев аргумент");
+      expect(first).not.toContain("исходы без предмета");
       const [, modelFrom] =
-        /модель предмета — строки ([0-9]+)–/.exec(keys) ?? [];
+        /модель предмета — строки ([0-9]+)–/.exec(first) ?? [];
       expect(
         fs.readFileSync(protoAt, "utf8").split("\n")[Number(modelFrom) - 1],
       ).toBe("## Модель предмета");

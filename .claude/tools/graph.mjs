@@ -2408,9 +2408,8 @@ const barKeysOf = (body) => {
   for (const o of p.outcomes) {
     if (o.outcome === "лозунг") continue;
     if (o.outcome === "") {
-      const tail = asked.get(barKey(o.id, o.subject));
       const list = bySubject.get(o.subject) ?? [];
-      list.push(o.id + (tail === undefined ? "" : " (" + tail + ")"));
+      list.push({ id: o.id, tail: asked.get(barKey(o.id, o.subject)) ?? "" });
       bySubject.set(o.subject, list);
     } else {
       const list = set.get(o.outcome) ?? [];
@@ -2418,13 +2417,45 @@ const barKeysOf = (body) => {
       set.set(o.outcome, list);
     }
   }
-  for (const [s, list] of bySubject)
+  // «Одна из» — строки своего уровня, общие для критериев предмета: печатаются
+  // раз на предмет, а не у каждого. Повтор у каждого критерия раздувал ключи
+  // вдвое (девятый прогон пробы `2026-10-16`).
+  const ONE_OF = "одна из: ";
+  const runOf = (group) => {
+    const ns = group.split(", ").map((t) => Number(t.slice(1)));
+    const steady = ns.every((n, k) => k === 0 || n === ns[k - 1] + 1);
+    return steady && ns.length > 2
+      ? "П" + ns[0] + "–П" + ns[ns.length - 1]
+      : group;
+  };
+  for (const [s, list] of bySubject) {
+    const count = new Map();
+    for (const { tail } of list)
+      for (const part of tail.split("; "))
+        if (part.startsWith(ONE_OF))
+          count.set(part, (count.get(part) ?? 0) + 1);
+    const common = [...count].sort((a, b) => b[1] - a[1])[0];
+    const shared = common !== undefined && common[1] > 1 ? common[0] : null;
     out.push(
       "исходы " +
         (s === "" ? "без предмета" : barQuoted(s)) +
+        (shared === null
+          ? ""
+          : " (где не сказано иначе — строка уровня, " +
+            ONE_OF +
+            runOf(shared.slice(ONE_OF.length)) +
+            ")") +
         ": " +
-        list.join(", "),
+        list
+          .map(({ id, tail }) => {
+            const rest = tail
+              .split("; ")
+              .filter((part) => part !== "" && part !== shared);
+            return rest.length === 0 ? id : id + " (" + rest.join("; ") + ")";
+          })
+          .join(", "),
     );
+  }
   for (const [outcome, list] of set)
     out.push(
       "исход уже стоит, проверить по телу критерия — " +
@@ -2441,6 +2472,40 @@ const barKeysOf = (body) => {
   const parts = barPartsLineOf(body);
   if (parts !== null) out.push(parts);
   return out;
+};
+/** Форма файла ответов и ключи к заполнению — файлом рядом со страницами
+ * чтения; в выводе остаются окно модели и путь. Вывод длиннее предела, который
+ * среда отдаёт сессии, режется посередине, а ключи стояли в середине: девятый
+ * прогон пробы `2026-10-16` — вырезано `12 845` знаков, и требования к «чисто»
+ * сессия восстанавливала по отказам. Файл пересобирается каждым вызовом
+ * `bar`, поэтому ключи в нём — ещё не заполненных строк. */
+const barKeysFileOf = (at) => {
+  const keys = barKeysOf(readFileSync(at, "utf8"));
+  const model = keys.find((line) =>
+    line.startsWith("модель предмета — строки"),
+  );
+  const dir = path.join(path.dirname(at), BAR_PAGES_DIR);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, ".gitignore"), "*" + LF);
+  const file = path.join(dir, path.basename(at, ".md") + "-ключи.md");
+  writeFileSync(
+    file,
+    [
+      "# Форма файла ответов и ключи к заполнению",
+      "",
+      ...barFillLegend(),
+      "",
+      "Ключи — протокол целиком ради них читать не нужно; ключ исхода —",
+      "`критерий@предмет`, итога — `уровень@предмет`, свидетеля — `СвN`:",
+      "",
+      ...keys.filter((line) => line !== model).map((line) => "- " + line),
+      "",
+    ].join(LF),
+  );
+  return [
+    ...(model === undefined ? [] : [model]),
+    "форма файла ответов и ключи к заполнению — файлом, открыть Read: " + file,
+  ];
 };
 /** Таблица частей одной строкой. Её сессия заполняет, а протокол вне окна
  * модели читать нельзя: без этой строки — в ключах и при отказе о частях —
@@ -17308,16 +17373,7 @@ if (mode === "bar") {
     console.log(
       "  Клетки вписывают файлом ответов, а не правкой таблицы: `graph.mjs bar-fill <файл>`.",
     );
-    for (const line of barFillLegend()) console.log("    " + line);
-    console.log("");
-    console.log(
-      "  Ключи к заполнению — протокол целиком ради них читать не нужно; ключ",
-    );
-    console.log(
-      "  исхода — `критерий@предмет`, итога — `уровень@предмет`, свидетеля — `СвN`:",
-    );
-    for (const line of barKeysOf(readFileSync(at, "utf8")))
-      console.log("    " + line);
+    for (const line of barKeysFileOf(at)) console.log("  " + line);
     process.exit(1);
   }
 
@@ -17353,6 +17409,7 @@ if (mode === "bar") {
       );
     console.log("  дыр: " + r.holes.length);
     for (const h of barHolesGrouped(r.holes)) console.log("    " + h);
+    for (const line of barKeysFileOf(at)) console.log("  " + line);
     const partsLine = r.holes.some((h) => /част/.test(h))
       ? barPartsLineOf(barHeader(at)?.body ?? "")
       : null;

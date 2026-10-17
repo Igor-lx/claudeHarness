@@ -2284,7 +2284,12 @@ describe("починки по пробе планки 2026-10-13", () => {
         path.join(box, "src", "app", "zzWide.ts"),
         "export const zzWide = (width: number, strict: boolean): boolean => (strict ? width > 1 : width > 0);\n",
       );
-      const first = tool("bar", "app/zzWide.ts");
+      const printed = tool("bar", "app/zzWide.ts");
+      // Форма лежит в файле ключей: вывод длиннее предела среды режется.
+      const first = fs.readFileSync(
+        /ключи к заполнению — файлом, открыть Read: (.+)$/m.exec(printed)[1],
+        "utf8",
+      );
       for (const line of [
         "стр N | слово",
         "ПN | снятие",
@@ -2296,7 +2301,7 @@ describe("починки по пробе планки 2026-10-13", () => {
         "путь файла | база | документация | чем это объяснено",
         "часть N | файлы | что",
       ])
-        expect(first).toContain("    " + "  " + line);
+        expect(first).toContain("  " + line);
       // Строка исхода в названной форме принимается разбором.
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       const copyAt = path.join(box, "copy.md");
@@ -2567,7 +2572,11 @@ describe("экономия свода по журналу пробы 2026-10-13"
       const tool = toolIn(box);
       fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
       const protoAt = path.join(box, ".context", "bar-protocol.md");
-      const first = tool("bar", "app/zzWide.ts");
+      const printed = tool("bar", "app/zzWide.ts");
+      const first = fs.readFileSync(
+        /ключи к заполнению — файлом, открыть Read: (.+)$/m.exec(printed)[1],
+        "utf8",
+      );
       for (const rule of [
         "недостающие клетки в конце строки — тоже `=`",
         "`чисто` — адрес `—`; в «что» — почему чисто, со всем, что ключ называет в скобках",
@@ -2689,13 +2698,19 @@ describe("экономия свода по журналу пробы 2026-10-13"
       const tool = toolIn(box);
       fs.writeFileSync(path.join(box, "src", "app", "zzWide.ts"), wide);
       const protoAt = path.join(box, ".context", "bar-protocol.md");
-      const first = tool("bar", "app/zzWide.ts");
-      const keys = /^ {4}исходы `app\/zzWide\.ts`: (.*)$/m.exec(first);
+      const printed = tool("bar", "app/zzWide.ts");
+      const first = fs.readFileSync(
+        /ключи к заполнению — файлом, открыть Read: (.+)$/m.exec(printed)[1],
+        "utf8",
+      );
+      const keys = /^- исходы `app\/zzWide\.ts`(.*)$/m.exec(first);
       expect(keys, first).not.toBeNull();
-      // Свидетель единицы и строка своего уровня — в скобках сразу, а не
-      // следующим отказом.
+      // Свидетель единицы и строка своего уровня — сразу, а не следующим
+      // отказом; строка уровня, общая для критериев, — раз на предмет.
       expect(keys[1]).toMatch(/A1 \([^)]*Св[0-9]+/);
-      expect(keys[1]).toMatch(/A1-бис \(одна из: П[0-9]+/);
+      expect(keys[1]).toMatch(
+        /^ \(где не сказано иначе — строка уровня, одна из: П[0-9]+/,
+      );
       const named = [
         ...new Set(keys[1].match(/(?:П|Св)[0-9]+(?:–Св[0-9]+)?/g)),
       ];
