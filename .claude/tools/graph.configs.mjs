@@ -85,7 +85,9 @@ export const tsconfigAt = (named) =>
 
 /** Конфиг компилятора с тем, что он продолжает: `{ at, via, options, raw,
  * references }`; файла нет — `null`. Компилятор проекта разрешает
- * `extends` из пакета, цепочку и ссылки так же, как при проверке типов. */
+ * `extends` из пакета, цепочку и ссылки так же, как при проверке типов, и
+ * называет файлы, которые видит, — `fileNames`; разбор текста их не знает,
+ * там `null`. */
 export const tsconfigRead = (named, repoRoot) => {
   const at = tsconfigAt(named);
   if (!existsSync(at)) return null;
@@ -105,6 +107,8 @@ export const tsconfigRead = (named, repoRoot) => {
         references: (parsed.projectReferences ?? []).map((r) =>
           tsconfigAt(r.path),
         ),
+        // Файлы, которые компилятор по этому конфигу действительно видит.
+        fileNames: parsed.fileNames.map((f) => path.resolve(f)),
       };
   }
   return tsconfigText(at);
@@ -136,6 +140,7 @@ const tsconfigText = (at, seen = new Set()) => {
     via: BY_TEXT,
     options: { ...options, ...own },
     raw,
+    fileNames: null,
     references: (raw.references ?? []).map((r) =>
       tsconfigAt(path.resolve(path.dirname(at), r.path)),
     ),

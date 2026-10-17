@@ -23495,10 +23495,18 @@ if (mode === "verify") {
           const unseen = [];
           let seedCode = 0;
           {
-            const at = path.join(BASE, "..", "tsconfig.json");
-            const inc = existsSync(at)
-              ? (readJson(at, {}).include ?? null)
-              : null;
+            // Какие файлы видит компилятор, отвечает он сам; разбор текста —
+            // запасной путь по `include`. Строгий разбор JSON красил законный
+            // конфиг с комментариями, а свой разбор образцов расходился с
+            // компилятором.
+            const compiler = tsconfigRead(
+              path.join(BASE, "..", "tsconfig.json"),
+              REPO_AT,
+            );
+            const seen =
+              compiler?.fileNames == null ? null : new Set(compiler.fileNames);
+            const inc =
+              compiler === null ? null : (compiler.raw.include ?? null);
             const mapAt = shelfAt("seat/map.json");
             const seeds =
               mapAt === null || !existsSync(mapAt)
@@ -23511,7 +23519,7 @@ if (mode === "verify") {
               const head = bare.slice(0, bare.indexOf("*"));
               return file.startsWith(head);
             };
-            if (inc !== null)
+            if (seen !== null || inc !== null)
               for (const e of seeds) {
                 // Компилятор и линт с типами разбирают TypeScript; остальной код
                 // линт читает без типов, и область компилятора ему не нужна.
@@ -23521,7 +23529,12 @@ if (mode === "verify") {
                 if (!e.to.includes("/")) continue;
                 if (!existsSync(path.join(REPO, e.to))) continue;
                 seedCode += 1;
-                if (inc.some((one) => covers(one, e.to))) continue;
+                if (
+                  seen === null
+                    ? inc.some((one) => covers(one, e.to))
+                    : seen.has(path.join(REPO, e.to))
+                )
+                  continue;
                 unseen.push(
                   e.to +
                     " — файл кода приехал обвязкой, а `include` компилятора его не накрывает: звено линта с типами падает на нём разбором",
