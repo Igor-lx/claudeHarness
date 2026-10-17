@@ -129,6 +129,7 @@ import {
   globMatcher,
   parseJsonc,
   runnerConfigLoad,
+  runnerRank,
   tsconfigAt,
   tsconfigRead,
 } from "./graph.configs.mjs";
@@ -23596,6 +23597,14 @@ if (mode === "verify") {
               );
             }
           }
+          // Действующий конфиг — тот, что читает раннер: первый в порядке, в
+          // котором его ищет сам раннер (`runnerRank`). Затенённый раннер
+          // не читает, и судить по нему область сбора значило бы краснеть на
+          // законном — найдено корпусом чужих проектов. Импорт `defineConfig`
+          // выше судится во всех: их компилирует звено типов.
+          const runnerNow = [...runnerConfigs].sort(
+            (a, b) => runnerRank(a.name) - runnerRank(b.name),
+          )[0];
           // Корень раннера — от папки конфига; область и подготовка считаются
           // от него.
           const runnerRoot = (cfg) =>
@@ -23618,7 +23627,8 @@ if (mode === "verify") {
               setupSeed !== undefined &&
               existsSync(path.join(REPO, setupSeed.to))
             ) {
-              const runnerConf = runnerConfigs.find((c) => c.test != null);
+              const runnerConf =
+                runnerNow?.test == null ? undefined : runnerNow;
               viteLooked += 1;
               const setupNamed =
                 runnerConf !== undefined &&
@@ -23662,7 +23672,7 @@ if (mode === "verify") {
           // а обновление обвязки настройку проекта не трогает — в посаженных
           // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
           // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
-          for (const cfg of runnerConfigs) {
+          for (const cfg of runnerNow === undefined ? [] : [runnerNow]) {
             if (cfg.test == null) continue;
             if (
               [cfg.test.include ?? []].flat().some((g) => g.includes(".claude"))
@@ -23678,7 +23688,7 @@ if (mode === "verify") {
           // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
           // корнем `lib`. Область не названа — она та, что у раннера по
           // умолчанию; у раннера с проектами своя на каждый, и здесь не судится.
-          for (const cfg of runnerConfigs) {
+          for (const cfg of runnerNow === undefined ? [] : [runnerNow]) {
             if (cfg.test == null || cfg.test.projects != null) continue;
             const root = runnerRoot(cfg);
             const dir =

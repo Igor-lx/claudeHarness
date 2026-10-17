@@ -9,6 +9,7 @@ import {
   RUNNER_DEFAULT_INCLUDE,
   globMatcher,
   runnerConfigLoad,
+  runnerRank,
   tsconfigRead,
 } from "./graph.configs.mjs";
 
@@ -162,5 +163,24 @@ describe("образцы путей — сопоставителем ранне�
     expect(m("src/a/b.test.tsx")).toBe(true);
     expect(m("src/old/b.test.ts")).toBe(false);
     expect(m("lib/b.test.ts")).toBe(false);
+  });
+});
+
+describe("действующий конфиг раннера", () => {
+  it("старшинство — порядок, в котором конфиг ищет сам раннер", () => {
+    const names = [
+      "vite.config.js",
+      "vite.config.ts",
+      "vitest.config.mjs",
+      "vitest.config.cts",
+      "vitest.config.mts",
+    ];
+    expect([...names].sort((a, b) => runnerRank(a) - runnerRank(b))).toEqual([
+      "vitest.config.mts",
+      "vitest.config.cts",
+      "vitest.config.mjs",
+      "vite.config.ts",
+      "vite.config.js",
+    ]);
   });
 });

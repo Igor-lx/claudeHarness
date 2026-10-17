@@ -233,6 +233,33 @@ export const layShelf = (shelf, target) => {
   return files.length;
 };
 
+/** Механика фазы 1 в живой проект: обвязка с полки, папки посадки и
+ * семена, кроме каркаса и отложенных; семя, столкнувшееся с файлом проекта,
+ * ложится рядом с суффиксом `.seat` — сливает его фаза 2 (`seat/seat.md`,
+ * шаг 1). Слияния, которые требуют суждения, — манифест, настройки среды, —
+ * здесь не делаются. Зовёт её корпус чужих проектов: он сверяет, как
+ * инструмент читает проект, устроенный не по умолчаниям обвязки. Отдаёт
+ * отложенные в `.seat`. */
+export const layShelfLive = (shelf, target) => {
+  const map = JSON.parse(
+    readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
+  );
+  const files = shelfFiles(shelf, new Set(map.projectOwnedInsideHarness ?? []));
+  for (const d of map.dirs ?? [])
+    mkdirSync(path.join(target, d), { recursive: true });
+  for (const r of files)
+    cpSync(path.join(shelf, r), path.join(target, ".claude", r));
+  const deferred = [];
+  for (const one of map.copy ?? []) {
+    if (one.notAtSeating !== undefined || one.onlyWhenEmpty === true) continue;
+    const to = path.join(target, one.to);
+    const busy = existsSync(to);
+    cpSync(path.join(shelf, one.from), busy ? to + ".seat" : to);
+    if (busy) deferred.push(one.to);
+  }
+  return deferred;
+};
+
 /** Испытательная посадка одной командой — режим `seat` и сборка стенда проб.
  *
  * Прежде посадку заводили процедурой из справочника, копируя её в оболочку:

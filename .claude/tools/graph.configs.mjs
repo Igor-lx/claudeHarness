@@ -212,6 +212,21 @@ export const runnerConfigLoad = async (at, repoRoot) => {
   }
 };
 
+/** Старшинство имён конфига раннера — порядок, в котором его ищет `vitest`:
+ * сначала `vitest.config`, затем `vite.config`, внутри — по расширению.
+ * Действующий конфиг — первый лежащий; затенённый раннер не читает. */
+const RUNNER_NAMES = ["vitest.config", "vite.config"];
+const RUNNER_EXTENSIONS = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+export const runnerRank = (name) => {
+  const base = path.basename(name);
+  const ext = path.extname(base);
+  const head = RUNNER_NAMES.indexOf(base.slice(0, -ext.length));
+  const tail = RUNNER_EXTENSIONS.indexOf(ext);
+  return head < 0 || tail < 0
+    ? Number.MAX_SAFE_INTEGER
+    : head * RUNNER_EXTENSIONS.length + tail;
+};
+
 /** Образцы раннера по умолчанию — те, что берёт `vitest`, когда область
  * сбора не названа. */
 export const RUNNER_DEFAULT_INCLUDE = ["**/*.{test,spec}.?(c|m)[jt]s?(x)"];
