@@ -120,7 +120,8 @@ import {
 } from "./graph.predicates.mjs";
 // Разбор модуля — что он берёт и что отдаёт — одной записью на текст: граф,
 // имена, поверхность и привязки читают её, а не каждый свой образец.
-import { parserFor, regexParser } from "./graph.parse.mjs";
+import { compilerAt, parserFor, regexParser } from "./graph.parse.mjs";
+import { stepsTouchedBy } from "./graph.steps.mjs";
 // Испытательная посадка и пакеты песочниц: посадке нужен один порядок и до
 // настройки проекта, и внутри режимов, которые её разбирают.
 import {
@@ -5562,6 +5563,7 @@ const CHECK_SECTIONS = [
   "Форма отчёта посадки без слов обвязки",
   "Вопросы записаны по форме",
   "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
+  "Шаги сверок исполнились",
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
   "Диапазон среды объявлен",
@@ -5596,14 +5598,111 @@ const LOOKED = new Map();
 /** Сверки, напечатавшие заголовок в этом прогоне. */
 const PRINTED = new Set();
 
+/** Шаги сверки базы и их падения. Сверка базы — один сценарий, и
+ * исключение одного места прежде обрывало его: `tsc -p .`, прочитанный как
+ * файл, оставил неисполненными `113` сверок из `142` — найдено посадкой
+ * руками в живой проект. Теперь код сверки лежит в шагах `checkStep`:
+ * упавший становится находкой, прогон идёт дальше. Шаги режутся по
+ * заголовкам секций, а счёт секции вычисляется после её заголовка, — так
+ * падение не уносит секцию из вывода; секции, читающие данные упавшего
+ * шага, называет хвост прогона (`graph.steps.mjs`). */
+const STEP_CRASHES = [];
+let stepsRun = 0;
+let stepNow = 0;
+/** Шаг, напечатавший строку вывода сверки: строка → номер шага, `0` — вне
+ * шагов. Ведёт подмена вывода сверки. */
+const SAID_STEPS = [];
+
+const crashLine = (crash) =>
+  "шаг " +
+  crash.step +
+  " сверки упал исключением: " +
+  crash.at +
+  " — " +
+  crash.message;
+
+const stepFailed = (error) => {
+  const stack = String(error?.stack ?? error);
+  const frames = stack
+    .split("\n")
+    .filter((one) => /graph[\w.]*\.mjs:\d+/.test(one))
+    .map((one) => /([\w.]+\.mjs:\d+)/.exec(one)[1]);
+  const crash = {
+    step: stepNow,
+    at: frames[0] ?? "место неизвестно",
+    frames: frames.slice(0, 3),
+    message: String(error?.message ?? error).split("\n")[0],
+  };
+  STEP_CRASHES.push(crash);
+  // Шаг, уже печатавший в секцию, считал её: строка ложится туда же.
+  if (SAID_STEPS.at(-1) === stepNow) console.log("    " + crashLine(crash));
+};
+
+// Посаженное падение для фальсификации и теста: шаг с этим номером бросает
+// там же, где упал бы его код, — шаг секции после своего заголовка, прочий
+// в начале: заголовок печатается раньше всего, что может упасть.
+let faultArmed = false;
+const plantedFault = (step) => {
+  if (process.env.GRAPH_VERIFY_FAULT !== String(stepsRun)) return;
+  if (/^(?:async\s*)?\(\)\s*=>\s*\{\s*checkHead\(/.test(String(step)))
+    faultArmed = true;
+  else throw new Error("посаженное падение шага " + stepsRun);
+};
+
+/** Шаг сверки базы: исключение не обрывает прогон, а становится находкой. */
+const checkStep = (step) => {
+  stepsRun += 1;
+  stepNow = stepsRun;
+  try {
+    plantedFault(step);
+    return step();
+  } catch (error) {
+    stepFailed(error);
+    return undefined;
+  } finally {
+    stepNow = 0;
+    faultArmed = false;
+  }
+};
+
+/** То же для шага, который ждёт. */
+const checkStepAsync = async (step) => {
+  stepsRun += 1;
+  stepNow = stepsRun;
+  try {
+    plantedFault(step);
+    return await step();
+  } catch (error) {
+    stepFailed(error);
+    return undefined;
+  } finally {
+    stepNow = 0;
+    faultArmed = false;
+  }
+};
+
+/** Заголовок секции. Счёт осмотренного — функцией: она считается после
+ * заголовка, и её падение не уносит секцию из вывода. */
 const checkHead = (title, looked) => {
   if (!CHECK_SECTIONS.includes(title))
     throw new Error("секция не объявлена в CHECK_SECTIONS: " + title);
   console.log("=== " + title + " ===");
   PRINTED.add(title);
-  if (looked === undefined) return;
-  LOOKED.set(title, looked);
-  sayLooked(looked.unit, looked.n);
+  if (faultArmed) {
+    faultArmed = false;
+    throw new Error("посаженное падение шага " + stepsRun);
+  }
+  let got = looked;
+  if (typeof looked === "function")
+    try {
+      got = looked();
+    } catch (error) {
+      stepFailed(error);
+      got = undefined;
+    }
+  if (got === undefined) return;
+  LOOKED.set(title, got);
+  sayLooked(got.unit, got.n);
 };
 
 // Какому полю настройки принадлежит предмет сверки. Список нужен трижды:
@@ -19331,20 +19430,24 @@ if (mode === "verify") {
   // разбирает секции, — фальсификация, приём свода, тесты обвязки.
   const WARNING = "прогон не роняет";
   const SAID = [];
-  {
-    const full =
-      process.argv.includes("--full") || process.env.GRAPH_VERIFY_FULL === "1";
-    const was = console.log;
-    console.log = (...args) => {
-      SAID.push(args.join(" "));
-      if (full) was(...args);
-    };
-    if (!full)
-      process.on("exit", () => {
-        for (const line of verifyBriefOf(SAID, WARNING))
-          process.stdout.write(line + "\n");
-      });
-  }
+  checkStep(() => {
+    {
+      const full =
+        process.argv.includes("--full") ||
+        process.env.GRAPH_VERIFY_FULL === "1";
+      const was = console.log;
+      console.log = (...args) => {
+        SAID.push(args.join(" "));
+        SAID_STEPS.push(stepNow);
+        if (full) was(...args);
+      };
+      if (!full)
+        process.on("exit", () => {
+          for (const line of verifyBriefOf(SAID, WARNING))
+            process.stdout.write(line + "\n");
+        });
+    }
+  });
   // Сверки, которые СМЯГЧАЕТ флаг посадки: их предмет доделывает фаза 2 —
   // правила проекта заполняются из ответа разработчика, отложенные семена
   // сливаются. Секция печатает всё
@@ -19356,10 +19459,10 @@ if (mode === "verify") {
   // вердикта проза разошлась с кодом — называла смягчённым долг карты,
   // которого флаг давно не трогал, и молчала о том, что смягчений не стало
   // вовсе.
-  const SOFT_WHILE_SEATING = [
+  const SOFT_WHILE_SEATING = checkStep(() => [
     "Шаблон правил заполнен",
     "Отложенное семя слито",
-  ];
+  ]);
   const printedRed = () =>
     printedIsRed(
       SAID,
@@ -19368,7 +19471,7 @@ if (mode === "verify") {
     );
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
-  const NEWLINE = String.fromCharCode(10);
+  const NEWLINE = checkStep(() => String.fromCharCode(10));
   const REPO = REPO_AT;
 
   /** Предмет звена цепочки: файлы, которые читает его инструмент.
@@ -19411,13 +19514,15 @@ if (mode === "verify") {
     return delegatedLink(re, scripts);
   };
   const linkNeeds = new Map();
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt))
-      for (const e of JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ??
-        [])
-        if (Array.isArray(e.needsFiles)) linkNeeds.set(e.name, e.needsFiles);
-  }
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt))
+        for (const e of JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ??
+          [])
+          if (Array.isArray(e.needsFiles)) linkNeeds.set(e.name, e.needsFiles);
+    }
+  });
   // Предмет звена — код ПРОЕКТА, и нетронутые семена в него не входят, ПОКА
   // у проекта есть свой код. Обвязка везёт файлы на своём языке — общий
   // помощник и подготовку прогона, — и в проекте на обычном JavaScript они
@@ -19429,13 +19534,15 @@ if (mode === "verify") {
   // Своего кода нет — считается ВСЁ: проект живёт каркасом, и каркас ему не
   // чужой, он и есть его код. Признак тот же, что у ворот, ревизии, предмета
   // свода и следа прогона: шестое его место, и общий помощник на всех один.
-  const subjectCode = (() => {
-    const every = [...files, ...styleFiles];
-    const seeds = seedOfPath();
-    const repoRoot = path.join(BASE, "..");
-    const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
-    return own.length > 0 ? own : every;
-  })();
+  const subjectCode = checkStep(() =>
+    (() => {
+      const every = [...files, ...styleFiles];
+      const seeds = seedOfPath();
+      const repoRoot = path.join(BASE, "..");
+      const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
+      return own.length > 0 ? own : every;
+    })(),
+  );
   // Звено, которого в проекте нет ПО ЕГО УСТРОЙСТВУ, а не по недосмотру.
   // Два случая, оба из правил слияния манифеста. Семенное имя звена занято
   // другой работой — скрипт под ним есть, а образец звена не совпадает ни с
@@ -19486,15 +19593,20 @@ if (mode === "verify") {
   // Заявляется СОСТАВ папки, а не её объём: число файлов меняется, только
   // когда файл появился или исчез, — и это ровно то событие, которое база
   // обязана заметить. Объём строк не заявляется нигде (см. режим `sizes`).
-  const DIR_RE = /`([\w./*{},-]+\/(?:\*\*)?)`\s*\((\d+) файл[а-я]*\)/g;
-  const DASH_RE = /`([\w./*{},-]+\/(?:\*\*)?)`[^`\n]*— (\d+) файл[а-я]*/g;
+  const DIR_RE = checkStep(
+    () => /`([\w./*{},-]+\/(?:\*\*)?)`\s*\((\d+) файл[а-я]*\)/g,
+  );
+  const DASH_RE = checkStep(
+    () => /`([\w./*{},-]+\/(?:\*\*)?)`[^`\n]*— (\d+) файл[а-я]*/g,
+  );
   // Радиус поражения слоя: «22 импортёра (+12 тестовых)». Считается по графу,
   // а не по папке, поэтому и живёт в проверке, а не в тексте.
-  const IMPORTERS_RE =
-    /`([\w./*{},-]+\/(?:\*\*)?)`[^`\n]*?(\d+) импортёр[а-я]*(?: \(\+(\d+) тест[а-я]*\))?/g;
-  const PATH_RE = new RegExp(
-    "`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`",
-    "g",
+  const IMPORTERS_RE = checkStep(
+    () =>
+      /`([\w./*{},-]+\/(?:\*\*)?)`[^`\n]*?(\d+) импортёр[а-я]*(?: \(\+(\d+) тест[а-я]*\))?/g,
+  );
+  const PATH_RE = checkStep(
+    () => new RegExp("`([\\w./{},*-]+\\.(?:" + CODE_STYLE_ALT + "))`", "g"),
   );
 
   let anchors = 0;
@@ -19568,12 +19680,13 @@ if (mode === "verify") {
   // инструмент их находит, неверна без всякого суждения.
   const mapLies = [];
   let mapClaims = 0;
-  const DENIAL = /^(?:нет|—|-|no|none)$/i;
+  const DENIAL = checkStep(() => /^(?:нет|—|-|no|none)$/i);
   const mapClaimSeen = new Set();
 
   // Таблицы слоёв разбирает общий помощник: их читает и модель свода, и два
   // разбора одной таблицы разошлись бы первой же правкой формы.
-  const { rules, isolation, rulesHeadSeen, isolationHeadSeen } = layerTables();
+  const { rules, isolation, rulesHeadSeen, isolationHeadSeen } =
+    checkStep(() => layerTables()) ?? {};
   // Строки файла под якорем читаются один раз на файл, а не на каждый якорь.
   // Якорей на один файл бывают тысячи — протокол свода называет строку
   // каждого объявления, — и чтение на каждый росло как их число, умноженное
@@ -19586,225 +19699,229 @@ if (mode === "verify") {
     return anchorLines.get(file);
   };
 
-  for (const name of readdirSync(BASE)) {
-    // README базы описывает ФОРМЫ записи и приводит примеры: якорь с номером,
-    // объём папки, радиус. Разбирать их как заявления значит ловить собственную
-    // инструкцию — ровно это и случилось, когда пример `:120` в контракте
-    // покраснел как битый якорь. Инструкция не факт о проекте.
-    if (!name.endsWith(".md") || name === "README.md") continue;
-    // Заголовок раздела задаёт префикс путей и, если называет ровно один файл,
-    // адресата относительных якорей.
-    let prefix = null;
-    let current = null;
-    let mapCols = null;
-    // Огороженный блок — ПРИМЕР, а не заявление о проекте.
-    //
-    // Разбор читал строки базы подряд, не отличая примера от записи. Пока
-    // примеров в базе не было, это не проявлялось; первый же появился в
-    // семени карты — образец обеих таблиц слоёв, заведённый затем, чтобы
-    // форму этих таблиц было откуда списать.
-    //
-    // Замерено на живом проекте: он объявил заголовки таблиц, и разбор
-    // выдал ТРИ слоя при одной строке в таблице — два лишних пришли из
-    // примера, и правила для несуществующих слоёв проверялись на настоящем
-    // коде. Пример, ставший правилом, — худший вид записи: он выглядит
-    // документацией и работает как объявление.
-    const lines = readFileSync(path.join(BASE, name), "utf8").split(NEWLINE);
-    const fenced = fencedLines(lines);
-    // Единица каталога — АБЗАЦ, а не строка. Адрес стоит в одной строке
-    // («**что нельзя** (`файл:строка`)»), а пометка названа словами в соседней
-    // («Решено: комментарий «…»»), и так написаны почти все записи. Обратная
-    // сверка, судящая по строке, спросила бы с двух записей из тридцати —
-    // то есть выглядела бы работающей, ничего не проверяя.
-    const record = [];
-    for (let i = 0; i < lines.length;) {
-      let j = i;
-      while (j < lines.length && lines[j].trim() !== "") j++;
-      const text = lines.slice(i, j).join("\n");
-      for (let k = i; k < j; k++) record[k] = text;
-      i = j + 1;
-    }
-    for (const [lineAt, line] of lines.entries()) {
-      if (fenced[lineAt]) continue;
-      const head = HEAD_RE.exec(line);
-      if (head !== null) {
-        const token = head[1];
-        prefix = !token.includes("/")
-          ? null
-          : CODE_OR_STYLE.test(token)
-            ? token.slice(0, token.lastIndexOf("/") + 1)
-            : bare(token) + "/";
-        const named = line.match(HEAD_FILES_RE) ?? [];
-        current =
-          named.length === 1
-            ? locate(named[0].split(String.fromCharCode(96)).join(""), prefix)
-            : null;
-        // Заголовок, называющий один файл, — его собственная запись: форма
-        // «единица записи — файл, заголовок — путь».
-        if (name === MAP && current !== null) mapMentions.add(current);
+  checkStep(() => {
+    for (const name of readdirSync(BASE)) {
+      // README базы описывает ФОРМЫ записи и приводит примеры: якорь с номером,
+      // объём папки, радиус. Разбирать их как заявления значит ловить собственную
+      // инструкцию — ровно это и случилось, когда пример `:120` в контракте
+      // покраснел как битый якорь. Инструкция не факт о проекте.
+      if (!name.endsWith(".md") || name === "README.md") continue;
+      // Заголовок раздела задаёт префикс путей и, если называет ровно один файл,
+      // адресата относительных якорей.
+      let prefix = null;
+      let current = null;
+      let mapCols = null;
+      // Огороженный блок — ПРИМЕР, а не заявление о проекте.
+      //
+      // Разбор читал строки базы подряд, не отличая примера от записи. Пока
+      // примеров в базе не было, это не проявлялось; первый же появился в
+      // семени карты — образец обеих таблиц слоёв, заведённый затем, чтобы
+      // форму этих таблиц было откуда списать.
+      //
+      // Замерено на живом проекте: он объявил заголовки таблиц, и разбор
+      // выдал ТРИ слоя при одной строке в таблице — два лишних пришли из
+      // примера, и правила для несуществующих слоёв проверялись на настоящем
+      // коде. Пример, ставший правилом, — худший вид записи: он выглядит
+      // документацией и работает как объявление.
+      const lines = readFileSync(path.join(BASE, name), "utf8").split(NEWLINE);
+      const fenced = fencedLines(lines);
+      // Единица каталога — АБЗАЦ, а не строка. Адрес стоит в одной строке
+      // («**что нельзя** (`файл:строка`)»), а пометка названа словами в соседней
+      // («Решено: комментарий «…»»), и так написаны почти все записи. Обратная
+      // сверка, судящая по строке, спросила бы с двух записей из тридцати —
+      // то есть выглядела бы работающей, ничего не проверяя.
+      const record = [];
+      for (let i = 0; i < lines.length;) {
+        let j = i;
+        while (j < lines.length && lines[j].trim() !== "") j++;
+        const text = lines.slice(i, j).join("\n");
+        for (let k = i; k < j; k++) record[k] = text;
+        i = j + 1;
       }
-
-      for (const span of line
-        .split(String.fromCharCode(96))
-        .filter((_, i) => i % 2 === 1)) {
-        const at = span.lastIndexOf(":");
-        if (at < 0) continue;
-        const numbers = span.slice(at + 1).split("-");
-        if (!numbers.every((n) => /^[0-9]+$/.test(n))) continue;
-        const where = span.slice(0, at);
-        if (where !== "" && !ANCHOR_TAIL.test(where)) continue;
-        const file = where === "" ? current : locate(where, prefix);
-        if (file === null) {
-          unresolved.push(`${name}: ${span}`);
-          continue;
+      for (const [lineAt, line] of lines.entries()) {
+        if (fenced[lineAt]) continue;
+        const head = HEAD_RE.exec(line);
+        if (head !== null) {
+          const token = head[1];
+          prefix = !token.includes("/")
+            ? null
+            : CODE_OR_STYLE.test(token)
+              ? token.slice(0, token.lastIndexOf("/") + 1)
+              : bare(token) + "/";
+          const named = line.match(HEAD_FILES_RE) ?? [];
+          current =
+            named.length === 1
+              ? locate(named[0].split(String.fromCharCode(96)).join(""), prefix)
+              : null;
+          // Заголовок, называющий один файл, — его собственная запись: форма
+          // «единица записи — файл, заголовок — путь».
+          if (name === MAP && current !== null) mapMentions.add(current);
         }
-        anchors++;
-        const body = linesAt(file);
-        const lines = body.length;
-        const last = Number(numbers[numbers.length - 1]);
-        if (last > lines)
-          broken.push(`${name}: ${span} — в файле ${lines} строк`);
-        else if (
-          !file.endsWith(".md") &&
-          JUNK_ANCHOR.test(body[Number(numbers[0]) - 1] ?? "")
-        )
-          broken.push(`${name}: ${span} — там скобка или пусто, якорь съехал`);
-        // Текст записи едет вместе с якорем: обратная сверка пометок судит по
-        // тому, что запись САМА о себе говорит, а не по догадке о её замысле.
-        const anchor = {
-          file,
-          from: Number(numbers[0]),
-          to: last,
-          text: record[lineAt] ?? line,
-        };
-        if (name === CONFIG.invariants) invariantAnchors.push(anchor);
-        if (name === CONFIG.decisions) decisionAnchors.push(anchor);
-      }
 
-      let m;
-      CITED_RE.lastIndex = 0;
-      while ((m = CITED_RE.exec(line)) !== null) {
-        const file = m[1] === "" ? current : locate(m[1], prefix);
-        if (file === null) continue;
-        // Второй адрес — не цитата, а следующий якорь.
-        if (/^[^\s]*:\d+(-\d+)?$/.test(m[4])) continue;
-        cited++;
-        const body = linesAt(file);
-        const from = Number(m[2]);
-        const to = Number(m[3] ?? m[2]);
-        if (!body.slice(from - 1, to).some((l) => l.includes(m[4]))) {
-          // Где цитата теперь: одна строка — номер съехал, и его переставит
-          // `repoint`; ни одной — конструкции больше нет; несколько — цитата
-          // не называет конструкцию, и номер ставят глазами.
-          const now = body
-            .map((l, i) => (l.includes(m[4]) ? i + 1 : 0))
-            .filter((n) => n > 0);
-          broken.push(
-            `${name}: ${m[1]}:${m[2]} — цитаты «${m[4]}» на этих строках нет` +
-              (now.length === 1
-                ? `: съехала на строку ${now[0]}, номер переставит режим repoint`
-                : now.length === 0
-                  ? ": в файле её нет вовсе"
-                  : `: цитата неоднозначна, строки ${now.join(", ")}`),
-          );
-        }
-      }
-      DIR_RE.lastIndex = 0;
-      while ((m = DIR_RE.exec(line)) !== null)
-        claimDir(name, m[1], prefix, m[2]);
-      DASH_RE.lastIndex = 0;
-      while ((m = DASH_RE.exec(line)) !== null)
-        claimDir(name, m[1], prefix, m[2]);
-      IMPORTERS_RE.lastIndex = 0;
-      while ((m = IMPORTERS_RE.exec(line)) !== null)
-        claimImporters(name, m[1], prefix, m[2], m[3]);
-      if (name === MAP) {
-        const cells = line.startsWith("|")
-          ? line
-              .split("|")
-              .slice(1, -1)
-              .map((c) => c.trim())
-          : null;
-        if (cells === null) mapCols = null;
-        else if (cells.includes("Состояние") || cells.includes("Эффекты"))
-          mapCols = {
-            state: cells.indexOf("Состояние"),
-            effects: cells.indexOf("Эффекты"),
-          };
-      }
-      // Описанием карта считает только СОБСТВЕННУЮ запись файла: путь первой
-      // графой, заголовок выше, объявленную папку (`claimDir`). Решено
-      // разработчиком: упоминание в чужой строке ничего о файле не описывает.
-      const ownCell = firstCellOf(line);
-      PATH_RE.lastIndex = 0;
-      while ((m = PATH_RE.exec(line)) !== null) {
-        const ownRow = ownCell.includes(m[0]);
-        for (const one of variants(m[1])) {
-          const hit = locate(one, prefix);
-          // Реестр тестов сверялся в одну сторону: каждый тест с диска обязан
-          // быть назван. Обратное молчало — удалённый тест оставлял строку,
-          // описывающую проверку, которой нет, и это хуже отсутствующей: она
-          // читается как действующая гарантия. Ловится только имя, похожее на
-          // тест, — иначе в список посыпалась бы проза.
-          if (hit === null) {
-            // `locate` молчит и когда файла нет, и когда имя неоднозначно —
-            // у парных форков одноимённых тестов по два. Неоднозначность
-            // отсутствием не является, иначе список наполнится живыми файлами.
-            const existsSomewhere = files.some(
-              (f) => rel(f) === one || rel(f).endsWith("/" + one),
-            );
-            if (name === TESTS && isTestPath(one) && !existsSomewhere)
-              goneTests.push(`${name}:${lineAt + 1}: ${one}`);
-            // Шаблоны со звёздочкой и перечисления расширений (`.ts/.tsx`)
-            // адресами не являются: они описывают форму, а не файл. Замер на
-            // здоровом дереве дал ровно три таких и ноль настоящих.
-            if (
-              name === MAP &&
-              (/\.tsx?$/.test(one) || isStylePath(one)) &&
-              !isTestPath(one) &&
-              !one.includes("*") &&
-              one.split("/").every((s) => !s.startsWith(".")) &&
-              !existsSomewhere
-            )
-              goneMapped.push(`${name}:${lineAt + 1}: ${one}`);
+        for (const span of line
+          .split(String.fromCharCode(96))
+          .filter((_, i) => i % 2 === 1)) {
+          const at = span.lastIndexOf(":");
+          if (at < 0) continue;
+          const numbers = span.slice(at + 1).split("-");
+          if (!numbers.every((n) => /^[0-9]+$/.test(n))) continue;
+          const where = span.slice(0, at);
+          if (where !== "" && !ANCHOR_TAIL.test(where)) continue;
+          const file = where === "" ? current : locate(where, prefix);
+          if (file === null) {
+            unresolved.push(`${name}: ${span}`);
             continue;
           }
-          if (name === MAP && ownRow) mapMentions.add(hit);
-          if (
-            name === MAP &&
-            ownRow &&
-            mapCols !== null &&
-            !mapClaimSeen.has(lineAt + ":" + hit)
-          ) {
-            mapClaimSeen.add(lineAt + ":" + hit);
-            const cells = line
-              .split("|")
-              .slice(1, -1)
-              .map((c) => c.trim());
-            const body = codeOf(readFileSync(hit, "utf8"));
-            for (const [col, subject, word] of [
-              [mapCols.state, "state", "состояния"],
-              [mapCols.effects, "timing", "эффектов"],
-            ]) {
-              const said = (cells[col] ?? "").replace(/`/g, "");
-              if (col < 0 || !DENIAL.test(said)) continue;
-              mapClaims += 1;
-              if (BRIEF_SUBJECTS[subject].test(body))
-                mapLies.push(
-                  rel(hit) +
-                    ": карта говорит «" +
-                    said +
-                    "» в графе " +
-                    word +
-                    ", а в коде они есть",
-                );
-            }
+          anchors++;
+          const body = linesAt(file);
+          const lines = body.length;
+          const last = Number(numbers[numbers.length - 1]);
+          if (last > lines)
+            broken.push(`${name}: ${span} — в файле ${lines} строк`);
+          else if (
+            !file.endsWith(".md") &&
+            JUNK_ANCHOR.test(body[Number(numbers[0]) - 1] ?? "")
+          )
+            broken.push(
+              `${name}: ${span} — там скобка или пусто, якорь съехал`,
+            );
+          // Текст записи едет вместе с якорем: обратная сверка пометок судит по
+          // тому, что запись САМА о себе говорит, а не по догадке о её замысле.
+          const anchor = {
+            file,
+            from: Number(numbers[0]),
+            to: last,
+            text: record[lineAt] ?? line,
+          };
+          if (name === CONFIG.invariants) invariantAnchors.push(anchor);
+          if (name === CONFIG.decisions) decisionAnchors.push(anchor);
+        }
+
+        let m;
+        CITED_RE.lastIndex = 0;
+        while ((m = CITED_RE.exec(line)) !== null) {
+          const file = m[1] === "" ? current : locate(m[1], prefix);
+          if (file === null) continue;
+          // Второй адрес — не цитата, а следующий якорь.
+          if (/^[^\s]*:\d+(-\d+)?$/.test(m[4])) continue;
+          cited++;
+          const body = linesAt(file);
+          const from = Number(m[2]);
+          const to = Number(m[3] ?? m[2]);
+          if (!body.slice(from - 1, to).some((l) => l.includes(m[4]))) {
+            // Где цитата теперь: одна строка — номер съехал, и его переставит
+            // `repoint`; ни одной — конструкции больше нет; несколько — цитата
+            // не называет конструкцию, и номер ставят глазами.
+            const now = body
+              .map((l, i) => (l.includes(m[4]) ? i + 1 : 0))
+              .filter((n) => n > 0);
+            broken.push(
+              `${name}: ${m[1]}:${m[2]} — цитаты «${m[4]}» на этих строках нет` +
+                (now.length === 1
+                  ? `: съехала на строку ${now[0]}, номер переставит режим repoint`
+                  : now.length === 0
+                    ? ": в файле её нет вовсе"
+                    : `: цитата неоднозначна, строки ${now.join(", ")}`),
+            );
           }
-          if (name === TESTS) testMentions.add(hit);
+        }
+        DIR_RE.lastIndex = 0;
+        while ((m = DIR_RE.exec(line)) !== null)
+          claimDir(name, m[1], prefix, m[2]);
+        DASH_RE.lastIndex = 0;
+        while ((m = DASH_RE.exec(line)) !== null)
+          claimDir(name, m[1], prefix, m[2]);
+        IMPORTERS_RE.lastIndex = 0;
+        while ((m = IMPORTERS_RE.exec(line)) !== null)
+          claimImporters(name, m[1], prefix, m[2], m[3]);
+        if (name === MAP) {
+          const cells = line.startsWith("|")
+            ? line
+                .split("|")
+                .slice(1, -1)
+                .map((c) => c.trim())
+            : null;
+          if (cells === null) mapCols = null;
+          else if (cells.includes("Состояние") || cells.includes("Эффекты"))
+            mapCols = {
+              state: cells.indexOf("Состояние"),
+              effects: cells.indexOf("Эффекты"),
+            };
+        }
+        // Описанием карта считает только СОБСТВЕННУЮ запись файла: путь первой
+        // графой, заголовок выше, объявленную папку (`claimDir`). Решено
+        // разработчиком: упоминание в чужой строке ничего о файле не описывает.
+        const ownCell = firstCellOf(line);
+        PATH_RE.lastIndex = 0;
+        while ((m = PATH_RE.exec(line)) !== null) {
+          const ownRow = ownCell.includes(m[0]);
+          for (const one of variants(m[1])) {
+            const hit = locate(one, prefix);
+            // Реестр тестов сверялся в одну сторону: каждый тест с диска обязан
+            // быть назван. Обратное молчало — удалённый тест оставлял строку,
+            // описывающую проверку, которой нет, и это хуже отсутствующей: она
+            // читается как действующая гарантия. Ловится только имя, похожее на
+            // тест, — иначе в список посыпалась бы проза.
+            if (hit === null) {
+              // `locate` молчит и когда файла нет, и когда имя неоднозначно —
+              // у парных форков одноимённых тестов по два. Неоднозначность
+              // отсутствием не является, иначе список наполнится живыми файлами.
+              const existsSomewhere = files.some(
+                (f) => rel(f) === one || rel(f).endsWith("/" + one),
+              );
+              if (name === TESTS && isTestPath(one) && !existsSomewhere)
+                goneTests.push(`${name}:${lineAt + 1}: ${one}`);
+              // Шаблоны со звёздочкой и перечисления расширений (`.ts/.tsx`)
+              // адресами не являются: они описывают форму, а не файл. Замер на
+              // здоровом дереве дал ровно три таких и ноль настоящих.
+              if (
+                name === MAP &&
+                (/\.tsx?$/.test(one) || isStylePath(one)) &&
+                !isTestPath(one) &&
+                !one.includes("*") &&
+                one.split("/").every((s) => !s.startsWith(".")) &&
+                !existsSomewhere
+              )
+                goneMapped.push(`${name}:${lineAt + 1}: ${one}`);
+              continue;
+            }
+            if (name === MAP && ownRow) mapMentions.add(hit);
+            if (
+              name === MAP &&
+              ownRow &&
+              mapCols !== null &&
+              !mapClaimSeen.has(lineAt + ":" + hit)
+            ) {
+              mapClaimSeen.add(lineAt + ":" + hit);
+              const cells = line
+                .split("|")
+                .slice(1, -1)
+                .map((c) => c.trim());
+              const body = codeOf(readFileSync(hit, "utf8"));
+              for (const [col, subject, word] of [
+                [mapCols.state, "state", "состояния"],
+                [mapCols.effects, "timing", "эффектов"],
+              ]) {
+                const said = (cells[col] ?? "").replace(/`/g, "");
+                if (col < 0 || !DENIAL.test(said)) continue;
+                mapClaims += 1;
+                if (BRIEF_SUBJECTS[subject].test(body))
+                  mapLies.push(
+                    rel(hit) +
+                      ": карта говорит «" +
+                      said +
+                      "» в графе " +
+                      word +
+                      ", а в коде они есть",
+                  );
+              }
+            }
+            if (name === TESTS) testMentions.add(hit);
+          }
         }
       }
     }
-  }
+  });
 
   // 6 и 8. пометки кода и записи каталогов сверяются В ОБЕ СТОРОНЫ
   //
@@ -19830,10 +19947,10 @@ if (mode === "verify") {
   // Корпус у обеих пометок один: код и стили, без тестов. Стили входят наравне
   // с модулями — правило проекта между ними разницы не делает, а раньше её
   // делал сканер: ограничения он в них не искал, решения искал.
-  const marked = [
+  const marked = checkStep(() => [
     ...files.filter((f) => !isTest(f)),
     ...everyFile.filter(isStylePath),
-  ];
+  ]);
   // Названной пометка считается тогда, когда запись её ПРОЦИТИРОВАЛА — в
   // обратных апострофах или в кавычках, как и написан весь каталог («Решено:
   // комментарий «flat by design»»). Голое слово в прозе именем пометки не
@@ -19909,55 +20026,59 @@ if (mode === "verify") {
   // расположению (код английский, база русская), а завтра может переехать
   // целиком в одну сторону. Сканер, знающий одну сторону, в этот день замолчит
   // и пройдёт зелёным — то есть соврёт ровно там, где его читают как гарантию.
-  const DECISION_RE =
-    /do not remove|by design|deliberat|intentional|on purpose|не удалять|намеренно|осознанно|по замыслу|нарочно/i;
+  const DECISION_RE = checkStep(
+    () =>
+      /do not remove|by design|deliberat|intentional|on purpose|не удалять|намеренно|осознанно|по замыслу|нарочно/i,
+  );
 
-  const markerKinds = [
-    {
-      title: "Пометки CONSTRAINT",
-      debtKind: "invariants",
-      base: CONFIG.invariants,
-      // В коде пометка пишется с тире: `CONSTRAINT — что нельзя`. Запись тире
-      // не повторяет — она называет пометку одним словом.
-      inCode: (line) => /(CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/.test(line),
-      // Почти-верная форма: слово пометки есть, тире нет. Пишут её постоянно —
-      // двоеточие после ключевого слова привычнее тире, — и до этой ветки она
-      // была НЕВИДИМА: ограничение объявлено в коде, сканер его не находит,
-      // сверка печатает ноль и остаётся зелёной. Свод такое запрещает прямо:
-      // проверка, которая может быть только зелёной, хуже отсутствующей.
-      //
-      // Второй формой двоеточие НЕ принимается намеренно. Форма — интерфейс, и
-      // двух интерфейсов у одного предмета не бывает: приняв оба, сверка
-      // перестала бы учить форме, а следующая пометка была бы написана третьим
-      // способом. Она называет промах и требует поправить.
-      nearMiss: (line) =>
-        /(CONSTRAINT|ОГРАНИЧЕНИЕ)\s*[:\-–]/.test(line) &&
-        !/(CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/.test(line),
-      names: /CONSTRAINT|ОГРАНИЧЕНИЕ/,
-      anchors: invariantAnchors,
-    },
-    {
-      title: "Пометки решений",
-      debtKind: "decisions",
-      base: CONFIG.decisions,
-      inCode: (line) => {
-        const hit = DECISION_RE.exec(line);
-        return hit !== null && inComment(line, hit.index);
+  const markerKinds = checkStep(() =>
+    [
+      {
+        title: "Пометки CONSTRAINT",
+        debtKind: "invariants",
+        base: CONFIG.invariants,
+        // В коде пометка пишется с тире: `CONSTRAINT — что нельзя`. Запись тире
+        // не повторяет — она называет пометку одним словом.
+        inCode: (line) => /(CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/.test(line),
+        // Почти-верная форма: слово пометки есть, тире нет. Пишут её постоянно —
+        // двоеточие после ключевого слова привычнее тире, — и до этой ветки она
+        // была НЕВИДИМА: ограничение объявлено в коде, сканер его не находит,
+        // сверка печатает ноль и остаётся зелёной. Свод такое запрещает прямо:
+        // проверка, которая может быть только зелёной, хуже отсутствующей.
+        //
+        // Второй формой двоеточие НЕ принимается намеренно. Форма — интерфейс, и
+        // двух интерфейсов у одного предмета не бывает: приняв оба, сверка
+        // перестала бы учить форме, а следующая пометка была бы написана третьим
+        // способом. Она называет промах и требует поправить.
+        nearMiss: (line) =>
+          /(CONSTRAINT|ОГРАНИЧЕНИЕ)\s*[:\-–]/.test(line) &&
+          !/(CONSTRAINT|ОГРАНИЧЕНИЕ)\s+—/.test(line),
+        names: /CONSTRAINT|ОГРАНИЧЕНИЕ/,
+        anchors: invariantAnchors,
       },
-      // Своего слова у пометки решения нет: запись называет её цитатой самого
-      // комментария.
-      names: DECISION_RE,
-      anchors: decisionAnchors,
-    },
-  ].map((kind) => ({ ...kind, ...markerCheck(kind) }));
+      {
+        title: "Пометки решений",
+        debtKind: "decisions",
+        base: CONFIG.decisions,
+        inCode: (line) => {
+          const hit = DECISION_RE.exec(line);
+          return hit !== null && inComment(line, hit.index);
+        },
+        // Своего слова у пометки решения нет: запись называет её цитатой самого
+        // комментария.
+        names: DECISION_RE,
+        anchors: decisionAnchors,
+      },
+    ].map((kind) => ({ ...kind, ...markerCheck(kind) })),
+  );
 
   // 1. каждый файл кода и каждый стиль упомянуты в карте
   // Ambient-объявления описывать нечем: в них нет ни поведения, ни связей.
-  const code = [
+  const code = checkStep(() => [
     ...files.filter((f) => !isTest(f) && !f.endsWith(".d.ts")),
     ...everyFile.filter(isStylePath),
-  ];
-  const missing = code.filter((f) => !mapMentions.has(f));
+  ]);
+  const missing = checkStep(() => code.filter((f) => !mapMentions.has(f)));
   // Долг карты — храповик, и заведён он под посадку в ЖИВОЙ проект. Там
   // описать триста файлов в день посадки нельзя, а требовать этого значит
   // оставить проект красным навсегда — после чего красный прогон перестают
@@ -19975,42 +20096,50 @@ if (mode === "verify") {
   // Баннер перехода — ПЕРВОЙ строкой прогона. Прежде он стоял последней, и
   // читался ровно до тех пор, пока его переставали замечать: полсотни секций
   // выше, а внизу счёт открытых шагов без единого их имени.
-  printTransition();
-  printFindings();
-
-  const overDebt = overDebtOf("map", missing.length);
-  checkHead("Покрытие карты", {
-    n: code.length,
-    unit: "файлов кода и стилей (без тестов)",
+  checkStep(() => {
+    printTransition();
+    printFindings();
   });
-  console.log(
-    `  без своей записи: ${missing.length}` +
-      debtTail("map") +
-      (goneMapped.length
-        ? `, названо и не существует: ${goneMapped.length}`
-        : ""),
-  );
-  debtNote("map", missing.length);
-  for (const f of debtList("map", missing)) console.log("    " + rel(f));
-  for (const m of goneMapped) console.log("    " + m);
+
+  const overDebt = checkStep(() => overDebtOf("map", missing.length));
+  checkStep(() => {
+    checkHead("Покрытие карты", () => ({
+      n: code.length,
+      unit: "файлов кода и стилей (без тестов)",
+    }));
+    console.log(
+      `  без своей записи: ${missing.length}` +
+        debtTail("map") +
+        (goneMapped.length
+          ? `, названо и не существует: ${goneMapped.length}`
+          : ""),
+    );
+    debtNote("map", missing.length);
+    for (const f of debtList("map", missing)) console.log("    " + rel(f));
+    for (const m of goneMapped) console.log("    " + m);
+  });
 
   // 2. каждый тестовый файл назван в 08-tests.md — поимённо, папкой не зачесть
-  const testFiles = files.filter(isTest);
-  const unnamed = testFiles.filter((f) => !testMentions.has(f));
-  checkHead("Покрытие тестов", {
-    n: testFiles.length,
-    unit: "тестовых файлов",
-  });
-  console.log(
-    `  не названо: ${unnamed.length}` +
-      debtTail("tests") +
-      (goneTests.length
-        ? `, названо и не существует: ${goneTests.length}`
-        : ""),
+  const testFiles = checkStep(() => files.filter(isTest));
+  const unnamed = checkStep(() =>
+    testFiles.filter((f) => !testMentions.has(f)),
   );
-  debtNote("tests", unnamed.length);
-  for (const f of debtList("tests", unnamed)) console.log("    " + rel(f));
-  for (const t of goneTests) console.log("    " + t);
+  checkStep(() => {
+    checkHead("Покрытие тестов", () => ({
+      n: testFiles.length,
+      unit: "тестовых файлов",
+    }));
+    console.log(
+      `  не названо: ${unnamed.length}` +
+        debtTail("tests") +
+        (goneTests.length
+          ? `, названо и не существует: ${goneTests.length}`
+          : ""),
+    );
+    debtNote("tests", unnamed.length);
+    for (const f of debtList("tests", unnamed)) console.log("    " + rel(f));
+    for (const t of goneTests) console.log("    " + t);
+  });
 
   // 6-бис. гарантия поведения держится тестом.
   //
@@ -20025,145 +20154,159 @@ if (mode === "verify") {
   const guaranteeDrift = [];
   const showcaseBare = [];
   let guaranteeRows = 0;
-  if (CONFIG.guarantees != null) {
-    const { rows, problem, at } = guarantees();
-    guaranteeRows = rows.length;
-    if (problem !== null)
-      guaranteeDrift.push(rel0(at) + " — таблица гарантий: " + problem);
-    const seenIds = new Map();
-    for (const g of rows) {
-      const where = rel0(at) + ":" + g.line + " — " + (g.id || "без номера");
-      if (!/^REQ-[0-9]+$/.test(g.id))
-        guaranteeDrift.push(where + ": номер не в форме REQ-n");
-      else if (seenIds.has(g.id))
-        guaranteeDrift.push(
-          where + ": номер занят строкой " + seenIds.get(g.id),
-        );
-      else seenIds.set(g.id, g.line);
-      if (g.kind !== "должно" && g.kind !== "никогда")
-        guaranteeDrift.push(
-          where + ": род «" + g.kind + "», а бывает «должно» либо «никогда»",
-        );
-      if (g.what === "")
-        guaranteeDrift.push(where + ": не сказано, что наблюдают");
-      // Источник — откуда обещание взято. Без него таблица держит то, что
-      // записал её автор, и это тот же круг, что у теста: обещание, которое
-      // придумали, а не получили, сверяется само с собой.
-      const src = g.sources;
-      if (
-        src.paths.length +
-          src.decisions.length +
-          src.issues.length +
-          src.links.length +
-          src.words.length ===
-        0
-      )
-        guaranteeDrift.push(
-          where +
-            ": источник не назван — путь в обратных кавычках, ADR-n, #n или адрес, либо «разработчик, ГГГГ-ММ-ДД»",
-        );
-      for (const p of src.paths)
-        if (guaranteeAbs(p) === null)
-          guaranteeDrift.push(where + ": источника `" + p + "` нет на диске");
-      for (const n of src.decisions)
-        if (!adrByNumber.has(n))
+  checkStep(() => {
+    if (CONFIG.guarantees != null) {
+      const { rows, problem, at } = guarantees();
+      guaranteeRows = rows.length;
+      if (problem !== null)
+        guaranteeDrift.push(rel0(at) + " — таблица гарантий: " + problem);
+      const seenIds = new Map();
+      for (const g of rows) {
+        const where = rel0(at) + ":" + g.line + " — " + (g.id || "без номера");
+        if (!/^REQ-[0-9]+$/.test(g.id))
+          guaranteeDrift.push(where + ": номер не в форме REQ-n");
+        else if (seenIds.has(g.id))
+          guaranteeDrift.push(
+            where + ": номер занят строкой " + seenIds.get(g.id),
+          );
+        else seenIds.set(g.id, g.line);
+        if (g.kind !== "должно" && g.kind !== "никогда")
+          guaranteeDrift.push(
+            where + ": род «" + g.kind + "», а бывает «должно» либо «никогда»",
+          );
+        if (g.what === "")
+          guaranteeDrift.push(where + ": не сказано, что наблюдают");
+        // Источник — откуда обещание взято. Без него таблица держит то, что
+        // записал её автор, и это тот же круг, что у теста: обещание, которое
+        // придумали, а не получили, сверяется само с собой.
+        const src = g.sources;
+        if (
+          src.paths.length +
+            src.decisions.length +
+            src.issues.length +
+            src.links.length +
+            src.words.length ===
+          0
+        )
           guaranteeDrift.push(
             where +
-              ": решения ADR-" +
-              n +
-              (CONFIG.adr == null
-                ? " нет — папка решений не объявлена"
-                : " нет в папке решений"),
+              ": источник не назван — путь в обратных кавычках, ADR-n, #n или адрес, либо «разработчик, ГГГГ-ММ-ДД»",
           );
-      for (const d of src.words) {
-        const t = Date.parse(d + "T00:00:00Z");
-        if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== d)
-          guaranteeDrift.push(where + ": «" + d + "» — не дата");
-      }
-      if (g.nodes.length === 0)
-        guaranteeDrift.push(where + ": не назван ни один узел");
-      for (const n of g.nodes)
-        if (guaranteeAbs(n) === null)
-          guaranteeDrift.push(where + ": узла `" + n + "` нет на диске");
-      if (g.testPath === null || g.testName === null) {
-        guaranteeDrift.push(
-          where +
-            ": тест не назван — нужен путь в обратных кавычках и имя в «ёлочках»",
-        );
-        continue;
-      }
-      const test = guaranteeAbs(g.testPath);
-      if (test === null)
-        guaranteeDrift.push(
-          where + ": тестового файла `" + g.testPath + "` нет на диске",
-        );
-      else if (!isTest(test))
-        guaranteeDrift.push(where + ": `" + g.testPath + "` — не тест");
-      else if (!readFileSync(test, "utf8").includes(g.testName))
-        guaranteeDrift.push(
-          where +
-            ": в `" +
-            g.testPath +
-            "` нет теста «" +
-            g.testName +
-            "» — снят, переименован или не написан",
-        );
-    }
-    // Номер, названный там, где таблицы нет: в тесте, в документе, в базе.
-    // Снятая гарантия оставляет за собой ссылки, и они продолжают обещать.
-    // Протокол свода не обещает ничего: его печатает режим по таблице.
-    const skip = new Set(
-      [at, CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol)]
-        .filter((one) => one !== null)
-        .map(norm),
-    );
-    const quoting = [
-      ...files.filter(isTest),
-      ...docFiles,
-      ...readdirSync(BASE)
-        .filter((e) => e.endsWith(".md"))
-        .map((e) => norm(path.join(BASE, e))),
-    ].filter((f) => !skip.has(norm(f)));
-    for (const f of [...new Set(quoting)]) {
-      // Образец в ограде кода документа — показанная форма, не ссылка.
-      const raw = readFileSync(f, "utf8");
-      const lines = (f.endsWith(".md") ? unfenced(raw) : raw).split(NEWLINE);
-      lines.forEach((line, i) => {
-        for (const m of line.matchAll(/\bREQ-[0-9]+\b/g))
-          if (!seenIds.has(m[0]))
+        for (const p of src.paths)
+          if (guaranteeAbs(p) === null)
+            guaranteeDrift.push(where + ": источника `" + p + "` нет на диске");
+        for (const n of src.decisions)
+          if (!adrByNumber.has(n))
             guaranteeDrift.push(
-              rel(f) + ":" + (i + 1) + " — " + m[0] + ": в таблице такой нет",
+              where +
+                ": решения ADR-" +
+                n +
+                (CONFIG.adr == null
+                  ? " нет — папка решений не объявлена"
+                  : " нет в папке решений"),
             );
-      });
-    }
-    // Строка витрины — пункт списка в документе с именем витрины.
-    for (const f of docFiles.filter((one) => /(^|\/)FEATURES\.md$/.test(one))) {
-      const lines = proseOf(f).split(NEWLINE);
-      lines.forEach((line, i) => {
-        if (/^\s*([-*+]|[0-9]+[.)])\s+\S/.test(line) && !/\bREQ-[0-9]+\b/.test(line))
-          showcaseBare.push(rel(f) + ":" + (i + 1));
-      });
-    }
-  }
-  checkHead("Гарантия держится тестом", {
-    n: guaranteeRows,
-    unit: "гарантий поведения",
-  });
-  if (CONFIG.guarantees == null)
-    console.log("  таблица гарантий не объявлена: сверять нечего");
-  else {
-    console.log(`  расхождений: ${guaranteeDrift.length}`);
-    for (const d of guaranteeDrift) console.log("    " + d);
-    console.log(
-      `  строк витрины без гарантии: ${showcaseBare.length}` +
-        debtTail("guarantees"),
-    );
-    debtNote("guarantees", showcaseBare.length);
-    for (const one of debtList("guarantees", showcaseBare))
-      console.log(
-        "    " + one + " — строка витрины не называет гарантию REQ-n",
+        for (const d of src.words) {
+          const t = Date.parse(d + "T00:00:00Z");
+          if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== d)
+            guaranteeDrift.push(where + ": «" + d + "» — не дата");
+        }
+        if (g.nodes.length === 0)
+          guaranteeDrift.push(where + ": не назван ни один узел");
+        for (const n of g.nodes)
+          if (guaranteeAbs(n) === null)
+            guaranteeDrift.push(where + ": узла `" + n + "` нет на диске");
+        if (g.testPath === null || g.testName === null) {
+          guaranteeDrift.push(
+            where +
+              ": тест не назван — нужен путь в обратных кавычках и имя в «ёлочках»",
+          );
+          continue;
+        }
+        const test = guaranteeAbs(g.testPath);
+        if (test === null)
+          guaranteeDrift.push(
+            where + ": тестового файла `" + g.testPath + "` нет на диске",
+          );
+        else if (!isTest(test))
+          guaranteeDrift.push(where + ": `" + g.testPath + "` — не тест");
+        else if (!readFileSync(test, "utf8").includes(g.testName))
+          guaranteeDrift.push(
+            where +
+              ": в `" +
+              g.testPath +
+              "` нет теста «" +
+              g.testName +
+              "» — снят, переименован или не написан",
+          );
+      }
+      // Номер, названный там, где таблицы нет: в тесте, в документе, в базе.
+      // Снятая гарантия оставляет за собой ссылки, и они продолжают обещать.
+      // Протокол свода не обещает ничего: его печатает режим по таблице.
+      const skip = new Set(
+        [
+          at,
+          CONFIG.barProtocol == null
+            ? null
+            : path.join(BASE, CONFIG.barProtocol),
+        ]
+          .filter((one) => one !== null)
+          .map(norm),
       );
-  }
+      const quoting = [
+        ...files.filter(isTest),
+        ...docFiles,
+        ...readdirSync(BASE)
+          .filter((e) => e.endsWith(".md"))
+          .map((e) => norm(path.join(BASE, e))),
+      ].filter((f) => !skip.has(norm(f)));
+      for (const f of [...new Set(quoting)]) {
+        // Образец в ограде кода документа — показанная форма, не ссылка.
+        const raw = readFileSync(f, "utf8");
+        const lines = (f.endsWith(".md") ? unfenced(raw) : raw).split(NEWLINE);
+        lines.forEach((line, i) => {
+          for (const m of line.matchAll(/\bREQ-[0-9]+\b/g))
+            if (!seenIds.has(m[0]))
+              guaranteeDrift.push(
+                rel(f) + ":" + (i + 1) + " — " + m[0] + ": в таблице такой нет",
+              );
+        });
+      }
+      // Строка витрины — пункт списка в документе с именем витрины.
+      for (const f of docFiles.filter((one) =>
+        /(^|\/)FEATURES\.md$/.test(one),
+      )) {
+        const lines = proseOf(f).split(NEWLINE);
+        lines.forEach((line, i) => {
+          if (
+            /^\s*([-*+]|[0-9]+[.)])\s+\S/.test(line) &&
+            !/\bREQ-[0-9]+\b/.test(line)
+          )
+            showcaseBare.push(rel(f) + ":" + (i + 1));
+        });
+      }
+    }
+  });
+  checkStep(() => {
+    checkHead("Гарантия держится тестом", () => ({
+      n: guaranteeRows,
+      unit: "гарантий поведения",
+    }));
+    if (CONFIG.guarantees == null)
+      console.log("  таблица гарантий не объявлена: сверять нечего");
+    else {
+      console.log(`  расхождений: ${guaranteeDrift.length}`);
+      for (const d of guaranteeDrift) console.log("    " + d);
+      console.log(
+        `  строк витрины без гарантии: ${showcaseBare.length}` +
+          debtTail("guarantees"),
+      );
+      debtNote("guarantees", showcaseBare.length);
+      for (const one of debtList("guarantees", showcaseBare))
+        console.log(
+          "    " + one + " — строка витрины не называет гарантию REQ-n",
+        );
+    }
+  });
 
   // 7. правила направления импортов держатся
   // Слой описан путём, запрет — либо путём (сверяется по графу), либо именем
@@ -20174,7 +20317,8 @@ if (mode === "verify") {
   // рода, что исключения адресов и ссылок: запись, которая ничего не
   // разрешает, читается как объявленная дыра, которой давно нет, и прикрывает
   // собой ту, что появится завтра.
-  const { edges: directionEdges, allowUsed } = directionFaults();
+  const { edges: directionEdges, allowUsed } =
+    checkStep(() => directionFaults()) ?? {};
   // Ребро, пришедшее с кодом до посадки, держит запись, назвавшая оба его
   // конца: пункт долга перехода либо решение. Без этого живой проект с
   // нарушенным направлением держал прогон красным навсегда, а свод это
@@ -20182,24 +20326,28 @@ if (mode === "verify") {
   // а сверка его не читала. Новое ребро такой записи не имеет и краснеет.
   const edgeHeldBy = (e) =>
     e.to === null ? heldBy([e.from], [e.banned]) : heldBy([e.from, e.to]);
-  const heldEdges = directionEdges.filter((e) => edgeHeldBy(e) !== null);
-  const broken7 = directionEdges
-    .filter((e) => !heldEdges.includes(e))
-    .map((e) => e.text);
+  const heldEdges = checkStep(() =>
+    directionEdges.filter((e) => edgeHeldBy(e) !== null),
+  );
+  const broken7 = checkStep(() =>
+    directionEdges.filter((e) => !heldEdges.includes(e)).map((e) => e.text),
+  );
   const deadRuleAllowances = [];
-  for (const rule of rules)
-    for (const q of rule.allowed)
-      if (!allowUsed.has(`${rule.layer}|${q}`))
-        deadRuleAllowances.push(
-          `правила направления: ${rule.layer} → ${q} — ничего не разрешает`,
-        );
+  checkStep(() => {
+    for (const rule of rules)
+      for (const q of rule.allowed)
+        if (!allowUsed.has(`${rule.layer}|${q}`))
+          deadRuleAllowances.push(
+            `правила направления: ${rule.layer} → ${q} — ничего не разрешает`,
+          );
+  });
   // Объявленный и ненайденный заголовок НАЗЫВАЕТСЯ, а не молчит.
   //
   // Поле настройки описано прозой, примера в файле нет, и естественное неверное
   // прочтение давало ноль правил при живой таблице на диске. Ноль тут читается
   // как «слой один, проверять нечего» — то есть сверка зелена оттого, что не
   // нашла своего предмета, а это худший из возможных исходов.
-  const headingMissed =
+  const headingMissed = checkStep(() =>
     CONFIG.rulesHeading == null || rules.length > 0
       ? null
       : rulesHeadSeen
@@ -20211,71 +20359,76 @@ if (mode === "verify") {
           " `isolationHeading`"
         : "Заголовок объявлен, а раздела с ним нет: «" +
           CONFIG.rulesHeading +
-          "» — объявляется текст заголовка раздела, а не шапка таблицы";
-  checkHead("Правила направления", {
-    n: rules.length,
-    unit: "правил направления",
+          "» — объявляется текст заголовка раздела, а не шапка таблицы",
+  );
+  checkStep(() => {
+    checkHead("Правила направления", () => ({
+      n: rules.length,
+      unit: "правил направления",
+    }));
+    console.log(`  нарушено: ${broken7.length}`);
+    if (heldEdges.length)
+      console.log(
+        "  держится записью долга или решения: " +
+          heldEdges.map((e) => e.text + " (" + edgeHeldBy(e) + ")").join("; "),
+      );
+    // Находка печатается строкой С ОТСТУПОМ — той же формой, какой её печатают все
+    // сверки. Приписанная к строке счёта, она не делала секцию красной ни для
+    // глаза, ни для режима фальсификации: числа оставались нулями. Поймано
+    // рецептом, который «промолчал» на заведомо неверном поле.
+    if (headingMissed !== null) console.log("    " + headingMissed);
+    for (const b of broken7) console.log("    " + b);
   });
-  console.log(`  нарушено: ${broken7.length}`);
-  if (heldEdges.length)
-    console.log(
-      "  держится записью долга или решения: " +
-        heldEdges
-          .map((e) => e.text + " (" + edgeHeldBy(e) + ")")
-          .join("; "),
-    );
-  // Находка печатается строкой С ОТСТУПОМ — той же формой, какой её печатают все
-  // сверки. Приписанная к строке счёта, она не делала секцию красной ни для
-  // глаза, ни для режима фальсификации: числа оставались нулями. Поймано
-  // рецептом, который «промолчал» на заведомо неверном поле.
-  if (headingMissed !== null) console.log("    " + headingMissed);
-  for (const b of broken7) console.log("    " + b);
 
   // 7a. изоляция слоя: импортировать можно только объявленное.
   const brokenIso = [];
-  for (const rule of isolation) {
-    const own = new Set(inside(rule.layer, null)?.hits ?? []);
-    const allowed = new Set(
-      rule.only.flatMap((q) => inside(q, null)?.hits ?? []),
-    );
-    // Тест — тоже: то же правило о границе слоя, что у направления.
-    for (const f of own) {
-      for (const dep of importsOf.get(f) ?? [])
-        if (!own.has(dep) && !allowed.has(dep))
-          brokenIso.push(`${rel(f)} → ${rel(dep)}`);
+  checkStep(() => {
+    for (const rule of isolation) {
+      const own = new Set(inside(rule.layer, null)?.hits ?? []);
+      const allowed = new Set(
+        rule.only.flatMap((q) => inside(q, null)?.hits ?? []),
+      );
+      // Тест — тоже: то же правило о границе слоя, что у направления.
+      for (const f of own) {
+        for (const dep of importsOf.get(f) ?? [])
+          if (!own.has(dep) && !allowed.has(dep))
+            brokenIso.push(`${rel(f)} → ${rel(dep)}`);
+      }
     }
-  }
+  });
   // 7b. звёздные бочки — только объявленные.
   const starDrift = [];
   let starLooked = 0;
-  if (CONFIG.starBarrels != null) {
-    const declared = new Set(CONFIG.starBarrels);
-    const onDisk = new Set(
-      files
-        .filter(
-          (f) => !isTest(f) && exportsStar(readFileSync(f, "utf8"), f),
-        )
-        .map(rel),
-    );
-    starLooked = new Set([...declared, ...onDisk]).size;
-    for (const f of onDisk)
-      if (!declared.has(f))
-        starDrift.push(
-          `звёздная бочка не объявлена: ${f} — здесь выключен анализ мёртвых экспортов`,
-        );
-    for (const f of declared)
-      if (!onDisk.has(f)) starDrift.push(`объявлена, но звёздочки нет: ${f}`);
-  }
-  checkHead("Звёздные бочки", {
-    n: starLooked,
-    unit: "звёздных бочек объявленных и на диске",
+  checkStep(() => {
+    if (CONFIG.starBarrels != null) {
+      const declared = new Set(CONFIG.starBarrels);
+      const onDisk = new Set(
+        files
+          .filter((f) => !isTest(f) && exportsStar(readFileSync(f, "utf8"), f))
+          .map(rel),
+      );
+      starLooked = new Set([...declared, ...onDisk]).size;
+      for (const f of onDisk)
+        if (!declared.has(f))
+          starDrift.push(
+            `звёздная бочка не объявлена: ${f} — здесь выключен анализ мёртвых экспортов`,
+          );
+      for (const f of declared)
+        if (!onDisk.has(f)) starDrift.push(`объявлена, но звёздочки нет: ${f}`);
+    }
   });
-  console.log(
-    CONFIG.starBarrels == null
-      ? "  список не заявлен"
-      : `  расхождений: ${starDrift.length}`,
-  );
-  for (const s of starDrift) console.log("    " + s);
+  checkStep(() => {
+    checkHead("Звёздные бочки", () => ({
+      n: starLooked,
+      unit: "звёздных бочек объявленных и на диске",
+    }));
+    console.log(
+      CONFIG.starBarrels == null
+        ? "  список не заявлен"
+        : `  расхождений: ${starDrift.length}`,
+    );
+    for (const s of starDrift) console.log("    " + s);
+  });
 
   // 7c. состав бочки в записи карты. У бочки нет своей логики — она только
   // отдаёт наружу, поэтому каждое имя, названное её записью, есть утверждение
@@ -20288,76 +20441,84 @@ if (mode === "verify") {
   // и сверка «каждый экспорт назван» краснела бы на законном.
   const barrelDrift = [];
   let barrelLooked = 0;
-  {
-    const CAMEL = /^(?=.*[a-z])(?=.*[A-Z])[A-Za-z][A-Za-z0-9]*$/;
-    const mapLines = readFileSync(path.join(BASE, CONFIG.map), "utf8").split(
-      NEWLINE,
-    );
-    let barrel = null;
-    const close = () => {
-      if (barrel === null) return;
-      barrelLooked += 1;
-      const own = exportsOf.get(barrel.file) ?? new Set();
-      for (const [name, line] of barrel.named)
-        if (!own.has(name))
-          barrelDrift.push(
-            `${CONFIG.map}:${line} — ${rel(barrel.file)} не отдаёт ${name}`,
-          );
-      barrel = null;
-    };
-    for (const [i, line] of mapLines.entries()) {
-      // Нынешняя форма карты — строка таблицы на файл, путь первой графой;
-      // бочку узнаёт код, а не слово в записи. Прежде читался один заголовок
-      // `### …бочка`, и у карты таблицей корпус сверки был нулём: переименованный
-      // экспорт входа области оставался в карте. Найдено пробой рефактора.
-      if (barrel === null && line.startsWith("|") && !/^[-:\s|]+$/.test(line)) {
-        close();
-        const first = firstCellOf(line);
-        const own = files.filter((f) => namesFileIn(first, f));
-        if (own.length !== 1 || !isBarrel(own[0])) continue;
-        if (exportsStar(readFileSync(own[0], "utf8"), own[0])) continue;
-        barrel = { file: own[0], named: [] };
-        const rest = line.slice(line.indexOf(first) + first.length);
-        for (const m of rest.matchAll(/`([^`]+)`/g))
-          if (CAMEL.test(m[1])) barrel.named.push([m[1], i + 1]);
-        close();
-        continue;
-      }
-      const head = /^###\s+`([^`]+)`\s+—\s+.*бочк/i.exec(line);
-      if (head !== null || /^###\s/.test(line)) close();
-      if (head === null) {
-        if (barrel !== null)
-          for (const m of line.matchAll(/`([^`]+)`/g))
-            if (CAMEL.test(m[1])) barrel.named.push([m[1], i + 1]);
-        continue;
-      }
-      const hits = files.filter(
-        (f) => rel(f) === head[1] || rel(f).endsWith("/" + head[1]),
+  checkStep(() => {
+    {
+      const CAMEL = /^(?=.*[a-z])(?=.*[A-Z])[A-Za-z][A-Za-z0-9]*$/;
+      const mapLines = readFileSync(path.join(BASE, CONFIG.map), "utf8").split(
+        NEWLINE,
       );
-      // Звёздная бочка пропускается: что именно она отдаёт, разобрать нельзя —
-      // то же ограничение, из-за которого у неё выключен анализ мёртвых
-      // экспортов. Спрашивать с записи о таком файле значило бы краснеть на
-      // законном: имена, пришедшие через `export *`, инструменту не видны.
-      barrel =
-        hits.length === 1 &&
-        !exportsStar(readFileSync(hits[0], "utf8"), hits[0])
-          ? { file: hits[0], named: [] }
-          : null;
+      let barrel = null;
+      const close = () => {
+        if (barrel === null) return;
+        barrelLooked += 1;
+        const own = exportsOf.get(barrel.file) ?? new Set();
+        for (const [name, line] of barrel.named)
+          if (!own.has(name))
+            barrelDrift.push(
+              `${CONFIG.map}:${line} — ${rel(barrel.file)} не отдаёт ${name}`,
+            );
+        barrel = null;
+      };
+      for (const [i, line] of mapLines.entries()) {
+        // Нынешняя форма карты — строка таблицы на файл, путь первой графой;
+        // бочку узнаёт код, а не слово в записи. Прежде читался один заголовок
+        // `### …бочка`, и у карты таблицей корпус сверки был нулём: переименованный
+        // экспорт входа области оставался в карте. Найдено пробой рефактора.
+        if (
+          barrel === null &&
+          line.startsWith("|") &&
+          !/^[-:\s|]+$/.test(line)
+        ) {
+          close();
+          const first = firstCellOf(line);
+          const own = files.filter((f) => namesFileIn(first, f));
+          if (own.length !== 1 || !isBarrel(own[0])) continue;
+          if (exportsStar(readFileSync(own[0], "utf8"), own[0])) continue;
+          barrel = { file: own[0], named: [] };
+          const rest = line.slice(line.indexOf(first) + first.length);
+          for (const m of rest.matchAll(/`([^`]+)`/g))
+            if (CAMEL.test(m[1])) barrel.named.push([m[1], i + 1]);
+          close();
+          continue;
+        }
+        const head = /^###\s+`([^`]+)`\s+—\s+.*бочк/i.exec(line);
+        if (head !== null || /^###\s/.test(line)) close();
+        if (head === null) {
+          if (barrel !== null)
+            for (const m of line.matchAll(/`([^`]+)`/g))
+              if (CAMEL.test(m[1])) barrel.named.push([m[1], i + 1]);
+          continue;
+        }
+        const hits = files.filter(
+          (f) => rel(f) === head[1] || rel(f).endsWith("/" + head[1]),
+        );
+        // Звёздная бочка пропускается: что именно она отдаёт, разобрать нельзя —
+        // то же ограничение, из-за которого у неё выключен анализ мёртвых
+        // экспортов. Спрашивать с записи о таком файле значило бы краснеть на
+        // законном: имена, пришедшие через `export *`, инструменту не видны.
+        barrel =
+          hits.length === 1 &&
+          !exportsStar(readFileSync(hits[0], "utf8"), hits[0])
+            ? { file: hits[0], named: [] }
+            : null;
+      }
+      close();
     }
-    close();
-  }
-  checkHead("Состав бочки в записи карты", {
-    n: barrelLooked,
-    unit: "бочек, названных картой",
   });
-  console.log(`  имён названо неверно: ${barrelDrift.length}`);
-  for (const b of barrelDrift) console.log("    " + b);
+  checkStep(() => {
+    checkHead("Состав бочки в записи карты", () => ({
+      n: barrelLooked,
+      unit: "бочек, названных картой",
+    }));
+    console.log(`  имён названо неверно: ${barrelDrift.length}`);
+    for (const b of barrelDrift) console.log("    " + b);
+  });
 
   // Тот же крючок, что у направления: объявленный и не сработавший заголовок
   // называется. Ноль слоёв читается как «изоляции нет, проверять нечего», и
   // отличить это от «таблица на диске есть, а разбор её не нашёл» по числу
   // нельзя.
-  const isoMissed =
+  const isoMissed = checkStep(() =>
     CONFIG.isolationHeading == null || isolation.length > 0
       ? null
       : isolationHeadSeen
@@ -20368,14 +20529,17 @@ if (mode === "verify") {
           " направление, и объявляется она полем `rulesHeading`"
         : "Заголовок объявлен, а раздела с ним нет: «" +
           CONFIG.isolationHeading +
-          "» — объявляется текст заголовка раздела, а не шапка таблицы";
-  checkHead("Правила изоляции", {
-    n: isolation.length,
-    unit: "слоёв изоляции",
+          "» — объявляется текст заголовка раздела, а не шапка таблицы",
+  );
+  checkStep(() => {
+    checkHead("Правила изоляции", () => ({
+      n: isolation.length,
+      unit: "слоёв изоляции",
+    }));
+    console.log(`  нарушено: ${brokenIso.length}`);
+    if (isoMissed !== null) console.log("    " + isoMissed);
+    for (const b of brokenIso) console.log("    " + b);
   });
-  console.log(`  нарушено: ${brokenIso.length}`);
-  if (isoMissed !== null) console.log("    " + isoMissed);
-  for (const b of brokenIso) console.log("    " + b);
 
   // 7c. правило про несуществующий предмет.
   // Обе таблицы слоёв судят «сверху вниз»: берут слой и смотрят его импорты.
@@ -20389,30 +20553,40 @@ if (mode === "verify") {
    * зависимостью: слои в обеих таблицах пишутся без косой ровно так же, и
    * прежняя оговорка «без косой — значит пакет» уводила из-под сверки весь её
    * главный случай. */
-  const declaredPackages = (() => {
-    const out = new Set();
-    if (CONFIG.manifest == null) return out;
-    const at = path.join(BASE, CONFIG.manifest);
-    if (!existsSync(at)) return out;
-    const j = JSON.parse(readFileSync(at, "utf8"));
-    for (const kind of ["dependencies", "devDependencies", "peerDependencies"])
-      for (const name of Object.keys(j[kind] ?? {})) out.add(name);
-    return out;
-  })();
+  const declaredPackages = checkStep(() =>
+    (() => {
+      const out = new Set();
+      if (CONFIG.manifest == null) return out;
+      const at = path.join(BASE, CONFIG.manifest);
+      if (!existsSync(at)) return out;
+      const j = JSON.parse(readFileSync(at, "utf8"));
+      for (const kind of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+      ])
+        for (const name of Object.keys(j[kind] ?? {})) out.add(name);
+      return out;
+    })(),
+  );
   const resolves = (q) =>
     declaredPackages.has(q) ||
     q.startsWith("@") ||
     (inside(q, null)?.hits ?? []).length > 0;
-  for (const [what, rule] of [
-    ...rules.map((r) => ["правила направления", r]),
-    ...isolation.map((r) => ["правила изоляции", r]),
-  ]) {
-    if (!resolves(rule.layer))
-      emptyRules.push(`${what}: слоя нет на диске — ${rule.layer}`);
-    for (const q of [...(rule.banned ?? []), ...(rule.only ?? [])])
-      if (!resolves(q))
-        emptyRules.push(`${what}: ${rule.layer} → адреса нет на диске — ${q}`);
-  }
+  checkStep(() => {
+    for (const [what, rule] of [
+      ...rules.map((r) => ["правила направления", r]),
+      ...isolation.map((r) => ["правила изоляции", r]),
+    ]) {
+      if (!resolves(rule.layer))
+        emptyRules.push(`${what}: слоя нет на диске — ${rule.layer}`);
+      for (const q of [...(rule.banned ?? []), ...(rule.only ?? [])])
+        if (!resolves(q))
+          emptyRules.push(
+            `${what}: ${rule.layer} → адреса нет на диске — ${q}`,
+          );
+    }
+  });
   // 7d. заявленная таблица найдена и не пуста.
   // Инструмент ищет таблицы ПО ЗАГОЛОВКУ. Заголовок переименовали — разбор даёт
   // ноль строк, а ноль строк печатается как «нарушено: 0», то есть выключение
@@ -20422,75 +20596,83 @@ if (mode === "verify") {
   // инструмента»: заголовок написан своими словами — и сверки нет.
   // Таблицы нет вовсе — ставят `null` в `CONFIG`, как у решений и линта.
   const missingTables = [];
-  if (CONFIG.rulesHeading != null && rules.length === 0)
-    missingTables.push(
-      `таблица не найдена или пуста: «${CONFIG.rulesHeading}» — сверка направлений выключена`,
-    );
-  if (CONFIG.isolationHeading != null && isolation.length === 0)
-    missingTables.push(
-      `таблица не найдена или пуста: «${CONFIG.isolationHeading}» — сверка изоляции выключена`,
-    );
-
-  checkHead("Правила про существующее", {
-    n: rules.length + isolation.length,
-    unit: "правил направления и изоляции",
+  checkStep(() => {
+    if (CONFIG.rulesHeading != null && rules.length === 0)
+      missingTables.push(
+        `таблица не найдена или пуста: «${CONFIG.rulesHeading}» — сверка направлений выключена`,
+      );
+    if (CONFIG.isolationHeading != null && isolation.length === 0)
+      missingTables.push(
+        `таблица не найдена или пуста: «${CONFIG.isolationHeading}» — сверка изоляции выключена`,
+      );
   });
-  console.log(
-    `  правил ни о чём: ${emptyRules.length}, заявленных таблиц не найдено: ${missingTables.length}`,
-  );
-  for (const e of emptyRules) console.log("    " + e);
-  for (const m of missingTables) console.log("    " + m);
-
-  for (const kind of markerKinds) {
-    checkHead(kind.title, { n: kind.total, unit: "пометок в коде" });
+  checkStep(() => {
+    checkHead("Правила про существующее", () => ({
+      n: rules.length + isolation.length,
+      unit: "правил направления и изоляции",
+    }));
     console.log(
-      `  без записи в ${kind.base}: ${kind.unlisted.length}` +
-        debtTail(kind.debtKind) +
-        `, названо записью и снято из кода: ${kind.gone.length}` +
-        (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
+      `  правил ни о чём: ${emptyRules.length}, заявленных таблиц не найдено: ${missingTables.length}`,
     );
-    debtNote(kind.debtKind, kind.unlisted.length);
-    for (const m of kind.missed ?? []) console.log("    " + m);
-    for (const u of debtList(kind.debtKind, kind.unlisted))
-      console.log("    " + u);
-    for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
-  }
+    for (const e of emptyRules) console.log("    " + e);
+    for (const m of missingTables) console.log("    " + m);
 
-  checkHead("Якоря", { n: anchors, unit: "якорей" });
-  console.log(`  с цитатой: ${cited}, битых: ${broken.length}`);
-  for (const b of broken) console.log("    " + b);
+    for (const kind of markerKinds) {
+      checkHead(kind.title, { n: kind.total, unit: "пометок в коде" });
+      console.log(
+        `  без записи в ${kind.base}: ${kind.unlisted.length}` +
+          debtTail(kind.debtKind) +
+          `, названо записью и снято из кода: ${kind.gone.length}` +
+          (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
+      );
+      debtNote(kind.debtKind, kind.unlisted.length);
+      for (const m of kind.missed ?? []) console.log("    " + m);
+      for (const u of debtList(kind.debtKind, kind.unlisted))
+        console.log("    " + u);
+      for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
+    }
+  });
+  checkStep(() => {
+    checkHead("Якоря", () => ({ n: anchors, unit: "якорей" }));
+    console.log(`  с цитатой: ${cited}, битых: ${broken.length}`);
+    for (const b of broken) console.log("    " + b);
+  });
   // 9a. каждый режим инструмента описан в справочнике и назван в правилах.
   // Заведено после пробы: справочник объявляет себя полным («оговорки и ловушки
   // КАЖДОГО режима»), а держать это обещание было нечему — новый режим мог
   // остаться неописанным, и заметить это стало бы некому.
   const undocumented = [];
-  {
-    const modes = toolModes();
-    // Справочник лежит рядом с ИНСТРУМЕНТОМ, а не с базой: это его собственный
-    // сосед, и переезд инструмента уводит справочник с собой.
-    const manualAt = path.join(TOOL_DIR, TOOL_MANUAL);
-    const manual = existsSync(manualAt) ? readFileSync(manualAt, "utf8") : null;
-    const implemented = new Set(modes);
-    // Вторая половина сверки — «режим назван в файлах правил» — снята вместе с
-    // перечнем режимов в правилах. Перечень был вторым списком тех же имён и
-    // разошёлся бы со справочником при первом новом режиме. Правила называют
-    // инструмент одним указателем, а режимы описаны там, где живут.
-    for (const m of [...implemented].sort()) {
-      if (
-        manual !== null &&
-        !new RegExp("^### `" + m + "\\b", "m").test(manual)
-      )
-        undocumented.push(`нет раздела в справочнике: ${m}`);
+  checkStep(() => {
+    {
+      const modes = toolModes();
+      // Справочник лежит рядом с ИНСТРУМЕНТОМ, а не с базой: это его собственный
+      // сосед, и переезд инструмента уводит справочник с собой.
+      const manualAt = path.join(TOOL_DIR, TOOL_MANUAL);
+      const manual = existsSync(manualAt)
+        ? readFileSync(manualAt, "utf8")
+        : null;
+      const implemented = new Set(modes);
+      // Вторая половина сверки — «режим назван в файлах правил» — снята вместе с
+      // перечнем режимов в правилах. Перечень был вторым списком тех же имён и
+      // разошёлся бы со справочником при первом новом режиме. Правила называют
+      // инструмент одним указателем, а режимы описаны там, где живут.
+      for (const m of [...implemented].sort()) {
+        if (
+          manual !== null &&
+          !new RegExp("^### `" + m + "\\b", "m").test(manual)
+        )
+          undocumented.push(`нет раздела в справочнике: ${m}`);
+      }
+      // Обратная сторона: раздел справочника про режим, которого нет. Справочник
+      // объявляет себя полным, и такой раздел отправляет читателя вызывать
+      // команду, которой не существует, — это хуже отсутствия раздела, потому что
+      // ему верят. Найдено пробой: раздел про выдуманный режим прошёл зелёным.
+      if (manual !== null)
+        for (const hit of manual.matchAll(/^### `([a-z-]+)\b/gm))
+          if (!implemented.has(hit[1]))
+            undocumented.push(`раздел есть, режима нет: ${hit[1]}`);
     }
-    // Обратная сторона: раздел справочника про режим, которого нет. Справочник
-    // объявляет себя полным, и такой раздел отправляет читателя вызывать
-    // команду, которой не существует, — это хуже отсутствия раздела, потому что
-    // ему верят. Найдено пробой: раздел про выдуманный режим прошёл зелёным.
-    if (manual !== null)
-      for (const hit of manual.matchAll(/^### `([a-z-]+)\b/gm))
-        if (!implemented.has(hit[1]))
-          undocumented.push(`раздел есть, режима нет: ${hit[1]}`);
-  }
+  });
 
   // Заголовок называет ПАРЫ, а не инструмент: список давно шире инструмента —
   // в нём справочник, словарь области, набор тестов на него и политика
@@ -20501,53 +20683,62 @@ if (mode === "verify") {
 
   // 9c. каждое точечное исключение линта объяснено, и каждое объяснение живо.
   const lintDrift = [];
-  if (CONFIG.lintExceptions != null) {
-    // Директива бывает и комментарием разметки — `{/* eslint-disable… */}`:
-    // в разметке другого комментария нет. Прежде она не опознавалась, и
-    // таблица, объясняющая такое исключение, числилась объясняющей пустоту.
-    const DIRECTIVE = /^\s*\{?\s*(?:\/\/|\/\*)\s*eslint-disable/;
-    const withDirective = new Set();
-    for (const f of files) {
-      const hit = readFileSync(f, "utf8")
-        .split(NEWLINE)
-        .some((line) => DIRECTIVE.test(line));
-      if (hit) withDirective.add(rel(f));
-    }
-    const at = path.join(BASE, CONFIG.lintExceptions.table);
-    const text = existsSync(at) ? readFileSync(at, "utf8").split(NEWLINE) : [];
-    const start = text.findIndex((l) =>
-      l.startsWith(CONFIG.lintExceptions.heading),
-    );
-    // Нет таблицы и нет ни одной директивы — нет и предмета: у нового проекта
-    // так и будет, а таблица заводится вместе с первым исключением. Требовать
-    // её раньше значит ронять посадку на пустом месте — поймано пересадкой,
-    // сразу после того, как сверку завели.
-    if (start < 0 && withDirective.size === 0) {
-      // предмета нет — расхождений тоже
-    } else if (start < 0)
-      lintDrift.push(
-        `исключения в коде есть (${withDirective.size} файлов), а таблицы, которая их объясняет, нет`,
-      );
-    else {
-      const named = new Set();
-      for (let i = start + 2; i < text.length && text[i].startsWith("|"); i++) {
-        const cell = text[i].split("|")[1] ?? "";
-        for (const tok of quotedIn(cell)) {
-          // Адрес принимается в обеих ходовых формах: от корня исходников и
-          // от корня репозитория, с `src/` впереди.
-          const found = [...withDirective].find(
-            (f) => f === tok || f.endsWith("/" + tok) || tok.endsWith("/" + f),
-          );
-          named.add(found ?? tok);
-        }
+  checkStep(() => {
+    if (CONFIG.lintExceptions != null) {
+      // Директива бывает и комментарием разметки — `{/* eslint-disable… */}`:
+      // в разметке другого комментария нет. Прежде она не опознавалась, и
+      // таблица, объясняющая такое исключение, числилась объясняющей пустоту.
+      const DIRECTIVE = /^\s*\{?\s*(?:\/\/|\/\*)\s*eslint-disable/;
+      const withDirective = new Set();
+      for (const f of files) {
+        const hit = readFileSync(f, "utf8")
+          .split(NEWLINE)
+          .some((line) => DIRECTIVE.test(line));
+        if (hit) withDirective.add(rel(f));
       }
-      for (const f of withDirective)
-        if (!named.has(f)) lintDrift.push(`исключение без объяснения: ${f}`);
-      for (const n of named)
-        if (!withDirective.has(n))
-          lintDrift.push(`объяснение без исключения: ${n}`);
+      const at = path.join(BASE, CONFIG.lintExceptions.table);
+      const text = existsSync(at)
+        ? readFileSync(at, "utf8").split(NEWLINE)
+        : [];
+      const start = text.findIndex((l) =>
+        l.startsWith(CONFIG.lintExceptions.heading),
+      );
+      // Нет таблицы и нет ни одной директивы — нет и предмета: у нового проекта
+      // так и будет, а таблица заводится вместе с первым исключением. Требовать
+      // её раньше значит ронять посадку на пустом месте — поймано пересадкой,
+      // сразу после того, как сверку завели.
+      if (start < 0 && withDirective.size === 0) {
+        // предмета нет — расхождений тоже
+      } else if (start < 0)
+        lintDrift.push(
+          `исключения в коде есть (${withDirective.size} файлов), а таблицы, которая их объясняет, нет`,
+        );
+      else {
+        const named = new Set();
+        for (
+          let i = start + 2;
+          i < text.length && text[i].startsWith("|");
+          i++
+        ) {
+          const cell = text[i].split("|")[1] ?? "";
+          for (const tok of quotedIn(cell)) {
+            // Адрес принимается в обеих ходовых формах: от корня исходников и
+            // от корня репозитория, с `src/` впереди.
+            const found = [...withDirective].find(
+              (f) =>
+                f === tok || f.endsWith("/" + tok) || tok.endsWith("/" + f),
+            );
+            named.add(found ?? tok);
+          }
+        }
+        for (const f of withDirective)
+          if (!named.has(f)) lintDrift.push(`исключение без объяснения: ${f}`);
+        for (const n of named)
+          if (!withDirective.has(n))
+            lintDrift.push(`объяснение без исключения: ${n}`);
+      }
     }
-  }
+  });
 
   // 9d. решения и ссылки на них сверяются В ОБЕ СТОРОНЫ.
   // Прямая: решение, на которое не ссылается никто, читают только те, кто уже
@@ -20558,354 +20749,373 @@ if (mode === "verify") {
   const orphanAdr = [];
   let adrLooked = 0;
   const danglingAdr = [];
-  if (CONFIG.adr != null) {
-    const dir = norm(path.join(BASE, CONFIG.adr.dir));
-    // Нет папки — нет предмета: у нового проекта решений ещё не было, и
-    // требовать её значило бы ронять посадку на пустом месте. Поймано
-    // пересадкой, ровно как со сверкой исключений линта.
-    if (!existsSync(dir)) {
-      /* решений пока нет */
-    } else {
-      const decisions = readdirSync(dir).filter((n) => /\.md$/.test(n));
-      adrLooked = decisions.length;
-      // Ссылкой считается номер решения (`ADR-004`) или имя его файла. Сам
-      // документ себя не адресует, поэтому из корпуса исключается он один.
-      for (const file of decisions) {
-        const number = /^(\d+)/.exec(file)?.[1] ?? null;
-        const marks = [file.replace(/\.md$/, ""), file];
-        // Корпус ссылок включает ФАЙЛЫ ПРАВИЛ. Правила — естественное место
-        // сослаться на решение: «почему так» там и объясняют. Без них решение,
-        // названное только в правилах, читалось как никем не адресованное, и
-        // предлагалось снести живую запись. Найдено посадкой в проект со
-        // вложенными правилами единицы переноса.
-        const rulesFiles = (CONFIG.rulesManifest?.rules ?? [])
-          .map((one) => norm(path.join(BASE, one)))
-          .filter((one) => existsSync(one));
-        const found = [
-          ...files,
-          ...styleFiles,
-          ...docFiles,
-          ...rulesFiles,
-        ].some((f) => {
-          if (norm(f) === norm(path.join(dir, file))) return false;
-          const body = readFileSync(f, "utf8");
-          if (marks.some((m) => body.includes(m))) return true;
-          // Номер сравнивается ЧИСЛОМ, а не строкой. Имя файла решения
-          // дополняют нулями до ширины — `0001`, — а ссылаются на него коротко:
-          // `ADR-1`. Так написан и заголовок самого документа. Сравнение строкой
-          // требовало дословного `ADR-0001`, и проект, сославшийся естественной
-          // формой, получал «на решение не ссылается никто» — при том что
-          // СОСЕДНЯЯ сверка, разбирающая якоря на документы, ту же ссылку
-          // разрешает: она номер к числу приводит. Два места инструмента читали
-          // одну форму по-разному, и расходились они молча.
-          if (number === null) return false;
-          ADR_REF.lastIndex = 0;
-          let hit;
-          while ((hit = ADR_REF.exec(body)) !== null)
-            if (Number(hit[1]) === Number(number)) return true;
-          return false;
-        });
-        if (!found) orphanAdr.push(`на решение не ссылается никто: ${file}`);
+  checkStep(() => {
+    if (CONFIG.adr != null) {
+      const dir = norm(path.join(BASE, CONFIG.adr.dir));
+      // Нет папки — нет предмета: у нового проекта решений ещё не было, и
+      // требовать её значило бы ронять посадку на пустом месте. Поймано
+      // пересадкой, ровно как со сверкой исключений линта.
+      if (!existsSync(dir)) {
+        /* решений пока нет */
+      } else {
+        const decisions = readdirSync(dir).filter((n) => /\.md$/.test(n));
+        adrLooked = decisions.length;
+        // Ссылкой считается номер решения (`ADR-004`) или имя его файла. Сам
+        // документ себя не адресует, поэтому из корпуса исключается он один.
+        for (const file of decisions) {
+          const number = /^(\d+)/.exec(file)?.[1] ?? null;
+          const marks = [file.replace(/\.md$/, ""), file];
+          // Корпус ссылок включает ФАЙЛЫ ПРАВИЛ. Правила — естественное место
+          // сослаться на решение: «почему так» там и объясняют. Без них решение,
+          // названное только в правилах, читалось как никем не адресованное, и
+          // предлагалось снести живую запись. Найдено посадкой в проект со
+          // вложенными правилами единицы переноса.
+          const rulesFiles = (CONFIG.rulesManifest?.rules ?? [])
+            .map((one) => norm(path.join(BASE, one)))
+            .filter((one) => existsSync(one));
+          const found = [
+            ...files,
+            ...styleFiles,
+            ...docFiles,
+            ...rulesFiles,
+          ].some((f) => {
+            if (norm(f) === norm(path.join(dir, file))) return false;
+            const body = readFileSync(f, "utf8");
+            if (marks.some((m) => body.includes(m))) return true;
+            // Номер сравнивается ЧИСЛОМ, а не строкой. Имя файла решения
+            // дополняют нулями до ширины — `0001`, — а ссылаются на него коротко:
+            // `ADR-1`. Так написан и заголовок самого документа. Сравнение строкой
+            // требовало дословного `ADR-0001`, и проект, сославшийся естественной
+            // формой, получал «на решение не ссылается никто» — при том что
+            // СОСЕДНЯЯ сверка, разбирающая якоря на документы, ту же ссылку
+            // разрешает: она номер к числу приводит. Два места инструмента читали
+            // одну форму по-разному, и расходились они молча.
+            if (number === null) return false;
+            ADR_REF.lastIndex = 0;
+            let hit;
+            while ((hit = ADR_REF.exec(body)) !== null)
+              if (Number(hit[1]) === Number(number)) return true;
+            return false;
+          });
+          if (!found) orphanAdr.push(`на решение не ссылается никто: ${file}`);
+        }
       }
     }
-  }
+  });
 
   // 9e. каждая константа таблицы настроек названа в её документе.
   const undocumentedConst = [];
   let constantsChecked = 0;
-  if (CONFIG.configDocs != null) {
-    const dir = norm(path.join(BASE, CONFIG.configDocs.dir));
-    const docsDir = norm(path.join(BASE, CONFIG.configDocs.docs));
-    // Как и у решений: нет предмета — нет сверки. Новый проект садится на
-    // пустое место, и требовать с него таблиц значило бы ронять первый прогон.
-    if (existsSync(dir) && existsSync(docsDir)) {
-      // Сегменты имени разбирают обе стороны: сокращение в документе значит
-      // «то же имя, кроме одного сегмента», и разворачивается только по
-      // соседу из ТОЙ ЖЕ строки. Совпадение по одному лишь куску имени
-      // засчитывало бы `…SHARE…` за любую константу с таким сегментом.
-      const parts = (n) => n.split("_");
-      const pairs = (line) => {
-        const tokens = [...line.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
-        const full = tokens.filter((t) => /^[A-Z][A-Z0-9_]*$/.test(t));
-        const short = tokens
-          .filter((t) => t.includes("…"))
-          .map((t) => t.replace(/…/g, ""))
-          .filter((t) => /^[A-Z][A-Z0-9_]*$/.test(t));
-        return { full, short };
-      };
-      for (const file of readdirSync(dir).filter((n) => /\.ts$/.test(n))) {
-        const code = readFileSync(path.join(dir, file), "utf8");
-        const names = parseModule(code, file).constants;
-        if (names.length === 0) continue; // бочка и типы констант не объявляют
-        const doc = path.join(docsDir, file.replace(/\.ts$/, ".md"));
-        if (!existsSync(doc)) {
-          undocumentedConst.push(`таблица без документа: ${file}`);
-          continue;
-        }
-        const lines = readFileSync(doc, "utf8").split(NEWLINE);
-        const forms = lines.map(pairs);
-        for (const name of names) {
-          constantsChecked++;
-          if (lines.some((l) => l.includes(name))) continue;
-          const own = parts(name);
-          const spelled = forms.some(({ full, short }) =>
-            short.some((s) =>
-              full.some((f) => {
-                const other = parts(f);
-                if (other.length !== own.length) return false;
-                const differ = own.filter((_, i) => own[i] !== other[i]);
-                return differ.length === 1 && differ[0] === s;
-              }),
-            ),
-          );
-          if (!spelled) undocumentedConst.push(`${file} → ${name}`);
-        }
-      }
-      // Обратная сторона: документ, чья таблица настроек исчезла. Он продолжает
-      // описывать константы, которых нет, и читается как действующий — при
-      // удалении файла сверка иначе просто замолкает, потому что перебирать
-      // становится нечего. Найдено пробой.
-      for (const doc of readdirSync(docsDir).filter((n) => /\.md$/.test(n))) {
-        // Спрашивается только с документа, который КОНСТАНТЫ И ОПИСЫВАЕТ, —
-        // признак: он называет хотя бы одно имя из заглавных букв в обратных
-        // кавычках. Папка документации держит и другое: соглашения проекта,
-        // витрину возможностей, решения. Требовать таблицы настроек от них
-        // значило бы краснеть на законном — и краснеть в первую очередь на
-        // СОБСТВЕННЫХ семенах обвязки, которые кладутся в ту же папку. Найдено
-        // посадкой в проект, впервые объявивший таблицы настроек.
-        const body = readFileSync(path.join(docsDir, doc), "utf8");
-        if (!/`[A-Z][A-Z0-9_]*`/.test(body)) continue;
-        const table = path.join(dir, doc.replace(/\.md$/, ".ts"));
-        if (!existsSync(table))
-          undocumentedConst.push(`документ без таблицы: ${doc}`);
-      }
-      // Вторая обратная сторона, и она про имя, а не про файл: константа
-      // перестала быть настройкой — сняли `export`, переименовали, убрали, — а
-      // документ продолжает объяснять её как ручку, которую хост может крутить.
-      // Общая сверка имён в тексте это пропускает: она спрашивает, есть ли имя
-      // в исполняемом тексте, и `const` без `export` ей подходит. Найдено
-      // пробой. Спрашивается принадлежность НАБОРУ настроек, а не своей паре:
-      // документ законно ссылается на константу соседнего файла, и требование
-      // «имя из своей пары» краснело бы на этом — замерено, такая ссылка есть.
-      const settingNames = new Set();
-      for (const file of readdirSync(dir).filter((n) => /\.ts$/.test(n)))
-        for (const name of parseModule(
-          readFileSync(path.join(dir, file), "utf8"),
-          file,
-        ).constants)
-          settingNames.add(name);
-      for (const doc of readdirSync(docsDir).filter((n) => /\.md$/.test(n))) {
-        const lines = readFileSync(path.join(docsDir, doc), "utf8").split(
-          NEWLINE,
-        );
-        for (const [i, line] of lines.entries())
-          for (const mm of line.matchAll(/`([^`\n]+)`/g)) {
-            const tok = mm[1];
-            // Одно слово заглавными — это не имя настройки, а слово в тексте
-            // (`DEV`, `CSS`): у настроек имя составное.
-            if (!/^[A-Z][A-Z0-9_]*$/.test(tok) || !tok.includes("_")) continue;
-            constantsChecked++;
-            if (!settingNames.has(tok))
-              undocumentedConst.push(
-                `${doc}:${i + 1} — ${tok}: документ описывает настройку, которой среди настроек нет`,
-              );
+  checkStep(() => {
+    if (CONFIG.configDocs != null) {
+      const dir = norm(path.join(BASE, CONFIG.configDocs.dir));
+      const docsDir = norm(path.join(BASE, CONFIG.configDocs.docs));
+      // Как и у решений: нет предмета — нет сверки. Новый проект садится на
+      // пустое место, и требовать с него таблиц значило бы ронять первый прогон.
+      if (existsSync(dir) && existsSync(docsDir)) {
+        // Сегменты имени разбирают обе стороны: сокращение в документе значит
+        // «то же имя, кроме одного сегмента», и разворачивается только по
+        // соседу из ТОЙ ЖЕ строки. Совпадение по одному лишь куску имени
+        // засчитывало бы `…SHARE…` за любую константу с таким сегментом.
+        const parts = (n) => n.split("_");
+        const pairs = (line) => {
+          const tokens = [...line.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+          const full = tokens.filter((t) => /^[A-Z][A-Z0-9_]*$/.test(t));
+          const short = tokens
+            .filter((t) => t.includes("…"))
+            .map((t) => t.replace(/…/g, ""))
+            .filter((t) => /^[A-Z][A-Z0-9_]*$/.test(t));
+          return { full, short };
+        };
+        for (const file of readdirSync(dir).filter((n) => /\.ts$/.test(n))) {
+          const code = readFileSync(path.join(dir, file), "utf8");
+          const names = parseModule(code, file).constants;
+          if (names.length === 0) continue; // бочка и типы констант не объявляют
+          const doc = path.join(docsDir, file.replace(/\.ts$/, ".md"));
+          if (!existsSync(doc)) {
+            undocumentedConst.push(`таблица без документа: ${file}`);
+            continue;
           }
+          const lines = readFileSync(doc, "utf8").split(NEWLINE);
+          const forms = lines.map(pairs);
+          for (const name of names) {
+            constantsChecked++;
+            if (lines.some((l) => l.includes(name))) continue;
+            const own = parts(name);
+            const spelled = forms.some(({ full, short }) =>
+              short.some((s) =>
+                full.some((f) => {
+                  const other = parts(f);
+                  if (other.length !== own.length) return false;
+                  const differ = own.filter((_, i) => own[i] !== other[i]);
+                  return differ.length === 1 && differ[0] === s;
+                }),
+              ),
+            );
+            if (!spelled) undocumentedConst.push(`${file} → ${name}`);
+          }
+        }
+        // Обратная сторона: документ, чья таблица настроек исчезла. Он продолжает
+        // описывать константы, которых нет, и читается как действующий — при
+        // удалении файла сверка иначе просто замолкает, потому что перебирать
+        // становится нечего. Найдено пробой.
+        for (const doc of readdirSync(docsDir).filter((n) => /\.md$/.test(n))) {
+          // Спрашивается только с документа, который КОНСТАНТЫ И ОПИСЫВАЕТ, —
+          // признак: он называет хотя бы одно имя из заглавных букв в обратных
+          // кавычках. Папка документации держит и другое: соглашения проекта,
+          // витрину возможностей, решения. Требовать таблицы настроек от них
+          // значило бы краснеть на законном — и краснеть в первую очередь на
+          // СОБСТВЕННЫХ семенах обвязки, которые кладутся в ту же папку. Найдено
+          // посадкой в проект, впервые объявивший таблицы настроек.
+          const body = readFileSync(path.join(docsDir, doc), "utf8");
+          if (!/`[A-Z][A-Z0-9_]*`/.test(body)) continue;
+          const table = path.join(dir, doc.replace(/\.md$/, ".ts"));
+          if (!existsSync(table))
+            undocumentedConst.push(`документ без таблицы: ${doc}`);
+        }
+        // Вторая обратная сторона, и она про имя, а не про файл: константа
+        // перестала быть настройкой — сняли `export`, переименовали, убрали, — а
+        // документ продолжает объяснять её как ручку, которую хост может крутить.
+        // Общая сверка имён в тексте это пропускает: она спрашивает, есть ли имя
+        // в исполняемом тексте, и `const` без `export` ей подходит. Найдено
+        // пробой. Спрашивается принадлежность НАБОРУ настроек, а не своей паре:
+        // документ законно ссылается на константу соседнего файла, и требование
+        // «имя из своей пары» краснело бы на этом — замерено, такая ссылка есть.
+        const settingNames = new Set();
+        for (const file of readdirSync(dir).filter((n) => /\.ts$/.test(n)))
+          for (const name of parseModule(
+            readFileSync(path.join(dir, file), "utf8"),
+            file,
+          ).constants)
+            settingNames.add(name);
+        for (const doc of readdirSync(docsDir).filter((n) => /\.md$/.test(n))) {
+          const lines = readFileSync(path.join(docsDir, doc), "utf8").split(
+            NEWLINE,
+          );
+          for (const [i, line] of lines.entries())
+            for (const mm of line.matchAll(/`([^`\n]+)`/g)) {
+              const tok = mm[1];
+              // Одно слово заглавными — это не имя настройки, а слово в тексте
+              // (`DEV`, `CSS`): у настроек имя составное.
+              if (!/^[A-Z][A-Z0-9_]*$/.test(tok) || !tok.includes("_"))
+                continue;
+              constantsChecked++;
+              if (!settingNames.has(tok))
+                undocumentedConst.push(
+                  `${doc}:${i + 1} — ${tok}: документ описывает настройку, которой среди настроек нет`,
+                );
+            }
+        }
       }
     }
-  }
-  checkHead("Константы настроек описаны", {
-    n: constantsChecked,
-    unit: "констант настроек",
   });
-  console.log(
-    `  разошлось: ${undocumentedConst.length}` + debtTail("constants"),
-  );
-  debtNote("constants", undocumentedConst.length);
-  for (const c of debtList("constants", undocumentedConst))
-    console.log("    " + c);
-
-  checkHead("Точечные исключения линта", {
-    n: files.length,
-    unit: "файлов кода",
+  checkStep(() => {
+    checkHead("Константы настроек описаны", () => ({
+      n: constantsChecked,
+      unit: "констант настроек",
+    }));
+    console.log(
+      `  разошлось: ${undocumentedConst.length}` + debtTail("constants"),
+    );
+    debtNote("constants", undocumentedConst.length);
+    for (const c of debtList("constants", undocumentedConst))
+      console.log("    " + c);
   });
-  console.log(`  расхождений: ${lintDrift.length}`);
-  for (const l of lintDrift) console.log("    " + l);
+  checkStep(() => {
+    checkHead("Точечные исключения линта", () => ({
+      n: files.length,
+      unit: "файлов кода",
+    }));
+    console.log(`  расхождений: ${lintDrift.length}`);
+    for (const l of lintDrift) console.log("    " + l);
+  });
 
   // 9f. выключения правил в самом конфиге линта — против объявленного списка.
   const offDrift = [];
-  if (CONFIG.lintConfigOff != null) {
-    const at = path.join(BASE, CONFIG.lintConfigOff.file);
-    if (!existsSync(at)) offDrift.push(`конфига линта нет: ${rel0(at)}`);
-    else {
-      // Конфиг разбирается ТЕКСТОМ, а не импортом: импорт потянул бы за собой
-      // все плагины линта — секунды к прогону и падение там, где их ещё не
-      // ставили. Блок узнаётся по балансу скобок, область — по строке `files`
-      // внутри него; блок без `files` действует на весь репозиторий, и пустая
-      // область здесь именно это и означает.
-      const found = [];
-      let depth = 0;
-      let block = null;
-      for (const line of readFileSync(at, "utf8").split(NEWLINE)) {
-        const opens = (line.match(/\{/g) ?? []).length;
-        const closes = (line.match(/\}/g) ?? []).length;
-        if (depth === 0 && opens > 0) block = { files: [], off: [] };
-        if (block !== null) {
-          const f = /files:\s*\[([^\]]*)\]/.exec(line);
-          if (f !== null)
-            block.files.push(
-              ...[...f[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]),
-            );
-          for (const m of line.matchAll(/"([^"]+)"\s*:\s*"off"/g))
-            block.off.push(m[1]);
+  checkStep(() => {
+    if (CONFIG.lintConfigOff != null) {
+      const at = path.join(BASE, CONFIG.lintConfigOff.file);
+      if (!existsSync(at)) offDrift.push(`конфига линта нет: ${rel0(at)}`);
+      else {
+        // Конфиг разбирается ТЕКСТОМ, а не импортом: импорт потянул бы за собой
+        // все плагины линта — секунды к прогону и падение там, где их ещё не
+        // ставили. Блок узнаётся по балансу скобок, область — по строке `files`
+        // внутри него; блок без `files` действует на весь репозиторий, и пустая
+        // область здесь именно это и означает.
+        const found = [];
+        let depth = 0;
+        let block = null;
+        for (const line of readFileSync(at, "utf8").split(NEWLINE)) {
+          const opens = (line.match(/\{/g) ?? []).length;
+          const closes = (line.match(/\}/g) ?? []).length;
+          if (depth === 0 && opens > 0) block = { files: [], off: [] };
+          if (block !== null) {
+            const f = /files:\s*\[([^\]]*)\]/.exec(line);
+            if (f !== null)
+              block.files.push(
+                ...[...f[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+              );
+            for (const m of line.matchAll(/"([^"]+)"\s*:\s*"off"/g))
+              block.off.push(m[1]);
+          }
+          depth += opens - closes;
+          if (depth <= 0 && block !== null) {
+            for (const rule of block.off)
+              for (const scope of block.files.length ? block.files : ["**"])
+                found.push(`${scope} → ${rule}`);
+            block = null;
+            depth = 0;
+          }
         }
-        depth += opens - closes;
-        if (depth <= 0 && block !== null) {
-          for (const rule of block.off)
-            for (const scope of block.files.length ? block.files : ["**"])
-              found.push(`${scope} → ${rule}`);
-          block = null;
-          depth = 0;
-        }
+        const declared = new Set(
+          CONFIG.lintConfigOff.allowed.map(
+            ([scope, rule]) => `${scope} → ${rule}`,
+          ),
+        );
+        for (const one of found)
+          if (!declared.has(one))
+            offDrift.push(`выключено, но не объявлено: ${one}`);
+        for (const one of declared)
+          if (!found.includes(one))
+            offDrift.push(`объявлено, но не выключено: ${one}`);
       }
-      const declared = new Set(
-        CONFIG.lintConfigOff.allowed.map(
-          ([scope, rule]) => `${scope} → ${rule}`,
-        ),
-      );
-      for (const one of found)
-        if (!declared.has(one))
-          offDrift.push(`выключено, но не объявлено: ${one}`);
-      for (const one of declared)
-        if (!found.includes(one))
-          offDrift.push(`объявлено, но не выключено: ${one}`);
     }
-  }
-  checkHead("Выключения правил линта", {
-    n: (CONFIG.lintConfigOff?.allowed ?? []).length,
-    unit: "объявленных выключений",
   });
-  console.log(
-    CONFIG.lintConfigOff == null
-      ? IDLE_NOTES["Выключения правил линта"]
-      : `  расхождений: ${offDrift.length}`,
-  );
-  for (const o of offDrift) console.log("    " + o);
-
-  checkHead("Режимы инструмента описаны", {
-    n: toolModes().length,
-    unit: "режимов инструмента",
+  checkStep(() => {
+    checkHead("Выключения правил линта", () => ({
+      n: (CONFIG.lintConfigOff?.allowed ?? []).length,
+      unit: "объявленных выключений",
+    }));
+    console.log(
+      CONFIG.lintConfigOff == null
+        ? IDLE_NOTES["Выключения правил линта"]
+        : `  расхождений: ${offDrift.length}`,
+    );
+    for (const o of offDrift) console.log("    " + o);
   });
-  console.log(`  без описания: ${undocumented.length}`);
-  for (const u of undocumented) console.log("    " + u);
+  checkStep(() => {
+    checkHead("Режимы инструмента описаны", () => ({
+      n: toolModes().length,
+      unit: "режимов инструмента",
+    }));
+    console.log(`  без описания: ${undocumented.length}`);
+    for (const u of undocumented) console.log("    " + u);
+  });
 
   // 9b. список разрешений среды не потерял того, что обещает полка
   const settingsDrift = [];
   let settingsLooked = 0;
   const settingsEarned = [];
-  {
-    // Правило записывается двумя равными формами: `Bash(ls *)` и `Bash(ls:*)`
-    // — среда считает их одним и тем же, а диалог подтверждения пишет первую.
-    // Сравнение дословно объявляло бы потерянным правило, записанное второй
-    // формой, то есть краснело бы на законном. Проверено по описанию среды.
-    const same = (one) =>
-      one.replace(new RegExp(":\\*\\)$"), " *)").replace(/\s+/g, " ");
-    // Спрашиваются ТРИ списка, а не один. Прежде смотрели только `allow`, и
-    // проект, потерявший запреты, проходил зелёным — при том что `deny` и
-    // `ask` и есть страховка от разрушительного, а `allow` всего лишь снимает
-    // вопросы. Хуже того: `allow` начинает действовать только после того, как
-    // папке доверились, а `deny` и `ask` — сразу.
-    const kinds = ["deny", "ask", "allow"];
-    const readAt = (at) => {
-      if (!existsSync(at)) return null;
-      const parsed = JSON.parse(readFileSync(at, "utf8"));
-      return Object.fromEntries(
-        kinds.map((k) => [k, (parsed?.permissions?.[k] ?? []).map(same)]),
-      );
-    };
-    const shared = readAt(path.join(BASE, CONFIG.settingsProject));
-    settingsLooked =
-      shared === null
-        ? 0
-        : kinds.reduce((n, k) => n + (shared[k] ?? []).length, 0);
-    const local = readAt(
-      path
-        .join(BASE, CONFIG.settingsProject)
-        .replace(/settings.json$/, "settings.local.json"),
-    );
-    if (shared === null)
-      settingsDrift.push(`нет файла: ${CONFIG.settingsProject}`);
-    // Запреты и вопросы СЕМЕНИ обязаны стоять в общем файле проекта. Файл
-    // ложится семенем, а у проекта со своим — дописывается в него; слияние
-    // делает человек, и потерянный запрет выглядит так же, как не
-    // привезённый. Прежде общий файл ехал в самом снимке, и команда установки
-    // затирала им файл проекта — теперь проект сохраняет своё, и держать
-    // приходится обратное: что обвязкино не потерялось. Разрешения `allow`
-    // не спрашиваются: без них задают вопрос, а без запрета — не спрашивают.
-    const seedSettings = readAt(shelfAt("seat/templates/settings.json") ?? "");
-    if (shared !== null && seedSettings !== null)
-      for (const kind of ["deny", "ask"])
-        for (const entry of seedSettings[kind])
-          if (!shared[kind].includes(entry))
-            settingsDrift.push(
-              `${kind}: ${entry} — есть в семени, нет в общем файле проекта`,
-            );
-    // И строки ПРОЕКТА слияние не снимает (`seat/seat.md`, шаг 5). Пока стоит
-    // флаг посадки, прежний вид файла лежит в последнем коммите. Семя,
-    // положенное поверх файла проекта, снимало его запрет без признака: сверка
-    // выше спрашивала только строки семени. Найдено пробой по холодному
-    // контуру. Крючки обвязки прежней формы заменяют семенными, и они не
-    // спрашиваются; свои крючки проекта — спрашиваются.
-    if (shared !== null && seatingIsUp()) {
-      const at = path.join(BASE, CONFIG.settingsProject);
-      let was = null;
-      try {
-        was = JSON.parse(headTextOf(at) ?? "null");
-      } catch {
-        was = null;
-      }
-      const hooksOf = (parsed) =>
-        Object.entries(parsed?.hooks ?? {}).flatMap(([event, groups]) =>
-          (groups ?? []).flatMap((group) =>
-            (group?.hooks ?? [])
-              .map((h) => [h.command, ...(h.args ?? [])].join(" "))
-              .filter((call) => !call.includes(".claude/tools/"))
-              .map((call) => `${event}: ${call}`),
-          ),
+  checkStep(() => {
+    {
+      // Правило записывается двумя равными формами: `Bash(ls *)` и `Bash(ls:*)`
+      // — среда считает их одним и тем же, а диалог подтверждения пишет первую.
+      // Сравнение дословно объявляло бы потерянным правило, записанное второй
+      // формой, то есть краснело бы на законном. Проверено по описанию среды.
+      const same = (one) =>
+        one.replace(new RegExp(":\\*\\)$"), " *)").replace(/\s+/g, " ");
+      // Спрашиваются ТРИ списка, а не один. Прежде смотрели только `allow`, и
+      // проект, потерявший запреты, проходил зелёным — при том что `deny` и
+      // `ask` и есть страховка от разрушительного, а `allow` всего лишь снимает
+      // вопросы. Хуже того: `allow` начинает действовать только после того, как
+      // папке доверились, а `deny` и `ask` — сразу.
+      const kinds = ["deny", "ask", "allow"];
+      const readAt = (at) => {
+        if (!existsSync(at)) return null;
+        const parsed = JSON.parse(readFileSync(at, "utf8"));
+        return Object.fromEntries(
+          kinds.map((k) => [k, (parsed?.permissions?.[k] ?? []).map(same)]),
         );
-      if (was !== null) {
-        for (const kind of kinds)
-          for (const entry of (was.permissions?.[kind] ?? []).map(same))
+      };
+      const shared = readAt(path.join(BASE, CONFIG.settingsProject));
+      settingsLooked =
+        shared === null
+          ? 0
+          : kinds.reduce((n, k) => n + (shared[k] ?? []).length, 0);
+      const local = readAt(
+        path
+          .join(BASE, CONFIG.settingsProject)
+          .replace(/settings.json$/, "settings.local.json"),
+      );
+      if (shared === null)
+        settingsDrift.push(`нет файла: ${CONFIG.settingsProject}`);
+      // Запреты и вопросы СЕМЕНИ обязаны стоять в общем файле проекта. Файл
+      // ложится семенем, а у проекта со своим — дописывается в него; слияние
+      // делает человек, и потерянный запрет выглядит так же, как не
+      // привезённый. Прежде общий файл ехал в самом снимке, и команда установки
+      // затирала им файл проекта — теперь проект сохраняет своё, и держать
+      // приходится обратное: что обвязкино не потерялось. Разрешения `allow`
+      // не спрашиваются: без них задают вопрос, а без запрета — не спрашивают.
+      const seedSettings = readAt(
+        shelfAt("seat/templates/settings.json") ?? "",
+      );
+      if (shared !== null && seedSettings !== null)
+        for (const kind of ["deny", "ask"])
+          for (const entry of seedSettings[kind])
             if (!shared[kind].includes(entry))
               settingsDrift.push(
-                `${kind}: ${entry} — было в файле проекта до посадки, слияние его сняло`,
+                `${kind}: ${entry} — есть в семени, нет в общем файле проекта`,
               );
-        const hooksNow = new Set(hooksOf(JSON.parse(readFileSync(at, "utf8"))));
-        for (const hook of hooksOf(was))
-          if (!hooksNow.has(hook))
-            settingsDrift.push(
-              `крючок ${hook} — был в файле проекта до посадки, слияние его сняло`,
-            );
+      // И строки ПРОЕКТА слияние не снимает (`seat/seat.md`, шаг 5). Пока стоит
+      // флаг посадки, прежний вид файла лежит в последнем коммите. Семя,
+      // положенное поверх файла проекта, снимало его запрет без признака: сверка
+      // выше спрашивала только строки семени. Найдено пробой по холодному
+      // контуру. Крючки обвязки прежней формы заменяют семенными, и они не
+      // спрашиваются; свои крючки проекта — спрашиваются.
+      if (shared !== null && seatingIsUp()) {
+        const at = path.join(BASE, CONFIG.settingsProject);
+        let was = null;
+        try {
+          was = JSON.parse(headTextOf(at) ?? "null");
+        } catch {
+          was = null;
+        }
+        const hooksOf = (parsed) =>
+          Object.entries(parsed?.hooks ?? {}).flatMap(([event, groups]) =>
+            (groups ?? []).flatMap((group) =>
+              (group?.hooks ?? [])
+                .map((h) => [h.command, ...(h.args ?? [])].join(" "))
+                .filter((call) => !call.includes(".claude/tools/"))
+                .map((call) => `${event}: ${call}`),
+            ),
+          );
+        if (was !== null) {
+          for (const kind of kinds)
+            for (const entry of (was.permissions?.[kind] ?? []).map(same))
+              if (!shared[kind].includes(entry))
+                settingsDrift.push(
+                  `${kind}: ${entry} — было в файле проекта до посадки, слияние его сняло`,
+                );
+          const hooksNow = new Set(
+            hooksOf(JSON.parse(readFileSync(at, "utf8"))),
+          );
+          for (const hook of hooksOf(was))
+            if (!hooksNow.has(hook))
+              settingsDrift.push(
+                `крючок ${hook} — был в файле проекта до посадки, слияние его сняло`,
+              );
+        }
       }
+      // Обратная сторона, и она НЕ роняет прогон. Проект наживает разрешения по
+      // ходу работы, и большая часть из них законно проектная — свои скрипты,
+      // свои пути, свои службы. Но часть общая, и семя о ней не узнаёт ничем:
+      // следующий проект начнёт с нуля и нажмёт те же подтверждения заново.
+      // Замерено на живом файле рабочей области: сорок пять общих правил,
+      // которых в семени не было, нашлись только ручным сравнением.
+      //
+      // Печатается вопросом, а не ошибкой: судить «общее или проектное» может
+      // только человек, а прогон, краснеющий на законном, перестают читать.
+      // Нажитое кнопкой попадает в местный файл, и туда ему и дорога: оно не
+      // едет. Но часть нажитого общая, и тогда её переносят в общий файл руками.
+      // Вопрос об этом задаётся здесь; молча общее правило осталось бы местным
+      // навсегда, и следующий проект нажал бы его заново.
+      if (shared !== null && local !== null)
+        for (const kind of kinds)
+          for (const entry of local[kind])
+            if (!shared[kind].includes(entry))
+              settingsEarned.push(`${kind}: ${entry}`);
     }
-    // Обратная сторона, и она НЕ роняет прогон. Проект наживает разрешения по
-    // ходу работы, и большая часть из них законно проектная — свои скрипты,
-    // свои пути, свои службы. Но часть общая, и семя о ней не узнаёт ничем:
-    // следующий проект начнёт с нуля и нажмёт те же подтверждения заново.
-    // Замерено на живом файле рабочей области: сорок пять общих правил,
-    // которых в семени не было, нашлись только ручным сравнением.
-    //
-    // Печатается вопросом, а не ошибкой: судить «общее или проектное» может
-    // только человек, а прогон, краснеющий на законном, перестают читать.
-    // Нажитое кнопкой попадает в местный файл, и туда ему и дорога: оно не
-    // едет. Но часть нажитого общая, и тогда её переносят в общий файл руками.
-    // Вопрос об этом задаётся здесь; молча общее правило осталось бы местным
-    // навсегда, и следующий проект нажал бы его заново.
-    if (shared !== null && local !== null)
-      for (const kind of kinds)
-        for (const entry of local[kind])
-          if (!shared[kind].includes(entry))
-            settingsEarned.push(`${kind}: ${entry}`);
-  }
+  });
   // Версии установленного против объявленных минимумов.
   //
   // Спрашивается то, что РЕАЛЬНО лежит в зависимостях, а не диапазон из
@@ -20920,85 +21130,95 @@ if (mode === "verify") {
   // клон без пакетов печатал «осмотрено» всех объявленных и «связка
   // совпадает». Найдено пробой по холодному контуру.
   const notInstalled = [];
-  if (CONFIG.verifiedVersions != null) {
-    // Версия установленного: у `node` она своя, у МЕНЕДЖЕРА ПАКЕТОВ —
-    // спрашивается у него самого, у пакета — из его манифеста.
-    //
-    // Менеджер добавлен по замеру: его версия объявлена полем среды манифеста,
-    // сам он это поле не соблюдает, и на версии ниже объявленной установка
-    // падает собственной ошибкой, где про версию нет ни слова. Посадка при этом
-    // встаёт, а причина выглядит дефектом проекта.
-    const installed = (name) => {
-      if (name === "node" || name === "npm") return toolVersion(name);
-      const at = path.join(BASE, "..", "node_modules", name, "package.json");
-      if (!existsSync(at)) return null;
-      return JSON.parse(readFileSync(at, "utf8")).version;
-    };
-    // Стороны называются ПОРОЗНЬ, потому что означают разное. Ниже связки
-    // поведение неизвестно, и обвязка за него не отвечает. Выше — каждый пакет
-    // сам по себе, вероятно, исправен, но связка как целое не мерена: ровно так
-    // мутационное звено и перестало читать результаты тестов, когда их раннер
-    // ушёл на мажор вперёд.
-    for (const [name, want] of Object.entries(CONFIG.verifiedVersions)) {
-      const have = installed(name);
-      if (have === null) {
-        notInstalled.push(name);
-        continue;
+  checkStep(() => {
+    if (CONFIG.verifiedVersions != null) {
+      // Версия установленного: у `node` она своя, у МЕНЕДЖЕРА ПАКЕТОВ —
+      // спрашивается у него самого, у пакета — из его манифеста.
+      //
+      // Менеджер добавлен по замеру: его версия объявлена полем среды манифеста,
+      // сам он это поле не соблюдает, и на версии ниже объявленной установка
+      // падает собственной ошибкой, где про версию нет ни слова. Посадка при этом
+      // встаёт, а причина выглядит дефектом проекта.
+      const installed = (name) => {
+        if (name === "node" || name === "npm") return toolVersion(name);
+        const at = path.join(BASE, "..", "node_modules", name, "package.json");
+        if (!existsSync(at)) return null;
+        return JSON.parse(readFileSync(at, "utf8")).version;
+      };
+      // Стороны называются ПОРОЗНЬ, потому что означают разное. Ниже связки
+      // поведение неизвестно, и обвязка за него не отвечает. Выше — каждый пакет
+      // сам по себе, вероятно, исправен, но связка как целое не мерена: ровно так
+      // мутационное звено и перестало читать результаты тестов, когда их раннер
+      // ушёл на мажор вперёд.
+      for (const [name, want] of Object.entries(CONFIG.verifiedVersions)) {
+        const have = installed(name);
+        if (have === null) {
+          notInstalled.push(name);
+          continue;
+        }
+        if (versionCmp(have, want) < 0)
+          oldVersions.push(
+            `${name} ${have} — НИЖЕ проверенной связки (${want}): поведение неизвестно`,
+          );
+        else if (versionCmp(have, want) > 0)
+          oldVersions.push(
+            `${name} ${have} — ВЫШЕ проверенной связки (${want}): сам по себе исправен, совместимость связки не мерена`,
+          );
       }
-      if (versionCmp(have, want) < 0)
-        oldVersions.push(
-          `${name} ${have} — НИЖЕ проверенной связки (${want}): поведение неизвестно`,
-        );
-      else if (versionCmp(have, want) > 0)
-        oldVersions.push(
-          `${name} ${have} — ВЫШЕ проверенной связки (${want}): сам по себе исправен, совместимость связки не мерена`,
-        );
     }
-  }
-
-  checkHead("Версии установленного (предупреждение, прогон не роняет)", {
-    n: Object.keys(CONFIG.verifiedVersions ?? {}).length - notInstalled.length,
-    unit: "установленных из объявленных версий",
   });
-  if (notInstalled.length > 0)
-    console.log(
-      `  не установлено, не сравнивалось: ${notInstalled.length} — ${notInstalled.join(", ")}. Пакеты не поставлены`,
+  checkStep(() => {
+    checkHead(
+      "Версии установленного (предупреждение, прогон не роняет)",
+      () => ({
+        n:
+          Object.keys(CONFIG.verifiedVersions ?? {}).length -
+          notInstalled.length,
+        unit: "установленных из объявленных версий",
+      }),
     );
-  console.log(
-    CONFIG.verifiedVersions == null
-      ? "  проверенная связка не объявлена"
-      : oldVersions.length === 0
-        ? "  связка совпадает с проверенной"
-        : `  расходится с проверенной связкой: ${oldVersions.length}.` +
-          " Объявлен набор версий, на котором обвязку мерили как целое, а не" +
-          " порог. Ниже него обвязка не отвечает ни за что; выше каждый пакет" +
-          " сам по себе, вероятно, исправен, но совместимость связки надо" +
-          " перемерить — прогнать цепочку и мутационное звено, и обновить" +
-          " объявление. Решение разработчика",
-  );
-  for (const o of oldVersions) console.log("    " + o);
-
-  checkHead(
-    "Разрешения, нажитые по ходу работы (предупреждение, прогон не роняет)",
-    {
+    if (notInstalled.length > 0)
+      console.log(
+        `  не установлено, не сравнивалось: ${notInstalled.length} — ${notInstalled.join(", ")}. Пакеты не поставлены`,
+      );
+    console.log(
+      CONFIG.verifiedVersions == null
+        ? "  проверенная связка не объявлена"
+        : oldVersions.length === 0
+          ? "  связка совпадает с проверенной"
+          : `  расходится с проверенной связкой: ${oldVersions.length}.` +
+            " Объявлен набор версий, на котором обвязку мерили как целое, а не" +
+            " порог. Ниже него обвязка не отвечает ни за что; выше каждый пакет" +
+            " сам по себе, вероятно, исправен, но совместимость связки надо" +
+            " перемерить — прогнать цепочку и мутационное звено, и обновить" +
+            " объявление. Решение разработчика",
+    );
+    for (const o of oldVersions) console.log("    " + o);
+  });
+  checkStep(() => {
+    checkHead(
+      "Разрешения, нажитые по ходу работы (предупреждение, прогон не роняет)",
+      () => ({
+        n: settingsLooked,
+        unit: "разрешений в общем файле",
+      }),
+    );
+    console.log(
+      settingsEarned.length === 0
+        ? "  нет: местный файл разрешений ничего не добавляет к общему"
+        : `  в местном файле есть, а в общем нет: ${settingsEarned.length}.` +
+            " Общее — перенести в общий, проектное — оставить местным",
+    );
+    for (const e of settingsEarned) console.log("    " + e);
+  });
+  checkStep(() => {
+    checkHead("Разрешения среды", () => ({
       n: settingsLooked,
       unit: "разрешений в общем файле",
-    },
-  );
-  console.log(
-    settingsEarned.length === 0
-      ? "  нет: местный файл разрешений ничего не добавляет к общему"
-      : `  в местном файле есть, а в общем нет: ${settingsEarned.length}.` +
-          " Общее — перенести в общий, проектное — оставить местным",
-  );
-  for (const e of settingsEarned) console.log("    " + e);
-
-  checkHead("Разрешения среды", {
-    n: settingsLooked,
-    unit: "разрешений в общем файле",
+    }));
+    console.log(`  расхождений: ${settingsDrift.length}`);
+    for (const s of settingsDrift) console.log("    " + s);
   });
-  console.log(`  расхождений: ${settingsDrift.length}`);
-  for (const s of settingsDrift) console.log("    " + s);
 
   // 10. якорь на документацию в коде указывает на существующий файл
   // Ссылки собирает общий помощник docRefsIn (см. его шапку).
@@ -21014,38 +21234,42 @@ if (mode === "verify") {
   // никуда при живом файле на диске.
   const deadAnchors = [];
   let anchorCount = 0;
-  const shelfDocs = new Set(shelfProse().map(([, full]) => norm(full)));
-  for (const f of new Set([...files, ...ROOT_CONFIGS])) {
-    const body = readFileSync(f, "utf8");
-    const specs = docRefsIn(body, isHashCommentConfig(path.basename(f)));
-    for (const spec of specs) {
-      anchorCount++;
-      // Якорь пишут относительно файла (`./README.md`), относительно корня
-      // компонента (`docs/architecture/x.md`) или корня исходников
-      // (`shared/engines/motion/README.md`). Поэтому пробуются все предки.
-      let dir = norm(path.dirname(f));
-      let found = false;
-      // Подъём идёт до корня РЕПОЗИТОРИЯ, а не исходников. Папка документации
-      // лежит рядом с исходниками, а не внутри: адрес, начинающийся с папки
-      // документации, с остановкой на корне исходников не разрешался никогда.
-      // Пока решений у
-      // проектов не было, это не проявлялось — первая же ссылка на решение из
-      // кода легла в «ведут в никуда», при живом файле на диске.
-      const stop = norm(path.join(BASE, ".."));
-      while (dir.length >= stop.length) {
-        const at = norm(path.join(dir, spec));
-        if (docFiles.includes(at) || shelfDocs.has(at)) {
-          found = true;
-          break;
+  const shelfDocs = checkStep(
+    () => new Set(shelfProse().map(([, full]) => norm(full))),
+  );
+  checkStep(() => {
+    for (const f of new Set([...files, ...ROOT_CONFIGS])) {
+      const body = readFileSync(f, "utf8");
+      const specs = docRefsIn(body, isHashCommentConfig(path.basename(f)));
+      for (const spec of specs) {
+        anchorCount++;
+        // Якорь пишут относительно файла (`./README.md`), относительно корня
+        // компонента (`docs/architecture/x.md`) или корня исходников
+        // (`shared/engines/motion/README.md`). Поэтому пробуются все предки.
+        let dir = norm(path.dirname(f));
+        let found = false;
+        // Подъём идёт до корня РЕПОЗИТОРИЯ, а не исходников. Папка документации
+        // лежит рядом с исходниками, а не внутри: адрес, начинающийся с папки
+        // документации, с остановкой на корне исходников не разрешался никогда.
+        // Пока решений у
+        // проектов не было, это не проявлялось — первая же ссылка на решение из
+        // кода легла в «ведут в никуда», при живом файле на диске.
+        const stop = norm(path.join(BASE, ".."));
+        while (dir.length >= stop.length) {
+          const at = norm(path.join(dir, spec));
+          if (docFiles.includes(at) || shelfDocs.has(at)) {
+            found = true;
+            break;
+          }
+          const up = norm(path.dirname(dir));
+          if (up === dir) break;
+          dir = up;
         }
-        const up = norm(path.dirname(dir));
-        if (up === dir) break;
-        dir = up;
+        if (found) continue;
+        deadAnchors.push(`${rel(f)} → ${spec}`);
       }
-      if (found) continue;
-      deadAnchors.push(`${rel(f)} → ${spec}`);
     }
-  }
+  });
   // 10-бис. комментарий не перерос в прозу, и его не стало слишком много
   //
   // Корпус — ВЕСЬ код проекта, включая тесты, листы стилей и конфиги в корне
@@ -21068,17 +21292,19 @@ if (mode === "verify") {
   //
   // Признак общий с воротами, ревизией, предметом свода, следом прогона и
   // предметом звена — седьмое его место.
-  const ownCode = (() => {
-    const seeds = seedOfPath();
-    const repoRoot = path.join(BASE, "..");
-    const every = [...new Set([...files, ...styleFiles, ...ROOT_CONFIGS])];
-    const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
-    // Своего кода нет — судится ВСЁ: проект живёт каркасом, и каркас ему не
-    // чужой. Иначе корпус этих сверок становится нулевым, а ноль осмотренного
-    // неотличим от здоровья — что свод запрещает прямо. Оговорка та же, что у
-    // предмета звена цепочки.
-    return own.length > 0 ? own : every;
-  })();
+  const ownCode = checkStep(() =>
+    (() => {
+      const seeds = seedOfPath();
+      const repoRoot = path.join(BASE, "..");
+      const every = [...new Set([...files, ...styleFiles, ...ROOT_CONFIGS])];
+      const own = every.filter((f) => !untouchedSeed(f, repoRoot, seeds));
+      // Своего кода нет — судится ВСЁ: проект живёт каркасом, и каркас ему не
+      // чужой. Иначе корпус этих сверок становится нулевым, а ноль осмотренного
+      // неотличим от здоровья — что свод запрещает прямо. Оговорка та же, что у
+      // предмета звена цепочки.
+      return own.length > 0 ? own : every;
+    })(),
+  );
   const wordyComments = [];
   const chattyFiles = [];
   let shareLooked = 0;
@@ -21096,7 +21322,7 @@ if (mode === "verify") {
   // ключевым словом языка либо кончается знаком, которым проза не
   // кончается. Одной такой строки мало — цитата в объяснении законна, — и
   // потому спрашивается ряд: три строки и не меньше двух похожих на код.
-  const CODE_HEADS = [
+  const CODE_HEADS = checkStep(() => [
     "import ",
     "export ",
     "const ",
@@ -21107,7 +21333,7 @@ if (mode === "verify") {
     "return ",
     "await ",
     "new ",
-  ];
+  ]);
   const looksCode = (line) => {
     const bare = line.trim();
     if (bare.length === 0) return false;
@@ -21117,79 +21343,81 @@ if (mode === "verify") {
     return bare.includes("(") || bare.includes("=") || bare.includes("<");
   };
   const deadCode = [];
-  for (const f of ownCode) {
-    const body = readFileSync(f, "utf8");
-    const hash = isHashCommentConfig(path.basename(f));
-    const runs = commentRunsOf(body, hash);
-    if (runs === "") continue;
-    let commentLines = 0;
-    for (const run of runs.split(";")) {
-      const [kind, at, words, rows] = run.split(":");
-      commentRuns += 1;
-      commentLines += Number(rows);
-      const ceiling =
-        kind === "block" ? COMMENT_BLOCK_WORDS : COMMENT_RUN_WORDS;
-      if (Number(words) <= ceiling) continue;
-      wordyComments.push(
-        rel(f) +
-          ":" +
-          at +
-          " — " +
-          (kind === "block" ? "блок" : "ряд") +
-          ", слов " +
-          words +
-          " при потолке " +
-          ceiling,
-      );
-    }
-    {
-      const lines = body.split(NEWLINE);
+  checkStep(() => {
+    for (const f of ownCode) {
+      const body = readFileSync(f, "utf8");
+      const hash = isHashCommentConfig(path.basename(f));
+      const runs = commentRunsOf(body, hash);
+      if (runs === "") continue;
+      let commentLines = 0;
       for (const run of runs.split(";")) {
-        const [, at, , rows] = run.split(":");
-        if (Number(rows) < 3) continue;
-        const from = Number(at) - 1;
-        let hits = 0;
-        for (let i = from; i < from + Number(rows); i += 1) {
-          const bare = lines[i]
-            .replace(hash ? "#" : "//", " ")
-            .replace("/*", " ")
-            .replace("*/", " ")
-            .trim();
-          const body2 = bare.startsWith("*") ? bare.slice(1).trim() : bare;
-          if (looksCode(body2)) hits += 1;
-        }
-        if (hits < 2) continue;
-        deadCode.push(
+        const [kind, at, words, rows] = run.split(":");
+        commentRuns += 1;
+        commentLines += Number(rows);
+        const ceiling =
+          kind === "block" ? COMMENT_BLOCK_WORDS : COMMENT_RUN_WORDS;
+        if (Number(words) <= ceiling) continue;
+        wordyComments.push(
           rel(f) +
             ":" +
             at +
-            " — в комментарии лежит код: строк, похожих на код, " +
-            hits +
-            " из " +
-            rows,
+            " — " +
+            (kind === "block" ? "блок" : "ряд") +
+            ", слов " +
+            words +
+            " при потолке " +
+            ceiling,
         );
       }
+      {
+        const lines = body.split(NEWLINE);
+        for (const run of runs.split(";")) {
+          const [, at, , rows] = run.split(":");
+          if (Number(rows) < 3) continue;
+          const from = Number(at) - 1;
+          let hits = 0;
+          for (let i = from; i < from + Number(rows); i += 1) {
+            const bare = lines[i]
+              .replace(hash ? "#" : "//", " ")
+              .replace("/*", " ")
+              .replace("*/", " ")
+              .trim();
+            const body2 = bare.startsWith("*") ? bare.slice(1).trim() : bare;
+            if (looksCode(body2)) hits += 1;
+          }
+          if (hits < 2) continue;
+          deadCode.push(
+            rel(f) +
+              ":" +
+              at +
+              " — в комментарии лежит код: строк, похожих на код, " +
+              hits +
+              " из " +
+              rows,
+          );
+        }
+      }
+      const total = body.split(NEWLINE).length;
+      if (total < COMMENT_SHARE_FLOOR) continue;
+      shareLooked += 1;
+      if (commentLines / total <= COMMENT_SHARE) continue;
+      // Доля печатается с десятой. Округлённая до целого, она читалась «10 % при
+      // потолке 10 %» — нарушение без видимой причины: замерено на семени, где
+      // строк комментария `18` из `174`.
+      chattyFiles.push(
+        rel(f) +
+          " — строк комментария " +
+          commentLines +
+          " из " +
+          total +
+          ", это " +
+          ((100 * commentLines) / total).toFixed(1) +
+          " % при потолке " +
+          Math.round(100 * COMMENT_SHARE) +
+          " %",
+      );
     }
-    const total = body.split(NEWLINE).length;
-    if (total < COMMENT_SHARE_FLOOR) continue;
-    shareLooked += 1;
-    if (commentLines / total <= COMMENT_SHARE) continue;
-    // Доля печатается с десятой. Округлённая до целого, она читалась «10 % при
-    // потолке 10 %» — нарушение без видимой причины: замерено на семени, где
-    // строк комментария `18` из `174`.
-    chattyFiles.push(
-      rel(f) +
-        " — строк комментария " +
-        commentLines +
-        " из " +
-        total +
-        ", это " +
-        ((100 * commentLines) / total).toFixed(1) +
-        " % при потолке " +
-        Math.round(100 * COMMENT_SHARE) +
-        " %",
-    );
-  }
+  });
   // Долг `comments` у трёх сверок ОДИН, и мерится он СУММОЙ их находок.
   // Предмет у сверок общий — комментарии кода, пришедшего до посадки, — а
   // поле в настройке одно. Пока каждая сравнивала с полем СВОЙ счёт, долг,
@@ -21198,64 +21426,76 @@ if (mode === "verify") {
   // долг за длинный комментарий прогон называл лишним и велел обнулить.
   // Замерено посадкой стенда, чей единственный старый комментарий длиннее
   // потолка.
-  const commentFound =
-    deadCode.length + wordyComments.length + chattyFiles.length;
-  DEBT_REAL.set(
-    "comments",
-    Math.max(DEBT_REAL.get("comments") ?? 0, commentFound),
+  const commentFound = checkStep(
+    () => deadCode.length + wordyComments.length + chattyFiles.length,
   );
-  const overComments = overDebtOf("comments", commentFound);
-  const commentTail =
+  checkStep(() => {
+    DEBT_REAL.set(
+      "comments",
+      Math.max(DEBT_REAL.get("comments") ?? 0, commentFound),
+    );
+  });
+  const overComments = checkStep(() => overDebtOf("comments", commentFound));
+  const commentTail = checkStep(() =>
     debtOf("comments") > 0
       ? "; у трёх сверок комментариев вместе находок " +
         commentFound +
         ", долг посадки на них общий: " +
         debtOf("comments")
-      : "";
-  checkHead("Закомментированного кода нет", {
-    n: commentRuns,
-    unit: "рядов комментария",
+      : "",
+  );
+  checkStep(() => {
+    checkHead("Закомментированного кода нет", () => ({
+      n: commentRuns,
+      unit: "рядов комментария",
+    }));
+    console.log("  рядов с кодом внутри: " + deadCode.length + commentTail);
+    for (const one of overComments > 0 ? deadCode : [])
+      console.log("    " + one);
+    if (deadCode.length > 0 && overComments === 0)
+      console.log(
+        "  Держится долгом посадки: код закомментирован до неё. Снять его — работа, а не правка",
+      );
   });
-  console.log("  рядов с кодом внутри: " + deadCode.length + commentTail);
-  for (const one of overComments > 0 ? deadCode : []) console.log("    " + one);
-  if (deadCode.length > 0 && overComments === 0)
-    console.log(
-      "  Держится долгом посадки: код закомментирован до неё. Снять его — работа, а не правка",
-    );
-  checkHead("Комментарий не перерос в прозу", {
-    n: commentRuns,
-    unit: "рядов комментария",
+  checkStep(() => {
+    checkHead("Комментарий не перерос в прозу", () => ({
+      n: commentRuns,
+      unit: "рядов комментария",
+    }));
+    console.log("  длиннее потолка: " + wordyComments.length + commentTail);
+    if (wordyComments.length > 0) debtNote("comments", commentFound);
+    // Список печатается ЦЕЛИКОМ, а не хвостом сверх долга. Долг решает, красный
+    // ли прогон; что именно нарушено — не его дело. Срез по числу отсекал с
+    // начала списка и потому поглощал НОВОЕ нарушение, показывая вместо него
+    // старое, известное. Замерено на стенде: сессия дописала свой длинный
+    // комментарий, прогон покраснел — и назвал чужой блок, принесённый кодом.
+    for (const c of overComments > 0 ? wordyComments : [])
+      console.log(
+        "    " + c + ". Оставить суть; остальное — в документ слоя или решение",
+      );
+    if (overComments > 0 && seedDriftNote(wordyComments) !== "")
+      console.log(seedDriftNote(wordyComments));
   });
-  console.log("  длиннее потолка: " + wordyComments.length + commentTail);
-  if (wordyComments.length > 0) debtNote("comments", commentFound);
-  // Список печатается ЦЕЛИКОМ, а не хвостом сверх долга. Долг решает, красный
-  // ли прогон; что именно нарушено — не его дело. Срез по числу отсекал с
-  // начала списка и потому поглощал НОВОЕ нарушение, показывая вместо него
-  // старое, известное. Замерено на стенде: сессия дописала свой длинный
-  // комментарий, прогон покраснел — и назвал чужой блок, принесённый кодом.
-  for (const c of overComments > 0 ? wordyComments : [])
-    console.log(
-      "    " + c + ". Оставить суть; остальное — в документ слоя или решение",
-    );
-  if (overComments > 0 && seedDriftNote(wordyComments) !== "")
-    console.log(seedDriftNote(wordyComments));
-
-  checkHead("Доля комментариев в файле", {
-    n: shareLooked,
-    unit: "файлов от потолка строк и выше",
+  checkStep(() => {
+    checkHead("Доля комментариев в файле", () => ({
+      n: shareLooked,
+      unit: "файлов от потолка строк и выше",
+    }));
+    console.log("  файлов сверх потолка: " + chattyFiles.length + commentTail);
+    if (chattyFiles.length > 0) debtNote("comments", commentFound);
+    for (const c of overComments > 0 ? chattyFiles : [])
+      console.log("    " + c + ". Объяснения переносят в документ слоя");
+    if (overComments > 0 && seedDriftNote(chattyFiles) !== "")
+      console.log(seedDriftNote(chattyFiles));
   });
-  console.log("  файлов сверх потолка: " + chattyFiles.length + commentTail);
-  if (chattyFiles.length > 0) debtNote("comments", commentFound);
-  for (const c of overComments > 0 ? chattyFiles : [])
-    console.log("    " + c + ". Объяснения переносят в документ слоя");
-  if (overComments > 0 && seedDriftNote(chattyFiles) !== "")
-    console.log(seedDriftNote(chattyFiles));
-  checkHead("Якоря на документацию в коде", {
-    n: anchorCount,
-    unit: "якорей на документацию",
+  checkStep(() => {
+    checkHead("Якоря на документацию в коде", () => ({
+      n: anchorCount,
+      unit: "якорей на документацию",
+    }));
+    console.log(`  ведут в никуда: ${deadAnchors.length}`);
+    for (const a of deadAnchors) console.log("    " + a);
   });
-  console.log(`  ведут в никуда: ${deadAnchors.length}`);
-  for (const a of deadAnchors) console.log("    " + a);
 
   // 11. отложенное не превращается в историю
   // Правило написано дважды — в шапке самого файла и в CLAUDE.md — и всё равно
@@ -21265,37 +21505,39 @@ if (mode === "verify") {
   // должен ловиться.
   const closedTodos = [];
   let todoLooked = 0;
-  if (CONFIG.todo != null) {
-    const todoPath = path.join(BASE, CONFIG.todo);
-    if (!existsSync(todoPath)) closedTodos.push(`файла нет: ${CONFIG.todo}`);
-    else {
-      // Обе половины этой сверки читают ОДИН файл и обязаны считать в нём
-      // одно и то же. Читали разное: сторона ссылок — через съёмник
-      // огороженных блоков и только нумерованный заголовок, сторона счёта —
-      // сырой текст и любой заголовок второго уровня.
-      //
-      // Цена замерена сценарием на стенде: свод по планке завёл шесть
-      // пунктов, а сверка доложила девять — в счёт попали образец формы из
-      // самого семени, лежащий в блоке кода, и заголовок раздела про форму.
-      // Хуже счёта то, что номера образца совпали с настоящими: в файле
-      // оказалось два пункта `1` и два пункта `2`, а на номер ссылаются из
-      // кода и из других файлов базы.
-      //
-      // Съёмник заведён ровно для этого, и его же комментарий называет
-      // пункты отложенного одним из четырёх сканеров, которым он нужен, —
-      // этот при заведении пропустили. Соседнее семя, список вопросов,
-      // обошло тот же класс иначе: приводит образец цитатой, а не разметкой.
-      const todoText = proseOf(todoPath);
-      todoLooked = todoText
-        .split(NEWLINE)
-        .filter((l) => /^#{2,}\s+\d+\./.test(l)).length;
-      for (const line of todoText.split(NEWLINE)) {
-        if (!/^#{2,}\s/.test(line)) continue;
-        const title = line.replace(/^#{2,}\s+/, "").trim();
-        if (closedMark(title)) closedTodos.push(`${CONFIG.todo}: ${title}`);
+  checkStep(() => {
+    if (CONFIG.todo != null) {
+      const todoPath = path.join(BASE, CONFIG.todo);
+      if (!existsSync(todoPath)) closedTodos.push(`файла нет: ${CONFIG.todo}`);
+      else {
+        // Обе половины этой сверки читают ОДИН файл и обязаны считать в нём
+        // одно и то же. Читали разное: сторона ссылок — через съёмник
+        // огороженных блоков и только нумерованный заголовок, сторона счёта —
+        // сырой текст и любой заголовок второго уровня.
+        //
+        // Цена замерена сценарием на стенде: свод по планке завёл шесть
+        // пунктов, а сверка доложила девять — в счёт попали образец формы из
+        // самого семени, лежащий в блоке кода, и заголовок раздела про форму.
+        // Хуже счёта то, что номера образца совпали с настоящими: в файле
+        // оказалось два пункта `1` и два пункта `2`, а на номер ссылаются из
+        // кода и из других файлов базы.
+        //
+        // Съёмник заведён ровно для этого, и его же комментарий называет
+        // пункты отложенного одним из четырёх сканеров, которым он нужен, —
+        // этот при заведении пропустили. Соседнее семя, список вопросов,
+        // обошло тот же класс иначе: приводит образец цитатой, а не разметкой.
+        const todoText = proseOf(todoPath);
+        todoLooked = todoText
+          .split(NEWLINE)
+          .filter((l) => /^#{2,}\s+\d+\./.test(l)).length;
+        for (const line of todoText.split(NEWLINE)) {
+          if (!/^#{2,}\s/.test(line)) continue;
+          const title = line.replace(/^#{2,}\s+/, "").trim();
+          if (closedMark(title)) closedTodos.push(`${CONFIG.todo}: ${title}`);
+        }
       }
     }
-  }
+  });
   // 11-тер. Вопросы без ответа: список открытых и форма каждой записи.
   //
   // Наличие вопроса дефектом НЕ является и прогон не роняет — вопрос ждёт
@@ -21312,69 +21554,73 @@ if (mode === "verify") {
   // вопрос в отчёте» для него была выключена: вопрос о доктрине жил ровно
   // столько, сколько его помнила сессия.
   const questionLists = [];
-  if (CONFIG.questions != null)
-    questionLists.push([
-      "проект",
-      path.join(BASE, CONFIG.questions),
-      CONFIG.questions,
-    ]);
-  if (SHELF !== null) {
-    const at = shelfAt("state/questions.md");
-    if (at !== null && existsSync(at))
-      questionLists.push(["доктрина", at, "state/questions.md"]);
-  }
-  for (const [origin, at, shown] of questionLists) {
-    if (!existsSync(at)) {
-      malformedQuestions.push(`файла нет: ${shown}`);
-    } else {
-      // Пример формы в ограде кода вопросом не является и нарушением формы тоже.
-      const text = proseOf(at);
-      const lines = text.split(NEWLINE);
-      const heads = [];
-      lines.forEach((line, i) => {
-        const h = /^##\s+Вопрос\s+(\d+)\.\s*(.+)$/.exec(line);
-        if (h !== null) heads.push({ n: h[1], title: h[2].trim(), at: i });
-      });
-      // Заголовок, начинающийся словом «Вопрос», но не по форме, список не
-      // читает вовсе («## Вопрос 5: …», «### Вопрос 5. …»): вопрос выпадает и
-      // из списка, и из требования назвать его в отчёте, не давая признака.
-      lines.forEach((line, i) => {
-        if (
-          /^#{1,6}\s*Вопрос(?!\p{L})/u.test(line) &&
-          !heads.some((h) => h.at === i)
-        )
-          malformedQuestions.push(
-            `заголовок не по форме «## Вопрос N. …»: ${line.trim()}`,
-          );
-      });
-      // Та же сеть, что у отложенного: закрытое удаляют, а не отмечают.
-      questionsSeen += heads.length;
-      for (const [k, h] of heads.entries()) {
-        if (closedMark(h.title)) {
-          malformedQuestions.push(`помечен закрытым, а не удалён: ${h.title}`);
-          continue;
+  checkStep(() => {
+    if (CONFIG.questions != null)
+      questionLists.push([
+        "проект",
+        path.join(BASE, CONFIG.questions),
+        CONFIG.questions,
+      ]);
+    if (SHELF !== null) {
+      const at = shelfAt("state/questions.md");
+      if (at !== null && existsSync(at))
+        questionLists.push(["доктрина", at, "state/questions.md"]);
+    }
+    for (const [origin, at, shown] of questionLists) {
+      if (!existsSync(at)) {
+        malformedQuestions.push(`файла нет: ${shown}`);
+      } else {
+        // Пример формы в ограде кода вопросом не является и нарушением формы тоже.
+        const text = proseOf(at);
+        const lines = text.split(NEWLINE);
+        const heads = [];
+        lines.forEach((line, i) => {
+          const h = /^##\s+Вопрос\s+(\d+)\.\s*(.+)$/.exec(line);
+          if (h !== null) heads.push({ n: h[1], title: h[2].trim(), at: i });
+        });
+        // Заголовок, начинающийся словом «Вопрос», но не по форме, список не
+        // читает вовсе («## Вопрос 5: …», «### Вопрос 5. …»): вопрос выпадает и
+        // из списка, и из требования назвать его в отчёте, не давая признака.
+        lines.forEach((line, i) => {
+          if (
+            /^#{1,6}\s*Вопрос(?!\p{L})/u.test(line) &&
+            !heads.some((h) => h.at === i)
+          )
+            malformedQuestions.push(
+              `заголовок не по форме «## Вопрос N. …»: ${line.trim()}`,
+            );
+        });
+        // Та же сеть, что у отложенного: закрытое удаляют, а не отмечают.
+        questionsSeen += heads.length;
+        for (const [k, h] of heads.entries()) {
+          if (closedMark(h.title)) {
+            malformedQuestions.push(
+              `помечен закрытым, а не удалён: ${h.title}`,
+            );
+            continue;
+          }
+          const body = lines
+            .slice(h.at, k + 1 < heads.length ? heads[k + 1].at : lines.length)
+            .join(NEWLINE);
+          const missing = [
+            ["Задан", /\*\*Задан:\*\*/],
+            ["Что решить", /\*\*Что решить\.?\*\*/],
+            [
+              "Последствие отсутствия ответа",
+              /\*\*Последствие отсутствия ответа\.?\*\*/,
+            ],
+          ]
+            .filter(([, re]) => !re.test(body))
+            .map(([name]) => name);
+          if (missing.length > 0)
+            malformedQuestions.push(
+              `«${h.title}» — нет граф: ${missing.join(", ")}`,
+            );
+          openQuestions.push(`[${origin}] Вопрос ${h.n}. ${h.title}`);
         }
-        const body = lines
-          .slice(h.at, k + 1 < heads.length ? heads[k + 1].at : lines.length)
-          .join(NEWLINE);
-        const missing = [
-          ["Задан", /\*\*Задан:\*\*/],
-          ["Что решить", /\*\*Что решить\.?\*\*/],
-          [
-            "Последствие отсутствия ответа",
-            /\*\*Последствие отсутствия ответа\.?\*\*/,
-          ],
-        ]
-          .filter(([, re]) => !re.test(body))
-          .map(([name]) => name);
-        if (missing.length > 0)
-          malformedQuestions.push(
-            `«${h.title}» — нет граф: ${missing.join(", ")}`,
-          );
-        openQuestions.push(`[${origin}] Вопрос ${h.n}. ${h.title}`);
       }
     }
-  }
+  });
   // 11-бис. ссылка на пункт отложенного ведёт в существующий пункт.
   // Закрытый пункт удаляется целиком, следующие сдвигаются — и «пункт 8»
   // остаётся висеть в пяти файлах сразу. Проверяется не нумерация: дыра в ней
@@ -21382,61 +21628,63 @@ if (mode === "verify") {
   // сам файл отложенного или список отложенного по-английски, иначе проверка
   // ловила бы «пункт 3» любого другого перечня и врала бы.
   const danglingTodo = [];
-  if (CONFIG.todo != null) {
-    const todoPath = path.join(BASE, CONFIG.todo);
-    if (existsSync(todoPath)) {
-      const numbers = new Set();
-      for (const line of proseOf(todoPath).split(NEWLINE)) {
-        const head = /^#{2,}\s+(\d+)\./.exec(line);
-        if (head !== null) numbers.add(head[1]);
-      }
-      // Падежи считаются все, а не три. «Сверься с пунктом 4», «закрыто
-      // пунктом 3», «из пунктов 2 и 3» — самые естественные формы ссылки, и
-      // именно творительный сверка не знала: найдено пробой, ссылка на
-      // несуществующий пункт прошла зелёной. Замерено на всей базе и на
-      // исходниках: новых попаданий ноль, то есть шума расширение не даёт.
-      const REF = /(?:пункт[а-яё]{0,3}|item)\s+(\d+)/gi;
-      const NAMES = new RegExp(
-        CONFIG.todo.replace(".", "\\.") + "|deferred-work list",
-      );
-      const scan = [
-        ...readdirSync(BASE)
-          .filter((n) => n.endsWith(".md") && n !== CONFIG.todo)
-          .map((n) => [n, path.join(BASE, n)]),
-        ...files.map((f) => [rel(f), f]),
-        ...docFiles.map((f) => [rel(f), f]),
-      ];
-      // Сам файл отложенного сканируется по тем же правилам, но без требования
-      // назвать себя по имени: внутри списка «пункт 4» и так значит его
-      // собственный пункт. Пропуск найден пробой — а именно здесь ссылки друг
-      // на друга и живут, и именно здесь их ломает удаление закрытого пункта.
-      scan.push([CONFIG.todo, todoPath]);
-      for (const [name, full] of scan) {
-        const selfRef = full === todoPath;
-        proseOf(full)
-          .split(NEWLINE)
-          .forEach((line, i) => {
-            if (!selfRef && !NAMES.test(line)) return;
-            REF.lastIndex = 0;
-            let m;
-            while ((m = REF.exec(line)) !== null) {
-              // «пункт 10 долга перехода» — номер ЧУЖОГО перечня, и внутри
-              // отложенного он пишется естественно: отложенное ссылается на
-              // долг, который откладывает. Прежде такой номер читался своим
-              // пунктом, и запись отложенного краснела на законной ссылке —
-              // замерено рефактором на стенде.
-              const after = line.slice(m.index + m[0].length);
-              if (/^\s+(?:долга|реестра|плана|списка)(?![а-яё])/i.test(after))
-                continue;
-              if (!numbers.has(m[1]))
-                danglingTodo.push(
-                  name + ":" + (i + 1) + " — пункта " + m[1] + " там нет",
-                );
-            }
-          });
+  checkStep(() => {
+    if (CONFIG.todo != null) {
+      const todoPath = path.join(BASE, CONFIG.todo);
+      if (existsSync(todoPath)) {
+        const numbers = new Set();
+        for (const line of proseOf(todoPath).split(NEWLINE)) {
+          const head = /^#{2,}\s+(\d+)\./.exec(line);
+          if (head !== null) numbers.add(head[1]);
+        }
+        // Падежи считаются все, а не три. «Сверься с пунктом 4», «закрыто
+        // пунктом 3», «из пунктов 2 и 3» — самые естественные формы ссылки, и
+        // именно творительный сверка не знала: найдено пробой, ссылка на
+        // несуществующий пункт прошла зелёной. Замерено на всей базе и на
+        // исходниках: новых попаданий ноль, то есть шума расширение не даёт.
+        const REF = /(?:пункт[а-яё]{0,3}|item)\s+(\d+)/gi;
+        const NAMES = new RegExp(
+          CONFIG.todo.replace(".", "\\.") + "|deferred-work list",
+        );
+        const scan = [
+          ...readdirSync(BASE)
+            .filter((n) => n.endsWith(".md") && n !== CONFIG.todo)
+            .map((n) => [n, path.join(BASE, n)]),
+          ...files.map((f) => [rel(f), f]),
+          ...docFiles.map((f) => [rel(f), f]),
+        ];
+        // Сам файл отложенного сканируется по тем же правилам, но без требования
+        // назвать себя по имени: внутри списка «пункт 4» и так значит его
+        // собственный пункт. Пропуск найден пробой — а именно здесь ссылки друг
+        // на друга и живут, и именно здесь их ломает удаление закрытого пункта.
+        scan.push([CONFIG.todo, todoPath]);
+        for (const [name, full] of scan) {
+          const selfRef = full === todoPath;
+          proseOf(full)
+            .split(NEWLINE)
+            .forEach((line, i) => {
+              if (!selfRef && !NAMES.test(line)) return;
+              REF.lastIndex = 0;
+              let m;
+              while ((m = REF.exec(line)) !== null) {
+                // «пункт 10 долга перехода» — номер ЧУЖОГО перечня, и внутри
+                // отложенного он пишется естественно: отложенное ссылается на
+                // долг, который откладывает. Прежде такой номер читался своим
+                // пунктом, и запись отложенного краснела на законной ссылке —
+                // замерено рефактором на стенде.
+                const after = line.slice(m.index + m[0].length);
+                if (/^\s+(?:долга|реестра|плана|списка)(?![а-яё])/i.test(after))
+                  continue;
+                if (!numbers.has(m[1]))
+                  danglingTodo.push(
+                    name + ":" + (i + 1) + " — пункта " + m[1] + " там нет",
+                  );
+              }
+            });
+        }
       }
     }
-  }
+  });
 
   // 12. новый якорь пишется с цитатой
   // Старые не переписываем: их 185, и переписывание ради переписывания —
@@ -21446,108 +21694,117 @@ if (mode === "verify") {
   // новой пройти нельзя. Без git сверка молчит и говорит об этом вслух.
   const uncitedNew = [];
   let newAnchorsChecked = true;
-  {
-    const NEW_ANCHOR = /`([\w./{}-]*):(\d+)(?:-\d+)?`/g;
-    let diff = null;
-    try {
-      const { execSync } = await import("node:child_process");
-      // `core.quotePath=false`: иначе имя не в ASCII приходит в заголовке
-      // кавычками с восьмеричными кодами и не сходится с путём протокола.
-      diff = execSync("git -c core.quotePath=false diff -U0 HEAD -- .context", {
-        cwd: REPO,
-        encoding: "utf8",
-        // stderr гасим: про недоступность git мы говорим сами, а его
-        // собственное сообщение — шум в отчёте инструмента.
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      // Дифф против HEAD не видит файлов, ещё не взятых в git: новый файл
-      // базы проходил с якорями без цитат целиком. Его строки — тоже
-      // добавленные, и они дописываются к диффу в той же форме.
-      const fresh = execSync(
-        "git ls-files --others --exclude-standard -z -- .context",
-        { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-      );
-      for (const one of zList(fresh)) {
-        const added = readFileSync(path.join(REPO, one), "utf8").split(NEWLINE);
-        diff +=
-          NEWLINE +
-          "+++ b/" +
-          one +
-          NEWLINE +
-          "@@ -0,0 +1," +
-          added.length +
-          " @@" +
-          NEWLINE +
-          added.map((l) => "+" + l).join(NEWLINE);
+  await checkStepAsync(async () => {
+    {
+      const NEW_ANCHOR = /`([\w./{}-]*):(\d+)(?:-\d+)?`/g;
+      let diff = null;
+      try {
+        const { execSync } = await import("node:child_process");
+        // `core.quotePath=false`: иначе имя не в ASCII приходит в заголовке
+        // кавычками с восьмеричными кодами и не сходится с путём протокола.
+        diff = execSync(
+          "git -c core.quotePath=false diff -U0 HEAD -- .context",
+          {
+            cwd: REPO,
+            encoding: "utf8",
+            // stderr гасим: про недоступность git мы говорим сами, а его
+            // собственное сообщение — шум в отчёте инструмента.
+            stdio: ["ignore", "pipe", "ignore"],
+          },
+        );
+        // Дифф против HEAD не видит файлов, ещё не взятых в git: новый файл
+        // базы проходил с якорями без цитат целиком. Его строки — тоже
+        // добавленные, и они дописываются к диффу в той же форме.
+        const fresh = execSync(
+          "git ls-files --others --exclude-standard -z -- .context",
+          { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+        );
+        for (const one of zList(fresh)) {
+          const added = readFileSync(path.join(REPO, one), "utf8").split(
+            NEWLINE,
+          );
+          diff +=
+            NEWLINE +
+            "+++ b/" +
+            one +
+            NEWLINE +
+            "@@ -0,0 +1," +
+            added.length +
+            " @@" +
+            NEWLINE +
+            added.map((l) => "+" + l).join(NEWLINE);
+        }
+      } catch {
+        newAnchorsChecked = false;
       }
-    } catch {
-      newAnchorsChecked = false;
-    }
-    // Адреса протокола свода — не записи базы, а форма режима `bar`: адрес
-    // там пишется строго «путь:строка», и существование строки сверяет сам
-    // режим при печати. Цитата у них невозможна по форме.
-    const barFile =
-      CONFIG.barProtocol == null
-        ? null
-        : norm(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
-    // Протоколы перехода — та же форма режима, что и протокол текущей работы.
-    const barDir =
-      barTransitionDir() === null
-        ? null
-        : norm(path.relative(REPO, barTransitionDir())) + "/";
-    if (diff !== null) {
-      let file = "";
-      // Строки ограды кода — показанный образец, якорь в нём не запись. Какие
-      // строки файла внутри ограды, берётся из его нынешнего текста, а номер
-      // добавленной строки — из заголовка куска диффа.
-      let fenced = new Set();
-      let at = 0;
-      for (const line of diff.split(NEWLINE)) {
-        if (line.startsWith("+++ b/")) {
-          // Имя с пробелом git закрывает табуляцией.
-          file = line.slice(6).replace(/\t$/, "");
-          fenced = new Set();
-          const here = path.join(REPO, file);
-          if (existsSync(here))
-            fencedLines(readFileSync(here, "utf8").split(NEWLINE)).forEach(
-              (inFence, i) => {
-                if (inFence) fenced.add(i + 1);
-              },
-            );
-          continue;
-        }
-        const hunk = /^@@ -\S+ \+(\d+)/.exec(line);
-        if (hunk !== null) {
-          at = Number(hunk[1]);
-          continue;
-        }
-        if (file === barFile) continue;
-        if (barDir !== null && file.startsWith(barDir)) continue;
-        if (!line.startsWith("+") || line.startsWith("+++")) continue;
-        const lineNo = at;
-        at += 1;
-        if (fenced.has(lineNo)) continue;
-        const body = line.slice(1);
-        NEW_ANCHOR.lastIndex = 0;
-        let m;
-        while ((m = NEW_ANCHOR.exec(body)) !== null) {
-          // Цитата — бэктик-фрагмент сразу за якорем, на той же строке.
-          if (!/^\s*`[^`]+`/.test(body.slice(m.index + m[0].length)))
-            uncitedNew.push(`${file}: ${m[0]} — якорь без цитаты`);
+      // Адреса протокола свода — не записи базы, а форма режима `bar`: адрес
+      // там пишется строго «путь:строка», и существование строки сверяет сам
+      // режим при печати. Цитата у них невозможна по форме.
+      const barFile =
+        CONFIG.barProtocol == null
+          ? null
+          : norm(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
+      // Протоколы перехода — та же форма режима, что и протокол текущей работы.
+      const barDir =
+        barTransitionDir() === null
+          ? null
+          : norm(path.relative(REPO, barTransitionDir())) + "/";
+      if (diff !== null) {
+        let file = "";
+        // Строки ограды кода — показанный образец, якорь в нём не запись. Какие
+        // строки файла внутри ограды, берётся из его нынешнего текста, а номер
+        // добавленной строки — из заголовка куска диффа.
+        let fenced = new Set();
+        let at = 0;
+        for (const line of diff.split(NEWLINE)) {
+          if (line.startsWith("+++ b/")) {
+            // Имя с пробелом git закрывает табуляцией.
+            file = line.slice(6).replace(/\t$/, "");
+            fenced = new Set();
+            const here = path.join(REPO, file);
+            if (existsSync(here))
+              fencedLines(readFileSync(here, "utf8").split(NEWLINE)).forEach(
+                (inFence, i) => {
+                  if (inFence) fenced.add(i + 1);
+                },
+              );
+            continue;
+          }
+          const hunk = /^@@ -\S+ \+(\d+)/.exec(line);
+          if (hunk !== null) {
+            at = Number(hunk[1]);
+            continue;
+          }
+          if (file === barFile) continue;
+          if (barDir !== null && file.startsWith(barDir)) continue;
+          if (!line.startsWith("+") || line.startsWith("+++")) continue;
+          const lineNo = at;
+          at += 1;
+          if (fenced.has(lineNo)) continue;
+          const body = line.slice(1);
+          NEW_ANCHOR.lastIndex = 0;
+          let m;
+          while ((m = NEW_ANCHOR.exec(body)) !== null) {
+            // Цитата — бэктик-фрагмент сразу за якорем, на той же строке.
+            if (!/^\s*`[^`]+`/.test(body.slice(m.index + m[0].length)))
+              uncitedNew.push(`${file}: ${m[0]} — якорь без цитаты`);
+          }
         }
       }
     }
-  }
-  checkHead("Новые якоря — с цитатой", {
-    n: files.length,
-    unit: "файлов кода",
   });
-  console.log(
-    newAnchorsChecked
-      ? `  добавлено якорей без цитаты: ${uncitedNew.length}`
-      : "  git недоступен — не проверено",
-  );
-  for (const u of uncitedNew) console.log("    " + u);
+  checkStep(() => {
+    checkHead("Новые якоря — с цитатой", () => ({
+      n: files.length,
+      unit: "файлов кода",
+    }));
+    console.log(
+      newAnchorsChecked
+        ? `  добавлено якорей без цитаты: ${uncitedNew.length}`
+        : "  git недоступен — не проверено",
+    );
+    for (const u of uncitedNew) console.log("    " + u);
+  });
 
   // 13. найденное чинится, а не записывается
   // Правило в CLAUDE.md, § «Найденное чинится сразу». Ловятся две формы
@@ -21569,176 +21826,180 @@ if (mode === "verify") {
   // не трогает, и без долга сверка краснела навсегда. Прозы свода и базы
   // долг не касается — там маркер пишет сама работа под обвязкой.
   const parkedInCode = [];
-  {
-    const CODE_MARK =
-      /(^|[^A-Za-zА-Яа-я])(TODO|FIXME|HACK|XXX|ВРЕМЕННО|ПОТОМ|ПОЧИНИТЬ)([^A-Za-zА-Яа-я]|$)/;
-    for (const f of files) {
-      // Полка везёт копии инструмента и правил, где маркеры перечислены как
-      // данные: сканер, читающий собственный список, докладывал бы о себе. Это
-      // тот же случай, что и с документацией, поэтому и предикат тот же.
-      if (isMachinery(f)) continue;
-      const body = readFileSync(f, "utf8").split(NEWLINE);
-      body.forEach((line, i) => {
-        if (CODE_MARK.test(line))
-          parkedInCode.push(
-            `${rel(f)}:${i + 1} — маркер отложенной работы в коде`,
-          );
-      });
-    }
+  checkStep(() => {
+    {
+      const CODE_MARK =
+        /(^|[^A-Za-zА-Яа-я])(TODO|FIXME|HACK|XXX|ВРЕМЕННО|ПОТОМ|ПОЧИНИТЬ)([^A-Za-zА-Яа-я]|$)/;
+      for (const f of files) {
+        // Полка везёт копии инструмента и правил, где маркеры перечислены как
+        // данные: сканер, читающий собственный список, докладывал бы о себе. Это
+        // тот же случай, что и с документацией, поэтому и предикат тот же.
+        if (isMachinery(f)) continue;
+        const body = readFileSync(f, "utf8").split(NEWLINE);
+        body.forEach((line, i) => {
+          if (CODE_MARK.test(line))
+            parkedInCode.push(
+              `${rel(f)}:${i + 1} — маркер отложенной работы в коде`,
+            );
+        });
+      }
 
-    const DEFECT =
-      /(дыр[аеуы]|баг|ошибк|дефект|сломан|неверн|расходит|не соответств|мёртв|дубл|утечк|bug|defect|broken|wrong|leak)/i;
-    // Список намеренно узкий — это обороты, которыми дефект паркуют, а не
-    // слова, которыми описывают устройство. Широкий словарь пробовался и был
-    // отвергнут замером: «отложенный тик», «не покрыто контрактным тестом»,
-    // «расходится молча» — нормальная проза, и на ней сверка давала четыре
-    // ложных срабатывания из четырёх. Естественную форму отказа («не делаем»,
-    // «остался без теста») ловит не она, а правило про заголовки ниже.
-    const DEFER =
-      /(не исправл|не почин|не стал[аио]? прав|оставлен[оа]? как есть|выходит за рамки|в задачу не входил|не входит в объ[её]м|вынесен[оа]? разработчику|отложен[оа]? до|записан[оа]? и не|deferred|out of scope|left as is)/i;
-    const DECIDED = /09-decisions\.md/;
-    const baseDocs = readdirSync(BASE).filter(
-      (n) => n.endsWith(".md") && n !== "README.md",
-    );
+      const DEFECT =
+        /(дыр[аеуы]|баг|ошибк|дефект|сломан|неверн|расходит|не соответств|мёртв|дубл|утечк|bug|defect|broken|wrong|leak)/i;
+      // Список намеренно узкий — это обороты, которыми дефект паркуют, а не
+      // слова, которыми описывают устройство. Широкий словарь пробовался и был
+      // отвергнут замером: «отложенный тик», «не покрыто контрактным тестом»,
+      // «расходится молча» — нормальная проза, и на ней сверка давала четыре
+      // ложных срабатывания из четырёх. Естественную форму отказа («не делаем»,
+      // «остался без теста») ловит не она, а правило про заголовки ниже.
+      const DEFER =
+        /(не исправл|не почин|не стал[аио]? прав|оставлен[оа]? как есть|выходит за рамки|в задачу не входил|не входит в объ[её]м|вынесен[оа]? разработчику|отложен[оа]? до|записан[оа]? и не|deferred|out of scope|left as is)/i;
+      const DECIDED = /09-decisions\.md/;
+      const baseDocs = readdirSync(BASE).filter(
+        (n) => n.endsWith(".md") && n !== "README.md",
+      );
 
-    // Тот же маркер, но в прозе базы и правил. Сеть выше читает только код, и
-    // `TODO`, вписанный в запись базы, проходил мимо неё молча — поймано
-    // пробой. Описания самих маркеров всегда стоят в обратных кавычках,
-    // поэтому код в кавычках вырезается перед поиском: иначе сверка доложила
-    // бы о строке, которая её же и описывает.
-    //
-    // Файл отложенного из этой сети НЕ исключается, хотя из соседней —
-    // исключается по существу. Разница в том, что там ловятся книжные обороты
-    // («отложено до…»), и в списке согласованных отсрочек они законны, а здесь
-    // ловится МАРКЕР — форма, которой помечают работу несделанную и
-    // **неоформленную**. Файл отложенного как раз требует оформления: заголовок,
-    // риск, статус. `TODO` внутри его пункта — это работа внутри работы, мимо
-    // всей этой формы. Найдено пробой: исключение было написано по файлу, а его
-    // причина относилась только к одной из двух сетей.
-    // Свод — доктрина плюс правила проекта (`glossary.md`), и маркер в прозе
-    // свода запрещён целиком: файлы доктрины входят в корпус наравне с
-    // правилами проекта. Обоснования, справочники и скиллы полки в него не
-    // входят — свод они не составляют.
-    const doctrineAt = shelfAt("rules");
-    const doctrineDocs =
-      doctrineAt === null || !existsSync(doctrineAt)
-        ? []
-        : readdirSync(doctrineAt)
-            .filter((n) => n.endsWith(".md"))
-            .map((n) => path.join(doctrineAt, n));
-    for (const rp of [
-      ...baseDocs.map((n) => path.join(BASE, n)),
-      ...CONFIG.rulesManifest.rules.map((r) => path.join(BASE, r)),
-      ...doctrineDocs,
-    ]) {
-      if (!existsSync(rp)) continue;
-      // Ограда кода — пример, как и обратные кавычки: маркер в ней описан.
-      const lines = proseOf(rp).split(NEWLINE);
-      lines.forEach((line, i) => {
-        const bare = line.replace(/`[^`]*`/g, " ");
-        if (CODE_MARK.test(bare))
+      // Тот же маркер, но в прозе базы и правил. Сеть выше читает только код, и
+      // `TODO`, вписанный в запись базы, проходил мимо неё молча — поймано
+      // пробой. Описания самих маркеров всегда стоят в обратных кавычках,
+      // поэтому код в кавычках вырезается перед поиском: иначе сверка доложила
+      // бы о строке, которая её же и описывает.
+      //
+      // Файл отложенного из этой сети НЕ исключается, хотя из соседней —
+      // исключается по существу. Разница в том, что там ловятся книжные обороты
+      // («отложено до…»), и в списке согласованных отсрочек они законны, а здесь
+      // ловится МАРКЕР — форма, которой помечают работу несделанную и
+      // **неоформленную**. Файл отложенного как раз требует оформления: заголовок,
+      // риск, статус. `TODO` внутри его пункта — это работа внутри работы, мимо
+      // всей этой формы. Найдено пробой: исключение было написано по файлу, а его
+      // причина относилась только к одной из двух сетей.
+      // Свод — доктрина плюс правила проекта (`glossary.md`), и маркер в прозе
+      // свода запрещён целиком: файлы доктрины входят в корпус наравне с
+      // правилами проекта. Обоснования, справочники и скиллы полки в него не
+      // входят — свод они не составляют.
+      const doctrineAt = shelfAt("rules");
+      const doctrineDocs =
+        doctrineAt === null || !existsSync(doctrineAt)
+          ? []
+          : readdirSync(doctrineAt)
+              .filter((n) => n.endsWith(".md"))
+              .map((n) => path.join(doctrineAt, n));
+      for (const rp of [
+        ...baseDocs.map((n) => path.join(BASE, n)),
+        ...CONFIG.rulesManifest.rules.map((r) => path.join(BASE, r)),
+        ...doctrineDocs,
+      ]) {
+        if (!existsSync(rp)) continue;
+        // Ограда кода — пример, как и обратные кавычки: маркер в ней описан.
+        const lines = proseOf(rp).split(NEWLINE);
+        lines.forEach((line, i) => {
+          const bare = line.replace(/`[^`]*`/g, " ");
+          if (CODE_MARK.test(bare))
+            parked.push(
+              `${path.relative(BASE, rp).split(path.sep).join("/")}:${i + 1} — маркер отложенной работы в тексте`,
+            );
+        });
+      }
+
+      for (const name of baseDocs) {
+        const p = path.join(BASE, name);
+        if (!existsSync(p)) continue;
+        const text = readFileSync(p, "utf8").split(NEWLINE);
+        let start = 0;
+        const flush = (end) => {
+          // Строки таблицы из абзаца выбрасываются. Таблица без пустых строк —
+          // формально один абзац, и словарь ловит в нём слова из РАЗНЫХ строк:
+          // «дефект» из одной, «отложено» из другой. Поймано пересадкой полки в
+          // пустой проект: скопированная туда таблица сверок роняла прогон,
+          // ничего при этом не откладывая. Парковка дефекта — это проза, а не
+          // ячейка таблицы.
+          const para = text
+            .slice(start, end)
+            .filter((l) => !l.trimStart().startsWith("|"))
+            .join(" ");
+          if (DEFECT.test(para) && DEFER.test(para) && !DECIDED.test(para))
+            parked.push(
+              `${name}:${start + 1} — дефект отложен без записи решения`,
+            );
+        };
+        text.forEach((line, i) => {
+          if (line.trim() !== "") return;
+          flush(i);
+          start = i + 1;
+        });
+        flush(text.length);
+
+        // Раздел, чей заголовок сам объявляет «этого мы не сделали», — и есть
+        // штатное место парковки. Здесь словарь не нужен: место названо, и
+        // каждый его абзац обязан назвать решение, по которому работа не
+        // делается. Заголовки и таблицы пропускаются — решение пишется прозой.
+        // Заголовок про НЕСДЕЛАННУЮ РАБОТУ, а не про методику измерения:
+        // «Что тестами не покрыто» — раздел о том, как считается покрытие, и
+        // ссылки на решение там не место. Проверено замером: широкий вариант
+        // ловил его пять раз подряд.
+        // Два стема требуют оборота, а не корня, и это замер, а не вкус.
+        // `отказ` в русском равно значит «отказались делать» и «отказ
+        // устройства», `не дела` — «не делаем» и «не делает». Несделанную
+        // работу объявляет только первое значение каждой пары, и несёт его
+        // оборот: «отказ ОТ», «не делаЕМ». Проверено на шести законных
+        // заголовках против семи объявляющих: широкие стемы давали пять ложных
+        // из шести, узкие — ноль при тех же пойманных.
+        const UNDONE =
+          /^#{2,6}\s+.*(не сделан|не закрыт|не дела(ем|ли|ть|ла|ло|л)(?![а-я])|оставлен как есть|отказ[а-я]*\s+от|отказались|not done|left undone)/i;
+        let inUndone = false;
+        let level = 0;
+        let block = [];
+        let blockAt = 0;
+        const flushBlock = () => {
+          const body = block.join(" ").trim();
+          block = [];
+          if (!inUndone || body === "" || DECIDED.test(body)) return;
           parked.push(
-            `${path.relative(BASE, rp).split(path.sep).join("/")}:${i + 1} — маркер отложенной работы в тексте`,
+            `${name}:${blockAt} — раздел «не сделано» без ссылки на решение`,
           );
-      });
-    }
-
-    for (const name of baseDocs) {
-      const p = path.join(BASE, name);
-      if (!existsSync(p)) continue;
-      const text = readFileSync(p, "utf8").split(NEWLINE);
-      let start = 0;
-      const flush = (end) => {
-        // Строки таблицы из абзаца выбрасываются. Таблица без пустых строк —
-        // формально один абзац, и словарь ловит в нём слова из РАЗНЫХ строк:
-        // «дефект» из одной, «отложено» из другой. Поймано пересадкой полки в
-        // пустой проект: скопированная туда таблица сверок роняла прогон,
-        // ничего при этом не откладывая. Парковка дефекта — это проза, а не
-        // ячейка таблицы.
-        const para = text
-          .slice(start, end)
-          .filter((l) => !l.trimStart().startsWith("|"))
-          .join(" ");
-        if (DEFECT.test(para) && DEFER.test(para) && !DECIDED.test(para))
-          parked.push(
-            `${name}:${start + 1} — дефект отложен без записи решения`,
-          );
-      };
-      text.forEach((line, i) => {
-        if (line.trim() !== "") return;
-        flush(i);
-        start = i + 1;
-      });
-      flush(text.length);
-
-      // Раздел, чей заголовок сам объявляет «этого мы не сделали», — и есть
-      // штатное место парковки. Здесь словарь не нужен: место названо, и
-      // каждый его абзац обязан назвать решение, по которому работа не
-      // делается. Заголовки и таблицы пропускаются — решение пишется прозой.
-      // Заголовок про НЕСДЕЛАННУЮ РАБОТУ, а не про методику измерения:
-      // «Что тестами не покрыто» — раздел о том, как считается покрытие, и
-      // ссылки на решение там не место. Проверено замером: широкий вариант
-      // ловил его пять раз подряд.
-      // Два стема требуют оборота, а не корня, и это замер, а не вкус.
-      // `отказ` в русском равно значит «отказались делать» и «отказ
-      // устройства», `не дела` — «не делаем» и «не делает». Несделанную
-      // работу объявляет только первое значение каждой пары, и несёт его
-      // оборот: «отказ ОТ», «не делаЕМ». Проверено на шести законных
-      // заголовках против семи объявляющих: широкие стемы давали пять ложных
-      // из шести, узкие — ноль при тех же пойманных.
-      const UNDONE =
-        /^#{2,6}\s+.*(не сделан|не закрыт|не дела(ем|ли|ть|ла|ло|л)(?![а-я])|оставлен как есть|отказ[а-я]*\s+от|отказались|not done|left undone)/i;
-      let inUndone = false;
-      let level = 0;
-      let block = [];
-      let blockAt = 0;
-      const flushBlock = () => {
-        const body = block.join(" ").trim();
-        block = [];
-        if (!inUndone || body === "" || DECIDED.test(body)) return;
-        parked.push(
-          `${name}:${blockAt} — раздел «не сделано» без ссылки на решение`,
-        );
-      };
-      text.forEach((line, i) => {
-        const heading = /^(#{2,6})\s/.exec(line);
-        if (heading) {
-          flushBlock();
-          const depth = heading[1].length;
-          if (inUndone && depth <= level) inUndone = false;
-          if (UNDONE.test(line)) {
-            inUndone = true;
-            level = depth;
+        };
+        text.forEach((line, i) => {
+          const heading = /^(#{2,6})\s/.exec(line);
+          if (heading) {
+            flushBlock();
+            const depth = heading[1].length;
+            if (inUndone && depth <= level) inUndone = false;
+            if (UNDONE.test(line)) {
+              inUndone = true;
+              level = depth;
+            }
+            return;
           }
-          return;
-        }
-        // Пустая строка, строка таблицы и разделитель абзацем не являются:
-        // решение пишется прозой, а `---` сам по себе ничего не утверждает.
-        if (
-          line.trim() === "" ||
-          line.trimStart().startsWith("|") ||
-          /^\s*([-*_])\1{2,}\s*$/.test(line)
-        ) {
-          flushBlock();
-          return;
-        }
-        if (block.length === 0) blockAt = i + 1;
-        block.push(line);
-      });
-      flushBlock();
+          // Пустая строка, строка таблицы и разделитель абзацем не являются:
+          // решение пишется прозой, а `---` сам по себе ничего не утверждает.
+          if (
+            line.trim() === "" ||
+            line.trimStart().startsWith("|") ||
+            /^\s*([-*_])\1{2,}\s*$/.test(line)
+          ) {
+            flushBlock();
+            return;
+          }
+          if (block.length === 0) blockAt = i + 1;
+          block.push(line);
+        });
+        flushBlock();
+      }
     }
-  }
-  checkHead("Найденное — исправлено, а не отложено", {
-    n: files.length,
-    unit: "файлов кода",
   });
-  console.log(
-    `  отложенного без решения: ${parked.length + parkedInCode.length}` +
-      debtTail("markers"),
-  );
-  debtNote("markers", parkedInCode.length);
-  for (const p of [...debtList("markers", parkedInCode), ...parked])
-    console.log("    " + p);
+  checkStep(() => {
+    checkHead("Найденное — исправлено, а не отложено", () => ({
+      n: files.length,
+      unit: "файлов кода",
+    }));
+    console.log(
+      `  отложенного без решения: ${parked.length + parkedInCode.length}` +
+        debtTail("markers"),
+    );
+    debtNote("markers", parkedInCode.length);
+    for (const p of [...debtList("markers", parkedInCode), ...parked])
+      console.log("    " + p);
+  });
 
   // 13b. Каждый раздел правил проекта КЛАССИФИЦИРОВАН: либо назван его адрес
   // на полке, либо он помечен проектным. Сверять заголовки проекта с
@@ -21761,542 +22022,562 @@ if (mode === "verify") {
   // и стояло оно с пометкой «удалять нельзя». Списков таких три — адреса,
   // ссылки на разделы и разрешённые связи в правилах направления, — и считаются
   // они одной секцией: заведи четвёртый, и вопрос «а он живой?» задастся сам.
-  const deadExceptions = [...deadRuleAllowances];
-  if (CONFIG.rulesManifest != null) {
-    // Таблица классификации разделов необязательна, и это следствие
-    // раскладки: в файле правил проекта лежит ТОЛЬКО проектное, доктрина —
-    // отдельными файлами рядом. Классифицировать стало нечего, вопрос «этот
-    // раздел едет на полку?» задаётся не здесь, а тем, куда человек кладёт
-    // текст. Таблица объявлена — сверяется по-прежнему.
-    const tableAt =
-      CONFIG.rulesManifest.table == null
-        ? null
-        : path.join(BASE, CONFIG.rulesManifest.table);
-    // Заголовки собираются со ВСЕХ заявленных файлов правил: разложенные по
-    // папкам, они остаются одним корпусом, и сверять их надо как один.
-    // Обратная сторона: файл правил, лежащий на диске и НЕ объявленный.
-    // Прямая ловит «объявлен, а файла нет» — это значит правила потеряли.
-    // Без обратной проходило противоположное и худшее: вложенный `CLAUDE.md`
-    // действует в своей папке, грузится сам, а обвязка о нём не знает вовсе —
-    // его разделы не классифицированы, на полку он не поедет, и заметить это
-    // некому. Найдено пробой.
-    //
-    // Исключения для полки здесь НЕТ, и оно не нужно: её заготовка называется
-    // иначе (`CLAUDE.template.md`), под имя не подпадает, а настоящий
-    // `CLAUDE.md`, положенный в полку, был бы ошибкой — на нём краснеть верно.
-    // Сказано прямо, потому что первая редакция комментария объявляла
-    // исключение, которого в коде не было: запись про несуществующий механизм
-    // опаснее её отсутствия, следующий заход на неё обопрётся.
-    {
-      const declared = new Set(
-        CONFIG.rulesManifest.rules.map((r) => norm(path.join(BASE, r))),
-      );
-      const skipDirs = new Set([
-        "node_modules",
-        ".stryker-tmp",
-        "dist",
-        "coverage",
-        ".git",
-      ]);
-      (function walkRules(dir) {
-        for (const e of readdirSync(dir)) {
-          if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
-          const full = norm(path.join(dir, e));
-          // Обвязка из обхода исключена целиком: в её семенах лежит заготовка
-          // файла правил, и обход объявлял её незаявленным файлом правил
-          // проекта. Найдено пересадкой начисто.
-          if (SHELF !== null && full.startsWith(norm(SHELF) + "/")) continue;
-          if (statSync(full).isDirectory()) walkRules(full);
-          else if (e === "CLAUDE.md" && !declared.has(full))
-            unclassified.push(
-              `файл правил не объявлен в манифесте: ${rel(full)}`,
-            );
-        }
-      })(norm(REPO));
-    }
-    const heads = [];
-    const rootRules = norm(path.join(REPO, "CLAUDE.md"));
-    for (const one of CONFIG.rulesManifest.rules) {
-      const at = path.join(BASE, one);
-      if (!existsSync(at)) {
-        unclassified.push(`нет файла правил: ${one}`);
-        continue;
-      }
-      const body = readFileSync(at, "utf8");
-      for (const line of body.split(NEWLINE))
-        if (line.startsWith("## ")) heads.push(line.slice(3).trim());
-      // Вложенный файл грузится один, без корневого, и без пути до него
-      // читается как весь свод правил (`base.md`, раздел «Правила,
-      // действующие только в одной папке»).
-      const here = norm(at);
-      if (
-        here !== rootRules &&
-        path.basename(here) === "CLAUDE.md" &&
-        existsSync(rootRules)
-      ) {
-        // Путь читается как путь: подстрока «../../CLAUDE.md» содержит
-        // «../CLAUDE.md», но ведёт выше корня.
-        const back = norm(path.relative(path.dirname(here), rootRules));
-        const points = [...body.matchAll(/[^\s()[\]`"'<>|]*CLAUDE\.md/g)].some(
-          (m) => norm(path.resolve(path.dirname(here), m[0])) === rootRules,
-        );
-        if (!points)
-          unclassified.push(
-            `вложенный файл правил не указывает на корневой: ${one} — нет пути ${back}`,
-          );
-      }
-    }
-    if (tableAt === null) {
-      // классификация не заявлена — сверять нечего
-    } else if (!existsSync(tableAt))
-      unclassified.push(`нет файла таблицы: ${CONFIG.rulesManifest.table}`);
-    else {
-      const lines = readFileSync(tableAt, "utf8").split(NEWLINE);
-      const at = lines.findIndex(
-        (l) => l.trim() === CONFIG.rulesManifest.heading.trim(),
-      );
-      const listed = [];
-      if (at < 0) unclassified.push("таблицу разделов не нашли");
-      else
-        for (let i = at + 2; i < lines.length; i += 1) {
-          if (!lines[i].trimStart().startsWith("|")) break;
-          listed.push(lines[i].split("|")[1].trim().replace(/`/g, ""));
-        }
-      for (const h of heads)
-        if (!listed.includes(h)) unclassified.push(`не классифицирован: ${h}`);
-      for (const l of listed)
-        if (!heads.includes(l)) unclassified.push(`раздела больше нет: ${l}`);
-    }
-
-    // 13b-1. Незаполненный шаблон правил. Правила приезжают заготовкой, где
-    // проектное размечено местами под заполнение, и заполняет их человек. Не
-    // заполнил — проект встаёт с доктриной без проектной половины: чем он
-    // является, где его слои, что публичная поверхность, чем проверяется. Это
-    // ровно то, ради чего правила и существуют в конкретном проекте, а прогон
-    // при этом зелёный: сверка разделов спрашивает, есть ли у раздела строка в
-    // таблице, а не написан ли он.
-    //
-    // Форма подстановки — угловые скобки с ЗАГЛАВНОЙ кириллицей либо многоточие.
-    // Уже, чем «любые угловые скобки», и намеренно: замерено, что в живых
-    // правилах законно стоят имена компонентов в угловых скобках и десяток
-    // оборотов вида `<путь>` —
-    // на них сверка кричала бы. Латиница исключена по той же причине: в базе
-    // законно стоит `<T>`, параметр обобщённого типа. Замер по всему
-    // репозиторию дал попадания только в самой заготовке и в цитатах инструкции
-    // посадки, то есть ложных срабатываний нет по построению.
-    // Корпус шире файлов правил, и это починка класса. Сверка смотрела только
-    // в них, а заготовки приезжают и в конфиги, и в файлы базы: после посадки в
-    // пустой проект места под заполнение остались в конфиге линтера и в списке
-    // исключений форматтера, и не увидел их никто. Список засеянного объявлен в
-    // настройке — чего в нём нет, о том и не спросят.
-    for (const one of [
-      ...CONFIG.rulesManifest.rules,
-      ...(CONFIG.seeded ?? []),
-    ]) {
-      const at = path.join(BASE, one);
-      if (!existsSync(at)) continue;
-      const body = readFileSync(at, "utf8");
-      const left = body.match(/<(?:[А-ЯЁ][А-ЯЁ ]*|\.\.\.)>/g);
-      if (left !== null)
-        unfilledTemplate.push(`${one}: ${[...new Set(left)].join(", ")}`);
-      // Вторая форма, и без неё первая была слепа на самом объёмном: подсказки
-      // заготовки написаны прозой в угловых скобках на несколько строк
-      // («<Слои и их назначение…>»), и предикат «целиком заглавные» их не берёт.
-      // Признак — открывающая скобка в начале строки: замерено, что в живых
-      // файлах правил таких строк ноль, а в заготовке их семь.
-      // Признак — открывающая скобка в начале строки, **после необязательного
-      // маркера комментария**. Без него детектор был слеп на конфигах: заготовка
-      // там пишется комментарием (`// <ПРОЕКТНОЕ: …>`, `# <ПРОЕКТНОЕ: …>`), и
-      // сверка проходила зелёной на файле, где место под заполнение стоит прямо
-      // в первой строке. Найдено пробой сразу после того, как корпус расширили
-      // на засеянные файлы: расширили, а форму не тронули.
-      // Пометки каркаса из счёта исключены. Это объявленная ПАРА маркеров, а
-      // не место под заполнение: у пустого проекта каркас лежит законно, и
-      // пометки при нём остаются. Образец ловил их открывающей скобкой — и
-      // верно посаженный пустой проект не мог пройти эту сверку в принципе,
-      // а рубеж завершения посадки у него как раз нулевой код возврата.
-      // Найдено посадкой в проект без кода.
-      // Маркеры обвязки — не подсказки заготовки: они приезжают в семенах и
-      // в правильно посаженном проекте обязаны стоять. Образец один на все:
-      // второй рядом с первым разошёлся бы при заведении третьего.
-      // Границы слова здесь нет и быть не может: она считается по латинице,
-      // а имена маркеров кириллические — после них `\b` не срабатывает
-      // никогда. Замерено вторым прогоном начисто: починка соседней запинки
-      // сломала опознание маркеров каркаса, и число подсказок втрое выросло.
-      const FRAME_MARK = /^\s*<!--\s*\/?(?:КАРКАС|ПУСТО|ЗАПОЛНИТЬ)[^>]*-->\s*$/;
-      const prose = body
-        .split(NEWLINE)
-        .filter(
-          (l) => !FRAME_MARK.test(l) && /^\s*(?:\/\/|#|\*|<!--)?\s*</.test(l),
-        ).length;
-      if (prose > 0)
-        unfilledTemplate.push(`${one}: подсказок заготовки прозой: ${prose}`);
-      // Инструкция ЗАПОЛНЯЮЩЕМУ живёт ровно до заполнения. У пустоты и у
-      // каркаса пометки есть, у слотов правил не было ни одной — и абзац
-      // «отвечать по слотам, слотов четыре» оставался в правилах проекта,
-      // обращённый к никому, при нуле слотов. Найдено ревизией результата
-      // на семи стендах разом: у всех семи.
-      if (body.includes("<!-- ЗАПОЛНИТЬ -->") && prose === 0)
-        unfilledTemplate.push(
-          one +
-            ": инструкция заполняющему пережила заполнение — снять абзац вместе с пометками ЗАПОЛНИТЬ",
-        );
-      // Четвёртая форма: ОБОРВАННАЯ подсказка. Три формы выше ищут
-      // открывающую скобку, и место, заполненное наполовину, ни одной из них
-      // не видно: ответ пишут поверх первых строк подсказки, а хвост её
-      // остаётся вместе с закрывающей скобкой. Замерено третьим кругом проб:
-      // в правилах стенда лежал абзац подсказки, кончающийся `>`, при ответе
-      // сверки «незаполненных мест: 0».
+  const deadExceptions = checkStep(() => [...deadRuleAllowances]);
+  checkStep(() => {
+    if (CONFIG.rulesManifest != null) {
+      // Таблица классификации разделов необязательна, и это следствие
+      // раскладки: в файле правил проекта лежит ТОЛЬКО проектное, доктрина —
+      // отдельными файлами рядом. Классифицировать стало нечего, вопрос «этот
+      // раздел едет на полку?» задаётся не здесь, а тем, куда человек кладёт
+      // текст. Таблица объявлена — сверяется по-прежнему.
+      const tableAt =
+        CONFIG.rulesManifest.table == null
+          ? null
+          : path.join(BASE, CONFIG.rulesManifest.table);
+      // Заголовки собираются со ВСЕХ заявленных файлов правил: разложенные по
+      // папкам, они остаются одним корпусом, и сверять их надо как один.
+      // Обратная сторона: файл правил, лежащий на диске и НЕ объявленный.
+      // Прямая ловит «объявлен, а файла нет» — это значит правила потеряли.
+      // Без обратной проходило противоположное и худшее: вложенный `CLAUDE.md`
+      // действует в своей папке, грузится сам, а обвязка о нём не знает вовсе —
+      // его разделы не классифицированы, на полку он не поедет, и заметить это
+      // некому. Найдено пробой.
       //
-      // Признак — строка, кончающаяся одинокой `>`, при том что открывающей
-      // скобки выше по файлу не осталось. Стрелка сравнения, закрывающая
-      // скобка разметки и цитата markdown под него не подходят: первая не
-      // стоит в конце строки, вторая кончается `-->`, третья начинается с
-      // `>`, а не кончается ею.
+      // Исключения для полки здесь НЕТ, и оно не нужно: её заготовка называется
+      // иначе (`CLAUDE.template.md`), под имя не подпадает, а настоящий
+      // `CLAUDE.md`, положенный в полку, был бы ошибкой — на нём краснеть верно.
+      // Сказано прямо, потому что первая редакция комментария объявляла
+      // исключение, которого в коде не было: запись про несуществующий механизм
+      // опаснее её отсутствия, следующий заход на неё обопрётся.
       {
-        const rows = body.split(NEWLINE);
-        let opened = false;
-        let orphan = 0;
-        for (const l of rows) {
-          if (/^\s*(?:\/\/|#|\*|<!--)?\s*</.test(l)) opened = true;
-          if (!/[^-\s]>\s*$/.test(l)) continue;
-          if (opened) {
-            opened = false;
-            continue;
-          }
-          orphan += 1;
-        }
-        if (orphan > 0)
-          unfilledTemplate.push(
-            `${one}: оборванных подсказок заготовки: ${orphan}`,
-          );
-      }
-      // Третья форма: место под заполнение ВНУТРИ строки таблицы. Две формы выше
-      // требуют, чтобы скобка стояла в начале строки либо чтобы подсказка была
-      // набрана заглавными, — и обе слепы на строку таблицы с угловыми скобками.
-      // Такая строка пролежала в реестре решений с самой посадки, при том что
-      // файл объявлен засеянным и проверяется каждым прогоном. Найдено прямым
-      // вопросом «полка готова?», то есть чтением, а не прогоном.
-      //
-      // Корпус узкий по построению: спрашиваются только объявленные засеянными
-      // файлы, а в них угловая скобка означает ровно одно.
-      const inRow = body.split(NEWLINE).filter(
-        (l) =>
-          l.trimStart().startsWith("|") &&
-          // Обратные кавычки снимаются до поиска: угловая скобка внутри них
-          // — нотация пути (`components/<Имя>/`), а не место под заполнение.
-          // Место под заполнение в кавычках не пишут никогда. Замерено
-          // посадкой начисто: проект, описавший раскладку доктринальной
-          // нотацией, закрыться не мог.
-          /<[^>]+>/.test(l.replace(/`[^`]*`/g, "")),
-      ).length;
-      if (inRow > 0)
-        unfilledTemplate.push(
-          one + ": мест под заполнение в таблицах: " + inRow,
+        const declared = new Set(
+          CONFIG.rulesManifest.rules.map((r) => norm(path.join(BASE, r))),
         );
-    }
-
-    // 13b-2. Ссылка на раздел по названию обязана разрешаться.
-    // Позиционная ссылка («правило выше») переезда файла не переживает и
-    // проверке не поддаётся — поэтому при выносе раздела такие переписывают в
-    // именные, а именные держит эта сверка. Заголовки берутся и из правил, и
-    // из базы: база ссылается на разделы правил, правила — на разделы базы.
-    // Корпус — это правила проекта, база И полка: правила ссылаются на разделы
-    // базы, база на разделы правил, а шаблон полки — на разделы `quality.md`,
-    // который в новом проекте станет соседом скопированного `CLAUDE.md`.
-    const allHeads = new Set(heads);
-    const shelfAt = SHELF;
-    // База обходится ВГЛУБЬ: доктрина, скопированная из донора, живёт её
-    // подпапкой, и на её разделы ссылается `CLAUDE.md`. Плоский обход находил
-    // только верхний уровень — и живая ссылка на «Эталонный узел» читалась как
-    // висячая у проекта, посаженного из донора. Найдено пробой.
-    const mdUnder = (dir) => {
-      if (!existsSync(dir)) return [];
-      const out = [];
-      for (const e of readdirSync(dir)) {
-        const full = path.join(dir, e);
-        if (statSync(full).isDirectory()) out.push(...mdUnder(full));
-        else if (e.endsWith(".md")) out.push(full);
+        const skipDirs = new Set([
+          "node_modules",
+          ".stryker-tmp",
+          "dist",
+          "coverage",
+          ".git",
+        ]);
+        (function walkRules(dir) {
+          for (const e of readdirSync(dir)) {
+            if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
+            const full = norm(path.join(dir, e));
+            // Обвязка из обхода исключена целиком: в её семенах лежит заготовка
+            // файла правил, и обход объявлял её незаявленным файлом правил
+            // проекта. Найдено пересадкой начисто.
+            if (SHELF !== null && full.startsWith(norm(SHELF) + "/")) continue;
+            if (statSync(full).isDirectory()) walkRules(full);
+            else if (e === "CLAUDE.md" && !declared.has(full))
+              unclassified.push(
+                `файл правил не объявлен в манифесте: ${rel(full)}`,
+              );
+          }
+        })(norm(REPO));
       }
-      return out;
-    };
-    const headSources = [
-      ...mdUnder(BASE),
-      ...(shelfAt === null ? [] : mdUnder(shelfAt)),
-    ];
-    for (const at of headSources)
-      for (const line of readFileSync(at, "utf8").split(NEWLINE))
-        if (/^#{2,}\s/.test(line))
-          allHeads.add(line.replace(/^#+\s*/, "").trim());
-    // Скиллы — тот же корпус, что правила: их читают и по ним действуют, а
-    // именная ссылка внутри скилла не проверялась ничем. Найдено пробой:
-    // ссылка на несуществующий раздел прошла зелёной. Класс уже записан у
-    // ссылок markdown — сверка сужена по ИСТОЧНИКУ, хотя причина её про ЦЕЛЬ.
-    // Заголовки скиллов идут в тот же набор: скилл ссылается прежде всего на
-    // собственный раздел, и без них сверка краснела бы на законном.
-    const skillFiles =
-      CONFIG.skills == null
-        ? []
-        : (() => {
-            const dir = path.join(BASE, CONFIG.skills.dir);
-            if (!existsSync(dir)) return [];
-            return readdirSync(dir)
-              .map((n) => path.join(dir, n, "SKILL.md"))
-              .filter((at) => existsSync(at));
-          })();
-    for (const at of skillFiles)
-      for (const line of readFileSync(at, "utf8").split(NEWLINE))
-        if (/^#{2,}\s/.test(line))
-          allHeads.add(line.replace(/^#+\s*/, "").trim());
-    const skip = new Set(CONFIG.rulesManifest.refExceptions);
-    const skipUsed = new Set();
-    const REF_RE = /(?:раздел[ае]?|§)\s+«([^»]+)»/g;
-    // Корпус ссылок — правила, вся база вглубь и **документация**. Последняя
-    // сюда не входила, и ссылка на несуществующий раздел из документа проходила
-    // молча: у документов таких ссылок как раз больше всего — они отсылают друг
-    // к другу и к разделам правил. Найдено пробой; заголовки для сверки берутся
-    // из того же корпуса, поэтому ссылка «документ → документ» тоже разрешается.
-    const sources = [
-      ...CONFIG.rulesManifest.rules
-        .map((one) => [one, path.join(BASE, one)])
-        .filter(([, at]) => existsSync(at)),
-      ...mdUnder(BASE).map((at) => [path.basename(at), at]),
-      ...docFiles.map((at) => [rel(at), at]),
-      // Скилл лежит вне `src`, и общий `rel` его не укорачивает — адрес печатался
-      // бы абсолютным, в отличие от соседей по списку. Считается от корня
-      // репозитория, как в остальных режимах.
-      ...skillFiles.map((at) => [
-        norm(path.relative(path.join(BASE, ".."), at)),
-        at,
-      ]),
-      // Собственная проза ПОЛКИ: доктрина, инструкция посадки, справочник
-      // инструмента, памятки. В корпус этой сверки не входила, и ссылка на
-      // несуществующий раздел из доктрины проходила молча. Замерено: из
-      // `25` ссылок на разделы во всей прозе репозитория сверка читала `5`.
-      ...shelfProse(),
-    ];
-    // Заголовки берутся из ТОГО ЖЕ корпуса, что и ссылки: иначе живая ссылка
-    // внутрь доктрины объявляется висячей.
-    for (const [, at] of sources)
-      for (const line of readFileSync(at, "utf8").split(NEWLINE))
-        if (/^#{2,}\s/.test(line))
-          allHeads.add(line.replace(/^#+\s*/, "").trim());
-    // Ссылка, назвавшая файл, разрешается в НЁМ, а не в любом заголовке
-    // корпуса. Прежде заголовки шли одним набором на весь корпус, и ссылка на
-    // переименованный раздел находила одноимённый в другом файле — или в
-    // обосновании, которое повторяет заголовки нормы. Найдено прогоном проб.
-    const headsOfFile = new Map();
-    const filesByName = new Map();
-    for (const at of new Set(
-      [...headSources, ...skillFiles, ...sources.map(([, one]) => one)].map(norm),
-    )) {
-      const own = new Set();
-      for (const line of readFileSync(at, "utf8").split(NEWLINE))
-        if (/^#{2,}\s/.test(line)) own.add(line.replace(/^#+\s*/, "").trim());
-      headsOfFile.set(at, own);
-      const name = path.basename(at);
-      filesByName.set(name, [...(filesByName.get(name) ?? []), at]);
-    }
-    // Файл ссылки: «раздел «X» в `f.md`» либо «`f.md`, раздел «X»» в одной
-    // фразе. Из одноимённых — тот, что в папке ссылки, иначе норма, а не её
-    // обоснование.
-    const namedFile = (from, before, after) => {
-      const hit =
-        /^\s+(?:в|из|файла)\s+`([^`\s]+\.md)`/.exec(after) ??
-        /`([^`\s]+\.md)`(?:\]\([^)\s]*\))?[^`«».;\n]{0,40}$/.exec(before);
-      if (hit === null) return null;
-      const all = filesByName.get(path.basename(hit[1])) ?? [];
-      if (all.length === 0) return null;
-      const here = all.filter((f) => path.dirname(f) === path.dirname(norm(from)));
-      if (here.length) return here;
-      const norms = all.filter((f) => !f.includes("/rationale/"));
-      return norms.length ? norms : all;
-    };
-    for (const [name, at] of sources) {
-      // Образец ссылки в ограде кода — показанная форма, а не адрес.
-      const body = proseOf(at);
-      REF_RE.lastIndex = 0;
-      let m;
-      while ((m = REF_RE.exec(body)) !== null) {
-        // Ссылка нередко разорвана переносом строки: сравнивать надо смысл, а
-        // не вёрстку, иначе живой заголовок читается как висячий.
-        const title = m[1].replace(/\s+/g, " ").trim();
-        refTokens++;
-        // Место под заполнение ссылкой не бывает: `«<ось>»` в форме отчёта —
-        // слот, который заполняют, а не адрес, по которому ходят.
-        if (title.includes("<")) continue;
-        if (skip.has(title)) {
-          skipUsed.add(title);
+      const heads = [];
+      const rootRules = norm(path.join(REPO, "CLAUDE.md"));
+      for (const one of CONFIG.rulesManifest.rules) {
+        const at = path.join(BASE, one);
+        if (!existsSync(at)) {
+          unclassified.push(`нет файла правил: ${one}`);
           continue;
         }
-        // Ссылка на раздел ЧУЖОГО свода — глобальных правил, живущих вне
-        // репозитория. Их инструмент не читает и потому не вправе утверждать,
-        // что раздела нет. Признак берётся из той же фразы: она сама называет,
-        // куда отсылает.
-        const around = body.slice(Math.max(0, m.index - 120), m.index);
-        // `\w` в JS — это латиница: на кириллице такой предикат молча не
-        // срабатывает, и первая версия этой проверки именно так и промолчала.
-        if (/глобальн[а-яё]*\s+правил/i.test(around)) continue;
-        // Заголовок могли назвать началом: «раздел «Планка качества»» против
-        // «## Планка качества — сверяется, а не подразумевается».
-        //
-        // Сравнение без регистра и без НУМЕРАТОРА: разделы доктрины идут
-        // буквой или числом («## B. Форма контракта: …»), а ссылаются на них
-        // строчными и без номера. Буквальное сравнение объявляло висячей
-        // живую ссылку — ложное срабатывание, а крикливой сверке перестают
-        // верить. Замерено на первом же расширении корпуса.
-        const bare = (one) =>
-          one
-            .toLowerCase()
-            .replace(/^[a-zа-яё0-9]{1,3}[.)]\s*/i, "")
-            .trim();
-        const want = bare(title);
-        // Начало заголовка — до тире либо двоеточия: «Отчёт» не называет ни
-        // «Отчётность», ни «Отчёт о сборке обвязки».
-        const target = namedFile(
-          at,
-          body.slice(Math.max(0, m.index - 80), m.index),
-          body.slice(m.index + m[0].length, m.index + m[0].length + 80),
-        );
-        const pool =
-          target === null
-            ? allHeads
-            : new Set(target.flatMap((f) => [...headsOfFile.get(f)]));
-        const found = [...pool].some((h) => {
-          const has = bare(h);
-          return (
-            has === want ||
-            (has.startsWith(want) && /^\s*[—–:-]/.test(has.slice(want.length)))
+        const body = readFileSync(at, "utf8");
+        for (const line of body.split(NEWLINE))
+          if (line.startsWith("## ")) heads.push(line.slice(3).trim());
+        // Вложенный файл грузится один, без корневого, и без пути до него
+        // читается как весь свод правил (`base.md`, раздел «Правила,
+        // действующие только в одной папке»).
+        const here = norm(at);
+        if (
+          here !== rootRules &&
+          path.basename(here) === "CLAUDE.md" &&
+          existsSync(rootRules)
+        ) {
+          // Путь читается как путь: подстрока «../../CLAUDE.md» содержит
+          // «../CLAUDE.md», но ведёт выше корня.
+          const back = norm(path.relative(path.dirname(here), rootRules));
+          const points = [
+            ...body.matchAll(/[^\s()[\]`"'<>|]*CLAUDE\.md/g),
+          ].some(
+            (m) => norm(path.resolve(path.dirname(here), m[0])) === rootRules,
           );
-        });
-        if (!found)
-          danglingRefs.push(
-            `${name}: «${title}»` +
-              (target === null
-                ? ""
-                : " — в " + path.basename(target[0]) + " такого раздела нет"),
+          if (!points)
+            unclassified.push(
+              `вложенный файл правил не указывает на корневой: ${one} — нет пути ${back}`,
+            );
+        }
+      }
+      if (tableAt === null) {
+        // классификация не заявлена — сверять нечего
+      } else if (!existsSync(tableAt))
+        unclassified.push(`нет файла таблицы: ${CONFIG.rulesManifest.table}`);
+      else {
+        const lines = readFileSync(tableAt, "utf8").split(NEWLINE);
+        const at = lines.findIndex(
+          (l) => l.trim() === CONFIG.rulesManifest.heading.trim(),
+        );
+        const listed = [];
+        if (at < 0) unclassified.push("таблицу разделов не нашли");
+        else
+          for (let i = at + 2; i < lines.length; i += 1) {
+            if (!lines[i].trimStart().startsWith("|")) break;
+            listed.push(lines[i].split("|")[1].trim().replace(/`/g, ""));
+          }
+        for (const h of heads)
+          if (!listed.includes(h))
+            unclassified.push(`не классифицирован: ${h}`);
+        for (const l of listed)
+          if (!heads.includes(l)) unclassified.push(`раздела больше нет: ${l}`);
+      }
+
+      // 13b-1. Незаполненный шаблон правил. Правила приезжают заготовкой, где
+      // проектное размечено местами под заполнение, и заполняет их человек. Не
+      // заполнил — проект встаёт с доктриной без проектной половины: чем он
+      // является, где его слои, что публичная поверхность, чем проверяется. Это
+      // ровно то, ради чего правила и существуют в конкретном проекте, а прогон
+      // при этом зелёный: сверка разделов спрашивает, есть ли у раздела строка в
+      // таблице, а не написан ли он.
+      //
+      // Форма подстановки — угловые скобки с ЗАГЛАВНОЙ кириллицей либо многоточие.
+      // Уже, чем «любые угловые скобки», и намеренно: замерено, что в живых
+      // правилах законно стоят имена компонентов в угловых скобках и десяток
+      // оборотов вида `<путь>` —
+      // на них сверка кричала бы. Латиница исключена по той же причине: в базе
+      // законно стоит `<T>`, параметр обобщённого типа. Замер по всему
+      // репозиторию дал попадания только в самой заготовке и в цитатах инструкции
+      // посадки, то есть ложных срабатываний нет по построению.
+      // Корпус шире файлов правил, и это починка класса. Сверка смотрела только
+      // в них, а заготовки приезжают и в конфиги, и в файлы базы: после посадки в
+      // пустой проект места под заполнение остались в конфиге линтера и в списке
+      // исключений форматтера, и не увидел их никто. Список засеянного объявлен в
+      // настройке — чего в нём нет, о том и не спросят.
+      for (const one of [
+        ...CONFIG.rulesManifest.rules,
+        ...(CONFIG.seeded ?? []),
+      ]) {
+        const at = path.join(BASE, one);
+        if (!existsSync(at)) continue;
+        const body = readFileSync(at, "utf8");
+        const left = body.match(/<(?:[А-ЯЁ][А-ЯЁ ]*|\.\.\.)>/g);
+        if (left !== null)
+          unfilledTemplate.push(`${one}: ${[...new Set(left)].join(", ")}`);
+        // Вторая форма, и без неё первая была слепа на самом объёмном: подсказки
+        // заготовки написаны прозой в угловых скобках на несколько строк
+        // («<Слои и их назначение…>»), и предикат «целиком заглавные» их не берёт.
+        // Признак — открывающая скобка в начале строки: замерено, что в живых
+        // файлах правил таких строк ноль, а в заготовке их семь.
+        // Признак — открывающая скобка в начале строки, **после необязательного
+        // маркера комментария**. Без него детектор был слеп на конфигах: заготовка
+        // там пишется комментарием (`// <ПРОЕКТНОЕ: …>`, `# <ПРОЕКТНОЕ: …>`), и
+        // сверка проходила зелёной на файле, где место под заполнение стоит прямо
+        // в первой строке. Найдено пробой сразу после того, как корпус расширили
+        // на засеянные файлы: расширили, а форму не тронули.
+        // Пометки каркаса из счёта исключены. Это объявленная ПАРА маркеров, а
+        // не место под заполнение: у пустого проекта каркас лежит законно, и
+        // пометки при нём остаются. Образец ловил их открывающей скобкой — и
+        // верно посаженный пустой проект не мог пройти эту сверку в принципе,
+        // а рубеж завершения посадки у него как раз нулевой код возврата.
+        // Найдено посадкой в проект без кода.
+        // Маркеры обвязки — не подсказки заготовки: они приезжают в семенах и
+        // в правильно посаженном проекте обязаны стоять. Образец один на все:
+        // второй рядом с первым разошёлся бы при заведении третьего.
+        // Границы слова здесь нет и быть не может: она считается по латинице,
+        // а имена маркеров кириллические — после них `\b` не срабатывает
+        // никогда. Замерено вторым прогоном начисто: починка соседней запинки
+        // сломала опознание маркеров каркаса, и число подсказок втрое выросло.
+        const FRAME_MARK =
+          /^\s*<!--\s*\/?(?:КАРКАС|ПУСТО|ЗАПОЛНИТЬ)[^>]*-->\s*$/;
+        const prose = body
+          .split(NEWLINE)
+          .filter(
+            (l) => !FRAME_MARK.test(l) && /^\s*(?:\/\/|#|\*|<!--)?\s*</.test(l),
+          ).length;
+        if (prose > 0)
+          unfilledTemplate.push(`${one}: подсказок заготовки прозой: ${prose}`);
+        // Инструкция ЗАПОЛНЯЮЩЕМУ живёт ровно до заполнения. У пустоты и у
+        // каркаса пометки есть, у слотов правил не было ни одной — и абзац
+        // «отвечать по слотам, слотов четыре» оставался в правилах проекта,
+        // обращённый к никому, при нуле слотов. Найдено ревизией результата
+        // на семи стендах разом: у всех семи.
+        if (body.includes("<!-- ЗАПОЛНИТЬ -->") && prose === 0)
+          unfilledTemplate.push(
+            one +
+              ": инструкция заполняющему пережила заполнение — снять абзац вместе с пометками ЗАПОЛНИТЬ",
+          );
+        // Четвёртая форма: ОБОРВАННАЯ подсказка. Три формы выше ищут
+        // открывающую скобку, и место, заполненное наполовину, ни одной из них
+        // не видно: ответ пишут поверх первых строк подсказки, а хвост её
+        // остаётся вместе с закрывающей скобкой. Замерено третьим кругом проб:
+        // в правилах стенда лежал абзац подсказки, кончающийся `>`, при ответе
+        // сверки «незаполненных мест: 0».
+        //
+        // Признак — строка, кончающаяся одинокой `>`, при том что открывающей
+        // скобки выше по файлу не осталось. Стрелка сравнения, закрывающая
+        // скобка разметки и цитата markdown под него не подходят: первая не
+        // стоит в конце строки, вторая кончается `-->`, третья начинается с
+        // `>`, а не кончается ею.
+        {
+          const rows = body.split(NEWLINE);
+          let opened = false;
+          let orphan = 0;
+          for (const l of rows) {
+            if (/^\s*(?:\/\/|#|\*|<!--)?\s*</.test(l)) opened = true;
+            if (!/[^-\s]>\s*$/.test(l)) continue;
+            if (opened) {
+              opened = false;
+              continue;
+            }
+            orphan += 1;
+          }
+          if (orphan > 0)
+            unfilledTemplate.push(
+              `${one}: оборванных подсказок заготовки: ${orphan}`,
+            );
+        }
+        // Третья форма: место под заполнение ВНУТРИ строки таблицы. Две формы выше
+        // требуют, чтобы скобка стояла в начале строки либо чтобы подсказка была
+        // набрана заглавными, — и обе слепы на строку таблицы с угловыми скобками.
+        // Такая строка пролежала в реестре решений с самой посадки, при том что
+        // файл объявлен засеянным и проверяется каждым прогоном. Найдено прямым
+        // вопросом «полка готова?», то есть чтением, а не прогоном.
+        //
+        // Корпус узкий по построению: спрашиваются только объявленные засеянными
+        // файлы, а в них угловая скобка означает ровно одно.
+        const inRow = body.split(NEWLINE).filter(
+          (l) =>
+            l.trimStart().startsWith("|") &&
+            // Обратные кавычки снимаются до поиска: угловая скобка внутри них
+            // — нотация пути (`components/<Имя>/`), а не место под заполнение.
+            // Место под заполнение в кавычках не пишут никогда. Замерено
+            // посадкой начисто: проект, описавший раскладку доктринальной
+            // нотацией, закрыться не мог.
+            /<[^>]+>/.test(l.replace(/`[^`]*`/g, "")),
+        ).length;
+        if (inRow > 0)
+          unfilledTemplate.push(
+            one + ": мест под заполнение в таблицах: " + inRow,
           );
       }
+
+      // 13b-2. Ссылка на раздел по названию обязана разрешаться.
+      // Позиционная ссылка («правило выше») переезда файла не переживает и
+      // проверке не поддаётся — поэтому при выносе раздела такие переписывают в
+      // именные, а именные держит эта сверка. Заголовки берутся и из правил, и
+      // из базы: база ссылается на разделы правил, правила — на разделы базы.
+      // Корпус — это правила проекта, база И полка: правила ссылаются на разделы
+      // базы, база на разделы правил, а шаблон полки — на разделы `quality.md`,
+      // который в новом проекте станет соседом скопированного `CLAUDE.md`.
+      const allHeads = new Set(heads);
+      const shelfAt = SHELF;
+      // База обходится ВГЛУБЬ: доктрина, скопированная из донора, живёт её
+      // подпапкой, и на её разделы ссылается `CLAUDE.md`. Плоский обход находил
+      // только верхний уровень — и живая ссылка на «Эталонный узел» читалась как
+      // висячая у проекта, посаженного из донора. Найдено пробой.
+      const mdUnder = (dir) => {
+        if (!existsSync(dir)) return [];
+        const out = [];
+        for (const e of readdirSync(dir)) {
+          const full = path.join(dir, e);
+          if (statSync(full).isDirectory()) out.push(...mdUnder(full));
+          else if (e.endsWith(".md")) out.push(full);
+        }
+        return out;
+      };
+      const headSources = [
+        ...mdUnder(BASE),
+        ...(shelfAt === null ? [] : mdUnder(shelfAt)),
+      ];
+      for (const at of headSources)
+        for (const line of readFileSync(at, "utf8").split(NEWLINE))
+          if (/^#{2,}\s/.test(line))
+            allHeads.add(line.replace(/^#+\s*/, "").trim());
+      // Скиллы — тот же корпус, что правила: их читают и по ним действуют, а
+      // именная ссылка внутри скилла не проверялась ничем. Найдено пробой:
+      // ссылка на несуществующий раздел прошла зелёной. Класс уже записан у
+      // ссылок markdown — сверка сужена по ИСТОЧНИКУ, хотя причина её про ЦЕЛЬ.
+      // Заголовки скиллов идут в тот же набор: скилл ссылается прежде всего на
+      // собственный раздел, и без них сверка краснела бы на законном.
+      const skillFiles =
+        CONFIG.skills == null
+          ? []
+          : (() => {
+              const dir = path.join(BASE, CONFIG.skills.dir);
+              if (!existsSync(dir)) return [];
+              return readdirSync(dir)
+                .map((n) => path.join(dir, n, "SKILL.md"))
+                .filter((at) => existsSync(at));
+            })();
+      for (const at of skillFiles)
+        for (const line of readFileSync(at, "utf8").split(NEWLINE))
+          if (/^#{2,}\s/.test(line))
+            allHeads.add(line.replace(/^#+\s*/, "").trim());
+      const skip = new Set(CONFIG.rulesManifest.refExceptions);
+      const skipUsed = new Set();
+      const REF_RE = /(?:раздел[ае]?|§)\s+«([^»]+)»/g;
+      // Корпус ссылок — правила, вся база вглубь и **документация**. Последняя
+      // сюда не входила, и ссылка на несуществующий раздел из документа проходила
+      // молча: у документов таких ссылок как раз больше всего — они отсылают друг
+      // к другу и к разделам правил. Найдено пробой; заголовки для сверки берутся
+      // из того же корпуса, поэтому ссылка «документ → документ» тоже разрешается.
+      const sources = [
+        ...CONFIG.rulesManifest.rules
+          .map((one) => [one, path.join(BASE, one)])
+          .filter(([, at]) => existsSync(at)),
+        ...mdUnder(BASE).map((at) => [path.basename(at), at]),
+        ...docFiles.map((at) => [rel(at), at]),
+        // Скилл лежит вне `src`, и общий `rel` его не укорачивает — адрес печатался
+        // бы абсолютным, в отличие от соседей по списку. Считается от корня
+        // репозитория, как в остальных режимах.
+        ...skillFiles.map((at) => [
+          norm(path.relative(path.join(BASE, ".."), at)),
+          at,
+        ]),
+        // Собственная проза ПОЛКИ: доктрина, инструкция посадки, справочник
+        // инструмента, памятки. В корпус этой сверки не входила, и ссылка на
+        // несуществующий раздел из доктрины проходила молча. Замерено: из
+        // `25` ссылок на разделы во всей прозе репозитория сверка читала `5`.
+        ...shelfProse(),
+      ];
+      // Заголовки берутся из ТОГО ЖЕ корпуса, что и ссылки: иначе живая ссылка
+      // внутрь доктрины объявляется висячей.
+      for (const [, at] of sources)
+        for (const line of readFileSync(at, "utf8").split(NEWLINE))
+          if (/^#{2,}\s/.test(line))
+            allHeads.add(line.replace(/^#+\s*/, "").trim());
+      // Ссылка, назвавшая файл, разрешается в НЁМ, а не в любом заголовке
+      // корпуса. Прежде заголовки шли одним набором на весь корпус, и ссылка на
+      // переименованный раздел находила одноимённый в другом файле — или в
+      // обосновании, которое повторяет заголовки нормы. Найдено прогоном проб.
+      const headsOfFile = new Map();
+      const filesByName = new Map();
+      for (const at of new Set(
+        [...headSources, ...skillFiles, ...sources.map(([, one]) => one)].map(
+          norm,
+        ),
+      )) {
+        const own = new Set();
+        for (const line of readFileSync(at, "utf8").split(NEWLINE))
+          if (/^#{2,}\s/.test(line)) own.add(line.replace(/^#+\s*/, "").trim());
+        headsOfFile.set(at, own);
+        const name = path.basename(at);
+        filesByName.set(name, [...(filesByName.get(name) ?? []), at]);
+      }
+      // Файл ссылки: «раздел «X» в `f.md`» либо «`f.md`, раздел «X»» в одной
+      // фразе. Из одноимённых — тот, что в папке ссылки, иначе норма, а не её
+      // обоснование.
+      const namedFile = (from, before, after) => {
+        const hit =
+          /^\s+(?:в|из|файла)\s+`([^`\s]+\.md)`/.exec(after) ??
+          /`([^`\s]+\.md)`(?:\]\([^)\s]*\))?[^`«».;\n]{0,40}$/.exec(before);
+        if (hit === null) return null;
+        const all = filesByName.get(path.basename(hit[1])) ?? [];
+        if (all.length === 0) return null;
+        const here = all.filter(
+          (f) => path.dirname(f) === path.dirname(norm(from)),
+        );
+        if (here.length) return here;
+        const norms = all.filter((f) => !f.includes("/rationale/"));
+        return norms.length ? norms : all;
+      };
+      for (const [name, at] of sources) {
+        // Образец ссылки в ограде кода — показанная форма, а не адрес.
+        const body = proseOf(at);
+        REF_RE.lastIndex = 0;
+        let m;
+        while ((m = REF_RE.exec(body)) !== null) {
+          // Ссылка нередко разорвана переносом строки: сравнивать надо смысл, а
+          // не вёрстку, иначе живой заголовок читается как висячий.
+          const title = m[1].replace(/\s+/g, " ").trim();
+          refTokens++;
+          // Место под заполнение ссылкой не бывает: `«<ось>»` в форме отчёта —
+          // слот, который заполняют, а не адрес, по которому ходят.
+          if (title.includes("<")) continue;
+          if (skip.has(title)) {
+            skipUsed.add(title);
+            continue;
+          }
+          // Ссылка на раздел ЧУЖОГО свода — глобальных правил, живущих вне
+          // репозитория. Их инструмент не читает и потому не вправе утверждать,
+          // что раздела нет. Признак берётся из той же фразы: она сама называет,
+          // куда отсылает.
+          const around = body.slice(Math.max(0, m.index - 120), m.index);
+          // `\w` в JS — это латиница: на кириллице такой предикат молча не
+          // срабатывает, и первая версия этой проверки именно так и промолчала.
+          if (/глобальн[а-яё]*\s+правил/i.test(around)) continue;
+          // Заголовок могли назвать началом: «раздел «Планка качества»» против
+          // «## Планка качества — сверяется, а не подразумевается».
+          //
+          // Сравнение без регистра и без НУМЕРАТОРА: разделы доктрины идут
+          // буквой или числом («## B. Форма контракта: …»), а ссылаются на них
+          // строчными и без номера. Буквальное сравнение объявляло висячей
+          // живую ссылку — ложное срабатывание, а крикливой сверке перестают
+          // верить. Замерено на первом же расширении корпуса.
+          const bare = (one) =>
+            one
+              .toLowerCase()
+              .replace(/^[a-zа-яё0-9]{1,3}[.)]\s*/i, "")
+              .trim();
+          const want = bare(title);
+          // Начало заголовка — до тире либо двоеточия: «Отчёт» не называет ни
+          // «Отчётность», ни «Отчёт о сборке обвязки».
+          const target = namedFile(
+            at,
+            body.slice(Math.max(0, m.index - 80), m.index),
+            body.slice(m.index + m[0].length, m.index + m[0].length + 80),
+          );
+          const pool =
+            target === null
+              ? allHeads
+              : new Set(target.flatMap((f) => [...headsOfFile.get(f)]));
+          const found = [...pool].some((h) => {
+            const has = bare(h);
+            return (
+              has === want ||
+              (has.startsWith(want) &&
+                /^\s*[—–:-]/.test(has.slice(want.length)))
+            );
+          });
+          if (!found)
+            danglingRefs.push(
+              `${name}: «${title}»` +
+                (target === null
+                  ? ""
+                  : " — в " + path.basename(target[0]) + " такого раздела нет"),
+            );
+        }
+      }
+      for (const one of skip)
+        if (!skipUsed.has(one))
+          deadExceptions.push(`ссылки на разделы: «${one}» — ничего не гасит`);
     }
-    for (const one of skip)
-      if (!skipUsed.has(one))
-        deadExceptions.push(`ссылки на разделы: «${one}» — ничего не гасит`);
-  }
-  checkHead("Ссылки на разделы", { n: refTokens, unit: "ссылок на разделы" });
-  console.log(
-    CONFIG.rulesManifest == null
-      ? "  реестр правил не заявлен"
-      : `  ведут в никуда: ${danglingRefs.length}`,
-  );
-  for (const d of danglingRefs) console.log("    " + d);
+  });
+  checkStep(() => {
+    checkHead("Ссылки на разделы", () => ({
+      n: refTokens,
+      unit: "ссылок на разделы",
+    }));
+    console.log(
+      CONFIG.rulesManifest == null
+        ? "  реестр правил не заявлен"
+        : `  ведут в никуда: ${danglingRefs.length}`,
+    );
+    for (const d of danglingRefs) console.log("    " + d);
+  });
   // 13c. Скиллы проекта: объявлены, лежат на месте, совпадают с полкой.
   const skillDrift = [];
   let skillsLooked = 0;
-  if (CONFIG.skills != null) {
-    const dir = path.join(BASE, CONFIG.skills.dir);
-    const onDisk = existsSync(dir)
-      ? readdirSync(dir).filter((n) =>
-          existsSync(path.join(dir, n, "SKILL.md")),
-        )
-      : [];
-    const tableAt = path.join(BASE, CONFIG.skills.table);
-    const listed = new Map();
-    if (!existsSync(tableAt))
-      skillDrift.push(`нет файла таблицы: ${CONFIG.skills.table}`);
-    else {
-      const lines = readFileSync(tableAt, "utf8").split(NEWLINE);
-      const at = lines.findIndex(
-        (l) => l.trim() === CONFIG.skills.heading.trim(),
-      );
-      if (at < 0) skillDrift.push("таблицу скиллов не нашли");
-      else
-        for (let i = at + 2; i < lines.length; i += 1) {
-          if (!lines[i].trimStart().startsWith("|")) break;
-          const cells = lines[i].split("|");
-          listed.set(
-            cells[1].trim().replace(/`/g, ""),
-            cells[2].trim().replace(/`/g, ""),
-          );
-        }
-    }
-    skillsLooked = new Set([...onDisk, ...listed.keys()]).size;
-    for (const name of onDisk)
-      if (!listed.has(name)) skillDrift.push(`не объявлен в таблице: ${name}`);
-    // Шапка скилла — то, чем он объявляет себя окружению: имя, по которому его
-    // зовут, и признак, делающий его вызываемым по `/`. Сверялись папка и
-    // таблица, а шапка — нет: `name`, разошедшийся с папкой, проходил зелёным в
-    // обеих копиях сразу, и объявление становилось ложным молча. Найдено пробой.
-    for (const name of onDisk) {
-      const head = readFileSync(path.join(dir, name, "SKILL.md"), "utf8")
-        .split(NEWLINE)
-        .slice(0, 12);
-      const declared = head
-        .map((l) => /^name:\s*(\S+)\s*$/.exec(l)?.[1])
-        .find((one) => one !== undefined);
-      if (declared === undefined) skillDrift.push(`в шапке нет имени: ${name}`);
-      else if (declared !== name)
-        skillDrift.push(
-          `имя в шапке не совпадает с папкой: ${name} ≠ ${declared}`,
-        );
-      if (!head.some((l) => /^user-invocable:\s*true\s*$/.test(l)))
-        skillDrift.push(`не вызываем по имени: ${name}`);
-      // Описание — единственное, по чему окружение подбирает скилл к задаче;
-      // без него скилл вызывается только по имени (`environment.md`).
-      const descAt = head.findIndex((l) => /^description:/.test(l));
-      const rest = descAt < 0 ? [] : head.slice(descAt + 1);
-      const wrapped = rest.findIndex((l) => !/^\s/.test(l));
-      const inline =
-        descAt < 0
-          ? ""
-          : head[descAt].replace(/^description:\s*[>|]?[-+]?/, "");
-      const words = [
-        inline,
-        ...rest.slice(0, wrapped < 0 ? rest.length : wrapped),
-      ].join("");
-      if (words.replace(/["'\s]/g, "") === "")
-        skillDrift.push(`в шапке нет описания: ${name}`);
-    }
-    for (const [name] of listed) {
-      if (!onDisk.includes(name)) {
-        skillDrift.push(`объявлен, но файла нет: ${name}`);
-        continue;
-      }
-      // Побайтовой пары у скилла больше нет: он существует в одном
-      // экземпляре, в папке обвязки, и сверять его не с чем. Вторая графа
-      // таблицы называет его адрес там же — она отвечает на вопрос «где
-      // лежит оригинал», а не служит опорой сверки.
-    }
-    // Памятка по скиллам — против состава, в обе стороны. Спрашивается только
-    // когда скиллы уже есть: на пустой папке памятке нечего описывать, и
-    // требовать её значило бы ронять первый прогон после посадки.
-    if (CONFIG.skills.memo != null && onDisk.length > 0) {
-      const memoAt = path.join(dir, CONFIG.skills.memo);
-      if (!existsSync(memoAt))
-        skillDrift.push(`нет памятки по скиллам: ${CONFIG.skills.memo}`);
+  checkStep(() => {
+    if (CONFIG.skills != null) {
+      const dir = path.join(BASE, CONFIG.skills.dir);
+      const onDisk = existsSync(dir)
+        ? readdirSync(dir).filter((n) =>
+            existsSync(path.join(dir, n, "SKILL.md")),
+          )
+        : [];
+      const tableAt = path.join(BASE, CONFIG.skills.table);
+      const listed = new Map();
+      if (!existsSync(tableAt))
+        skillDrift.push(`нет файла таблицы: ${CONFIG.skills.table}`);
       else {
-        const lines = readFileSync(memoAt, "utf8").split(NEWLINE);
+        const lines = readFileSync(tableAt, "utf8").split(NEWLINE);
         const at = lines.findIndex(
-          (l) => l.trim() === CONFIG.skills.memoHeading.trim(),
+          (l) => l.trim() === CONFIG.skills.heading.trim(),
         );
-        if (at < 0) skillDrift.push("в памятке не нашли таблицу скиллов");
-        else {
-          const inMemo = new Set();
+        if (at < 0) skillDrift.push("таблицу скиллов не нашли");
+        else
           for (let i = at + 2; i < lines.length; i += 1) {
             if (!lines[i].trimStart().startsWith("|")) break;
-            inMemo.add(lines[i].split("|")[1].trim().replace(/`/g, ""));
+            const cells = lines[i].split("|");
+            listed.set(
+              cells[1].trim().replace(/`/g, ""),
+              cells[2].trim().replace(/`/g, ""),
+            );
           }
-          for (const name of onDisk)
-            if (!inMemo.has(name))
-              skillDrift.push(`нет строки в памятке: ${name}`);
-          for (const name of inMemo)
-            if (!onDisk.includes(name))
-              skillDrift.push(
-                `памятка описывает несуществующий скилл: ${name}`,
-              );
+      }
+      skillsLooked = new Set([...onDisk, ...listed.keys()]).size;
+      for (const name of onDisk)
+        if (!listed.has(name))
+          skillDrift.push(`не объявлен в таблице: ${name}`);
+      // Шапка скилла — то, чем он объявляет себя окружению: имя, по которому его
+      // зовут, и признак, делающий его вызываемым по `/`. Сверялись папка и
+      // таблица, а шапка — нет: `name`, разошедшийся с папкой, проходил зелёным в
+      // обеих копиях сразу, и объявление становилось ложным молча. Найдено пробой.
+      for (const name of onDisk) {
+        const head = readFileSync(path.join(dir, name, "SKILL.md"), "utf8")
+          .split(NEWLINE)
+          .slice(0, 12);
+        const declared = head
+          .map((l) => /^name:\s*(\S+)\s*$/.exec(l)?.[1])
+          .find((one) => one !== undefined);
+        if (declared === undefined)
+          skillDrift.push(`в шапке нет имени: ${name}`);
+        else if (declared !== name)
+          skillDrift.push(
+            `имя в шапке не совпадает с папкой: ${name} ≠ ${declared}`,
+          );
+        if (!head.some((l) => /^user-invocable:\s*true\s*$/.test(l)))
+          skillDrift.push(`не вызываем по имени: ${name}`);
+        // Описание — единственное, по чему окружение подбирает скилл к задаче;
+        // без него скилл вызывается только по имени (`environment.md`).
+        const descAt = head.findIndex((l) => /^description:/.test(l));
+        const rest = descAt < 0 ? [] : head.slice(descAt + 1);
+        const wrapped = rest.findIndex((l) => !/^\s/.test(l));
+        const inline =
+          descAt < 0
+            ? ""
+            : head[descAt].replace(/^description:\s*[>|]?[-+]?/, "");
+        const words = [
+          inline,
+          ...rest.slice(0, wrapped < 0 ? rest.length : wrapped),
+        ].join("");
+        if (words.replace(/["'\s]/g, "") === "")
+          skillDrift.push(`в шапке нет описания: ${name}`);
+      }
+      for (const [name] of listed) {
+        if (!onDisk.includes(name)) {
+          skillDrift.push(`объявлен, но файла нет: ${name}`);
+          continue;
+        }
+        // Побайтовой пары у скилла больше нет: он существует в одном
+        // экземпляре, в папке обвязки, и сверять его не с чем. Вторая графа
+        // таблицы называет его адрес там же — она отвечает на вопрос «где
+        // лежит оригинал», а не служит опорой сверки.
+      }
+      // Памятка по скиллам — против состава, в обе стороны. Спрашивается только
+      // когда скиллы уже есть: на пустой папке памятке нечего описывать, и
+      // требовать её значило бы ронять первый прогон после посадки.
+      if (CONFIG.skills.memo != null && onDisk.length > 0) {
+        const memoAt = path.join(dir, CONFIG.skills.memo);
+        if (!existsSync(memoAt))
+          skillDrift.push(`нет памятки по скиллам: ${CONFIG.skills.memo}`);
+        else {
+          const lines = readFileSync(memoAt, "utf8").split(NEWLINE);
+          const at = lines.findIndex(
+            (l) => l.trim() === CONFIG.skills.memoHeading.trim(),
+          );
+          if (at < 0) skillDrift.push("в памятке не нашли таблицу скиллов");
+          else {
+            const inMemo = new Set();
+            for (let i = at + 2; i < lines.length; i += 1) {
+              if (!lines[i].trimStart().startsWith("|")) break;
+              inMemo.add(lines[i].split("|")[1].trim().replace(/`/g, ""));
+            }
+            for (const name of onDisk)
+              if (!inMemo.has(name))
+                skillDrift.push(`нет строки в памятке: ${name}`);
+            for (const name of inMemo)
+              if (!onDisk.includes(name))
+                skillDrift.push(
+                  `памятка описывает несуществующий скилл: ${name}`,
+                );
+          }
         }
       }
     }
-  }
+  });
   // 13d. сверка выключена, а предмет уже есть.
   // Поля `CONFIG` необязательны намеренно: у нового проекта ещё нет ни решений,
   // ни таблиц настроек, ни исключений линта, и требовать их значило бы ронять
@@ -22324,282 +22605,291 @@ if (mode === "verify") {
     })(norm(root));
     return found;
   };
-  if (CONFIG.adr == null) {
-    disarmedLooked += 1;
-    // Папку решений ищут и в документах корня: по обычаю она лежит в
-    // `docs/adr`, а не среди исходников. Пока искали в одних деревьях кода,
-    // проект со своими решениями в документах посадку проходил с пустым
-    // полем, и сверка адресуемости решений не вооружалась никогда —
-    // напоминание, обещанное шагом 2, не звучало. Замерено посадкой руками.
-    const docsAt = path.join(REPO, "docs");
-    const found = [
-      ...SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")),
-      ...(existsSync(docsAt) ? dirsUnder(docsAt, "adr") : []),
-    ].filter((d) => readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)));
-    if (found.length)
-      disarmed.push(
-        "решения уже есть (" +
-          path.relative(REPO, found[0]).split(path.sep).join("/") +
-          "), а CONFIG.adr пуст",
-      );
-  }
-  if (CONFIG.configDocs == null) {
-    disarmedLooked += 1;
-    const found = SRC_ROOTS.flatMap((one) => dirsUnder(one, "config")).filter(
-      (d) =>
-        readdirSync(d).some(
-          (n) =>
-            /\.md$/.test(n) ||
-            (/\.ts$/.test(n) &&
-              parseModule(readFileSync(path.join(d, n), "utf8"), n).constants
-                .length > 0),
-        ),
-    );
-    if (found.length)
-      disarmed.push(
-        "таблицы настроек уже есть (" +
-          rel(found[0]) +
-          "), а CONFIG.configDocs пуст",
-      );
-  }
-  // Направление зависимостей: правила проекта называют его ПРОЗОЙ, а таблицу,
-  // по которой оно проверяется, не объявляют. Сверка направления осматривала
-  // ноль правил во всех восьми замеренных прогонах — то есть доктрина
-  // утверждает направление, а держит его ничто.
-  if (CONFIG.rulesHeading == null && CONFIG.isolationHeading == null) {
-    disarmedLooked += 1;
-    const said = (CONFIG.rulesManifest?.rules ?? [])
-      .map((r) => path.join(BASE, r))
-      .filter((at) => existsSync(at))
-      .map((at) => readFileSync(at, "utf8"))
-      .join(NEWLINE);
-    if (/Направление\s+(зависимостей|одно)/.test(said))
-      disarmed.push(
-        "правила проекта называют направление зависимостей прозой, а " +
-          "ни CONFIG.rulesHeading, ни CONFIG.isolationHeading не объявлены — держит это ничто",
-      );
-  }
-  // Реестр находок: поле пусто, а история полна починок. Обратная сторона
-  // сверки «Находки закрыты» — коммит `fix:`, не названный ни одной строкой,
-  // — при пустом поле молчит обо всех сразу.
-  if (CONFIG.findings == null) {
-    disarmedLooked += 1;
-    let fixes = 0;
-    try {
-      fixes = execFileSync(
-        "git",
-        ["log", "--oneline", "--format=%s", "-n", "200"],
-        {
-          cwd: path.join(BASE, ".."),
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        },
-      )
-        .split(NEWLINE)
-        .filter((l) => /^fix(\([^)]*\))?: /.test(l)).length;
-    } catch {
-      fixes = 0;
+  checkStep(() => {
+    if (CONFIG.adr == null) {
+      disarmedLooked += 1;
+      // Папку решений ищут и в документах корня: по обычаю она лежит в
+      // `docs/adr`, а не среди исходников. Пока искали в одних деревьях кода,
+      // проект со своими решениями в документах посадку проходил с пустым
+      // полем, и сверка адресуемости решений не вооружалась никогда —
+      // напоминание, обещанное шагом 2, не звучало. Замерено посадкой руками.
+      const docsAt = path.join(REPO, "docs");
+      const found = [
+        ...SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")),
+        ...(existsSync(docsAt) ? dirsUnder(docsAt, "adr") : []),
+      ].filter((d) => readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)));
+      if (found.length)
+        disarmed.push(
+          "решения уже есть (" +
+            path.relative(REPO, found[0]).split(path.sep).join("/") +
+            "), а CONFIG.adr пуст",
+        );
     }
-    if (fixes > 0)
-      disarmed.push(
-        "починок в истории: " +
-          fixes +
-          ", а CONFIG.findings пуст — «всё найденное починено» держится памятью",
+    if (CONFIG.configDocs == null) {
+      disarmedLooked += 1;
+      const found = SRC_ROOTS.flatMap((one) => dirsUnder(one, "config")).filter(
+        (d) =>
+          readdirSync(d).some(
+            (n) =>
+              /\.md$/.test(n) ||
+              (/\.ts$/.test(n) &&
+                parseModule(readFileSync(path.join(d, n), "utf8"), n).constants
+                  .length > 0),
+          ),
       );
-  }
-  // Звёздная бочка выключает разбор мёртвых экспортов внутри себя, и пустое
-  // поле выключает сверку целиком: `export *` появится — не скажет никто.
-  if (CONFIG.starBarrels == null) {
-    disarmedLooked += 1;
-    const found = files.filter(
-      (f) => !isTest(f) && exportsStar(readFileSync(f, "utf8"), f),
-    );
-    if (found.length)
-      disarmed.push(
-        "звёздные бочки уже есть (" +
-          rel(found[0]) +
-          "), а CONFIG.starBarrels пуст",
-      );
-  }
-  // Планка: политика качества лежит на диске, а протокол или набор критериев
-  // не объявлены — свод по планке держится памятью целиком.
-  for (const [field, why] of [
-    ["barProtocol", "протоколу негде лежать"],
-    ["qualityScope", "набор критериев неоткуда взять"],
-  ]) {
-    if (CONFIG[field] != null) continue;
-    disarmedLooked += 1;
-    const policy = path.join(BASE, "..", ".claude/rules/quality.md");
-    if (existsSync(policy))
-      disarmed.push(
-        "политика качества на диске есть, а CONFIG." + field + " пуст — " + why,
-      );
-  }
-  // След прогона: протокол планки ведётся, а следа нет — вопрос о планке
-  // держится памятью на каждой правке.
-  if (CONFIG.testedLedger == null) {
-    disarmedLooked += 1;
-    if (CONFIG.barProtocol != null)
-      disarmed.push(
-        "протокол планки ведётся, а CONFIG.testedLedger пуст — вопрос о планке держится памятью",
-      );
-  }
-  // Сводка обещаний: раздел в базе заведён, а поле пусто — обещания без опоры
-  // никто не собирает.
-  if (CONFIG.promises == null) {
-    disarmedLooked += 1;
-    const found = readdirSync(BASE)
-      .filter((n) => n.endsWith(".md"))
-      .find((n) => /Держится:/.test(readFileSync(path.join(BASE, n), "utf8")));
-    if (found !== undefined)
-      disarmed.push(
-        "записи обещаний уже есть (" + found + "), а CONFIG.promises пуст",
-      );
-  }
-  if (CONFIG.lintConfigOff == null) {
-    disarmedLooked += 1;
-    const at = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"]
-      .map((n) => path.join(BASE, "..", n))
-      .find((f) => existsSync(f) && /:\s*"off"/.test(readFileSync(f, "utf8")));
-    if (at !== undefined)
-      disarmed.push(
-        "правила линта уже выключаются в конфиге, а CONFIG.lintConfigOff пуст",
-      );
-  }
-  if (CONFIG.domTables == null) {
-    disarmedLooked += 1;
-    // Предмет таблицы — ЧУЖАЯ связь: имя, второго конца которого в
-    // репозитории нет. Своё дублирование предметом этого поля не является и
-    // объявлению не подлежит — его сводят к одному источнику конструкцией, а
-    // ловит его свод по планке.
-    const { vars, attrs } = foreignLinks();
-    // Сигналы называются ВСЕ, а не первый попавшийся: закрыв таблицей одни
-    // переменные, проект оставлял бы атрибуты необъявленными при зелёном
-    // прогоне и выполненном требовании.
-    if (vars.length)
-      disarmed.push(
-        "переменная стиля " +
-          vars[0].name +
-          " читается в " +
-          vars[0].where +
-          " и не объявлена ни одним листом проекта — её ставит кто-то снаружи, а CONFIG.domTables пуст",
-      );
-    if (attrs.length)
-      disarmed.push(
-        "атрибут " +
-          attrs[0].name +
-          " есть в " +
-          attrs[0].where +
-          " и не встречается в коде проекта — его пишет кто-то снаружи, а CONFIG.domTables пуст",
-      );
-  }
-  if (CONFIG.skills == null) {
-    disarmedLooked += 1;
-    const at = path.join(BASE, "../.claude/skills");
-    if (existsSync(at) && readdirSync(at).length)
-      disarmed.push("скиллы уже есть, а CONFIG.skills пуст");
-  }
-  // Ревизия сводов по истории вооружается основанием, и прежде его не ставил
-  // никто: посадка давала команду ворот, а поле оставалось пустым, и второй
-  // слой — «Коммит с кодом накрыт сводом» — молчал в каждом посаженном
-  // проекте, говоря «история не сверяется». Замерено посадкой в мини-стенд.
-  // Предмет — ворота стоят и история есть: тогда основание объявить можно.
-  if (CONFIG.barSince == null && CONFIG.barProtocol != null) {
-    disarmedLooked += 1;
-    const git = (args) => {
+      if (found.length)
+        disarmed.push(
+          "таблицы настроек уже есть (" +
+            rel(found[0]) +
+            "), а CONFIG.configDocs пуст",
+        );
+    }
+    // Направление зависимостей: правила проекта называют его ПРОЗОЙ, а таблицу,
+    // по которой оно проверяется, не объявляют. Сверка направления осматривала
+    // ноль правил во всех восьми замеренных прогонах — то есть доктрина
+    // утверждает направление, а держит его ничто.
+    if (CONFIG.rulesHeading == null && CONFIG.isolationHeading == null) {
+      disarmedLooked += 1;
+      const said = (CONFIG.rulesManifest?.rules ?? [])
+        .map((r) => path.join(BASE, r))
+        .filter((at) => existsSync(at))
+        .map((at) => readFileSync(at, "utf8"))
+        .join(NEWLINE);
+      if (/Направление\s+(зависимостей|одно)/.test(said))
+        disarmed.push(
+          "правила проекта называют направление зависимостей прозой, а " +
+            "ни CONFIG.rulesHeading, ни CONFIG.isolationHeading не объявлены — держит это ничто",
+        );
+    }
+    // Реестр находок: поле пусто, а история полна починок. Обратная сторона
+    // сверки «Находки закрыты» — коммит `fix:`, не названный ни одной строкой,
+    // — при пустом поле молчит обо всех сразу.
+    if (CONFIG.findings == null) {
+      disarmedLooked += 1;
+      let fixes = 0;
       try {
-        return execFileSync("git", args, {
-          cwd: REPO_AT,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        }).trim();
+        fixes = execFileSync(
+          "git",
+          ["log", "--oneline", "--format=%s", "-n", "200"],
+          {
+            cwd: path.join(BASE, ".."),
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          },
+        )
+          .split(NEWLINE)
+          .filter((l) => /^fix(\([^)]*\))?: /.test(l)).length;
       } catch {
-        return null;
+        fixes = 0;
       }
-    };
-    const hooks = git(["config", "core.hooksPath"]);
-    const head = git(["rev-parse", "--verify", "-q", "HEAD"]);
-    if (hooks && head)
-      disarmed.push(
-        "ворота стоят (`core.hooksPath` = " +
-          hooks +
-          "), история есть, а CONFIG.barSince пуст — ревизия сводов по истории выключена: объявить основанием последний коммит до установки ворот",
+      if (fixes > 0)
+        disarmed.push(
+          "починок в истории: " +
+            fixes +
+            ", а CONFIG.findings пуст — «всё найденное починено» держится памятью",
+        );
+    }
+    // Звёздная бочка выключает разбор мёртвых экспортов внутри себя, и пустое
+    // поле выключает сверку целиком: `export *` появится — не скажет никто.
+    if (CONFIG.starBarrels == null) {
+      disarmedLooked += 1;
+      const found = files.filter(
+        (f) => !isTest(f) && exportsStar(readFileSync(f, "utf8"), f),
       );
-  }
-  // Основание серии — коммит, с которого коммит с кодом идёт частью серии и
-  // несёт её строку. Пусто при объявленном основании сводов — ревизия судит
-  // всю историю прежним правилом, и коммит мимо серии не краснеет.
-  if (CONFIG.seriesSince == null && CONFIG.barSince != null) {
-    disarmedLooked += 1;
-    disarmed.push(
-      "CONFIG.barSince объявлен, а CONFIG.seriesSince пуст — коммиты мимо серии ревизия не видит: объявить основанием серии последний коммит до обновления обвязки",
-    );
-  }
-  // Два поля, добавленных вместе со своими сверками. Без этих двух строк они
-  // ведут себя по-разному, и хуже то, которое молчит: незаявленная копия
-  // доктрины краснеет сама, на первом же адресе внутри неё, а незаявленный
-  // список вопросов и незаявленный порядок чтения печатают «не заявлено» и
-  // проходят зелёными — то есть посадочное умолчание переживает появление
-  // предмета ровно так, как здесь уже случалось с тремя полями выше.
-  if (
-    CONFIG.questions == null &&
-    existsSync(path.join(BASE, "13-questions.md"))
-  )
-    disarmed.push("список вопросов уже есть, а CONFIG.questions пуст");
-  if (CONFIG.doctrineReading == null && SHELF !== null)
-    disarmed.push("полка есть, а CONFIG.doctrineReading пуст");
-  // Страж был неполон: смотрел шесть необязательных полей из полутора десятков,
-  // и какие именно — не говорил нигде. Сверка готовности нашла живой пример:
-  // папка документации с двумя документами при пустом `docsIndex`. Список
-  // дополняется вместе с каждым новым необязательным полем — иначе страж
-  // стареет ровно так же, как то, что он стережёт.
-  if (CONFIG.docsIndex == null) {
-    disarmedLooked += 1;
-    const at = path.join(BASE, "../docs");
+      if (found.length)
+        disarmed.push(
+          "звёздные бочки уже есть (" +
+            rel(found[0]) +
+            "), а CONFIG.starBarrels пуст",
+        );
+    }
+    // Планка: политика качества лежит на диске, а протокол или набор критериев
+    // не объявлены — свод по планке держится памятью целиком.
+    for (const [field, why] of [
+      ["barProtocol", "протоколу негде лежать"],
+      ["qualityScope", "набор критериев неоткуда взять"],
+    ]) {
+      if (CONFIG[field] != null) continue;
+      disarmedLooked += 1;
+      const policy = path.join(BASE, "..", ".claude/rules/quality.md");
+      if (existsSync(policy))
+        disarmed.push(
+          "политика качества на диске есть, а CONFIG." +
+            field +
+            " пуст — " +
+            why,
+        );
+    }
+    // След прогона: протокол планки ведётся, а следа нет — вопрос о планке
+    // держится памятью на каждой правке.
+    if (CONFIG.testedLedger == null) {
+      disarmedLooked += 1;
+      if (CONFIG.barProtocol != null)
+        disarmed.push(
+          "протокол планки ведётся, а CONFIG.testedLedger пуст — вопрос о планке держится памятью",
+        );
+    }
+    // Сводка обещаний: раздел в базе заведён, а поле пусто — обещания без опоры
+    // никто не собирает.
+    if (CONFIG.promises == null) {
+      disarmedLooked += 1;
+      const found = readdirSync(BASE)
+        .filter((n) => n.endsWith(".md"))
+        .find((n) =>
+          /Держится:/.test(readFileSync(path.join(BASE, n), "utf8")),
+        );
+      if (found !== undefined)
+        disarmed.push(
+          "записи обещаний уже есть (" + found + "), а CONFIG.promises пуст",
+        );
+    }
+    if (CONFIG.lintConfigOff == null) {
+      disarmedLooked += 1;
+      const at = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"]
+        .map((n) => path.join(BASE, "..", n))
+        .find(
+          (f) => existsSync(f) && /:\s*"off"/.test(readFileSync(f, "utf8")),
+        );
+      if (at !== undefined)
+        disarmed.push(
+          "правила линта уже выключаются в конфиге, а CONFIG.lintConfigOff пуст",
+        );
+    }
+    if (CONFIG.domTables == null) {
+      disarmedLooked += 1;
+      // Предмет таблицы — ЧУЖАЯ связь: имя, второго конца которого в
+      // репозитории нет. Своё дублирование предметом этого поля не является и
+      // объявлению не подлежит — его сводят к одному источнику конструкцией, а
+      // ловит его свод по планке.
+      const { vars, attrs } = foreignLinks();
+      // Сигналы называются ВСЕ, а не первый попавшийся: закрыв таблицей одни
+      // переменные, проект оставлял бы атрибуты необъявленными при зелёном
+      // прогоне и выполненном требовании.
+      if (vars.length)
+        disarmed.push(
+          "переменная стиля " +
+            vars[0].name +
+            " читается в " +
+            vars[0].where +
+            " и не объявлена ни одним листом проекта — её ставит кто-то снаружи, а CONFIG.domTables пуст",
+        );
+      if (attrs.length)
+        disarmed.push(
+          "атрибут " +
+            attrs[0].name +
+            " есть в " +
+            attrs[0].where +
+            " и не встречается в коде проекта — его пишет кто-то снаружи, а CONFIG.domTables пуст",
+        );
+    }
+    if (CONFIG.skills == null) {
+      disarmedLooked += 1;
+      const at = path.join(BASE, "../.claude/skills");
+      if (existsSync(at) && readdirSync(at).length)
+        disarmed.push("скиллы уже есть, а CONFIG.skills пуст");
+    }
+    // Ревизия сводов по истории вооружается основанием, и прежде его не ставил
+    // никто: посадка давала команду ворот, а поле оставалось пустым, и второй
+    // слой — «Коммит с кодом накрыт сводом» — молчал в каждом посаженном
+    // проекте, говоря «история не сверяется». Замерено посадкой в мини-стенд.
+    // Предмет — ворота стоят и история есть: тогда основание объявить можно.
+    if (CONFIG.barSince == null && CONFIG.barProtocol != null) {
+      disarmedLooked += 1;
+      const git = (args) => {
+        try {
+          return execFileSync("git", args, {
+            cwd: REPO_AT,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+        } catch {
+          return null;
+        }
+      };
+      const hooks = git(["config", "core.hooksPath"]);
+      const head = git(["rev-parse", "--verify", "-q", "HEAD"]);
+      if (hooks && head)
+        disarmed.push(
+          "ворота стоят (`core.hooksPath` = " +
+            hooks +
+            "), история есть, а CONFIG.barSince пуст — ревизия сводов по истории выключена: объявить основанием последний коммит до установки ворот",
+        );
+    }
+    // Основание серии — коммит, с которого коммит с кодом идёт частью серии и
+    // несёт её строку. Пусто при объявленном основании сводов — ревизия судит
+    // всю историю прежним правилом, и коммит мимо серии не краснеет.
+    if (CONFIG.seriesSince == null && CONFIG.barSince != null) {
+      disarmedLooked += 1;
+      disarmed.push(
+        "CONFIG.barSince объявлен, а CONFIG.seriesSince пуст — коммиты мимо серии ревизия не видит: объявить основанием серии последний коммит до обновления обвязки",
+      );
+    }
+    // Два поля, добавленных вместе со своими сверками. Без этих двух строк они
+    // ведут себя по-разному, и хуже то, которое молчит: незаявленная копия
+    // доктрины краснеет сама, на первом же адресе внутри неё, а незаявленный
+    // список вопросов и незаявленный порядок чтения печатают «не заявлено» и
+    // проходят зелёными — то есть посадочное умолчание переживает появление
+    // предмета ровно так, как здесь уже случалось с тремя полями выше.
     if (
-      existsSync(at) &&
-      readdirSync(at).filter((n) => n.endsWith(".md")).length
+      CONFIG.questions == null &&
+      existsSync(path.join(BASE, "13-questions.md"))
     )
-      disarmed.push("документы уже есть (docs/), а CONFIG.docsIndex пуст");
-  }
-  if (CONFIG.mutationConfig == null) {
-    disarmedLooked += 1;
-    const at = ["stryker.config.json", "stryker.conf.json"]
-      .map((n) => path.join(BASE, "..", n))
-      .find((f) => existsSync(f));
-    if (at !== undefined)
-      disarmed.push(
-        "конфиг мутационного прогона уже есть, а CONFIG.mutationConfig пуст",
+      disarmed.push("список вопросов уже есть, а CONFIG.questions пуст");
+    if (CONFIG.doctrineReading == null && SHELF !== null)
+      disarmed.push("полка есть, а CONFIG.doctrineReading пуст");
+    // Страж был неполон: смотрел шесть необязательных полей из полутора десятков,
+    // и какие именно — не говорил нигде. Сверка готовности нашла живой пример:
+    // папка документации с двумя документами при пустом `docsIndex`. Список
+    // дополняется вместе с каждым новым необязательным полем — иначе страж
+    // стареет ровно так же, как то, что он стережёт.
+    if (CONFIG.docsIndex == null) {
+      disarmedLooked += 1;
+      const at = path.join(BASE, "../docs");
+      if (
+        existsSync(at) &&
+        readdirSync(at).filter((n) => n.endsWith(".md")).length
+      )
+        disarmed.push("документы уже есть (docs/), а CONFIG.docsIndex пуст");
+    }
+    if (CONFIG.mutationConfig == null) {
+      disarmedLooked += 1;
+      const at = ["stryker.config.json", "stryker.conf.json"]
+        .map((n) => path.join(BASE, "..", n))
+        .find((f) => existsSync(f));
+      if (at !== undefined)
+        disarmed.push(
+          "конфиг мутационного прогона уже есть, а CONFIG.mutationConfig пуст",
+        );
+    }
+    if (CONFIG.lintExceptions == null) {
+      disarmedLooked += 1;
+      const hit = files.find((f) =>
+        /eslint-disable-next-line|eslint-disable-line/.test(
+          readFileSync(f, "utf8"),
+        ),
       );
-  }
-  if (CONFIG.lintExceptions == null) {
-    disarmedLooked += 1;
-    const hit = files.find((f) =>
-      /eslint-disable-next-line|eslint-disable-line/.test(
-        readFileSync(f, "utf8"),
-      ),
-    );
-    if (hit !== undefined)
-      disarmed.push(
-        "точечные исключения линта уже есть (" +
-          rel(hit) +
-          "), а CONFIG.lintExceptions пуст",
-      );
-  }
-  if (CONFIG.transition == null) {
-    disarmedLooked += 1;
-    const at = path.join(BASE, "15-transition.md");
-    if (existsSync(at))
-      disarmed.push("план перехода уже есть, а CONFIG.transition пуст");
-  }
-  if (CONFIG.checksTable == null && SHELF_CHECKS_TABLE !== null) {
-    const at = SHELF_CHECKS_TABLE;
-    if (
-      existsSync(at) &&
-      readFileSync(at, "utf8").includes("| Что сверяется |")
-    )
-      disarmed.push("таблица сверок уже есть, а CONFIG.checksTable пуст");
-  }
+      if (hit !== undefined)
+        disarmed.push(
+          "точечные исключения линта уже есть (" +
+            rel(hit) +
+            "), а CONFIG.lintExceptions пуст",
+        );
+    }
+    if (CONFIG.transition == null) {
+      disarmedLooked += 1;
+      const at = path.join(BASE, "15-transition.md");
+      if (existsSync(at))
+        disarmed.push("план перехода уже есть, а CONFIG.transition пуст");
+    }
+    if (CONFIG.checksTable == null && SHELF_CHECKS_TABLE !== null) {
+      const at = SHELF_CHECKS_TABLE;
+      if (
+        existsSync(at) &&
+        readFileSync(at, "utf8").includes("| Что сверяется |")
+      )
+        disarmed.push("таблица сверок уже есть, а CONFIG.checksTable пуст");
+    }
+  });
   // 13e. Сверка состава критериев снята намеренно, а не потеряна: её место
   // занял побайтовый двойник доктрины (`rules/quality.md` в парах выше).
   // Состав сличал перечень имён и молчал о формулировках — полка могла увезти
@@ -22612,224 +22902,230 @@ if (mode === "verify") {
   const scopeDrift = [];
   let barScopes = 0;
   const liveScopes = [];
-  if (CONFIG.qualityScope != null) {
-    const policyAt = path.join(BASE, CONFIG.qualityScope.policy);
-    const tableAt = path.join(BASE, CONFIG.qualityScope.table);
-    if (!existsSync(policyAt)) scopeDrift.push("политики нет");
-    else if (!existsSync(tableAt)) scopeDrift.push("файла таблицы нет");
-    else {
-      const sections = new Map();
-      for (const line of proseOf(policyAt).split(NEWLINE)) {
-        const h = /^## ([K-U])\.\s+(.+)$/.exec(line);
-        if (h !== null) sections.set(h[1], h[2].trim());
-      }
-      barScopes = sections.size;
-      // Предмет ищется в исполняемом тексте прод-кода: `fetch` в комментарии и
-      // адрес пространства имён в разметке значка предметом не являются, и на
-      // них сверка кричала бы — а крикливой проверке перестают верить (J4).
-      const code = files.filter((f) => !isMachinery(f) && !isTest(f));
-      const manifest = path.join(BASE, "..", "package.json");
-      const pkg = existsSync(manifest)
-        ? JSON.parse(readFileSync(manifest, "utf8"))
-        : {};
-      const script = (n) => (pkg.scripts ?? {})[n] !== undefined;
-      // Считается только то, что проект добавил САМ.
-      //
-      // Сеть по зависимостям ищет предмет раздела по имени библиотеки:
-      // клиент запросов, обёртка хранилища, движок движения, набор
-      // локализации. Пока полка везла один React, имя в манифесте означало
-      // выбор проекта. Как только она стала раздавать стек приложения —
-      // маршрутизатор, кэш запросов, хранилище, очистку разметки, даты,
-      // локализацию, — те же имена стали означать ПОДАРОК ПОЛКИ, и сеть
-      // объявляла бы живыми шесть разделов на проекте, где нет ни строки
-      // соответствующего кода.
-      //
-      // Поэтому из манифеста вычитается манифест семени: остаётся то, что
-      // дописали после посадки. Сеть по КОДУ при этом не трогается — она
-      // и была про код, а не про намерение.
-      const shelfDeps = new Set();
-      {
-        const seedAt = shelfAt("seat/templates/package.json");
-        if (seedAt !== null && existsSync(seedAt)) {
-          const seed = readJson(seedAt, {});
-          for (const d of Object.keys(seed.dependencies ?? {}))
-            shelfDeps.add(d);
-          for (const d of Object.keys(seed.devDependencies ?? {}))
-            shelfDeps.add(d);
-        }
-      }
-      const deps = Object.keys({
-        ...(pkg.dependencies ?? {}),
-        ...(pkg.devDependencies ?? {}),
-      }).filter((d) => !shelfDeps.has(d));
-      // Выкладка видна не только скриптом: конфигом площадки, контейнером
-      // и шагом конвейера. Скрипта `start` у семени на сборщике нет вовсе.
-      const ciTexts = () => {
-        const out = [];
-        const wf = path.join(BASE, "..", ".github", "workflows");
-        if (walkable(wf))
-          for (const n of readdirSync(wf))
-            if (/\.ya?ml$/.test(n))
-              out.push(readFileSync(path.join(wf, n), "utf8"));
-        for (const p of [
-          ".gitlab-ci.yml",
-          "bitbucket-pipelines.yml",
-          "azure-pipelines.yml",
-          ".drone.yml",
-          ".woodpecker.yml",
-          "Jenkinsfile",
-        ]) {
-          const at = path.join(BASE, "..", p);
-          if (existsSync(at) && statSync(at).isFile())
-            out.push(readFileSync(at, "utf8"));
-        }
-        return out;
-      };
-      const deployedBy = () => {
-        const at = [
-          "vercel.json",
-          "now.json",
-          "netlify.toml",
-          "Dockerfile",
-          "docker-compose.yml",
-          "docker-compose.yaml",
-          "compose.yaml",
-          "fly.toml",
-          "render.yaml",
-          "Procfile",
-          "app.yaml",
-          "wrangler.toml",
-          "firebase.json",
-          "amplify.yml",
-        ].find((p) => existsSync(path.join(BASE, "..", p)));
-        if (at !== undefined) return `конфиг площадки \`${at}\``;
-        return ciTexts().some((text) =>
-          /\b(?:deploy|gh-pages|vercel|netlify|wrangler|firebase deploy|s3 sync|azure\/webapps-deploy|cloudflare\/pages-action)\b/i.test(
-            text,
-          ),
-        )
-          ? "шаг выкладки в конвейере"
-          : null;
-      };
-      // Свидетель предмета — первый найденный на каждый раздел, по коду, по
-      // модулям, по листам стилей и по манифесту. Образцы — словарь области:
-      // внешнее и асинхронное там те же, по которым спрашивает модель свода.
-      // Свидетель печатается рядом с расхождением — без него неясно, что
-      // оживило раздел. Импорт в коде — свидетель, чей бы ни был пакет:
-      // подарок полки вычитается из манифеста, а не из кода. Замерено на
-      // стенде: запросы через `axios` и строки через `i18next`, оба подарены
-      // полкой, разделов внешних данных и локализации не включали.
-      let witnesses = null;
-      const witnessOf = (id) => {
-        if (witnesses !== null) return witnesses.get(id);
-        witnesses = new Map();
-        const note = (to, what) => {
-          if (!witnesses.has(to)) witnesses.set(to, what);
-        };
-        const kind = (to, sort, where) => {
-          note(to, `${sort}: ${where}`);
-          for (const next of scopesImplied(to + "/" + sort).split(";"))
-            if (next !== "") note(next, `следует из ${to} (${sort}): ${where}`);
-        };
-        const paired = new Set(
-          SCOPE_PAIRED.flatMap(([to, one, two]) => [
-            to + "/" + one,
-            to + "/" + two,
-          ]),
-        );
-        const importOf =
-          /(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"']+)["']/;
-        for (const f of code) {
-          if (/\.(?:tsx|jsx)$/.test(f)) {
-            note("M", `разметка: ${rel(f)}`);
-            note("P", `разметка: ${rel(f)}`);
-          }
-          const seen = new Map();
-          readFileSync(f, "utf8")
-            .split(NEWLINE)
-            .forEach((line, i) => {
-              const where = `${rel(f)}:${i + 1}`;
-              for (const [to, sort, re] of SCOPE_LINE_KINDS) {
-                const m = re.exec(line);
-                const key = to + "/" + sort;
-                if (m !== null && !inComment(line, m.index) && !seen.has(key))
-                  seen.set(key, `\`${m[0].trim()}\` в ${where}`);
-              }
-              const taken = importOf.exec(line);
-              if (taken === null || inComment(line, taken.index)) return;
-              for (const [to, sort, re] of SCOPE_MODULE_KINDS) {
-                const key = to + "/" + sort;
-                if (re.test(taken[1]) && !seen.has(key))
-                  seen.set(key, `импорт \`${taken[1]}\` в ${where}`);
-              }
-            });
-          for (const [key, where] of seen) {
-            if (paired.has(key)) continue;
-            const cut = key.indexOf("/");
-            kind(key.slice(0, cut), key.slice(cut + 1), where);
-          }
-          for (const [to, one, two] of SCOPE_PAIRED) {
-            const first = seen.get(to + "/" + one);
-            const second = seen.get(to + "/" + two);
-            if (first !== undefined && second !== undefined)
-              kind(to, one, `${first} при ${second}`);
-          }
-        }
-        for (const f of styleFiles) {
-          note("O", `лист стилей: ${rel(f)}`);
-          readFileSync(f, "utf8")
-            .split(NEWLINE)
-            .forEach((line, i) => {
-              for (const [to, sort, re] of SCOPE_STYLE_KINDS)
-                if (re.test(line)) kind(to, sort, `${rel(f)}:${i + 1}`);
-            });
-        }
-        for (const d of deps)
-          for (const [to, sort, re] of SCOPE_MODULE_KINDS)
-            if (re.test(d)) kind(to, sort, `зависимость \`${d}\` в манифесте`);
-        if (script("build")) note("R", "скрипт `build` в манифесте");
-        for (const s of ["deploy", "start"])
-          if (script(s)) note("S", `скрипт \`${s}\` в манифесте`);
-        const deploy = deployedBy();
-        if (deploy !== null) note("S", deploy);
-        const ci = [
-          ".github/workflows",
-          ".gitlab-ci.yml",
-          ".circleci",
-          ".drone.yml",
-          "azure-pipelines.yml",
-          "Jenkinsfile",
-          "bitbucket-pipelines.yml",
-          ".woodpecker.yml",
-        ].find((p) => existsSync(path.join(BASE, "..", p)));
-        if (ci !== undefined) note("U", `описание конвейера \`${ci}\``);
-        return witnesses.get(id);
-      };
-      const declared = qualityScopeDeclared();
-      if (declared === null) scopeDrift.push("таблицу применимости не нашли");
+  checkStep(() => {
+    if (CONFIG.qualityScope != null) {
+      const policyAt = path.join(BASE, CONFIG.qualityScope.policy);
+      const tableAt = path.join(BASE, CONFIG.qualityScope.table);
+      if (!existsSync(policyAt)) scopeDrift.push("политики нет");
+      else if (!existsSync(tableAt)) scopeDrift.push("файла таблицы нет");
       else {
-        for (const [id, title] of sections)
-          if (!declared.has(id))
-            scopeDrift.push(`раздел не объявлен: ${id}. ${title}`);
-        for (const id of declared.keys())
-          if (!sections.has(id))
-            scopeDrift.push(`объявлен раздел, которого нет в политике: ${id}`);
-        for (const [id, d] of declared) {
-          if (!sections.has(id)) continue;
-          if (d.live) {
-            liveScopes.push(id);
-            continue;
+        const sections = new Map();
+        for (const line of proseOf(policyAt).split(NEWLINE)) {
+          const h = /^## ([K-U])\.\s+(.+)$/.exec(line);
+          if (h !== null) sections.set(h[1], h[2].trim());
+        }
+        barScopes = sections.size;
+        // Предмет ищется в исполняемом тексте прод-кода: `fetch` в комментарии и
+        // адрес пространства имён в разметке значка предметом не являются, и на
+        // них сверка кричала бы — а крикливой проверке перестают верить (J4).
+        const code = files.filter((f) => !isMachinery(f) && !isTest(f));
+        const manifest = path.join(BASE, "..", "package.json");
+        const pkg = existsSync(manifest)
+          ? JSON.parse(readFileSync(manifest, "utf8"))
+          : {};
+        const script = (n) => (pkg.scripts ?? {})[n] !== undefined;
+        // Считается только то, что проект добавил САМ.
+        //
+        // Сеть по зависимостям ищет предмет раздела по имени библиотеки:
+        // клиент запросов, обёртка хранилища, движок движения, набор
+        // локализации. Пока полка везла один React, имя в манифесте означало
+        // выбор проекта. Как только она стала раздавать стек приложения —
+        // маршрутизатор, кэш запросов, хранилище, очистку разметки, даты,
+        // локализацию, — те же имена стали означать ПОДАРОК ПОЛКИ, и сеть
+        // объявляла бы живыми шесть разделов на проекте, где нет ни строки
+        // соответствующего кода.
+        //
+        // Поэтому из манифеста вычитается манифест семени: остаётся то, что
+        // дописали после посадки. Сеть по КОДУ при этом не трогается — она
+        // и была про код, а не про намерение.
+        const shelfDeps = new Set();
+        {
+          const seedAt = shelfAt("seat/templates/package.json");
+          if (seedAt !== null && existsSync(seedAt)) {
+            const seed = readJson(seedAt, {});
+            for (const d of Object.keys(seed.dependencies ?? {}))
+              shelfDeps.add(d);
+            for (const d of Object.keys(seed.devDependencies ?? {}))
+              shelfDeps.add(d);
           }
-          if (d.why === "") scopeDrift.push(`неприменим без причины: ${id}`);
-          const seen = witnessOf(id);
-          if (seen !== undefined)
-            scopeDrift.push(
-              `объявлен неприменимым, а предмет на диске есть: ${id} — ${seen}`,
-            );
+        }
+        const deps = Object.keys({
+          ...(pkg.dependencies ?? {}),
+          ...(pkg.devDependencies ?? {}),
+        }).filter((d) => !shelfDeps.has(d));
+        // Выкладка видна не только скриптом: конфигом площадки, контейнером
+        // и шагом конвейера. Скрипта `start` у семени на сборщике нет вовсе.
+        const ciTexts = () => {
+          const out = [];
+          const wf = path.join(BASE, "..", ".github", "workflows");
+          if (walkable(wf))
+            for (const n of readdirSync(wf))
+              if (/\.ya?ml$/.test(n))
+                out.push(readFileSync(path.join(wf, n), "utf8"));
+          for (const p of [
+            ".gitlab-ci.yml",
+            "bitbucket-pipelines.yml",
+            "azure-pipelines.yml",
+            ".drone.yml",
+            ".woodpecker.yml",
+            "Jenkinsfile",
+          ]) {
+            const at = path.join(BASE, "..", p);
+            if (existsSync(at) && statSync(at).isFile())
+              out.push(readFileSync(at, "utf8"));
+          }
+          return out;
+        };
+        const deployedBy = () => {
+          const at = [
+            "vercel.json",
+            "now.json",
+            "netlify.toml",
+            "Dockerfile",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yaml",
+            "fly.toml",
+            "render.yaml",
+            "Procfile",
+            "app.yaml",
+            "wrangler.toml",
+            "firebase.json",
+            "amplify.yml",
+          ].find((p) => existsSync(path.join(BASE, "..", p)));
+          if (at !== undefined) return `конфиг площадки \`${at}\``;
+          return ciTexts().some((text) =>
+            /\b(?:deploy|gh-pages|vercel|netlify|wrangler|firebase deploy|s3 sync|azure\/webapps-deploy|cloudflare\/pages-action)\b/i.test(
+              text,
+            ),
+          )
+            ? "шаг выкладки в конвейере"
+            : null;
+        };
+        // Свидетель предмета — первый найденный на каждый раздел, по коду, по
+        // модулям, по листам стилей и по манифесту. Образцы — словарь области:
+        // внешнее и асинхронное там те же, по которым спрашивает модель свода.
+        // Свидетель печатается рядом с расхождением — без него неясно, что
+        // оживило раздел. Импорт в коде — свидетель, чей бы ни был пакет:
+        // подарок полки вычитается из манифеста, а не из кода. Замерено на
+        // стенде: запросы через `axios` и строки через `i18next`, оба подарены
+        // полкой, разделов внешних данных и локализации не включали.
+        let witnesses = null;
+        const witnessOf = (id) => {
+          if (witnesses !== null) return witnesses.get(id);
+          witnesses = new Map();
+          const note = (to, what) => {
+            if (!witnesses.has(to)) witnesses.set(to, what);
+          };
+          const kind = (to, sort, where) => {
+            note(to, `${sort}: ${where}`);
+            for (const next of scopesImplied(to + "/" + sort).split(";"))
+              if (next !== "")
+                note(next, `следует из ${to} (${sort}): ${where}`);
+          };
+          const paired = new Set(
+            SCOPE_PAIRED.flatMap(([to, one, two]) => [
+              to + "/" + one,
+              to + "/" + two,
+            ]),
+          );
+          const importOf =
+            /(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"']+)["']/;
+          for (const f of code) {
+            if (/\.(?:tsx|jsx)$/.test(f)) {
+              note("M", `разметка: ${rel(f)}`);
+              note("P", `разметка: ${rel(f)}`);
+            }
+            const seen = new Map();
+            readFileSync(f, "utf8")
+              .split(NEWLINE)
+              .forEach((line, i) => {
+                const where = `${rel(f)}:${i + 1}`;
+                for (const [to, sort, re] of SCOPE_LINE_KINDS) {
+                  const m = re.exec(line);
+                  const key = to + "/" + sort;
+                  if (m !== null && !inComment(line, m.index) && !seen.has(key))
+                    seen.set(key, `\`${m[0].trim()}\` в ${where}`);
+                }
+                const taken = importOf.exec(line);
+                if (taken === null || inComment(line, taken.index)) return;
+                for (const [to, sort, re] of SCOPE_MODULE_KINDS) {
+                  const key = to + "/" + sort;
+                  if (re.test(taken[1]) && !seen.has(key))
+                    seen.set(key, `импорт \`${taken[1]}\` в ${where}`);
+                }
+              });
+            for (const [key, where] of seen) {
+              if (paired.has(key)) continue;
+              const cut = key.indexOf("/");
+              kind(key.slice(0, cut), key.slice(cut + 1), where);
+            }
+            for (const [to, one, two] of SCOPE_PAIRED) {
+              const first = seen.get(to + "/" + one);
+              const second = seen.get(to + "/" + two);
+              if (first !== undefined && second !== undefined)
+                kind(to, one, `${first} при ${second}`);
+            }
+          }
+          for (const f of styleFiles) {
+            note("O", `лист стилей: ${rel(f)}`);
+            readFileSync(f, "utf8")
+              .split(NEWLINE)
+              .forEach((line, i) => {
+                for (const [to, sort, re] of SCOPE_STYLE_KINDS)
+                  if (re.test(line)) kind(to, sort, `${rel(f)}:${i + 1}`);
+              });
+          }
+          for (const d of deps)
+            for (const [to, sort, re] of SCOPE_MODULE_KINDS)
+              if (re.test(d))
+                kind(to, sort, `зависимость \`${d}\` в манифесте`);
+          if (script("build")) note("R", "скрипт `build` в манифесте");
+          for (const s of ["deploy", "start"])
+            if (script(s)) note("S", `скрипт \`${s}\` в манифесте`);
+          const deploy = deployedBy();
+          if (deploy !== null) note("S", deploy);
+          const ci = [
+            ".github/workflows",
+            ".gitlab-ci.yml",
+            ".circleci",
+            ".drone.yml",
+            "azure-pipelines.yml",
+            "Jenkinsfile",
+            "bitbucket-pipelines.yml",
+            ".woodpecker.yml",
+          ].find((p) => existsSync(path.join(BASE, "..", p)));
+          if (ci !== undefined) note("U", `описание конвейера \`${ci}\``);
+          return witnesses.get(id);
+        };
+        const declared = qualityScopeDeclared();
+        if (declared === null) scopeDrift.push("таблицу применимости не нашли");
+        else {
+          for (const [id, title] of sections)
+            if (!declared.has(id))
+              scopeDrift.push(`раздел не объявлен: ${id}. ${title}`);
+          for (const id of declared.keys())
+            if (!sections.has(id))
+              scopeDrift.push(
+                `объявлен раздел, которого нет в политике: ${id}`,
+              );
+          for (const [id, d] of declared) {
+            if (!sections.has(id)) continue;
+            if (d.live) {
+              liveScopes.push(id);
+              continue;
+            }
+            if (d.why === "") scopeDrift.push(`неприменим без причины: ${id}`);
+            const seen = witnessOf(id);
+            if (seen !== undefined)
+              scopeDrift.push(
+                `объявлен неприменимым, а предмет на диске есть: ${id} — ${seen}`,
+              );
+          }
         }
       }
     }
-  }
+  });
   // 13f. каждый документ находится от указателя.
   //
   // Документ найден, если его называет указатель либо на него ведёт ссылка из
@@ -22840,866 +23136,890 @@ if (mode === "verify") {
   // сайта документации: маршрут /plugins/zoom ведёт в документ zoom.md папки plugins.
   const indexDrift = [];
   let indexDocs = 0;
-  if (CONFIG.docsIndex != null) {
-    const dir = norm(path.join(BASE, CONFIG.docsIndex.dir));
-    const table = path.join(BASE, CONFIG.docsIndex.table);
-    if (existsSync(dir) && existsSync(table)) {
-      const text = readFileSync(table, "utf8");
-      if (!text.includes(CONFIG.docsIndex.heading))
-        indexDrift.push(`таблицы указателя нет: «${CONFIG.docsIndex.heading}»`);
-      else {
-        const all = [];
-        (function walkIndexed(at) {
-          for (const e of readdirSync(at)) {
-            const full = norm(path.join(at, e));
-            if (outOfTree(e, full)) continue;
-            if (statSync(full).isDirectory()) walkIndexed(full);
-            else if (e.endsWith(".md")) all.push(full);
-          }
-        })(dir);
-        indexDocs = all.length;
-        const inDocs = (full) =>
-          path.relative(dir, full).split(path.sep).join("/");
-        const reached = new Set(all.filter((f) => text.includes(inDocs(f))));
-        const queue = [...reached];
-        const LINK = /\]\(([^)\s#?]+)[^)]*\)/g;
-        while (queue.length > 0) {
-          const from = queue.shift();
-          for (const m of readFileSync(from, "utf8").matchAll(LINK)) {
-            if (/^[a-z][a-z0-9+.-]*:/i.test(m[1])) continue;
-            const tail = m[1].replace(/^\//, "");
-            const bases = m[1].startsWith("/") ? [dir] : [path.dirname(from), dir];
-            for (const one of bases) {
-              const at = norm(path.join(one, tail));
-              const hit = (
-                /\.md$/.test(at)
-                  ? [at]
-                  : [at + ".md", at + "/index.md", at + "/README.md"]
-              ).find((c) => all.includes(c));
-              if (hit === undefined) continue;
-              if (!reached.has(hit)) {
-                reached.add(hit);
-                queue.push(hit);
+  checkStep(() => {
+    if (CONFIG.docsIndex != null) {
+      const dir = norm(path.join(BASE, CONFIG.docsIndex.dir));
+      const table = path.join(BASE, CONFIG.docsIndex.table);
+      if (existsSync(dir) && existsSync(table)) {
+        const text = readFileSync(table, "utf8");
+        if (!text.includes(CONFIG.docsIndex.heading))
+          indexDrift.push(
+            `таблицы указателя нет: «${CONFIG.docsIndex.heading}»`,
+          );
+        else {
+          const all = [];
+          (function walkIndexed(at) {
+            for (const e of readdirSync(at)) {
+              const full = norm(path.join(at, e));
+              if (outOfTree(e, full)) continue;
+              if (statSync(full).isDirectory()) walkIndexed(full);
+              else if (e.endsWith(".md")) all.push(full);
+            }
+          })(dir);
+          indexDocs = all.length;
+          const inDocs = (full) =>
+            path.relative(dir, full).split(path.sep).join("/");
+          const reached = new Set(all.filter((f) => text.includes(inDocs(f))));
+          const queue = [...reached];
+          const LINK = /\]\(([^)\s#?]+)[^)]*\)/g;
+          while (queue.length > 0) {
+            const from = queue.shift();
+            for (const m of readFileSync(from, "utf8").matchAll(LINK)) {
+              if (/^[a-z][a-z0-9+.-]*:/i.test(m[1])) continue;
+              const tail = m[1].replace(/^\//, "");
+              const bases = m[1].startsWith("/")
+                ? [dir]
+                : [path.dirname(from), dir];
+              for (const one of bases) {
+                const at = norm(path.join(one, tail));
+                const hit = (
+                  /\.md$/.test(at)
+                    ? [at]
+                    : [at + ".md", at + "/index.md", at + "/README.md"]
+                ).find((c) => all.includes(c));
+                if (hit === undefined) continue;
+                if (!reached.has(hit)) {
+                  reached.add(hit);
+                  queue.push(hit);
+                }
+                break;
               }
-              break;
             }
           }
+          for (const f of all)
+            if (!reached.has(f))
+              indexDrift.push(
+                "документ не находится от указателя: " +
+                  inDocs(f) +
+                  ". Назвать строкой указателя либо ссылкой из документа, который он называет",
+              );
         }
-        for (const f of all)
-          if (!reached.has(f))
-            indexDrift.push(
-              "документ не находится от указателя: " +
-                inDocs(f) +
-                ". Назвать строкой указателя либо ссылкой из документа, который он называет",
-            );
       }
     }
-  }
-  // 13g. версия среды против объявленного диапазона — ПРЕДУПРЕЖДЕНИЕ.
-  //
-  // Три свойства, и все три решены разработчиком:
-  //
-  // 1. Прогона не роняет. Запрет стоил бы дороже пользы (см. `CONFIG.manifest`),
-  //    а поломка от неподходящей версии приходит громко — инструменты падают, а
-  //    не выдают тихо другие числа.
-  // 2. **Молчит, когда версия подходит.** Секция, печатающая «всё хорошо»
-  //    каждый прогон, — это плата за то, чего в работающем проекте не
-  //    происходит. Здесь молчание и означает «в диапазоне»; голос появляется
-  //    ровно там, где он нужен: посадка в новый проект, переезд на другую
-  //    машину, смена версии.
-  // 3. Говорит громко, когда не подходит: разработчик обязан быть предупреждён,
-  //    а решать дальше — ему.
-  //
-  // Разбирается ровно та форма диапазона, которая объявлена в манифесте:
-  // нижняя граница `>=` и верхняя `<`. Форма, которой разбор не знает, честно
-  // называется неразобранной — иначе предупреждение врало бы уверенным тоном.
-  if (CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    const want = existsSync(at)
-      ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
-      : null;
-    const low =
-      want === null ? null : (/(?:^|\s)>=\s*([\d.]+)/.exec(want)?.[1] ?? null);
-    const high =
-      want === null ? null : (/(?:^|\s)<\s*([\d.]+)/.exec(want)?.[1] ?? null);
-    const now = process.version;
-    // `.nvmrc` — вторая запись той же версии (`close.md`, «Воспроизводимость и
-    // скорость петли»): разойдясь с `engines`, она ставит разработчику среду,
-    // на которой числа базовой линии не снимались. Сравнивается по числу
-    // названных в ней частей: «22» подходит к «>=22.23.2», «22.20» — нет.
-    const nvmAt = path.join(path.dirname(at), ".nvmrc");
-    const nvmLine = existsSync(nvmAt)
-      ? (readFileSync(nvmAt, "utf8")
-          .split(NEWLINE)
-          .map((l) => l.trim())
-          .find((l) => l !== "" && !l.startsWith("#")) ?? null)
-      : null;
-    const nvmParts =
-      nvmLine === null
-        ? null
-        : (/^v?(\d+(?:\.\d+){0,2})$/
-            .exec(nvmLine)?.[1]
-            .split(".")
-            .map(Number) ?? null);
-    const nvmCmp = (bound) => versionCmp(nvmLine, bound, nvmParts.length);
-    const nvmDrift =
-      nvmParts === null
-        ? null
-        : low !== null && nvmCmp(low) < 0
-          ? `.nvmrc называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
-          : high !== null && nvmCmp(high) >= 0
-            ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
-            : null;
-    const say =
-      want === null
-        ? "    диапазон версии не объявлен — переносимость держится на памяти"
-        : low === null && high === null
-          ? `    диапазон «${want}» записан формой, которой разбор не знает`
-          : low !== null && versionCmp(now, low) < 0
-            ? `    версия НИЖЕ объявленной: ${now} при «${want}»`
-            : high !== null && versionCmp(now, high) >= 0
-              ? `    версия ВЫШЕ объявленной: ${now} при «${want}»`
+    // 13g. версия среды против объявленного диапазона — ПРЕДУПРЕЖДЕНИЕ.
+    //
+    // Три свойства, и все три решены разработчиком:
+    //
+    // 1. Прогона не роняет. Запрет стоил бы дороже пользы (см. `CONFIG.manifest`),
+    //    а поломка от неподходящей версии приходит громко — инструменты падают, а
+    //    не выдают тихо другие числа.
+    // 2. **Молчит, когда версия подходит.** Секция, печатающая «всё хорошо»
+    //    каждый прогон, — это плата за то, чего в работающем проекте не
+    //    происходит. Здесь молчание и означает «в диапазоне»; голос появляется
+    //    ровно там, где он нужен: посадка в новый проект, переезд на другую
+    //    машину, смена версии.
+    // 3. Говорит громко, когда не подходит: разработчик обязан быть предупреждён,
+    //    а решать дальше — ему.
+    //
+    // Разбирается ровно та форма диапазона, которая объявлена в манифесте:
+    // нижняя граница `>=` и верхняя `<`. Форма, которой разбор не знает, честно
+    // называется неразобранной — иначе предупреждение врало бы уверенным тоном.
+    if (CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      const want = existsSync(at)
+        ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
+        : null;
+      const low =
+        want === null
+          ? null
+          : (/(?:^|\s)>=\s*([\d.]+)/.exec(want)?.[1] ?? null);
+      const high =
+        want === null ? null : (/(?:^|\s)<\s*([\d.]+)/.exec(want)?.[1] ?? null);
+      const now = process.version;
+      // `.nvmrc` — вторая запись той же версии (`close.md`, «Воспроизводимость и
+      // скорость петли»): разойдясь с `engines`, она ставит разработчику среду,
+      // на которой числа базовой линии не снимались. Сравнивается по числу
+      // названных в ней частей: «22» подходит к «>=22.23.2», «22.20» — нет.
+      const nvmAt = path.join(path.dirname(at), ".nvmrc");
+      const nvmLine = existsSync(nvmAt)
+        ? (readFileSync(nvmAt, "utf8")
+            .split(NEWLINE)
+            .map((l) => l.trim())
+            .find((l) => l !== "" && !l.startsWith("#")) ?? null)
+        : null;
+      const nvmParts =
+        nvmLine === null
+          ? null
+          : (/^v?(\d+(?:\.\d+){0,2})$/
+              .exec(nvmLine)?.[1]
+              .split(".")
+              .map(Number) ?? null);
+      const nvmCmp = (bound) => versionCmp(nvmLine, bound, nvmParts.length);
+      const nvmDrift =
+        nvmParts === null
+          ? null
+          : low !== null && nvmCmp(low) < 0
+            ? `.nvmrc называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
+            : high !== null && nvmCmp(high) >= 0
+              ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
               : null;
-    // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
-    // роняет прогон. Дрейф версии остаётся предупреждением.
-    envUndeclared = want === null;
-    checkHead("Диапазон среды объявлен", {
-      n: envUndeclared ? 0 : 1,
-      unit: "объявленных диапазонов",
-    });
-    console.log("  не объявлено: " + (envUndeclared ? 1 : 0));
-    if (envUndeclared)
-      console.log(
-        "    переносимость держится на памяти. Объявить `engines` в манифесте",
-      );
-    console.log("  расхождений с .nvmrc: " + (nvmDrift === null ? 0 : 1));
-    if (nvmDrift !== null) console.log("    " + nvmDrift);
-    {
-      checkHead("Версия среды (предупреждение, прогон не роняет)", {
+      const say =
+        want === null
+          ? "    диапазон версии не объявлен — переносимость держится на памяти"
+          : low === null && high === null
+            ? `    диапазон «${want}» записан формой, которой разбор не знает`
+            : low !== null && versionCmp(now, low) < 0
+              ? `    версия НИЖЕ объявленной: ${now} при «${want}»`
+              : high !== null && versionCmp(now, high) >= 0
+                ? `    версия ВЫШЕ объявленной: ${now} при «${want}»`
+                : null;
+      // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
+      // роняет прогон. Дрейф версии остаётся предупреждением.
+      envUndeclared = want === null;
+      checkHead("Диапазон среды объявлен", {
         n: envUndeclared ? 0 : 1,
-        unit: "объявленный диапазон среды",
+        unit: "объявленных диапазонов",
       });
-      if (say !== null && !envUndeclared) {
-        console.log(say);
+      console.log("  не объявлено: " + (envUndeclared ? 1 : 0));
+      if (envUndeclared)
         console.log(
-          "  Числа базовой линии снимались на объявленной версии; решение, что",
+          "    переносимость держится на памяти. Объявить `engines` в манифесте",
         );
-        console.log("  с этим делать, за вами — прогон остановлен не будет.");
-      } else {
-        console.log(
-          envUndeclared
-            ? "  диапазон не объявлен — сверять не с чем"
-            : "  версия в объявленном диапазоне",
-        );
-      }
-    }
-  }
-
-  // Инструменты обязательной цепочки: есть ли они вообще.
-  // Версия среды отвечает «та ли», а этот вопрос — «есть ли», и он первее:
-  // проверять версию линтера, которого нет, бессмысленно. Как и версия,
-  // предупреждает и не роняет — набор инструментов у проекта может быть
-  // другим. Спрашивается только объявленное в `CONFIG.toolchain`.
-  if (CONFIG.toolchain != null && CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
-    const scripts = pkg?.scripts ?? {};
-    const declared = new Set([
-      ...Object.keys(pkg?.dependencies ?? {}),
-      ...Object.keys(pkg?.devDependencies ?? {}),
-    ]);
-    const gaps = [];
-    const elsewhere = [];
-    for (const link of CONFIG.toolchain) {
-      // Звено без предмета пробелом не является: его не дописывают намеренно.
-      if (!linkHasSubject(link.script)) continue;
-      if (linkTakenElsewhere(link.script, scripts)) {
-        elsewhere.push(link.script);
-        continue;
-      }
-      // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
-      const own = linkOwnName(link.script, scripts) ?? link.script;
-      const noScript = link.script != null && scripts[own] == null;
-      const missing = (link.packages ?? []).filter((p) => !declared.has(p));
-      if (!noScript && missing.length === 0) continue;
-      const what = [
-        noScript ? `команды \`${link.script}\` нет` : null,
-        missing.length ? `не объявлены: ${missing.join(", ")}` : null,
-      ]
-        .filter((x) => x !== null)
-        .join("; ");
-      // Четыре пробела: этим отступом прогон узнаёт находку. С двумя она не
-      // роняла его даже после того, как секция перестала быть предупреждением.
-      gaps.push(
-        `    ${link.script ?? "звено"} — ${what}` +
-          NEWLINE +
-          `      зачем: ${link.why ?? "не сказано в настройке"}` +
-          NEWLINE +
-          (link.template == null
-            ? "      настраивается руками: шаблона на полке нет намеренно, конфиг" +
-              NEWLINE +
-              "      этого звена зависит от вида проекта"
-            : `      шаблон настройки на полке: ${link.template}`),
-      );
-    }
-    // Обратная сторона: звено, появившееся в самой цепочке, но не объявленное.
-    // Прямая ловит «объявлено, а инструмента нет»; без этой половины список
-    // молча отстаёт от цепочки, и на следующей посадке про новое звено просто
-    // не спросят. Найдено пробой — сверка была односторонней с рождения.
-    const chain = scripts.check ?? null;
-    if (chain !== null) {
-      // Связка читается именем менеджера, объявленного ПРОЕКТОМ. Прежде имя
-      // стояло здесь литералом, и на проекте с другим менеджером связка
-      // читалась как пустая: обратная сторона сверки не видела в ней ни
-      // одного звена и молчать могла только зелено.
-      const inChain = scriptCallsIn(chain);
-      // Известными считаются и семенные имена звеньев, и те, под которыми
-      // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
-      // связку, докладывается как необъявленное звено.
-      const known = new Set();
-      for (const l of CONFIG.toolchain) {
-        if (l.script == null) continue;
-        known.add(l.script);
-        const mine = linkOwnName(l.script, scripts);
-        if (mine !== null) known.add(mine);
-      }
-      for (const link of inChain)
-        if (!known.has(link))
-          gaps.push(
-            `    ${link} — цепочка проверок его зовёт, а в объявлении звеньев его нет` +
-              NEWLINE +
-              "      значит про его инструмент на посадке не спросят",
-          );
-    }
-
-    // Смотрится ВСЕГДА, краснеет только при снятом флаге посадки.
-    //
-    // Прежде секция была объявлена предупреждением и прогон не роняла никогда
-    // — при том, что докладывает ровно то, чего у обвязки быть не должно:
-    // звено цепочки объявлено, а инструмента под него нет. Её собственный
-    // вывод говорит это прямым текстом: «поставленный без настройки проходит,
-    // не проверив ничего».
-    //
-    // Оправдание было, но узкое: пока посадка идёт, пакеты ещё не поставлены,
-    // и падать на этом значило бы падать на собственном незаконченном шаге.
-    // Флаг посадки это и различает — тем же приёмом, каким соседняя сверка
-    // различает несведённое семя.
-    //
-    // Найдено обходом «требование стояло, а инструмента не было»: рецепт
-    // фальсификации на эту секцию не доходил ни до одной сверки, потому что
-    // дойти было некуда.
-    // Печатается ВСЕГДА, а не только при находках. Секция, которой в чистом
-    // прогоне нет вовсе, не попадает ни в мета-сверку о корпусе, ни в разбор
-    // фальсификации: подсаженную поломку тот приписать некуда, и рецепт на неё
-    // докладывал «не дошла ни до одной сверки» с рождения.
-    {
-      // Связка проверок — ОДНА СТРОКА манифеста, приехавшая семенем целиком,
-      // и данными она не является. Проект, снявший звено без предмета,
-      // обязан вычеркнуть его и отсюда — а не вычеркнув, получает цепочку,
-      // которая не доходит до первой команды: `npm run check` падает на
-      // «Missing script», и падает НАВСЕГДА. Сверки при этом зелёные: они
-      // спрашивают звенья по отдельности, а связку не читал никто.
-      //
-      // Замерено посадкой в проект на обычном JavaScript: звено типов снято
-      // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
-      const chainCalls =
-        typeof scripts.check === "string"
-          ? scriptCallsIn(scripts.check, scripts)
-          : [];
-      const chainBroken = [];
-      for (const one of chainCalls)
-        if (scripts[one] == null)
-          chainBroken.push(
-            one +
-              " — связка проверок зовёт команду, которой в манифесте нет: цепочка не доходит до первой",
-          );
+      console.log("  расхождений с .nvmrc: " + (nvmDrift === null ? 0 : 1));
+      if (nvmDrift !== null) console.log("    " + nvmDrift);
       {
-        // Обратная сторона: живое звено, выпавшее из связки, перестаёт
-        // спрашиваться вовсе — и молча. Состав связки объявлен СЕМЕНЕМ
-        // манифеста, а не этим списком: он растёт вместе с цепочкой.
-        const seedAt = shelfAt("seat/templates/package.json");
-        const seedBody =
-          seedAt === null || !existsSync(seedAt)
-            ? null
-            : readJson(seedAt, {}).scripts?.check;
-        for (const piece of String(seedBody ?? "").split("&&")) {
-          const one = piece.trim();
-          const run = /^npm run ([^ ]+)/.exec(one);
-          const name =
-            run !== null ? run[1] : /^npm test( |$)/.test(one) ? "test" : null;
-          if (name === null) continue;
-          if (!linkHasSubject(name)) continue;
-          const own = linkOwnName(name, scripts) ?? name;
-          if (scripts[own] == null) continue;
-          if (chainCalls.includes(own)) continue;
-          chainBroken.push(
-            own +
-              " — звено живо и команда есть, а связка проверок его не зовёт: спрашивать его нечему",
+        checkHead("Версия среды (предупреждение, прогон не роняет)", {
+          n: envUndeclared ? 0 : 1,
+          unit: "объявленный диапазон среды",
+        });
+        if (say !== null && !envUndeclared) {
+          console.log(say);
+          console.log(
+            "  Числа базовой линии снимались на объявленной версии; решение, что",
+          );
+          console.log("  с этим делать, за вами — прогон остановлен не будет.");
+        } else {
+          console.log(
+            envUndeclared
+              ? "  диапазон не объявлен — сверять не с чем"
+              : "  версия в объявленном диапазоне",
           );
         }
       }
+    }
 
-      // Конфиг СНЯТОГО звена остаётся, когда его инструмент служит живому.
-      // Оговорка та же, что у пакетов, и следует из неё: пакет, названный
-      // двумя звеньями, живёт, пока живо хотя бы одно, — а инструмент без
-      // своей настройки не работает. Компилятор назван и у звена линта:
-      // правила с типами держатся на нём и читают `tsconfig.json`.
-      //
-      // Замерено посадкой в проект на обычном JavaScript: звено типов снято
-      // по инструкции вместе с конфигом, и живое звено линта стало падать
-      // разбором на файлах САМОЙ ОБВЯЗКИ — «не найден в проекте компилятора».
-      // Цепочка красная, чинить нечем: конфиг класть запрещала инструкция.
-      const sharedConfigs = [];
-      {
-        const live = CONFIG.toolchain.filter((one) =>
-          linkHasSubject(one.script),
+    // Инструменты обязательной цепочки: есть ли они вообще.
+    // Версия среды отвечает «та ли», а этот вопрос — «есть ли», и он первее:
+    // проверять версию линтера, которого нет, бессмысленно. Как и версия,
+    // предупреждает и не роняет — набор инструментов у проекта может быть
+    // другим. Спрашивается только объявленное в `CONFIG.toolchain`.
+    if (CONFIG.toolchain != null && CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
+      const scripts = pkg?.scripts ?? {};
+      const declared = new Set([
+        ...Object.keys(pkg?.dependencies ?? {}),
+        ...Object.keys(pkg?.devDependencies ?? {}),
+      ]);
+      const gaps = [];
+      const elsewhere = [];
+      for (const link of CONFIG.toolchain) {
+        // Звено без предмета пробелом не является: его не дописывают намеренно.
+        if (!linkHasSubject(link.script)) continue;
+        if (linkTakenElsewhere(link.script, scripts)) {
+          elsewhere.push(link.script);
+          continue;
+        }
+        // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
+        const own = linkOwnName(link.script, scripts) ?? link.script;
+        const noScript = link.script != null && scripts[own] == null;
+        const missing = (link.packages ?? []).filter((p) => !declared.has(p));
+        if (!noScript && missing.length === 0) continue;
+        const what = [
+          noScript ? `команды \`${link.script}\` нет` : null,
+          missing.length ? `не объявлены: ${missing.join(", ")}` : null,
+        ]
+          .filter((x) => x !== null)
+          .join("; ");
+        // Четыре пробела: этим отступом прогон узнаёт находку. С двумя она не
+        // роняла его даже после того, как секция перестала быть предупреждением.
+        gaps.push(
+          `    ${link.script ?? "звено"} — ${what}` +
+            NEWLINE +
+            `      зачем: ${link.why ?? "не сказано в настройке"}` +
+            NEWLINE +
+            (link.template == null
+              ? "      настраивается руками: шаблона на полке нет намеренно, конфиг" +
+                NEWLINE +
+                "      этого звена зависит от вида проекта"
+              : `      шаблон настройки на полке: ${link.template}`),
         );
-        const livePacks = new Set(live.flatMap((one) => one.packages ?? []));
-        // Спрашивается СЕМЯ, а не настройка проекта. Звено, у которого
-        // предмета нет, проект вправе вычеркнуть из своего списка звеньев
-        // целиком, — и охранять его конфиг стало бы нечем: сверка смотрела
-        // бы в список, из которого звено уже вычеркнуто.
-        // Семя знает все звенья и их инструменты, и знание это не
-        // зависит от того, что проект у себя оставил.
+      }
+      // Обратная сторона: звено, появившееся в самой цепочке, но не объявленное.
+      // Прямая ловит «объявлено, а инструмента нет»; без этой половины список
+      // молча отстаёт от цепочки, и на следующей посадке про новое звено просто
+      // не спросят. Найдено пробой — сверка была односторонней с рождения.
+      const chain = scripts.check ?? null;
+      if (chain !== null) {
+        // Связка читается именем менеджера, объявленного ПРОЕКТОМ. Прежде имя
+        // стояло здесь литералом, и на проекте с другим менеджером связка
+        // читалась как пустая: обратная сторона сверки не видела в ней ни
+        // одного звена и молчать могла только зелено.
+        const inChain = scriptCallsIn(chain);
+        // Известными считаются и семенные имена звеньев, и те, под которыми
+        // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
+        // связку, докладывается как необъявленное звено.
+        const known = new Set();
+        for (const l of CONFIG.toolchain) {
+          if (l.script == null) continue;
+          known.add(l.script);
+          const mine = linkOwnName(l.script, scripts);
+          if (mine !== null) known.add(mine);
+        }
+        for (const link of inChain)
+          if (!known.has(link))
+            gaps.push(
+              `    ${link} — цепочка проверок его зовёт, а в объявлении звеньев его нет` +
+                NEWLINE +
+                "      значит про его инструмент на посадке не спросят",
+            );
+      }
+
+      // Смотрится ВСЕГДА, краснеет только при снятом флаге посадки.
+      //
+      // Прежде секция была объявлена предупреждением и прогон не роняла никогда
+      // — при том, что докладывает ровно то, чего у обвязки быть не должно:
+      // звено цепочки объявлено, а инструмента под него нет. Её собственный
+      // вывод говорит это прямым текстом: «поставленный без настройки проходит,
+      // не проверив ничего».
+      //
+      // Оправдание было, но узкое: пока посадка идёт, пакеты ещё не поставлены,
+      // и падать на этом значило бы падать на собственном незаконченном шаге.
+      // Флаг посадки это и различает — тем же приёмом, каким соседняя сверка
+      // различает несведённое семя.
+      //
+      // Найдено обходом «требование стояло, а инструмента не было»: рецепт
+      // фальсификации на эту секцию не доходил ни до одной сверки, потому что
+      // дойти было некуда.
+      // Печатается ВСЕГДА, а не только при находках. Секция, которой в чистом
+      // прогоне нет вовсе, не попадает ни в мета-сверку о корпусе, ни в разбор
+      // фальсификации: подсаженную поломку тот приписать некуда, и рецепт на неё
+      // докладывал «не дошла ни до одной сверки» с рождения.
+      {
+        // Связка проверок — ОДНА СТРОКА манифеста, приехавшая семенем целиком,
+        // и данными она не является. Проект, снявший звено без предмета,
+        // обязан вычеркнуть его и отсюда — а не вычеркнув, получает цепочку,
+        // которая не доходит до первой команды: `npm run check` падает на
+        // «Missing script», и падает НАВСЕГДА. Сверки при этом зелёные: они
+        // спрашивают звенья по отдельности, а связку не читал никто.
         //
-        // Замерено повторной посадкой в проект на обычном JavaScript:
-        // звено типов снято по инструкции, конфиг компилятора унесён
-        // вместе с ним, и живое звено линта снова падало разбором на
-        // файлах самой обвязки — при зелёном прогоне.
-        const seedLinks = (() => {
-          const at = shelfAt("seat/templates/graph.config.mjs");
-          if (at === null || !existsSync(at)) return [];
-          const body = readFileSync(at, "utf8");
-          const from = body.indexOf("toolchain: [");
-          if (from < 0) return [];
-          const out = [];
-          for (const piece of body.slice(from).split("    {")) {
-            const pick = (key) => {
-              const k = piece.indexOf(key + ": ");
-              if (k < 0) return null;
-              const q1 = piece.indexOf(String.fromCharCode(34), k);
-              if (q1 < 0) return null;
-              const q2 = piece.indexOf(String.fromCharCode(34), q1 + 1);
-              return q2 < 0 ? null : piece.slice(q1 + 1, q2);
-            };
-            const name = pick("script");
+        // Замерено посадкой в проект на обычном JavaScript: звено типов снято
+        // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
+        const chainCalls =
+          typeof scripts.check === "string"
+            ? scriptCallsIn(scripts.check, scripts)
+            : [];
+        const chainBroken = [];
+        for (const one of chainCalls)
+          if (scripts[one] == null)
+            chainBroken.push(
+              one +
+                " — связка проверок зовёт команду, которой в манифесте нет: цепочка не доходит до первой",
+            );
+        {
+          // Обратная сторона: живое звено, выпавшее из связки, перестаёт
+          // спрашиваться вовсе — и молча. Состав связки объявлен СЕМЕНЕМ
+          // манифеста, а не этим списком: он растёт вместе с цепочкой.
+          const seedAt = shelfAt("seat/templates/package.json");
+          const seedBody =
+            seedAt === null || !existsSync(seedAt)
+              ? null
+              : readJson(seedAt, {}).scripts?.check;
+          for (const piece of String(seedBody ?? "").split("&&")) {
+            const one = piece.trim();
+            const run = /^npm run ([^ ]+)/.exec(one);
+            const name =
+              run !== null
+                ? run[1]
+                : /^npm test( |$)/.test(one)
+                  ? "test"
+                  : null;
             if (name === null) continue;
-            const conf = pick("config");
-            const packs = (() => {
-              const k = piece.indexOf("packages: [");
-              if (k < 0) return [];
-              const end = piece.indexOf("]", k);
-              const parts = piece.slice(k, end).split(String.fromCharCode(34));
-              const out = [];
-              for (let i = 1; i < parts.length; i += 2) out.push(parts[i]);
-              return out;
-            })();
-            out.push({ script: name, config: conf, packages: packs });
-          }
-          return out;
-        })();
-        for (const link of seedLinks) {
-          if (linkHasSubject(link.script)) continue;
-          if (link.config == null) continue;
-          const shared = (link.packages ?? []).filter((one) =>
-            livePacks.has(one),
-          );
-          if (shared.length === 0) continue;
-          if (existsSync(path.join(BASE, "..", link.config))) continue;
-          sharedConfigs.push(
-            link.config +
-              " — конфиг снятого звена " +
-              link.script +
-              ", а его инструмент служит живому: " +
-              shared.join(", "),
-          );
-        }
-      }
-
-      // Обвязка везёт СВОИ файлы кода — общий помощник, подготовку прогона —
-      // и кладёт их в `src/`. Проект, чей компилятор смотрит в другие папки,
-      // их не видит: звено типов их не проверяет, а звено линта с типами
-      // падает РАЗБОРОМ — «файл не найден по настройке компилятора», — и
-      // падает на файлах самой обвязки, а не на коде проекта.
-      //
-      // Замерено посадкой стенда с двумя деревьями: `include` объявлял
-      // `client` и `server`, привезённые семена легли в `src`, и линт дал
-      // три ошибки разбора подряд.
-      const unseen = [];
-      let seedCode = 0;
-      {
-        const at = path.join(BASE, "..", "tsconfig.json");
-        const inc = existsSync(at) ? (readJson(at, {}).include ?? null) : null;
-        const mapAt = shelfAt("seat/map.json");
-        const seeds =
-          mapAt === null || !existsSync(mapAt)
-            ? []
-            : (readJson(mapAt, {}).copy ?? []);
-        const covers = (one, file) => {
-          const bare = one.replace(/[/]+$/, "");
-          if (file === bare || file.startsWith(bare + "/")) return true;
-          if (!bare.includes("*")) return false;
-          const head = bare.slice(0, bare.indexOf("*"));
-          return file.startsWith(head);
-        };
-        if (inc !== null)
-          for (const e of seeds) {
-            // Компилятор и линт с типами разбирают TypeScript; остальной код
-            // линт читает без типов, и область компилятора ему не нужна.
-            if (!TS_FILE.test(e.to)) continue;
-            // Конфиг в корне репозитория компилятору не принадлежит: его
-            // читает свой инструмент, и в область типов он не входит.
-            if (!e.to.includes("/")) continue;
-            if (!existsSync(path.join(REPO, e.to))) continue;
-            seedCode += 1;
-            if (inc.some((one) => covers(one, e.to))) continue;
-            unseen.push(
-              e.to +
-                " — файл кода приехал обвязкой, а `include` компилятора его не накрывает: звено линта с типами падает на нём разбором",
+            if (!linkHasSubject(name)) continue;
+            const own = linkOwnName(name, scripts) ?? name;
+            if (scripts[own] == null) continue;
+            if (chainCalls.includes(own)) continue;
+            chainBroken.push(
+              own +
+                " — звено живо и команда есть, а связка проверок его не зовёт: спрашивать его нечему",
             );
           }
-      }
+        }
 
-      // Секция тестов в настройке сборщика требует, чтобы `defineConfig`
-      // был взят из `vitest/config`, а не из `vite`: у сборщика в типе
-      // такого поля нет вовсе. Привозит секцию обвязка, а импорт остаётся
-      // проектным — и звено типов краснеет на СВОЕЙ ЖЕ настройке, сообщением
-      // «'test' does not exist in type UserConfigExport», которое про тесты
-      // не говорит ничего.
-      //
-      // Замерено посадкой стенда с раскладкой умолчания: слияние дописало
-      // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
-      const viteDrift = [];
-      let viteLooked = 0;
-      const viteSeen = new Set();
-      // Спрашивается только там, где есть ЗВЕНО ТИПОВ: ломается от этого
-      // именно компилятор. В проекте на обычном JavaScript импорт берут
-      // откуда угодно — раннер читает секцию тестов в любом случае, и
-      // требовать тут `vitest/config` значило бы краснеть на законном.
-      if (linkHasSubject("typecheck")) {
+        // Конфиг СНЯТОГО звена остаётся, когда его инструмент служит живому.
+        // Оговорка та же, что у пакетов, и следует из неё: пакет, названный
+        // двумя звеньями, живёт, пока живо хотя бы одно, — а инструмент без
+        // своей настройки не работает. Компилятор назван и у звена линта:
+        // правила с типами держатся на нём и читают `tsconfig.json`.
+        //
+        // Замерено посадкой в проект на обычном JavaScript: звено типов снято
+        // по инструкции вместе с конфигом, и живое звено линта стало падать
+        // разбором на файлах САМОЙ ОБВЯЗКИ — «не найден в проекте компилятора».
+        // Цепочка красная, чинить нечем: конфиг класть запрещала инструкция.
+        const sharedConfigs = [];
+        {
+          const live = CONFIG.toolchain.filter((one) =>
+            linkHasSubject(one.script),
+          );
+          const livePacks = new Set(live.flatMap((one) => one.packages ?? []));
+          // Спрашивается СЕМЯ, а не настройка проекта. Звено, у которого
+          // предмета нет, проект вправе вычеркнуть из своего списка звеньев
+          // целиком, — и охранять его конфиг стало бы нечем: сверка смотрела
+          // бы в список, из которого звено уже вычеркнуто.
+          // Семя знает все звенья и их инструменты, и знание это не
+          // зависит от того, что проект у себя оставил.
+          //
+          // Замерено повторной посадкой в проект на обычном JavaScript:
+          // звено типов снято по инструкции, конфиг компилятора унесён
+          // вместе с ним, и живое звено линта снова падало разбором на
+          // файлах самой обвязки — при зелёном прогоне.
+          const seedLinks = (() => {
+            const at = shelfAt("seat/templates/graph.config.mjs");
+            if (at === null || !existsSync(at)) return [];
+            const body = readFileSync(at, "utf8");
+            const from = body.indexOf("toolchain: [");
+            if (from < 0) return [];
+            const out = [];
+            for (const piece of body.slice(from).split("    {")) {
+              const pick = (key) => {
+                const k = piece.indexOf(key + ": ");
+                if (k < 0) return null;
+                const q1 = piece.indexOf(String.fromCharCode(34), k);
+                if (q1 < 0) return null;
+                const q2 = piece.indexOf(String.fromCharCode(34), q1 + 1);
+                return q2 < 0 ? null : piece.slice(q1 + 1, q2);
+              };
+              const name = pick("script");
+              if (name === null) continue;
+              const conf = pick("config");
+              const packs = (() => {
+                const k = piece.indexOf("packages: [");
+                if (k < 0) return [];
+                const end = piece.indexOf("]", k);
+                const parts = piece
+                  .slice(k, end)
+                  .split(String.fromCharCode(34));
+                const out = [];
+                for (let i = 1; i < parts.length; i += 2) out.push(parts[i]);
+                return out;
+              })();
+              out.push({ script: name, config: conf, packages: packs });
+            }
+            return out;
+          })();
+          for (const link of seedLinks) {
+            if (linkHasSubject(link.script)) continue;
+            if (link.config == null) continue;
+            const shared = (link.packages ?? []).filter((one) =>
+              livePacks.has(one),
+            );
+            if (shared.length === 0) continue;
+            if (existsSync(path.join(BASE, "..", link.config))) continue;
+            sharedConfigs.push(
+              link.config +
+                " — конфиг снятого звена " +
+                link.script +
+                ", а его инструмент служит живому: " +
+                shared.join(", "),
+            );
+          }
+        }
+
+        // Обвязка везёт СВОИ файлы кода — общий помощник, подготовку прогона —
+        // и кладёт их в `src/`. Проект, чей компилятор смотрит в другие папки,
+        // их не видит: звено типов их не проверяет, а звено линта с типами
+        // падает РАЗБОРОМ — «файл не найден по настройке компилятора», — и
+        // падает на файлах самой обвязки, а не на коде проекта.
+        //
+        // Замерено посадкой стенда с двумя деревьями: `include` объявлял
+        // `client` и `server`, привезённые семена легли в `src`, и линт дал
+        // три ошибки разбора подряд.
+        const unseen = [];
+        let seedCode = 0;
+        {
+          const at = path.join(BASE, "..", "tsconfig.json");
+          const inc = existsSync(at)
+            ? (readJson(at, {}).include ?? null)
+            : null;
+          const mapAt = shelfAt("seat/map.json");
+          const seeds =
+            mapAt === null || !existsSync(mapAt)
+              ? []
+              : (readJson(mapAt, {}).copy ?? []);
+          const covers = (one, file) => {
+            const bare = one.replace(/[/]+$/, "");
+            if (file === bare || file.startsWith(bare + "/")) return true;
+            if (!bare.includes("*")) return false;
+            const head = bare.slice(0, bare.indexOf("*"));
+            return file.startsWith(head);
+          };
+          if (inc !== null)
+            for (const e of seeds) {
+              // Компилятор и линт с типами разбирают TypeScript; остальной код
+              // линт читает без типов, и область компилятора ему не нужна.
+              if (!TS_FILE.test(e.to)) continue;
+              // Конфиг в корне репозитория компилятору не принадлежит: его
+              // читает свой инструмент, и в область типов он не входит.
+              if (!e.to.includes("/")) continue;
+              if (!existsSync(path.join(REPO, e.to))) continue;
+              seedCode += 1;
+              if (inc.some((one) => covers(one, e.to))) continue;
+              unseen.push(
+                e.to +
+                  " — файл кода приехал обвязкой, а `include` компилятора его не накрывает: звено линта с типами падает на нём разбором",
+              );
+            }
+        }
+
+        // Секция тестов в настройке сборщика требует, чтобы `defineConfig`
+        // был взят из `vitest/config`, а не из `vite`: у сборщика в типе
+        // такого поля нет вовсе. Привозит секцию обвязка, а импорт остаётся
+        // проектным — и звено типов краснеет на СВОЕЙ ЖЕ настройке, сообщением
+        // «'test' does not exist in type UserConfigExport», которое про тесты
+        // не говорит ничего.
+        //
+        // Замерено посадкой стенда с раскладкой умолчания: слияние дописало
+        // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
+        const viteDrift = [];
+        let viteLooked = 0;
+        const viteSeen = new Set();
+        // Спрашивается только там, где есть ЗВЕНО ТИПОВ: ломается от этого
+        // именно компилятор. В проекте на обычном JavaScript импорт берут
+        // откуда угодно — раннер читает секцию тестов в любом случае, и
+        // требовать тут `vitest/config` значило бы краснеть на законном.
+        if (linkHasSubject("typecheck")) {
+          for (const name of runnerConfigNames()) {
+            const at = path.join(BASE, "..", name);
+            if (!existsSync(at)) continue;
+            viteSeen.add(name);
+            const body = readFileSync(at, "utf8");
+            if (testSectionOf(body) === null) continue;
+            if (body.includes("vitest/config")) continue;
+            // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
+            // типы — замерено компилятором на такой настройке. Для старших
+            // версий это не мерено, и они спрашиваются по-прежнему.
+            const runner = readJson(
+              path.join(BASE, "..", "node_modules", "vitest", "package.json"),
+              {},
+            );
+            const major = Number(String(runner.version ?? "0").split(".")[0]);
+            if (
+              major === 2 &&
+              /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(body)
+            )
+              continue;
+            viteDrift.push(
+              name +
+                " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
+            );
+          }
+        }
+        // Подготовка прогона легла — раннер обязан её звать. Правило слияния
+        // «дописать в конфиг раннера область сбора, и только её» оставляло
+        // семя подготовки лежать мёртвым: реестр тестов называл его уборкой
+        // между тестами, а раннер проекта с `globals: false` его не читал, и
+        // вторая же отрисовка в одном файле нашла бы две копии узла. Замерено
+        // посадкой руками в проект со своей секцией тестов.
+        {
+          const setupAt = shelfAt("seat/map.json");
+          const setupSeed =
+            setupAt !== null && existsSync(setupAt)
+              ? (readJson(setupAt, {}).copy ?? []).find((e) =>
+                  e.from.endsWith("tests/setup.ts"),
+                )
+              : undefined;
+          if (
+            setupSeed !== undefined &&
+            existsSync(path.join(REPO, setupSeed.to))
+          ) {
+            const runnerConf = runnerConfigNames()
+              .map((n) => path.join(BASE, "..", n))
+              .filter((at) => existsSync(at))
+              .map((at) => readFileSync(at, "utf8"))
+              .find((body) => testSectionOf(body) !== null);
+            viteLooked += 1;
+            if (
+              runnerConf !== undefined &&
+              !runnerConf.includes(setupSeed.to.replace(/^src\//, ""))
+            )
+              viteDrift.push(
+                setupSeed.to +
+                  " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
+              );
+            // Секции тестов нет НИ В ОДНОЙ настройке, а звено тестов обвязки
+            // живое: раннер идёт умолчанием и подготовку не зовёт. Так выходило,
+            // когда настройку сборщика под другим именем того же формата
+            // откладывали в `.seat` до фазы 2 — тесты фазы 1 шли без области
+            // сбора и без подготовки, и зелёными. Найдено посадкой руками в
+            // проект с `vite.config.js`. У проекта со своим раннером звено
+            // тестов не живое, и вопроса нет.
+            const testLink = (
+              readJson(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
+            ).find((e) => e.name === "test");
+            const testLives =
+              testLink?.recognise != null &&
+              linkCalled(
+                new RegExp(testLink.recognise),
+                readJson(
+                  path.join(BASE, CONFIG.manifest ?? "../package.json"),
+                  {},
+                ).scripts ?? {},
+              );
+            if (runnerConf === undefined && testLives)
+              viteDrift.push(
+                setupSeed.to +
+                  " — подготовка прогона лежит, звено тестов живое, а секции тестов нет ни в одной настройке сборщика: раннер идёт умолчанием и подготовку не зовёт",
+              );
+          }
+        }
+        // Область сбора не называет папку обвязки: её тесты идут своей
+        // командой, вне прогона проекта. Семя прежде называло её в `include`,
+        // а обновление обвязки настройку проекта не трогает — в посаженных
+        // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
+        // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
         for (const name of runnerConfigNames()) {
           const at = path.join(BASE, "..", name);
           if (!existsSync(at)) continue;
           viteSeen.add(name);
           const body = readFileSync(at, "utf8");
-          if (testSectionOf(body) === null) continue;
-          if (body.includes("vitest/config")) continue;
-          // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
-          // типы — замерено компилятором на такой настройке. Для старших
-          // версий это не мерено, и они спрашиваются по-прежнему.
-          const runner = readJson(
-            path.join(BASE, "..", "node_modules", "vitest", "package.json"),
-            {},
+          const section = testSectionOf(body);
+          if (section === null) continue;
+          const lists = [...section.matchAll(/include:\s*\[([^\]]*)\]/g)].map(
+            (m) => m[1],
           );
-          const major = Number(String(runner.version ?? "0").split(".")[0]);
-          if (
-            major === 2 &&
-            /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(body)
-          )
-            continue;
-          viteDrift.push(
-            name +
-              " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
-          );
-        }
-      }
-      // Подготовка прогона легла — раннер обязан её звать. Правило слияния
-      // «дописать в конфиг раннера область сбора, и только её» оставляло
-      // семя подготовки лежать мёртвым: реестр тестов называл его уборкой
-      // между тестами, а раннер проекта с `globals: false` его не читал, и
-      // вторая же отрисовка в одном файле нашла бы две копии узла. Замерено
-      // посадкой руками в проект со своей секцией тестов.
-      {
-        const setupAt = shelfAt("seat/map.json");
-        const setupSeed =
-          setupAt !== null && existsSync(setupAt)
-            ? (readJson(setupAt, {}).copy ?? []).find((e) =>
-                e.from.endsWith("tests/setup.ts"),
-              )
-            : undefined;
-        if (
-          setupSeed !== undefined &&
-          existsSync(path.join(REPO, setupSeed.to))
-        ) {
-          const runnerConf = runnerConfigNames()
-            .map((n) => path.join(BASE, "..", n))
-            .filter((at) => existsSync(at))
-            .map((at) => readFileSync(at, "utf8"))
-            .find((body) => testSectionOf(body) !== null);
-          viteLooked += 1;
-          if (
-            runnerConf !== undefined &&
-            !runnerConf.includes(setupSeed.to.replace(/^src\//, ""))
-          )
+          if (lists.some((l) => l.includes(".claude")))
             viteDrift.push(
-              setupSeed.to +
-                " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
+              name +
+                " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
             );
-          // Секции тестов нет НИ В ОДНОЙ настройке, а звено тестов обвязки
-          // живое: раннер идёт умолчанием и подготовку не зовёт. Так выходило,
-          // когда настройку сборщика под другим именем того же формата
-          // откладывали в `.seat` до фазы 2 — тесты фазы 1 шли без области
-          // сбора и без подготовки, и зелёными. Найдено посадкой руками в
-          // проект с `vite.config.js`. У проекта со своим раннером звено
-          // тестов не живое, и вопроса нет.
-          const testLink = (
-            readJson(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
-          ).find((e) => e.name === "test");
-          const testLives =
-            testLink?.recognise != null &&
-            linkCalled(
-              new RegExp(testLink.recognise),
-              readJson(
-                path.join(BASE, CONFIG.manifest ?? "../package.json"),
-                {},
-              ).scripts ?? {},
-            );
-          if (runnerConf === undefined && testLives)
+        }
+        // Область сбора называет тесты проекта. Семя пишет её от корня `src`, и в
+        // проекте с другим корнем, у которого своего конфига раннера не было,
+        // оно ложилось целиком: раннер не находил ни одного теста, а сверка
+        // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
+        // корнем `lib`. Область — первый список строк в секции тестов до
+        // покрытия: у покрытия своя.
+        for (const name of runnerConfigNames()) {
+          const at = path.join(BASE, "..", name);
+          if (!existsSync(at)) continue;
+          const body = readFileSync(at, "utf8");
+          const section = testSectionOf(body);
+          if (section === null) continue;
+          const cut = section.search(/\bcoverage\s*:/);
+          const globs = [
+            ...(cut < 0 ? section : section.slice(0, cut)).matchAll(
+              /include:\s*\[([^\]]*)\]/g,
+            ),
+          ]
+            .map((m) =>
+              [...m[1].matchAll(/["']([^"']+)["']/g)].map((g) => g[1]),
+            )
+            .find((list) => list.length > 0);
+          if (globs === undefined) continue;
+          const collected = globsToTest(globs);
+          // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
+          // лежит в папке тестов, но тестом не является.
+          const lost = files
+            .filter((f) => TEST_SUFFIX.test(f))
+            .map((f) => norm(path.relative(path.join(BASE, ".."), f)))
+            .filter((k) => !collected(k));
+          for (const k of lost.slice(0, 5))
             viteDrift.push(
-              setupSeed.to +
-                " — подготовка прогона лежит, звено тестов живое, а секции тестов нет ни в одной настройке сборщика: раннер идёт умолчанием и подготовку не зовёт",
+              name +
+                " — тест проекта " +
+                k +
+                " вне области сбора `include`: раннер его не соберёт",
+            );
+          if (lost.length > 5)
+            viteDrift.push(
+              name + " — и ещё тестов вне области сбора: " + (lost.length - 5),
             );
         }
-      }
-      // Область сбора не называет папку обвязки: её тесты идут своей
-      // командой, вне прогона проекта. Семя прежде называло её в `include`,
-      // а обновление обвязки настройку проекта не трогает — в посаженных
-      // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
-      // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
-      for (const name of runnerConfigNames()) {
-        const at = path.join(BASE, "..", name);
-        if (!existsSync(at)) continue;
-        viteSeen.add(name);
-        const body = readFileSync(at, "utf8");
-        const section = testSectionOf(body);
-        if (section === null) continue;
-        const lists = [...section.matchAll(/include:\s*\[([^\]]*)\]/g)].map(
-          (m) => m[1],
-        );
-        if (lists.some((l) => l.includes(".claude")))
-          viteDrift.push(
-            name +
-              " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
-          );
-      }
-      // Область сбора называет тесты проекта. Семя пишет её от корня `src`, и в
-      // проекте с другим корнем, у которого своего конфига раннера не было,
-      // оно ложилось целиком: раннер не находил ни одного теста, а сверка
-      // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
-      // корнем `lib`. Область — первый список строк в секции тестов до
-      // покрытия: у покрытия своя.
-      for (const name of runnerConfigNames()) {
-        const at = path.join(BASE, "..", name);
-        if (!existsSync(at)) continue;
-        const body = readFileSync(at, "utf8");
-        const section = testSectionOf(body);
-        if (section === null) continue;
-        const cut = section.search(/\bcoverage\s*:/);
-        const globs = [
-          ...(cut < 0 ? section : section.slice(0, cut)).matchAll(
-            /include:\s*\[([^\]]*)\]/g,
-          ),
-        ]
-          .map((m) => [...m[1].matchAll(/["']([^"']+)["']/g)].map((g) => g[1]))
-          .find((list) => list.length > 0);
-        if (globs === undefined) continue;
-        const collected = globsToTest(globs);
-        // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
-        // лежит в папке тестов, но тестом не является.
-        const lost = files
-          .filter((f) => TEST_SUFFIX.test(f))
-          .map((f) => norm(path.relative(path.join(BASE, ".."), f)))
-          .filter((k) => !collected(k));
-        for (const k of lost.slice(0, 5))
-          viteDrift.push(
-            name +
-              " — тест проекта " +
-              k +
-              " вне области сбора `include`: раннер его не соберёт",
-          );
-        if (lost.length > 5)
-          viteDrift.push(
-            name + " — и ещё тестов вне области сбора: " + (lost.length - 5),
-          );
-      }
-      checkHead("Настройка сборки знает про тесты", {
-        n: viteSeen.size + viteLooked,
-        unit: "настроек сборки",
-      });
-      console.log("  расхождений: " + viteDrift.length);
-      for (const one of viteDrift) console.log("    " + one);
-      checkHead("Привезённый код виден компилятору", {
-        n: seedCode,
-        unit: "файлов кода, привезённых обвязкой",
-      });
-      // Привезённого кода может не быть вовсе: каркас едет в пустой проект,
-      // помощник и подготовка прогона — по условию. Строку читает и
-      // фальсификация: рецепту здесь ломать нечего.
-      if (seedCode === 0)
-        console.log(IDLE_NOTES["Привезённый код виден компилятору"]);
-      console.log("  вне области компилятора: " + unseen.length);
-      for (const one of unseen) console.log("    " + one);
+        checkHead("Настройка сборки знает про тесты", {
+          n: viteSeen.size + viteLooked,
+          unit: "настроек сборки",
+        });
+        console.log("  расхождений: " + viteDrift.length);
+        for (const one of viteDrift) console.log("    " + one);
+        checkHead("Привезённый код виден компилятору", {
+          n: seedCode,
+          unit: "файлов кода, привезённых обвязкой",
+        });
+        // Привезённого кода может не быть вовсе: каркас едет в пустой проект,
+        // помощник и подготовка прогона — по условию. Строку читает и
+        // фальсификация: рецепту здесь ломать нечего.
+        if (seedCode === 0)
+          console.log(IDLE_NOTES["Привезённый код виден компилятору"]);
+        console.log("  вне области компилятора: " + unseen.length);
+        for (const one of unseen) console.log("    " + one);
 
-      // Строгость компилятора — там, где звено типов проверяет код.
-      //
-      // Часть планки стоит на строгости, и посадка дописывает её всегда.
-      // Проверки у этого не было никакой: монорепозиторий раздаёт проверку
-      // типов пакетам, строгость дописали в конфиг корня, а пакеты остались
-      // при своей, и звено типов проверяло их мягче объявленного — зелёным.
-      // Замерено посадкой руками в монорепозиторий.
-      //
-      // Конфиги берутся по тому, что звено ЗОВЁТ: `-p` и `--project` —
-      // названный файл, иначе конфиг корня; конфиг-решение со ссылками — его
-      // ссылки; делегирование пакетам — те же вызовы в каждом пакете. Опции
-      // читаются вместе с тем, что конфиг продолжает. Набор флагов — из семени
-      // конфига: всё включённое в нём, что строже умолчания.
-      const strictGap = [];
-      let strictLooked = 0;
-      if (linkHasSubject("typecheck")) {
-        const seedTs = shelfAt("seat/templates/tsconfig.json");
-        const seedOpts =
-          seedTs !== null && existsSync(seedTs)
-            ? (parseJsonc(readFileSync(seedTs, "utf8"))?.compilerOptions ?? {})
-            : {};
-        const want = Object.entries(seedOpts)
-          .filter(
-            ([k, v]) =>
-              v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
-          )
-          .map(([k]) => k);
-        for (const [one, opts] of typeCheckOptions()) {
-          if (opts == null) continue;
-          strictLooked += 1;
-          const lax = want.filter((k) => opts[k] !== true);
-          if (lax.length)
-            strictGap.push(
-              path.relative(REPO, one).split(path.sep).join("/") +
-                " — звено типов проверяет по нему, а строгости семени нет: " +
-                lax.join(", "),
-            );
-        }
-      }
-      checkHead("Строгость компилятора там, где проверяются типы", {
-        n: strictLooked,
-        unit: "конфигов компилятора, по которым идёт проверка типов",
-      });
-      console.log("  без строгости семени: " + strictGap.length);
-      for (const one of strictGap) console.log("    " + one);
-      checkHead("Конфиг снятого звена служит живому", {
-        n: CONFIG.toolchain.length,
-        unit: "звеньев цепочки",
-      });
-      console.log(
-        "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
-      );
-      for (const one of sharedConfigs) console.log("    " + one);
-
-      // Конвейер — ТА ЖЕ СВЯЗКА, что скрипт проверок, только написанная
-      // однажды и живущая отдельно. Описание сборки на сервере, которое
-      // собирает проект и не зовёт ни одного звена цепочки, даёт ворота,
-      // не проверяющие ничего: зелёная галочка стоит, типы и тесты не
-      // прогонялись. Планка требует обратного прямо — раздел U, «порядок
-      // ворот от дешёвых к дорогим», — а крючка у требования не было.
-      //
-      // Замерено посадкой стенда с описанием на сервере: единственный шаг
-      // конвейера — сборка, и прогон об этом молчал.
-      const ciFiles = [];
-      {
-        const roots = [".github/workflows", ".circleci"];
-        const loose = [
-          ".gitlab-ci.yml",
-          ".drone.yml",
-          "azure-pipelines.yml",
-          "Jenkinsfile",
-          "bitbucket-pipelines.yml",
-          ".woodpecker.yml",
-        ];
-        const at = (one) => path.join(BASE, "..", one);
-        for (const one of loose) if (existsSync(at(one))) ciFiles.push(one);
-        for (const dir of roots) {
-          if (!existsSync(at(dir))) continue;
-          for (const name of readdirSync(at(dir))) {
-            const full = path.join(at(dir), name);
-            if (statSync(full).isDirectory()) continue;
-            ciFiles.push(dir + "/" + name);
+        // Строгость компилятора — там, где звено типов проверяет код.
+        //
+        // Часть планки стоит на строгости, и посадка дописывает её всегда.
+        // Проверки у этого не было никакой: монорепозиторий раздаёт проверку
+        // типов пакетам, строгость дописали в конфиг корня, а пакеты остались
+        // при своей, и звено типов проверяло их мягче объявленного — зелёным.
+        // Замерено посадкой руками в монорепозиторий.
+        //
+        // Конфиги берутся по тому, что звено ЗОВЁТ: `-p` и `--project` —
+        // названный файл, иначе конфиг корня; конфиг-решение со ссылками — его
+        // ссылки; делегирование пакетам — те же вызовы в каждом пакете. Опции
+        // читаются вместе с тем, что конфиг продолжает. Набор флагов — из семени
+        // конфига: всё включённое в нём, что строже умолчания.
+        const strictGap = [];
+        let strictLooked = 0;
+        if (linkHasSubject("typecheck")) {
+          const seedTs = shelfAt("seat/templates/tsconfig.json");
+          const seedOpts =
+            seedTs !== null && existsSync(seedTs)
+              ? (parseJsonc(readFileSync(seedTs, "utf8"))?.compilerOptions ??
+                {})
+              : {};
+          const want = Object.entries(seedOpts)
+            .filter(
+              ([k, v]) =>
+                v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
+            )
+            .map(([k]) => k);
+          for (const [one, opts] of typeCheckOptions()) {
+            if (opts == null) continue;
+            strictLooked += 1;
+            const lax = want.filter((k) => opts[k] !== true);
+            if (lax.length)
+              strictGap.push(
+                path.relative(REPO, one).split(path.sep).join("/") +
+                  " — звено типов проверяет по нему, а строгости семени нет: " +
+                  lax.join(", "),
+              );
           }
         }
-      }
-      const ciMute = [];
-      const ciAside = [];
-      // Описание, которое не зовёт менеджер пакетов проекта, проекта не
-      // собирает и воротами не является: публикация документации запросом,
-      // запирание старых обсуждений чужим действием. Замерено на библиотеке:
-      // из пяти описаний два проекта не касались, и прогон требовал от них
-      // проверок. Ищется вызов командой, а не слово: `cache: npm` в
-      // настройке шага вызовом не является.
-      const PM_CALL =
-        /(?:^|[;&|]|run:)\s*(?:-\s+)?(?:npm|pnpm|yarn|bun)(?:[ \t]+\S|[ \t]*$)/m;
-      for (const one of ciFiles) {
-        const body = readFileSync(path.join(BASE, "..", one), "utf8");
-        if (!PM_CALL.test(body)) {
-          ciAside.push(one);
-          continue;
-        }
-        const names = CONFIG.toolchain
-          .map((link) => link.script)
-          .filter((name) => name != null)
-          .filter((name) => linkHasSubject(name))
-          .filter(
-            (name) => scripts[linkOwnName(name, scripts) ?? name] != null,
-          );
-        // Звено зовут ЕГО ИМЕНЕМ В ПРОЕКТЕ, а не семенным: конвейер проекта
-        // пишет `npm run types`, если звено типов у него `types`. Прежде
-        // искалось семенное имя, и конвейер, зовущий звено типов проекта,
-        // объявлялся не зовущим ни одного — замерено посадкой руками. Звено
-        // тестов менеджер зовёт и сокращённо, `npm test`.
-        const called = new Set(
-          body
-            .split(NEWLINE)
-            .flatMap((line) =>
-              scriptCallsIn(line.replace(/^\s*(-\s*)?(run:\s*)?/, "")),
-            ),
-        );
-        const calls = names.filter((name) => {
-          const own = linkOwnName(name, scripts) ?? name;
-          return body.includes("run " + own) || called.has(own);
+        checkHead("Строгость компилятора там, где проверяются типы", {
+          n: strictLooked,
+          unit: "конфигов компилятора, по которым идёт проверка типов",
         });
-        if (body.includes("run check") || calls.length > 0) continue;
-        // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
-        // посадки не входит: она ставит инструмент, а не чинит код. Пункт
-        // долга перехода снимает красное и оставляет находку на виду — пункт,
-        // назвавший ЭТОТ файл. Прежде пункт держал сверку по имени, и один
-        // пункт про одно описание держал любое число новых: замерено
-        // фальсификацией на стенде — посаженное второе описание без проверок
-        // прошло зелёным.
-        if (
-          openFindingRows().some(
-            (row) => row.includes("«Конвейер зовёт проверки»") && row.includes(one),
-          )
-        )
-          continue;
-        ciMute.push(
-          one +
-            " — описание сборки на сервере не зовёт ни связку проверок, ни одно звено цепочки: ворота стоят и не проверяют ничего. Записать пунктом долга перехода либо позвать цепочку",
-        );
-      }
-      checkHead("Конвейер зовёт проверки", {
-        n: ciFiles.length,
-        unit: "описаний сборки на сервере",
-      });
-      console.log("  не зовут цепочку: " + ciMute.length);
-      if (ciAside.length)
-        console.log(
-          "  проекта не собирают, вопрос не задаётся: " + ciAside.join(", "),
-        );
-      for (const one of ciMute) console.log("    " + one);
-      checkHead("Связка проверок зовёт живые звенья", {
-        n: chainCalls.length,
-        unit: "вызовов в связке проверок",
-      });
-      console.log("  расхождений: " + chainBroken.length);
-      for (const one of chainBroken) console.log("    " + one);
-      checkHead(
-        "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
-        {
+        console.log("  без строгости семени: " + strictGap.length);
+        for (const one of strictGap) console.log("    " + one);
+        checkHead("Конфиг снятого звена служит живому", {
           n: CONFIG.toolchain.length,
           unit: "звеньев цепочки",
-        },
-      );
-      console.log("  звеньев цепочки без инструмента: " + gaps.length + "");
-      for (const g of gaps) console.log(g);
-      if (elsewhere.length)
+        });
         console.log(
-          "  у проекта своё устройство, не пробел: " +
-            elsewhere.join(", ") +
-            " — имя звена занято своей работой либо нет ведущего звена; расхождение с умолчанием держит план перехода",
+          "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
         );
-      if (gaps.length) {
-        console.log(
-          "  Поставить и настроить — шаг 6 фазы 1 посадки, «Поставить пакеты».",
+        for (const one of sharedConfigs) console.log("    " + one);
+
+        // Конвейер — ТА ЖЕ СВЯЗКА, что скрипт проверок, только написанная
+        // однажды и живущая отдельно. Описание сборки на сервере, которое
+        // собирает проект и не зовёт ни одного звена цепочки, даёт ворота,
+        // не проверяющие ничего: зелёная галочка стоит, типы и тесты не
+        // прогонялись. Планка требует обратного прямо — раздел U, «порядок
+        // ворот от дешёвых к дорогим», — а крючка у требования не было.
+        //
+        // Замерено посадкой стенда с описанием на сервере: единственный шаг
+        // конвейера — сборка, и прогон об этом молчал.
+        const ciFiles = [];
+        {
+          const roots = [".github/workflows", ".circleci"];
+          const loose = [
+            ".gitlab-ci.yml",
+            ".drone.yml",
+            "azure-pipelines.yml",
+            "Jenkinsfile",
+            "bitbucket-pipelines.yml",
+            ".woodpecker.yml",
+          ];
+          const at = (one) => path.join(BASE, "..", one);
+          for (const one of loose) if (existsSync(at(one))) ciFiles.push(one);
+          for (const dir of roots) {
+            if (!existsSync(at(dir))) continue;
+            for (const name of readdirSync(at(dir))) {
+              const full = path.join(at(dir), name);
+              if (statSync(full).isDirectory()) continue;
+              ciFiles.push(dir + "/" + name);
+            }
+          }
+        }
+        const ciMute = [];
+        const ciAside = [];
+        // Описание, которое не зовёт менеджер пакетов проекта, проекта не
+        // собирает и воротами не является: публикация документации запросом,
+        // запирание старых обсуждений чужим действием. Замерено на библиотеке:
+        // из пяти описаний два проекта не касались, и прогон требовал от них
+        // проверок. Ищется вызов командой, а не слово: `cache: npm` в
+        // настройке шага вызовом не является.
+        const PM_CALL =
+          /(?:^|[;&|]|run:)\s*(?:-\s+)?(?:npm|pnpm|yarn|bun)(?:[ \t]+\S|[ \t]*$)/m;
+        for (const one of ciFiles) {
+          const body = readFileSync(path.join(BASE, "..", one), "utf8");
+          if (!PM_CALL.test(body)) {
+            ciAside.push(one);
+            continue;
+          }
+          const names = CONFIG.toolchain
+            .map((link) => link.script)
+            .filter((name) => name != null)
+            .filter((name) => linkHasSubject(name))
+            .filter(
+              (name) => scripts[linkOwnName(name, scripts) ?? name] != null,
+            );
+          // Звено зовут ЕГО ИМЕНЕМ В ПРОЕКТЕ, а не семенным: конвейер проекта
+          // пишет `npm run types`, если звено типов у него `types`. Прежде
+          // искалось семенное имя, и конвейер, зовущий звено типов проекта,
+          // объявлялся не зовущим ни одного — замерено посадкой руками. Звено
+          // тестов менеджер зовёт и сокращённо, `npm test`.
+          const called = new Set(
+            body
+              .split(NEWLINE)
+              .flatMap((line) =>
+                scriptCallsIn(line.replace(/^\s*(-\s*)?(run:\s*)?/, "")),
+              ),
+          );
+          const calls = names.filter((name) => {
+            const own = linkOwnName(name, scripts) ?? name;
+            return body.includes("run " + own) || called.has(own);
+          });
+          if (body.includes("run check") || calls.length > 0) continue;
+          // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
+          // посадки не входит: она ставит инструмент, а не чинит код. Пункт
+          // долга перехода снимает красное и оставляет находку на виду — пункт,
+          // назвавший ЭТОТ файл. Прежде пункт держал сверку по имени, и один
+          // пункт про одно описание держал любое число новых: замерено
+          // фальсификацией на стенде — посаженное второе описание без проверок
+          // прошло зелёным.
+          if (
+            openFindingRows().some(
+              (row) =>
+                row.includes("«Конвейер зовёт проверки»") && row.includes(one),
+            )
+          )
+            continue;
+          ciMute.push(
+            one +
+              " — описание сборки на сервере не зовёт ни связку проверок, ни одно звено цепочки: ворота стоят и не проверяют ничего. Записать пунктом долга перехода либо позвать цепочку",
+          );
+        }
+        checkHead("Конвейер зовёт проверки", {
+          n: ciFiles.length,
+          unit: "описаний сборки на сервере",
+        });
+        console.log("  не зовут цепочку: " + ciMute.length);
+        if (ciAside.length)
+          console.log(
+            "  проекта не собирают, вопрос не задаётся: " + ciAside.join(", "),
+          );
+        for (const one of ciMute) console.log("    " + one);
+        checkHead("Связка проверок зовёт живые звенья", {
+          n: chainCalls.length,
+          unit: "вызовов в связке проверок",
+        });
+        console.log("  расхождений: " + chainBroken.length);
+        for (const one of chainBroken) console.log("    " + one);
+        checkHead(
+          "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
+          {
+            n: CONFIG.toolchain.length,
+            unit: "звеньев цепочки",
+          },
         );
-        console.log(
-          "  Инструмент ставится вместе со своей настройкой, одной правкой:",
-        );
-        console.log("  поставленный без неё проходит, не проверив ничего.");
+        console.log("  звеньев цепочки без инструмента: " + gaps.length + "");
+        for (const g of gaps) console.log(g);
+        if (elsewhere.length)
+          console.log(
+            "  у проекта своё устройство, не пробел: " +
+              elsewhere.join(", ") +
+              " — имя звена занято своей работой либо нет ведущего звена; расхождение с умолчанием держит план перехода",
+          );
+        if (gaps.length) {
+          console.log(
+            "  Поставить и настроить — шаг 6 фазы 1 посадки, «Поставить пакеты».",
+          );
+          console.log(
+            "  Инструмент ставится вместе со своей настройкой, одной правкой:",
+          );
+          console.log("  поставленный без неё проходит, не проверив ничего.");
+        }
       }
     }
-  }
+  });
 
   // Обещания без опоры: раздел объявлен — значит собираемо всё, что в нём.
   // Прямая сторона у этой формы уже есть (`open` собирает по слову); здесь
   // обратная: запись, написанная мимо словаря, из сводки выпадает молча.
   const mutePromises = [];
   let promiseRows = 0;
-  if (CONFIG.promises != null) {
-    const at = path.join(BASE, CONFIG.promises.file);
-    if (!existsSync(at))
-      mutePromises.push(`файла нет: ${CONFIG.promises.file}`);
-    else {
-      // Образец записи в ограде кода не запись: парность считается по тексту.
-      const lines = proseOf(at).split(NEWLINE);
-      const from = lines.findIndex((l) => l.trim() === CONFIG.promises.heading);
-      promiseRows = lines.filter((l) => /^\s*Держится:/.test(l)).length;
-      if (from < 0)
-        mutePromises.push(
-          `раздел объявлен и не найден: «${CONFIG.promises.heading}»`,
-        );
+  checkStep(() => {
+    if (CONFIG.promises != null) {
+      const at = path.join(BASE, CONFIG.promises.file);
+      if (!existsSync(at))
+        mutePromises.push(`файла нет: ${CONFIG.promises.file}`);
       else {
-        // Метка графы — вторая половина той же формы, и до пробы её не
-        // спрашивал никто. Сверка ниже требовала узнаваемое СЛОВО в значении
-        // («вниманием», «ничем»), а сводка собирает записи по самой метке
-        // «Держится». Переименуй метку — и запись выпадает из сводки, ровно
-        // как при неузнаваемом слове, но уже молча: графы «Держится» тут
-        // больше нет, спрашивать не с чего. Замерено подсадкой: сводка дала
-        // `10` записей вместо `11`, прогон остался зелёным.
-        //
-        // Опора — парность формы: у каждой записи раздела две строки,
-        // «Держится» и «Сломается», и вторая без первой означает, что метку
-        // переписали. Соврать нечем — на живом разделе замерено `11` пар, и
-        // «Держится» везде стоит первым, так что ложных срабатываний нет по
-        // построению.
-        //
-        // Ищется именно СИРОТА, а не расхождение списков по позициям. Первый
-        // вариант сверял их поштучно и на одной переписанной метке докладывал
-        // `11` расхождений вместо одного: сдвиг делал «сломанной» каждую
-        // последующую пару. Шум тут дороже пропуска — он учит не читать вывод.
-        let pendingHold = null;
-        for (let i = from + 1; i < lines.length; i++) {
-          if (/^## /.test(lines[i])) break;
-          if (/^\s*(\*\*)?Сломается/.test(lines[i])) {
-            if (pendingHold === null)
+        // Образец записи в ограде кода не запись: парность считается по тексту.
+        const lines = proseOf(at).split(NEWLINE);
+        const from = lines.findIndex(
+          (l) => l.trim() === CONFIG.promises.heading,
+        );
+        promiseRows = lines.filter((l) => /^\s*Держится:/.test(l)).length;
+        if (from < 0)
+          mutePromises.push(
+            `раздел объявлен и не найден: «${CONFIG.promises.heading}»`,
+          );
+        else {
+          // Метка графы — вторая половина той же формы, и до пробы её не
+          // спрашивал никто. Сверка ниже требовала узнаваемое СЛОВО в значении
+          // («вниманием», «ничем»), а сводка собирает записи по самой метке
+          // «Держится». Переименуй метку — и запись выпадает из сводки, ровно
+          // как при неузнаваемом слове, но уже молча: графы «Держится» тут
+          // больше нет, спрашивать не с чего. Замерено подсадкой: сводка дала
+          // `10` записей вместо `11`, прогон остался зелёным.
+          //
+          // Опора — парность формы: у каждой записи раздела две строки,
+          // «Держится» и «Сломается», и вторая без первой означает, что метку
+          // переписали. Соврать нечем — на живом разделе замерено `11` пар, и
+          // «Держится» везде стоит первым, так что ложных срабатываний нет по
+          // построению.
+          //
+          // Ищется именно СИРОТА, а не расхождение списков по позициям. Первый
+          // вариант сверял их поштучно и на одной переписанной метке докладывал
+          // `11` расхождений вместо одного: сдвиг делал «сломанной» каждую
+          // последующую пару. Шум тут дороже пропуска — он учит не читать вывод.
+          let pendingHold = null;
+          for (let i = from + 1; i < lines.length; i++) {
+            if (/^## /.test(lines[i])) break;
+            if (/^\s*(\*\*)?Сломается/.test(lines[i])) {
+              if (pendingHold === null)
+                mutePromises.push(
+                  `${CONFIG.promises.file}:${i + 1}  «Сломается» без «Держится»` +
+                    ` — метку графы переписали, и запись выпала из сводки`,
+                );
+              pendingHold = null;
+              continue;
+            }
+            if (!/^\s*(\*\*)?Держится/.test(lines[i])) continue;
+            // Второй «Держится» подряд — предыдущая запись осталась без
+            // «Сломается». Без этой ветки незакрытой замечалась бы только
+            // последняя запись раздела: следующая метка молча затирала
+            // незакрытую. Найдено пробой по этой же сверке, через ход после
+            // того, как её завели.
+            if (pendingHold !== null)
               mutePromises.push(
-                `${CONFIG.promises.file}:${i + 1}  «Сломается» без «Держится»` +
-                  ` — метку графы переписали, и запись выпала из сводки`,
+                `${CONFIG.promises.file}:${pendingHold}  «Держится» без` +
+                  ` «Сломается» — запись не дописана`,
               );
-            pendingHold = null;
-            continue;
+            pendingHold = i + 1;
+            if (HELD_BY_NOTHING.test(lines[i])) continue;
+            mutePromises.push(
+              `${CONFIG.promises.file}:${i + 1}  ${lines[i].trim()}`,
+            );
           }
-          if (!/^\s*(\*\*)?Держится/.test(lines[i])) continue;
-          // Второй «Держится» подряд — предыдущая запись осталась без
-          // «Сломается». Без этой ветки незакрытой замечалась бы только
-          // последняя запись раздела: следующая метка молча затирала
-          // незакрытую. Найдено пробой по этой же сверке, через ход после
-          // того, как её завели.
           if (pendingHold !== null)
             mutePromises.push(
               `${CONFIG.promises.file}:${pendingHold}  «Держится» без` +
                 ` «Сломается» — запись не дописана`,
             );
-          pendingHold = i + 1;
-          if (HELD_BY_NOTHING.test(lines[i])) continue;
-          mutePromises.push(
-            `${CONFIG.promises.file}:${i + 1}  ${lines[i].trim()}`,
-          );
         }
-        if (pendingHold !== null)
-          mutePromises.push(
-            `${CONFIG.promises.file}:${pendingHold}  «Держится» без` +
-              ` «Сломается» — запись не дописана`,
-          );
       }
     }
-  }
+  });
   // Объявленные области — существуют ли они на диске.
   //
   // Область смоука и пары форков заданы путями, и путь переживает переезд
@@ -23713,29 +24033,36 @@ if (mode === "verify") {
   // проходит зелёным и читается как действующее»), только про другой список.
   const goneScope = [];
   let scopePaths = 0;
-  for (const p of CONFIG.smokeScope ?? []) {
-    scopePaths++;
-    if (!existsSync(path.join(REPO, p))) goneScope.push(`область смоука: ${p}`);
-  }
-  for (const { from, to } of CONFIG.forks ?? []) {
-    scopePaths += 2;
-    if (!existsSync(path.join(ROOT, from)))
-      goneScope.push(`пара форков: ${from}`);
-    if (!existsSync(path.join(ROOT, to))) goneScope.push(`пара форков: ${to}`);
-  }
-  checkHead("Объявленные области существуют", {
-    n: scopePaths,
-    unit: "адресов объявленных областей",
+  checkStep(() => {
+    for (const p of CONFIG.smokeScope ?? []) {
+      scopePaths++;
+      if (!existsSync(path.join(REPO, p)))
+        goneScope.push(`область смоука: ${p}`);
+    }
+    for (const { from, to } of CONFIG.forks ?? []) {
+      scopePaths += 2;
+      if (!existsSync(path.join(ROOT, from)))
+        goneScope.push(`пара форков: ${from}`);
+      if (!existsSync(path.join(ROOT, to)))
+        goneScope.push(`пара форков: ${to}`);
+    }
   });
-  console.log(`  ведут в никуда: ${goneScope.length}`);
-  for (const g of goneScope) console.log("    " + g);
-
-  checkHead("Обещания без опоры собираются сводкой", {
-    n: promiseRows,
-    unit: "записей сводки обещаний",
+  checkStep(() => {
+    checkHead("Объявленные области существуют", () => ({
+      n: scopePaths,
+      unit: "адресов объявленных областей",
+    }));
+    console.log(`  ведут в никуда: ${goneScope.length}`);
+    for (const g of goneScope) console.log("    " + g);
   });
-  console.log(`  записей мимо словаря: ${mutePromises.length}`);
-  for (const m of mutePromises) console.log("    " + m);
+  checkStep(() => {
+    checkHead("Обещания без опоры собираются сводкой", () => ({
+      n: promiseRows,
+      unit: "записей сводки обещаний",
+    }));
+    console.log(`  записей мимо словаря: ${mutePromises.length}`);
+    for (const m of mutePromises) console.log("    " + m);
+  });
 
   // 13h. имена связей мимо графа импортов существуют в коде: атрибуты
   // разметки, переменные и классы стилей — и имена в самом коде, которые один
@@ -23746,138 +24073,142 @@ if (mode === "verify") {
   // других узла, и ни досье, ни база этой связи не называли.
   const domDrift = [];
   let domNames = 0;
-  if (CONFIG.domTables != null) {
-    const at = path.join(BASE, CONFIG.domTables.file);
-    if (existsSync(at)) {
-      const text = readFileSync(at, "utf8").split(NEWLINE);
-      // Имя живо, только если стоит в ИСПОЛНЯЕМОМ тексте. Сверка искала его во
-      // всём файле разом и потому держалась за собственное эхо: после
-      // согласованного переименования достаточно было оставить старое имя в
-      // комментарии или в шапке теста — и таблица связей, единственный способ
-      // узнать радиус такой правки, продолжала описывать имя, которого в коде
-      // нет. Найдено пробой. Тот же класс уже был починен у имён констант и у
-      // camelCase-имён, поэтому здесь не заводится третий фильтр, а берётся
-      // тот же предикат.
-      const liveDomNames = new Set();
-      domNames = text.filter((l) => /^\|/.test(l.trim())).length;
-      for (const f of [...files, ...styleFiles])
-        for (const line of readFileSync(f, "utf8").split(NEWLINE))
-          // Имя целиком: прежний образец не знал подчёркивания и цифр и
-          // брал от `--yarl__pull_offset` одно `--yarl`, — то есть сверял
-          // приставку, и любая переменная проекта проходила живой.
-          for (const hit of line.matchAll(/--[A-Za-z0-9_-]+|data-[a-z0-9_-]+/g))
-            if (!inComment(line, hit.index)) liveDomNames.add(hit[0]);
-      // Класс живёт в двух формах: в листе стилей он с точкой, в контракте —
-      // строкой в кавычках. Обе засчитываются как одно имя.
-      for (const f of styleFiles)
-        for (const one of cssClasses(readFileSync(f, "utf8")))
-          liveDomNames.add("." + one);
-      for (const f of files.filter((one) => !isTest(one)))
-        for (const line of readFileSync(f, "utf8").split(NEWLINE))
-          for (const hit of line.matchAll(CODE_NAME))
-            if (!inComment(line, hit.index))
-              liveDomNames.add("." + (hit[1] ?? hit[2] ?? hit[3]));
-      // Имена в коде: строка в кавычках либо идентификатор — в исполняемом
-      // тексте. И обратный словарь «строка → константы, которые её несут»:
-      // конец связи пишет константу, а не строку.
-      const liveCodeNames = new Set();
-      const carriers = new Map();
-      for (const f of files.filter((one) => !isTest(one)))
-        for (const line of readFileSync(f, "utf8").split(NEWLINE)) {
-          for (const hit of line.matchAll(/["'`]([^"'`$\\]+)["'`]/g))
-            if (!inComment(line, hit.index)) liveCodeNames.add(hit[1]);
-          for (const hit of line.matchAll(/[A-Za-z_$][\w$]*/g))
-            if (!inComment(line, hit.index)) liveCodeNames.add(hit[0]);
-          const decl =
-            /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=[^;]*?["'`]([^"'`$\\]+)["'`]/.exec(
-              line,
-            );
-          if (decl !== null && !inComment(line, decl.index)) {
-            if (!carriers.has(decl[2])) carriers.set(decl[2], new Set());
-            carriers.get(decl[2]).add(decl[1]);
-          }
-        }
-      for (const heading of CONFIG.domTables.headings) {
-        const from = text.indexOf(heading);
-        if (from < 0) {
-          domDrift.push(`таблицы нет: «${heading}»`);
-          continue;
-        }
-        const { rows: domRows, problem: domProblem } = tableAfter(text, from);
-        if (domProblem !== null) {
-          domDrift.push(`«${heading}»: ${domProblem}`);
-          continue;
-        }
-        for (const row of domRows) {
-          // Первая графа — имена связи. Форма отличает род: переменная,
-          // атрибут и класс — связь через разметку и стили; всё прочее —
-          // имя в самом коде.
-          const named = [...row.split("|")[1].matchAll(/`([^`]+)`/g)]
-            .map((hit) => hit[1])
-            .filter((one) => /^(--|data-|\.)?[A-Za-z][\w.:/-]*$/.test(one));
-          // Сборщик имени, названный той же строкой: конец связи, который
-          // собирает имя вызовом, а не пишет его строкой.
-          const builders = [...row.matchAll(/`([a-z][A-Za-z0-9]*)`/g)].map(
-            (hit) => hit[1],
-          );
-          // Адреса, названные ТОЙ ЖЕ строкой: кто объявляет, кто читает.
-          // Строка, не называющая файлов, проверяется как прежде.
-          const where = [...row.matchAll(/`([^`]+)`/g)]
-            .map((hit) => hit[1])
-            .filter((one) => one.includes("/") && CODE_OR_STYLE.test(one))
-            .map((one) => path.join(BASE, "..", one))
-            .filter((one) => existsSync(one));
-          for (const name of named) {
-            const inCode = !/^(--|data-|\.)/.test(name);
-            const bare = bareNamesOf(name);
-            if (
-              !(inCode ? liveCodeNames : liveDomNames).has(name) &&
-              !bare.some((b) => liveCodeNames.has(b))
-            ) {
-              domDrift.push(`названо в таблице, нет в коде: ${name}`);
-              continue;
-            }
-            // Имя живо где-то — этого мало. Половина согласованного
-            // переименования оставляет его живым только у читателя, и связь
-            // рвётся при зелёном прогоне.
-            for (const at of where) {
-              const body = readFileSync(at, "utf8").split(NEWLINE);
-              // Класс в листе стилей пишется с точкой, а в контракте — без
-              // неё, строкой в кавычках. Ищутся обе формы: иначе строка
-              // таблицы краснела бы на законной записи контракта.
-              const forms = [
-                ...(name.startsWith(".") ? [name, name.slice(1)] : [name]),
-                ...bare,
-                ...builders,
-                ...(inCode ? (carriers.get(name) ?? []) : []),
-              ];
-              const here = body.some((line) =>
-                forms.some((one) => {
-                  // Имя ищется ЦЕЛИКОМ, а не вхождением: `.messageEnterActive`
-                  // входит подстрокой в `.messageEnterActiveXX`, и сверка
-                  // отвечала «имя на месте» о переименованном классе.
-                  let at = line.indexOf(one);
-                  while (at >= 0) {
-                    const after = line[at + one.length] ?? "";
-                    const before = line[at - 1] ?? "";
-                    const tail = /[A-Za-z0-9_-]/.test(after);
-                    const head = /[A-Za-z0-9_-]/.test(before);
-                    if (!tail && !head && !inComment(line, at)) return true;
-                    at = line.indexOf(one, at + 1);
-                  }
-                  return false;
-                }),
+  checkStep(() => {
+    if (CONFIG.domTables != null) {
+      const at = path.join(BASE, CONFIG.domTables.file);
+      if (existsSync(at)) {
+        const text = readFileSync(at, "utf8").split(NEWLINE);
+        // Имя живо, только если стоит в ИСПОЛНЯЕМОМ тексте. Сверка искала его во
+        // всём файле разом и потому держалась за собственное эхо: после
+        // согласованного переименования достаточно было оставить старое имя в
+        // комментарии или в шапке теста — и таблица связей, единственный способ
+        // узнать радиус такой правки, продолжала описывать имя, которого в коде
+        // нет. Найдено пробой. Тот же класс уже был починен у имён констант и у
+        // camelCase-имён, поэтому здесь не заводится третий фильтр, а берётся
+        // тот же предикат.
+        const liveDomNames = new Set();
+        domNames = text.filter((l) => /^\|/.test(l.trim())).length;
+        for (const f of [...files, ...styleFiles])
+          for (const line of readFileSync(f, "utf8").split(NEWLINE))
+            // Имя целиком: прежний образец не знал подчёркивания и цифр и
+            // брал от `--yarl__pull_offset` одно `--yarl`, — то есть сверял
+            // приставку, и любая переменная проекта проходила живой.
+            for (const hit of line.matchAll(
+              /--[A-Za-z0-9_-]+|data-[a-z0-9_-]+/g,
+            ))
+              if (!inComment(line, hit.index)) liveDomNames.add(hit[0]);
+        // Класс живёт в двух формах: в листе стилей он с точкой, в контракте —
+        // строкой в кавычках. Обе засчитываются как одно имя.
+        for (const f of styleFiles)
+          for (const one of cssClasses(readFileSync(f, "utf8")))
+            liveDomNames.add("." + one);
+        for (const f of files.filter((one) => !isTest(one)))
+          for (const line of readFileSync(f, "utf8").split(NEWLINE))
+            for (const hit of line.matchAll(CODE_NAME))
+              if (!inComment(line, hit.index))
+                liveDomNames.add("." + (hit[1] ?? hit[2] ?? hit[3]));
+        // Имена в коде: строка в кавычках либо идентификатор — в исполняемом
+        // тексте. И обратный словарь «строка → константы, которые её несут»:
+        // конец связи пишет константу, а не строку.
+        const liveCodeNames = new Set();
+        const carriers = new Map();
+        for (const f of files.filter((one) => !isTest(one)))
+          for (const line of readFileSync(f, "utf8").split(NEWLINE)) {
+            for (const hit of line.matchAll(/["'`]([^"'`$\\]+)["'`]/g))
+              if (!inComment(line, hit.index)) liveCodeNames.add(hit[1]);
+            for (const hit of line.matchAll(/[A-Za-z_$][\w$]*/g))
+              if (!inComment(line, hit.index)) liveCodeNames.add(hit[0]);
+            const decl =
+              /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=[^;]*?["'`]([^"'`$\\]+)["'`]/.exec(
+                line,
               );
-              if (!here)
-                domDrift.push(
-                  `${name} — названо строкой таблицы, но в ${rel(at)} его нет`,
+            if (decl !== null && !inComment(line, decl.index)) {
+              if (!carriers.has(decl[2])) carriers.set(decl[2], new Set());
+              carriers.get(decl[2]).add(decl[1]);
+            }
+          }
+        for (const heading of CONFIG.domTables.headings) {
+          const from = text.indexOf(heading);
+          if (from < 0) {
+            domDrift.push(`таблицы нет: «${heading}»`);
+            continue;
+          }
+          const { rows: domRows, problem: domProblem } = tableAfter(text, from);
+          if (domProblem !== null) {
+            domDrift.push(`«${heading}»: ${domProblem}`);
+            continue;
+          }
+          for (const row of domRows) {
+            // Первая графа — имена связи. Форма отличает род: переменная,
+            // атрибут и класс — связь через разметку и стили; всё прочее —
+            // имя в самом коде.
+            const named = [...row.split("|")[1].matchAll(/`([^`]+)`/g)]
+              .map((hit) => hit[1])
+              .filter((one) => /^(--|data-|\.)?[A-Za-z][\w.:/-]*$/.test(one));
+            // Сборщик имени, названный той же строкой: конец связи, который
+            // собирает имя вызовом, а не пишет его строкой.
+            const builders = [...row.matchAll(/`([a-z][A-Za-z0-9]*)`/g)].map(
+              (hit) => hit[1],
+            );
+            // Адреса, названные ТОЙ ЖЕ строкой: кто объявляет, кто читает.
+            // Строка, не называющая файлов, проверяется как прежде.
+            const where = [...row.matchAll(/`([^`]+)`/g)]
+              .map((hit) => hit[1])
+              .filter((one) => one.includes("/") && CODE_OR_STYLE.test(one))
+              .map((one) => path.join(BASE, "..", one))
+              .filter((one) => existsSync(one));
+            for (const name of named) {
+              const inCode = !/^(--|data-|\.)/.test(name);
+              const bare = bareNamesOf(name);
+              if (
+                !(inCode ? liveCodeNames : liveDomNames).has(name) &&
+                !bare.some((b) => liveCodeNames.has(b))
+              ) {
+                domDrift.push(`названо в таблице, нет в коде: ${name}`);
+                continue;
+              }
+              // Имя живо где-то — этого мало. Половина согласованного
+              // переименования оставляет его живым только у читателя, и связь
+              // рвётся при зелёном прогоне.
+              for (const at of where) {
+                const body = readFileSync(at, "utf8").split(NEWLINE);
+                // Класс в листе стилей пишется с точкой, а в контракте — без
+                // неё, строкой в кавычках. Ищутся обе формы: иначе строка
+                // таблицы краснела бы на законной записи контракта.
+                const forms = [
+                  ...(name.startsWith(".") ? [name, name.slice(1)] : [name]),
+                  ...bare,
+                  ...builders,
+                  ...(inCode ? (carriers.get(name) ?? []) : []),
+                ];
+                const here = body.some((line) =>
+                  forms.some((one) => {
+                    // Имя ищется ЦЕЛИКОМ, а не вхождением: `.messageEnterActive`
+                    // входит подстрокой в `.messageEnterActiveXX`, и сверка
+                    // отвечала «имя на месте» о переименованном классе.
+                    let at = line.indexOf(one);
+                    while (at >= 0) {
+                      const after = line[at + one.length] ?? "";
+                      const before = line[at - 1] ?? "";
+                      const tail = /[A-Za-z0-9_-]/.test(after);
+                      const head = /[A-Za-z0-9_-]/.test(before);
+                      if (!tail && !head && !inComment(line, at)) return true;
+                      at = line.indexOf(one, at + 1);
+                    }
+                    return false;
+                  }),
                 );
+                if (!here)
+                  domDrift.push(
+                    `${name} — названо строкой таблицы, но в ${rel(at)} его нет`,
+                  );
+              }
             }
           }
         }
       }
     }
-  }
+  });
   // Обратная сторона: ЧУЖАЯ связь, найденная на диске, обязана быть
   // названа таблицей. Прежде её не было вовсе, и новое имя, заведённое
   // завтра, не видел никто: предмет спрашивался ровно один раз — пока поле
@@ -23889,16 +24220,21 @@ if (mode === "verify") {
   // одним нашим листом, и атрибут, которого нет в нашем коде, перечислимы
   // полностью.
   const domMissed = [];
-  if (CONFIG.domTables != null) {
-    const at = path.join(BASE, CONFIG.domTables.file);
-    const body = existsSync(at) ? readFileSync(at, "utf8") : "";
-    const { vars, attrs } = foreignLinks();
-    for (const one of [...vars, ...attrs])
-      if (!body.includes(one.name))
-        domMissed.push(
-          one.name + " — чужая связь в " + one.where + ", таблицей не названа",
-        );
-  }
+  checkStep(() => {
+    if (CONFIG.domTables != null) {
+      const at = path.join(BASE, CONFIG.domTables.file);
+      const body = existsSync(at) ? readFileSync(at, "utf8") : "";
+      const { vars, attrs } = foreignLinks();
+      for (const one of [...vars, ...attrs])
+        if (!body.includes(one.name))
+          domMissed.push(
+            one.name +
+              " — чужая связь в " +
+              one.where +
+              ", таблицей не названа",
+          );
+    }
+  });
   // 13i. Имена классов, названные кодом, существуют в листе стилей.
   //
   // Связь кода с листом модуля стилей НЕ ВИДИТ НИКТО. Объявление, которое
@@ -23937,129 +24273,133 @@ if (mode === "verify") {
   // Имя, названное таблицей связей, законно: это объявленная ЧУЖАЯ сторона, и
   // сводить её не с чем.
   const classDrift = [];
-  {
-    const classesOf = (sheets) => {
-      const out = new Set();
-      for (const f of sheets)
-        for (const one of cssClasses(readFileSync(f, "utf8"))) out.add(one);
-      return out;
-    };
-    // Для ключей карты классов набор берётся по ПАПКЕ: карта объявлена
-    // рядом с листом, а импортирует лист соседний файл той же папки.
-    const nearDir = (dir) => {
-      const sheets = styleFiles.filter((f) => path.dirname(f) === dir);
-      for (const f of files)
-        if (path.dirname(f) === dir)
-          for (const one of styleImportsOf(
-            codeOf(readFileSync(f, "utf8")),
-            f,
-          )) {
-            const at = norm(path.resolve(dir, one.spec));
-            if (existsSync(at) && !sheets.includes(at)) sheets.push(at);
-          }
-      return classesOf(sheets);
-    };
-    const foreignNamed = new Set();
-    if (CONFIG.domTables != null) {
-      const at = path.join(BASE, CONFIG.domTables.file);
-      if (existsSync(at))
-        for (const m of readFileSync(at, "utf8").matchAll(/`([^`]+)`/g))
-          foreignNamed.add(m[1]);
-    }
-
-    // Ключ карты классов: строка вида `имя?: string`. Индексная подпись сюда не
-    // попадает — у неё в позиции имени скобка.
-    const MAP_KEY = /^\s{2,}(\w+)\??:\s*string/gm;
-    const LITERAL = /"(\w+)"/g;
-
-    for (const f of files) {
-      if (isTest(f) || f.endsWith(".d.ts")) continue;
-      const body = codeOf(readFileSync(f, "utf8"));
-      const dir = path.dirname(f);
-
-      // --- сторона первая: обращения к привязке импорта и её псевдонимам ---
-      const bindings = [];
-      const sheets = [];
-      for (const one of styleImportsOf(body, f)) {
-        bindings.push(one.binding);
-        const at = norm(path.resolve(dir, one.spec));
-        if (existsSync(at)) sheets.push(at);
+  checkStep(() => {
+    {
+      const classesOf = (sheets) => {
+        const out = new Set();
+        for (const f of sheets)
+          for (const one of cssClasses(readFileSync(f, "utf8"))) out.add(one);
+        return out;
+      };
+      // Для ключей карты классов набор берётся по ПАПКЕ: карта объявлена
+      // рядом с листом, а импортирует лист соседний файл той же папки.
+      const nearDir = (dir) => {
+        const sheets = styleFiles.filter((f) => path.dirname(f) === dir);
+        for (const f of files)
+          if (path.dirname(f) === dir)
+            for (const one of styleImportsOf(
+              codeOf(readFileSync(f, "utf8")),
+              f,
+            )) {
+              const at = norm(path.resolve(dir, one.spec));
+              if (existsSync(at) && !sheets.includes(at)) sheets.push(at);
+            }
+        return classesOf(sheets);
+      };
+      const foreignNamed = new Set();
+      if (CONFIG.domTables != null) {
+        const at = path.join(BASE, CONFIG.domTables.file);
+        if (existsSync(at))
+          for (const m of readFileSync(at, "utf8").matchAll(/`([^`]+)`/g))
+            foreignNamed.add(m[1]);
       }
-      if (bindings.length) {
-        // Псевдоним — местная константа, в объявлении которой стоит
-        // ИСХОДНАЯ привязка. Цепочкой они не собираются: найденный
-        // псевдоним, ставший зацепкой для следующего, за два шага утаскивал
-        // в список кэш и ссылку на него, и обращения к методам словаря
-        // объявлялись расхождением. Замерено на эталонном проекте.
-        const seeds = [...bindings];
-        for (const chunk of body.split(";")) {
-          if (chunk.length > 400) continue;
-          const named = /const\s+(\w+)\s*=/.exec(chunk);
-          if (named === null) continue;
-          // Смотрим ТОЛЬКО часть от самого объявления: кусок, нарезанный
-          // по точке с запятой, начинается хвостом предыдущего оператора,
-          // и упомянутая там привязка утаскивала в псевдонимы соседнюю
-          // ссылку. Замерено на эталонном проекте.
-          const tail = chunk.slice(named.index);
-          if (seeds.some((b) => new RegExp("\\b" + b + "\\b").test(tail)))
-            bindings.push(named[1]);
+
+      // Ключ карты классов: строка вида `имя?: string`. Индексная подпись сюда не
+      // попадает — у неё в позиции имени скобка.
+      const MAP_KEY = /^\s{2,}(\w+)\??:\s*string/gm;
+      const LITERAL = /"(\w+)"/g;
+
+      for (const f of files) {
+        if (isTest(f) || f.endsWith(".d.ts")) continue;
+        const body = codeOf(readFileSync(f, "utf8"));
+        const dir = path.dirname(f);
+
+        // --- сторона первая: обращения к привязке импорта и её псевдонимам ---
+        const bindings = [];
+        const sheets = [];
+        for (const one of styleImportsOf(body, f)) {
+          bindings.push(one.binding);
+          const at = norm(path.resolve(dir, one.spec));
+          if (existsSync(at)) sheets.push(at);
         }
-        const allowed = new Set([...classesOf(sheets), ...foreignNamed]);
-        for (const b of new Set(bindings))
-          for (const m of body.matchAll(
-            new RegExp("\\b" + b + "\\.(\\w+)", "g"),
-          ))
-            if (!allowed.has(m[1]))
-              classDrift.push(
-                rel(f) +
-                  ": `" +
-                  b +
-                  "." +
-                  m[1] +
-                  "` — класса нет в листе, который этот файл импортирует",
-              );
-      }
+        if (bindings.length) {
+          // Псевдоним — местная константа, в объявлении которой стоит
+          // ИСХОДНАЯ привязка. Цепочкой они не собираются: найденный
+          // псевдоним, ставший зацепкой для следующего, за два шага утаскивал
+          // в список кэш и ссылку на него, и обращения к методам словаря
+          // объявлялись расхождением. Замерено на эталонном проекте.
+          const seeds = [...bindings];
+          for (const chunk of body.split(";")) {
+            if (chunk.length > 400) continue;
+            const named = /const\s+(\w+)\s*=/.exec(chunk);
+            if (named === null) continue;
+            // Смотрим ТОЛЬКО часть от самого объявления: кусок, нарезанный
+            // по точке с запятой, начинается хвостом предыдущего оператора,
+            // и упомянутая там привязка утаскивала в псевдонимы соседнюю
+            // ссылку. Замерено на эталонном проекте.
+            const tail = chunk.slice(named.index);
+            if (seeds.some((b) => new RegExp("\\b" + b + "\\b").test(tail)))
+              bindings.push(named[1]);
+          }
+          const allowed = new Set([...classesOf(sheets), ...foreignNamed]);
+          for (const b of new Set(bindings))
+            for (const m of body.matchAll(
+              new RegExp("\\b" + b + "\\.(\\w+)", "g"),
+            ))
+              if (!allowed.has(m[1]))
+                classDrift.push(
+                  rel(f) +
+                    ": `" +
+                    b +
+                    "." +
+                    m[1] +
+                    "` — класса нет в листе, который этот файл импортирует",
+                );
+        }
 
-      // --- сторона вторая: именованные ключи карты классов ---
-      const own = nearDir(dir);
-      if (own.size === 0) continue;
-      // Тело в фигурных скобках читается ДО ЗАКРЫВАЮЩЕЙ СКОБКИ в начале
-      // строки. Прежде захват кончался «на скобке ИЛИ на точке с запятой», и
-      // нежадный разбор останавливался на первой же — на индексной подписи,
-      // которая в эталонной карте стоит первой строкой. Именованные ключи шли
-      // после неё и не читались ни разу.
-      const blocks = [
-        ...body.matchAll(/(?:interface|type)\s+(\w+)[^{;]*\{([\s\S]*?)^\}/gm),
-      ].map((m) => ({ name: m[1], body: m[2] }));
-      // Псевдоним-объединение скобок не имеет и кончается точкой с запятой.
-      const unions = [...body.matchAll(/type\s+(\w+)\s*=\s*([^;{]*);/g)].map(
-        (m) => ({ name: m[1], body: m[2] }),
-      );
-      // Признак карты классов двойной. Соглашение об имени покрывает
-      // объединение литералов, у которого строения нет. Строение — индексная
-      // подпись строки на строку — переживает переименование типа, а имя
-      // нет: переименовали бы, и покрытие пропало бы молча.
-      const isMap = (one) =>
-        /ClassMap|ClassNames?|ClassNameKeys|ClassNameMap/.test(one.name) ||
-        /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(one.body);
-      for (const one of [...blocks, ...unions].filter(isMap)) {
-        const keys = new Set();
-        for (const m of one.body.matchAll(MAP_KEY)) keys.add(m[1]);
-        for (const m of one.body.matchAll(LITERAL)) keys.add(m[1]);
-        for (const k of keys)
-          if (!own.has(k) && !foreignNamed.has(k))
-            classDrift.push(
-              rel(f) + ": ключ карты классов `" + k + "` в листе не объявлен",
-            );
+        // --- сторона вторая: именованные ключи карты классов ---
+        const own = nearDir(dir);
+        if (own.size === 0) continue;
+        // Тело в фигурных скобках читается ДО ЗАКРЫВАЮЩЕЙ СКОБКИ в начале
+        // строки. Прежде захват кончался «на скобке ИЛИ на точке с запятой», и
+        // нежадный разбор останавливался на первой же — на индексной подписи,
+        // которая в эталонной карте стоит первой строкой. Именованные ключи шли
+        // после неё и не читались ни разу.
+        const blocks = [
+          ...body.matchAll(/(?:interface|type)\s+(\w+)[^{;]*\{([\s\S]*?)^\}/gm),
+        ].map((m) => ({ name: m[1], body: m[2] }));
+        // Псевдоним-объединение скобок не имеет и кончается точкой с запятой.
+        const unions = [...body.matchAll(/type\s+(\w+)\s*=\s*([^;{]*);/g)].map(
+          (m) => ({ name: m[1], body: m[2] }),
+        );
+        // Признак карты классов двойной. Соглашение об имени покрывает
+        // объединение литералов, у которого строения нет. Строение — индексная
+        // подпись строки на строку — переживает переименование типа, а имя
+        // нет: переименовали бы, и покрытие пропало бы молча.
+        const isMap = (one) =>
+          /ClassMap|ClassNames?|ClassNameKeys|ClassNameMap/.test(one.name) ||
+          /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(one.body);
+        for (const one of [...blocks, ...unions].filter(isMap)) {
+          const keys = new Set();
+          for (const m of one.body.matchAll(MAP_KEY)) keys.add(m[1]);
+          for (const m of one.body.matchAll(LITERAL)) keys.add(m[1]);
+          for (const k of keys)
+            if (!own.has(k) && !foreignNamed.has(k))
+              classDrift.push(
+                rel(f) + ": ключ карты классов `" + k + "` в листе не объявлен",
+              );
+        }
       }
     }
-  }
-  checkHead("Имена классов из кода есть в листе стилей", {
-    n: files.length,
-    unit: "файлов кода",
   });
-  console.log("  расхождений: " + classDrift.length);
-  for (const d of classDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Имена классов из кода есть в листе стилей", () => ({
+      n: files.length,
+      unit: "файлов кода",
+    }));
+    console.log("  расхождений: " + classDrift.length);
+    for (const d of classDrift) console.log("    " + d);
+  });
 
   // Сторона обратная: класс объявлен листом, и не спрашивает его никто.
   //
@@ -24074,61 +24414,67 @@ if (mode === "verify") {
   // сторона законна: её имена перечислены таблицей связей.
   const classDead = [];
   let classesSeen = 0;
-  {
-    const asked = [];
-    for (const f of files)
-      if (existsSync(f)) asked.push(readFileSync(f, "utf8"));
-    const haystack = asked.join(NEWLINE);
-    // Объявленная чужая сторона берётся из таблицы связей — тем же чтением,
-    // что и у первой стороны: имена в обратных кавычках.
-    const foreign = new Set();
-    if (CONFIG.domTables != null) {
-      const atDom = path.join(BASE, CONFIG.domTables.file);
-      if (existsSync(atDom))
-        for (const m of readFileSync(atDom, "utf8").matchAll(/`([^`]+)`/g))
-          foreign.add(m[1]);
-    }
-    for (const sheet of styleFiles) {
-      const text = readFileSync(sheet, "utf8");
-      for (const name of cssClasses(text)) {
-        classesSeen += 1;
-        if (foreign.has(name)) continue;
-        // Имя, кончающееся разделителем, — корень вложенных имён, а не класс:
-        // `.lib_ { &_x {} }` даёт `lib__x`, и сам `lib_` не ставит никто.
-        if (/[_-]$/.test(name)) continue;
-        // Имя, встреченное в коде хоть раз и хоть как, считается спрошенным.
-        // Граница слова обязательна: без неё `button` нашёлся бы внутри
-        // `buttonGroup`, и мёртвый класс прошёл бы как живой.
-        const edge = new RegExp(
-          "\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b",
-        );
-        if (edge.test(haystack)) continue;
-        if (bareNamesOf(name).some((b) => codeLiterals().has(b))) continue;
-        classDead.push(
-          rel(sheet) + ": класс `" + name + "` не спрашивает ни один файл",
-        );
+  checkStep(() => {
+    {
+      const asked = [];
+      for (const f of files)
+        if (existsSync(f)) asked.push(readFileSync(f, "utf8"));
+      const haystack = asked.join(NEWLINE);
+      // Объявленная чужая сторона берётся из таблицы связей — тем же чтением,
+      // что и у первой стороны: имена в обратных кавычках.
+      const foreign = new Set();
+      if (CONFIG.domTables != null) {
+        const atDom = path.join(BASE, CONFIG.domTables.file);
+        if (existsSync(atDom))
+          for (const m of readFileSync(atDom, "utf8").matchAll(/`([^`]+)`/g))
+            foreign.add(m[1]);
+      }
+      for (const sheet of styleFiles) {
+        const text = readFileSync(sheet, "utf8");
+        for (const name of cssClasses(text)) {
+          classesSeen += 1;
+          if (foreign.has(name)) continue;
+          // Имя, кончающееся разделителем, — корень вложенных имён, а не класс:
+          // `.lib_ { &_x {} }` даёт `lib__x`, и сам `lib_` не ставит никто.
+          if (/[_-]$/.test(name)) continue;
+          // Имя, встреченное в коде хоть раз и хоть как, считается спрошенным.
+          // Граница слова обязательна: без неё `button` нашёлся бы внутри
+          // `buttonGroup`, и мёртвый класс прошёл бы как живой.
+          const edge = new RegExp(
+            "\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b",
+          );
+          if (edge.test(haystack)) continue;
+          if (bareNamesOf(name).some((b) => codeLiterals().has(b))) continue;
+          classDead.push(
+            rel(sheet) + ": класс `" + name + "` не спрашивает ни один файл",
+          );
+        }
       }
     }
-  }
+  });
   // Мёртвое правило в листе живого проекта снимает правка кода, а не посадка:
   // до неё его держит пункт долга перехода числом либо строка реестра на класс.
-  const deadOpen = Math.min(
-    classDead.length,
-    openFindings().get("Класс из листа стилей спрошен кодом") ?? 0,
+  const deadOpen = checkStep(() =>
+    Math.min(
+      classDead.length,
+      openFindings().get("Класс из листа стилей спрошен кодом") ?? 0,
+    ),
   );
-  checkHead("Класс из листа стилей спрошен кодом", {
-    n: classesSeen,
-    unit: "имён классов в листах",
+  checkStep(() => {
+    checkHead("Класс из листа стилей спрошен кодом", () => ({
+      n: classesSeen,
+      unit: "имён классов в листах",
+    }));
+    console.log("  расхождений: " + (classDead.length - deadOpen));
+    if (deadOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + deadOpen);
+    for (const d of classDead.slice(deadOpen))
+      console.log(
+        "    " +
+          d +
+          ". Убрать из листа либо объявить чужой стороной в таблице связей",
+      );
   });
-  console.log("  расхождений: " + (classDead.length - deadOpen));
-  if (deadOpen > 0)
-    console.log("  держатся долгом перехода или реестром: " + deadOpen);
-  for (const d of classDead.slice(deadOpen))
-    console.log(
-      "    " +
-        d +
-        ". Убрать из листа либо объявить чужой стороной в таблице связей",
-    );
 
   // 13j. Отступление от схемы стилизации объявлено решением.
   //
@@ -24157,58 +24503,61 @@ if (mode === "verify") {
   // посаженного проекта. Поле `adr` — про адресуемость отдельных решений
   // якорями, и его пустота не значит, что решений негде записать: привязка к
   // нему оставляла сверку немой ровно там, где отступление и живёт.
-  const decidedAt =
-    CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-  if (decidedAt !== null) {
-    // Отступление объявляет запись решения либо пункт долга перехода с
-    // планом приведения: по умолчанию оно долг, решением становится, когда
-    // разработчик сказал «оставляем».
-    const decided =
-      (existsSync(decidedAt) ? readFileSync(decidedAt, "utf8") : "") +
-      debtPlanText();
-    // Считается ПАПКА компонента: в ней и он сам, и его тип, и его лист.
-    // Пофайловый разбор называл файл типов — адрес, по которому чинить
-    // нечего, потому что лист импортирует не тип, а компонент рядом.
-    const byDir = new Map();
-    for (const f of files) {
-      if (isTest(f) || f.endsWith(".d.ts")) continue;
-      const dir = path.dirname(f);
-      if (!byDir.has(dir)) byDir.set(dir, []);
-      byDir.get(dir).push(f);
-    }
-    for (const [dir, kin] of byDir) {
-      let ownSheet = false;
-      let takesMap = false;
-      for (const f of kin) {
-        const body = codeOf(readFileSync(f, "utf8"));
-        if (styleImportsOf(body, f).length > 0) ownSheet = true;
-        // Карта классов узнаётся так же, как в соседней сверке: по строению
-        // с индексной подписью либо по соглашению об имени.
-        if (
-          /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(body) ||
-          // Объявить карту классов можно не только типом: проект, пишущий
-          // контракт СХЕМОЙ, объявляет её обычной константой. Пока здесь
-          // стояли только interface и type, такой проект был для сверки
-          // невидим, и отступление от схемы стилизации молчало ровно там, где
-          // оно самое сильное. Замерено на стенде, объявляющем контракт через
-          // zod, — а zod обвязка везёт с собой сама.
-          /(?:interface|type|const|let|var)\s+\w*(?:ClassMap|ClassNames?|ClassNameKeys|ClassNameMap)\w*\b/.test(
-            body,
-          )
-        )
-          takesMap = true;
+  const decidedAt = checkStep(() =>
+    CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions),
+  );
+  checkStep(() => {
+    if (decidedAt !== null) {
+      // Отступление объявляет запись решения либо пункт долга перехода с
+      // планом приведения: по умолчанию оно долг, решением становится, когда
+      // разработчик сказал «оставляем».
+      const decided =
+        (existsSync(decidedAt) ? readFileSync(decidedAt, "utf8") : "") +
+        debtPlanText();
+      // Считается ПАПКА компонента: в ней и он сам, и его тип, и его лист.
+      // Пофайловый разбор называл файл типов — адрес, по которому чинить
+      // нечего, потому что лист импортирует не тип, а компонент рядом.
+      const byDir = new Map();
+      for (const f of files) {
+        if (isTest(f) || f.endsWith(".d.ts")) continue;
+        const dir = path.dirname(f);
+        if (!byDir.has(dir)) byDir.set(dir, []);
+        byDir.get(dir).push(f);
       }
-      // Папка без КОМПОНЕНТА схемы не касается: набор объявлений публичного
-      // контракта тоже называет карту классов, но не рисует ничего и листа
-      // иметь не должен. Замерено на эталонном проекте: единственным ложным
-      // срабатыванием была ровно такая папка.
-      const hasComponent = kin.some((f) => /[.](tsx|jsx)$/.test(f));
-      if (ownSheet || !takesMap || !hasComponent) continue;
-      const at = rel(dir);
-      if (decided.includes(at)) continue;
-      schemeStray.push(at);
+      for (const [dir, kin] of byDir) {
+        let ownSheet = false;
+        let takesMap = false;
+        for (const f of kin) {
+          const body = codeOf(readFileSync(f, "utf8"));
+          if (styleImportsOf(body, f).length > 0) ownSheet = true;
+          // Карта классов узнаётся так же, как в соседней сверке: по строению
+          // с индексной подписью либо по соглашению об имени.
+          if (
+            /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(body) ||
+            // Объявить карту классов можно не только типом: проект, пишущий
+            // контракт СХЕМОЙ, объявляет её обычной константой. Пока здесь
+            // стояли только interface и type, такой проект был для сверки
+            // невидим, и отступление от схемы стилизации молчало ровно там, где
+            // оно самое сильное. Замерено на стенде, объявляющем контракт через
+            // zod, — а zod обвязка везёт с собой сама.
+            /(?:interface|type|const|let|var)\s+\w*(?:ClassMap|ClassNames?|ClassNameKeys|ClassNameMap)\w*\b/.test(
+              body,
+            )
+          )
+            takesMap = true;
+        }
+        // Папка без КОМПОНЕНТА схемы не касается: набор объявлений публичного
+        // контракта тоже называет карту классов, но не рисует ничего и листа
+        // иметь не должен. Замерено на эталонном проекте: единственным ложным
+        // срабатыванием была ровно такая папка.
+        const hasComponent = kin.some((f) => /[.](tsx|jsx)$/.test(f));
+        if (ownSheet || !takesMap || !hasComponent) continue;
+        const at = rel(dir);
+        if (decided.includes(at)) continue;
+        schemeStray.push(at);
+      }
     }
-  }
+  });
   // 13k. Новый узел лежит по раскладке.
   //
   // Умолчание обвязки: `app` — корень композиции, `components/<Имя>` — папка
@@ -24227,59 +24576,61 @@ if (mode === "verify") {
   // предмете разошлись бы.
   const layoutStray = [];
   let layoutSaid = null;
-  {
-    const decidedAt2 =
-      CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-    const decided2 =
-      (decidedAt2 !== null && existsSync(decidedAt2)
-        ? readFileSync(decidedAt2, "utf8")
-        : "") + debtPlanText();
-    // Регистр не спрашивается: слова пишут в начале предложения с заглавной,
-    // и посадка начисто на этом и споткнулась — решение записано, сверка его
-    // не увидела.
-    if (decided2.toLowerCase().includes("раскладка проекта"))
-      layoutSaid = IDLE_NOTES["Новый узел лежит по раскладке"].trim();
-    else {
-      // Слой УЗЛОВ берётся из объявления, а не из умолчания: проект уже
-      // сказал обвязке, где они лежат, полем componentsAt — им пользуются и
-      // сверка про README, и область мутационного прогона. Пока здесь стояло
-      // зашитое components, проект со своим именем слоя получал находку на
-      // каждом файле узла и ответ «место по умолчанию — components», то есть
-      // обвязка переспрашивала то, что ей уже объявили.
-      const LAYERS = [
-        new RegExp("^app/"),
-        ...(CONFIG.componentsAt ?? ["components"]).map(
-          (one) => new RegExp("^" + one + "/[^/]+/"),
-        ),
-        new RegExp("^shared/[^/]+/"),
-      ];
-      for (const f of [...files, ...styleFiles]) {
-        // Объявления типов принадлежат проекту, а не слою: их кладут в
-        // корень исходников, и сборщик ищет их там.
-        if (isTest(f) || f.endsWith(".d.ts")) continue;
-        const r = rel(f);
-        if (LAYERS.some((re) => re.test(r))) continue;
-        // У проекта со СПИСКОМ деревьев адрес пишется от общего родителя, а
-        // слои приложения и общего живут внутри каждого дерева. Файл узнаётся
-        // и по адресу внутри своего дерева. Прежде помощник слияния карт
-        // классов, который обвязка кладёт в `src/shared/`, в любом проекте с
-        // несколькими деревьями объявлялся лежащим вне раскладки. Замерено
-        // посадкой руками в монорепозиторий.
-        const tree = SRC_ROOTS.find((one) =>
-          norm(f).startsWith(norm(one) + "/"),
-        );
-        if (
-          tree !== undefined &&
-          LAYERS.some((re) =>
-            re.test(path.relative(tree, f).split(path.sep).join("/")),
+  checkStep(() => {
+    {
+      const decidedAt2 =
+        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+      const decided2 =
+        (decidedAt2 !== null && existsSync(decidedAt2)
+          ? readFileSync(decidedAt2, "utf8")
+          : "") + debtPlanText();
+      // Регистр не спрашивается: слова пишут в начале предложения с заглавной,
+      // и посадка начисто на этом и споткнулась — решение записано, сверка его
+      // не увидела.
+      if (decided2.toLowerCase().includes("раскладка проекта"))
+        layoutSaid = IDLE_NOTES["Новый узел лежит по раскладке"].trim();
+      else {
+        // Слой УЗЛОВ берётся из объявления, а не из умолчания: проект уже
+        // сказал обвязке, где они лежат, полем componentsAt — им пользуются и
+        // сверка про README, и область мутационного прогона. Пока здесь стояло
+        // зашитое components, проект со своим именем слоя получал находку на
+        // каждом файле узла и ответ «место по умолчанию — components», то есть
+        // обвязка переспрашивала то, что ей уже объявили.
+        const LAYERS = [
+          new RegExp("^app/"),
+          ...(CONFIG.componentsAt ?? ["components"]).map(
+            (one) => new RegExp("^" + one + "/[^/]+/"),
+          ),
+          new RegExp("^shared/[^/]+/"),
+        ];
+        for (const f of [...files, ...styleFiles]) {
+          // Объявления типов принадлежат проекту, а не слою: их кладут в
+          // корень исходников, и сборщик ищет их там.
+          if (isTest(f) || f.endsWith(".d.ts")) continue;
+          const r = rel(f);
+          if (LAYERS.some((re) => re.test(r))) continue;
+          // У проекта со СПИСКОМ деревьев адрес пишется от общего родителя, а
+          // слои приложения и общего живут внутри каждого дерева. Файл узнаётся
+          // и по адресу внутри своего дерева. Прежде помощник слияния карт
+          // классов, который обвязка кладёт в `src/shared/`, в любом проекте с
+          // несколькими деревьями объявлялся лежащим вне раскладки. Замерено
+          // посадкой руками в монорепозиторий.
+          const tree = SRC_ROOTS.find((one) =>
+            norm(f).startsWith(norm(one) + "/"),
+          );
+          if (
+            tree !== undefined &&
+            LAYERS.some((re) =>
+              re.test(path.relative(tree, f).split(path.sep).join("/")),
+            )
           )
-        )
-          continue;
-        layoutStray.push(r);
+            continue;
+          layoutStray.push(r);
+        }
+        if (layoutStray.length === 0) layoutSaid = "вне объявленных слоёв: 0";
       }
-      if (layoutStray.length === 0) layoutSaid = "вне объявленных слоёв: 0";
     }
-  }
+  });
   // 13l. У папки компонента есть README.
   //
   // Компонент переносят копированием папки, и первое, что открывает пришедший
@@ -24319,74 +24670,80 @@ if (mode === "verify") {
   const pulled = [];
   const pullSeen = [];
   let pullLooked = 0;
-  {
-    const layers = CONFIG.componentsAt ?? ["components"];
-    const nodeOf = (f) => {
-      for (const layer of layers) {
-        const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
-        if (m !== null) return layer + "/" + m[1];
-      }
-      return null;
-    };
-    for (const [from, targets] of importsOf) {
-      const here = nodeOf(from);
-      if (here === null) continue;
-      for (const to of targets) {
-        const there = nodeOf(to);
-        if (there === null || there === here) continue;
-        pullLooked += 1;
-        const doc = norm(path.join(ROOT, here, "docs", "README.md"));
-        // Пара называется ВСЕГДА, даже когда документа ещё нет: строение
-        // приложения — кто кого тянет — видно из графа импортов и без
-        // чтения кода, и прятать его до перехода незачем. Находкой это
-        // становится только при живом документе, который молчит.
-        pullSeen.push(here + " → " + there);
-        if (!existsSync(doc)) continue;
-        if (readFileSync(doc, "utf8").includes(there)) continue;
-        pulled.push(
-          here +
-            " тянет за собой " +
-            there +
-            ", а его README об этом не говорит: взять узел отдельно нельзя, и узнают это переносом",
-        );
+  checkStep(() => {
+    {
+      const layers = CONFIG.componentsAt ?? ["components"];
+      const nodeOf = (f) => {
+        for (const layer of layers) {
+          const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
+          if (m !== null) return layer + "/" + m[1];
+        }
+        return null;
+      };
+      for (const [from, targets] of importsOf) {
+        const here = nodeOf(from);
+        if (here === null) continue;
+        for (const to of targets) {
+          const there = nodeOf(to);
+          if (there === null || there === here) continue;
+          pullLooked += 1;
+          const doc = norm(path.join(ROOT, here, "docs", "README.md"));
+          // Пара называется ВСЕГДА, даже когда документа ещё нет: строение
+          // приложения — кто кого тянет — видно из графа импортов и без
+          // чтения кода, и прятать его до перехода незачем. Находкой это
+          // становится только при живом документе, который молчит.
+          pullSeen.push(here + " → " + there);
+          if (!existsSync(doc)) continue;
+          if (readFileSync(doc, "utf8").includes(there)) continue;
+          pulled.push(
+            here +
+              " тянет за собой " +
+              there +
+              ", а его README об этом не говорит: взять узел отдельно нельзя, и узнают это переносом",
+          );
+        }
       }
     }
-  }
-  checkHead("Узел, тянущий соседа, назван документом", {
-    n: pullLooked,
-    unit: "импортов из узла в узел",
   });
-  console.log("  не названо документом: " + pulled.length);
-  for (const one of pulled) console.log("    " + one);
-  if (pullSeen.length)
-    console.log(
-      "  узлы, тянущие соседей: " + [...new Set(pullSeen)].join(", "),
-    );
+  checkStep(() => {
+    checkHead("Узел, тянущий соседа, назван документом", () => ({
+      n: pullLooked,
+      unit: "импортов из узла в узел",
+    }));
+    console.log("  не названо документом: " + pulled.length);
+    for (const one of pulled) console.log("    " + one);
+    if (pullSeen.length)
+      console.log(
+        "  узлы, тянущие соседей: " + [...new Set(pullSeen)].join(", "),
+      );
+  });
   const noReadme = [];
   let readmeBlind = null;
   let componentDirs = 0;
-  {
-    const layers = CONFIG.componentsAt ?? ["components"];
-    const seen = new Set();
-    for (const f of [...files, ...styleFiles])
-      for (const layer of layers) {
-        const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
-        if (m === null) continue;
-        seen.add(layer + "/" + m[1]);
+  checkStep(() => {
+    {
+      const layers = CONFIG.componentsAt ?? ["components"];
+      const seen = new Set();
+      for (const f of [...files, ...styleFiles])
+        for (const layer of layers) {
+          const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
+          if (m === null) continue;
+          seen.add(layer + "/" + m[1]);
+        }
+      componentDirs = seen.size;
+      for (const one of seen) {
+        const at = norm(path.join(ROOT, one, "docs", "README.md"));
+        if (!docFiles.includes(at)) noReadme.push(rel(at));
       }
-    componentDirs = seen.size;
-    for (const one of seen) {
-      const at = norm(path.join(ROOT, one, "docs", "README.md"));
-      if (!docFiles.includes(at)) noReadme.push(rel(at));
+      // Своя раскладка, а не просто «слоёв нет»: проект умолчания без
+      // компонентов не слеп — ему нечего смотреть, и это разные состояния.
+      const ownLayout =
+        layoutSaid !== null && layoutSaid.includes("раскладка проекта своя");
+      if (seen.size === 0 && ownLayout && CONFIG.componentsAt == null)
+        readmeBlind =
+          "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — сверка не смотрит никуда";
     }
-    // Своя раскладка, а не просто «слоёв нет»: проект умолчания без
-    // компонентов не слеп — ему нечего смотреть, и это разные состояния.
-    const ownLayout =
-      layoutSaid !== null && layoutSaid.includes("раскладка проекта своя");
-    if (seen.size === 0 && ownLayout && CONFIG.componentsAt == null)
-      readmeBlind =
-        "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — сверка не смотрит никуда";
-  }
+  });
   // 13m. Язык внутри корня исходников.
   //
   // Правило механическое и давно записано: внутри корня исходников —
@@ -24405,52 +24762,61 @@ if (mode === "verify") {
   // (`writing.md`, раздел «Язык: граница проходит по расположению»): так
   // решил разработчик. Семена двух конфигов несли русские комментарии рядом
   // с английским кодом, и сверка их не читала.
-  const tongueCorpus = [...new Set([...files, ...styleFiles, ...ROOT_CONFIGS])];
+  const tongueCorpus = checkStep(() => [
+    ...new Set([...files, ...styleFiles, ...ROOT_CONFIGS]),
+  ]);
   const wrongTongue = [];
-  {
-    const CYR = /[\u0400-\u04FF]/;
-    for (const f of tongueCorpus) {
-      const hash = isHashCommentConfig(path.basename(f));
-      const rows = readFileSync(f, "utf8").split(NEWLINE);
-      for (let i = 0; i < rows.length; i++) {
-        const line = rows[i].trim();
-        // Спрашивается ТОЛЬКО комментарий. Строковый литерал не спрашивается:
-        // текст для пользователя и текст диагностики машине неотличимы, а
-        // первый — предмет раздела об интернационализации, а не языковой
-        // границы. Замерено задачей от разработчика: он попросил кнопку с
-        // русской подписью, и сверка объявила нарушением выполненную просьбу.
-        const isComment = hash
-          ? line.startsWith("#")
-          : line.startsWith("//") ||
-            line.startsWith("/*") ||
-            line.startsWith("*");
-        if (!isComment || !CYR.test(line)) continue;
-        wrongTongue.push(rel(f) + ":" + (i + 1));
+  checkStep(() => {
+    {
+      const CYR = /[\u0400-\u04FF]/;
+      for (const f of tongueCorpus) {
+        const hash = isHashCommentConfig(path.basename(f));
+        const rows = readFileSync(f, "utf8").split(NEWLINE);
+        for (let i = 0; i < rows.length; i++) {
+          const line = rows[i].trim();
+          // Спрашивается ТОЛЬКО комментарий. Строковый литерал не спрашивается:
+          // текст для пользователя и текст диагностики машине неотличимы, а
+          // первый — предмет раздела об интернационализации, а не языковой
+          // границы. Замерено задачей от разработчика: он попросил кнопку с
+          // русской подписью, и сверка объявила нарушением выполненную просьбу.
+          const isComment = hash
+            ? line.startsWith("#")
+            : line.startsWith("//") ||
+              line.startsWith("/*") ||
+              line.startsWith("*");
+          if (!isComment || !CYR.test(line)) continue;
+          wrongTongue.push(rel(f) + ":" + (i + 1));
+        }
       }
     }
-  }
-  checkHead("Язык внутри корня исходников", {
-    n: tongueCorpus.length,
-    unit: "файлов кода, стилей и конфигов корня",
   });
-  console.log(
-    "  строк не на языке кода: " + wrongTongue.length + debtTail("tongue"),
-  );
-  debtNote("tongue", wrongTongue.length);
+  checkStep(() => {
+    checkHead("Язык внутри корня исходников", () => ({
+      n: tongueCorpus.length,
+      unit: "файлов кода, стилей и конфигов корня",
+    }));
+    console.log(
+      "  строк не на языке кода: " + wrongTongue.length + debtTail("tongue"),
+    );
+    debtNote("tongue", wrongTongue.length);
+  });
   // Долг обещан доктриной с тех пор, как сверка заведена, а поля не было ни
   // одного: живой проект с русскими комментариями — обычный случай у этой
   // обвязки — краснел навсегда, и свод запрещает это сам. Найдено посадкой
   // библиотеки, чей лист стилей объясняется по-русски.
-  const tongueSaid = debtList("tongue", wrongTongue);
-  for (const one of tongueSaid.slice(0, 20))
-    console.log(
-      "    " +
-        one +
-        " — комментарий на русском, а код проекта пишут по-английски",
-    );
-  if (tongueSaid.length > 20)
-    console.log("    …и ещё " + (tongueSaid.length - 20));
-  if (seedDriftNote(tongueSaid) !== "") console.log(seedDriftNote(tongueSaid));
+  const tongueSaid = checkStep(() => debtList("tongue", wrongTongue));
+  checkStep(() => {
+    for (const one of tongueSaid.slice(0, 20))
+      console.log(
+        "    " +
+          one +
+          " — комментарий на русском, а код проекта пишут по-английски",
+      );
+    if (tongueSaid.length > 20)
+      console.log("    …и ещё " + (tongueSaid.length - 20));
+    if (seedDriftNote(tongueSaid) !== "")
+      console.log(seedDriftNote(tongueSaid));
+  });
   // 13l-бис. Документы компонента лежат в его `docs/`.
   //
   // Вся проза компонента лежит в `docs/`, и дверь — `docs/README.md`. В корне
@@ -24468,40 +24834,46 @@ if (mode === "verify") {
   // README, вторым экземпляром; слой берётся из того же поля `componentsAt`.
   const looseDocs = [];
   let componentDocs = 0;
-  {
-    const layers = CONFIG.componentsAt ?? ["components"];
-    for (const f of docFiles) {
-      const r = rel(f);
-      if (!layers.some((l) => r.startsWith(l + "/"))) continue;
-      componentDocs += 1;
-      if (r.includes("/docs/")) continue;
-      looseDocs.push(r);
+  checkStep(() => {
+    {
+      const layers = CONFIG.componentsAt ?? ["components"];
+      for (const f of docFiles) {
+        const r = rel(f);
+        if (!layers.some((l) => r.startsWith(l + "/"))) continue;
+        componentDocs += 1;
+        if (r.includes("/docs/")) continue;
+        looseDocs.push(r);
+      }
     }
-  }
-  checkHead("Документы компонента лежат в его `docs/`", {
-    n: componentDocs,
-    unit: "документов внутри папок компонентов",
   });
-  console.log("  документов мимо `docs/`: " + looseDocs.length);
-  for (const one of looseDocs)
-    console.log(
-      "    " + one + ". Вся проза компонента внутри `docs/`, включая README",
-    );
-  checkHead("У компонента есть README", {
-    n: componentDirs,
-    unit: "папок компонентов",
+  checkStep(() => {
+    checkHead("Документы компонента лежат в его `docs/`", () => ({
+      n: componentDocs,
+      unit: "документов внутри папок компонентов",
+    }));
+    console.log("  документов мимо `docs/`: " + looseDocs.length);
+    for (const one of looseDocs)
+      console.log(
+        "    " + one + ". Вся проза компонента внутри `docs/`, включая README",
+      );
   });
-  if (readmeBlind !== null) console.log("  " + readmeBlind);
-  console.log(
-    "  папок компонентов без README: " + noReadme.length + debtTail("readme"),
-  );
-  debtNote("readme", noReadme.length);
-  for (const one of debtList("readme", noReadme))
+  checkStep(() => {
+    checkHead("У компонента есть README", () => ({
+      n: componentDirs,
+      unit: "папок компонентов",
+    }));
+    if (readmeBlind !== null) console.log("  " + readmeBlind);
     console.log(
-      "    " +
-        one +
-        ". Зачем папка, что берут, что тянется следом, чего нельзя",
+      "  папок компонентов без README: " + noReadme.length + debtTail("readme"),
     );
+    debtNote("readme", noReadme.length);
+    for (const one of debtList("readme", noReadme))
+      console.log(
+        "    " +
+          one +
+          ". Зачем папка, что берут, что тянется следом, чего нельзя",
+      );
+  });
   // 13k-бис. Правила проекта не утверждают чужую раскладку.
   //
   // Семя правил приезжает с таблицей раскладки УМОЛЧАНИЯ и говорит прозой:
@@ -24526,116 +24898,120 @@ if (mode === "verify") {
   // ничего: доктрина описывает другую раскладку и отвечает «в `components`»
   // проекту, у которого такой папки нет. Замерено вторым кругом проб.
   const layoutLie = [];
-  {
-    const seedAt = shelfAt("seat/templates/CLAUDE.md");
-    const decidedAt3 =
-      CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-    const decided3 = (
-      (decidedAt3 !== null && existsSync(decidedAt3)
-        ? readFileSync(decidedAt3, "utf8")
-        : "") + debtPlanText()
-    ).toLowerCase();
-    const mine = (CONFIG.rulesManifest?.rules ?? []).map((r) =>
-      path.join(BASE, r),
-    );
-    if (seedAt !== null && existsSync(seedAt)) {
-      const seed = readFileSync(seedAt, "utf8").split(NEWLINE);
-      const lineWith = (what) =>
-        (seed.find((l) => l.includes(what)) ?? "").trim();
-      const axes = [
-        {
-          decided: "раскладка проекта",
-          claim: lineWith("Раскладка умолчания обвязки"),
-          what: "раскладку умолчания",
-        },
-        {
-          decided: "схема стилизации",
-          claim: lineWith("Схема стилизации при этом действует"),
-          what: "схему стилизации умолчания",
-        },
-      ];
-      for (const axis of axes) {
-        if (!decided3.includes(axis.decided)) continue;
-        if (axis.claim === "") continue;
-        for (const at of mine) {
-          if (!existsSync(at)) continue;
-          if (!readFileSync(at, "utf8").includes(axis.claim)) continue;
-          layoutLie.push(
-            rel0(at) +
-              " — утверждает " +
-              axis.what +
-              ", а отступление от неё объявлено решением либо долгом перехода. Объявление опознаётся по словам «" +
-              axis.decided +
-              "»: при совпадении с умолчанием этих слов ни в решениях, ни в долге не пишут",
-          );
+  checkStep(() => {
+    {
+      const seedAt = shelfAt("seat/templates/CLAUDE.md");
+      const decidedAt3 =
+        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+      const decided3 = (
+        (decidedAt3 !== null && existsSync(decidedAt3)
+          ? readFileSync(decidedAt3, "utf8")
+          : "") + debtPlanText()
+      ).toLowerCase();
+      const mine = (CONFIG.rulesManifest?.rules ?? []).map((r) =>
+        path.join(BASE, r),
+      );
+      if (seedAt !== null && existsSync(seedAt)) {
+        const seed = readFileSync(seedAt, "utf8").split(NEWLINE);
+        const lineWith = (what) =>
+          (seed.find((l) => l.includes(what)) ?? "").trim();
+        const axes = [
+          {
+            decided: "раскладка проекта",
+            claim: lineWith("Раскладка умолчания обвязки"),
+            what: "раскладку умолчания",
+          },
+          {
+            decided: "схема стилизации",
+            claim: lineWith("Схема стилизации при этом действует"),
+            what: "схему стилизации умолчания",
+          },
+        ];
+        for (const axis of axes) {
+          if (!decided3.includes(axis.decided)) continue;
+          if (axis.claim === "") continue;
+          for (const at of mine) {
+            if (!existsSync(at)) continue;
+            if (!readFileSync(at, "utf8").includes(axis.claim)) continue;
+            layoutLie.push(
+              rel0(at) +
+                " — утверждает " +
+                axis.what +
+                ", а отступление от неё объявлено решением либо долгом перехода. Объявление опознаётся по словам «" +
+                axis.decided +
+                "»: при совпадении с умолчанием этих слов ни в решениях, ни в долге не пишут",
+            );
+          }
         }
-      }
-      // Своя раскладка обязана быть НАЗВАНА: каждая папка верхнего уровня,
-      // держащая код, названа в правилах проекта путём — с косой чертой либо
-      // в обратных кавычках. Без косой черты и кавычек имя папки не
-      // отличить от слова прозы: «весь показ под ui» проверку проходило бы,
-      // а ответом на «куда класть» не было.
-      if (decided3.includes("раскладка проекта")) {
-        const tops = new Set();
-        for (const f of [...files, ...styleFiles]) {
-          if (isTest(f) || f.endsWith(".d.ts")) continue;
-          const top = rel(f).split("/")[0];
-          if (top !== undefined && top !== rel(f)) tops.add(top);
+        // Своя раскладка обязана быть НАЗВАНА: каждая папка верхнего уровня,
+        // держащая код, названа в правилах проекта путём — с косой чертой либо
+        // в обратных кавычках. Без косой черты и кавычек имя папки не
+        // отличить от слова прозы: «весь показ под ui» проверку проходило бы,
+        // а ответом на «куда класть» не было.
+        if (decided3.includes("раскладка проекта")) {
+          const tops = new Set();
+          for (const f of [...files, ...styleFiles]) {
+            if (isTest(f) || f.endsWith(".d.ts")) continue;
+            const top = rel(f).split("/")[0];
+            if (top !== undefined && top !== rel(f)) tops.add(top);
+          }
+          const said = mine
+            .filter((at) => existsSync(at))
+            .map((at) => readFileSync(at, "utf8"))
+            .join(NEWLINE);
+          const nameless = [...tops]
+            .sort()
+            .filter(
+              (top) =>
+                !said.includes(top + "/") && !said.includes("`" + top + "`"),
+            );
+          for (const top of nameless)
+            layoutLie.push(
+              "раскладка своя, а папка `" +
+                top +
+                "/` в правилах проекта не названа: «куда кладут новый узел» ответа не имеет",
+            );
         }
-        const said = mine
-          .filter((at) => existsSync(at))
-          .map((at) => readFileSync(at, "utf8"))
-          .join(NEWLINE);
-        const nameless = [...tops]
-          .sort()
-          .filter(
-            (top) =>
-              !said.includes(top + "/") && !said.includes("`" + top + "`"),
-          );
-        for (const top of nameless)
-          layoutLie.push(
-            "раскладка своя, а папка `" +
-              top +
-              "/` в правилах проекта не названа: «куда кладут новый узел» ответа не имеет",
-          );
       }
     }
-  }
+  });
   // Пустая папка под корнем исходников не бывает своей: файл её заводит,
   // файл и уносит. Остаётся она от посадки, заведшей папку раскладки
   // умолчания там, где раскладка своя, и от правки, унёсшей последний файл.
   // И то и другое — утверждение о раскладке, которого никто не делал.
   const hollow = [];
   let dirsWalked = 0;
-  {
-    const walk = (dir) => {
-      let kids = [];
-      try {
-        kids = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return true;
-      }
-      dirsWalked += 1;
-      let live = false;
-      for (const e of kids) {
-        if (!e.isDirectory()) {
-          live = true;
-          continue;
+  checkStep(() => {
+    {
+      const walk = (dir) => {
+        let kids = [];
+        try {
+          kids = readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return true;
         }
-        const inner = dir + "/" + e.name;
-        // Обход обязан спрашивать то же исключение, что и сбор кода. Своего у
-        // него не было, и на проекте, объявившем корнем исходников корень
-        // репозитория, сверка потребовала убрать папки внутри `.git` и
-        // `node_modules`. Замерено посадкой стенда с двумя деревьями.
-        if (outOfTree(e.name, inner)) continue;
-        if (walk(inner)) live = true;
-      }
-      if (!live)
-        hollow.push(path.relative(ROOT, dir).split(path.sep).join("/"));
-      return live;
-    };
-    for (const one of SRC_ROOTS) if (existsSync(one)) walk(one);
-  }
+        dirsWalked += 1;
+        let live = false;
+        for (const e of kids) {
+          if (!e.isDirectory()) {
+            live = true;
+            continue;
+          }
+          const inner = dir + "/" + e.name;
+          // Обход обязан спрашивать то же исключение, что и сбор кода. Своего у
+          // него не было, и на проекте, объявившем корнем исходников корень
+          // репозитория, сверка потребовала убрать папки внутри `.git` и
+          // `node_modules`. Замерено посадкой стенда с двумя деревьями.
+          if (outOfTree(e.name, inner)) continue;
+          if (walk(inner)) live = true;
+        }
+        if (!live)
+          hollow.push(path.relative(ROOT, dir).split(path.sep).join("/"));
+        return live;
+      };
+      for (const one of SRC_ROOTS) if (existsSync(one)) walk(one);
+    }
+  });
 
   // Код, лежащий ВНЕ объявленных деревьев. Спрашивается только у проекта,
   // который объявил их СПИСКОМ: он тем самым сказал «мои деревья вот эти», и
@@ -24648,140 +25024,152 @@ if (mode === "verify") {
   // `corpusOutside` — это другая развилка, со своей ценой.
   const outsideRoots = [];
   let outsideLooked = 0;
-  if (Array.isArray(CONFIG.src) && CONFIG.src.length > 1) {
-    const skip = new Set(ROOT_SEEDS);
-    const walk = (dir) => {
-      let kids = [];
-      try {
-        kids = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const e of kids) {
-        const at = norm(path.join(dir, e.name));
-        if (outOfTree(e.name, at)) continue;
-        if (e.isDirectory()) {
-          walk(at);
-          continue;
+  checkStep(() => {
+    if (Array.isArray(CONFIG.src) && CONFIG.src.length > 1) {
+      const skip = new Set(ROOT_SEEDS);
+      const walk = (dir) => {
+        let kids = [];
+        try {
+          kids = readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
         }
-        if (!CODE_FILE.test(e.name) && !isStylePath(e.name)) continue;
-        // Файл в самом корне репозитория — настройка, а не код проекта:
-        // тот же признак, что у описи кода.
-        if (norm(dir) === norm(REPO)) continue;
-        // Настройка инструмента названа по обычаю — `*.config.*`, — и лежит
-        // она не только в корне репозитория, но и в корне каждого пакета
-        // монорепозитория. Прежде исключался один корень репозитория, и
-        // конфиг сборщика пакета приложения объявлялся кодом вне деревьев.
-        // Замерено посадкой руками в монорепозиторий.
-        if (/[.]config[.][cm]?[jt]s$/.test(e.name)) continue;
-        outsideLooked += 1;
-        if (insideRoots(at)) continue;
-        if (skip.has(at)) continue;
-        // Файл ОБВЯЗКИ называется особо. Она везёт свой код — общий
-        // помощник и подготовку прогона — и кладёт его в `src/`; проект,
-        // перечисливший свои деревья, это дерево объявить обязан наравне
-        // с ними. Иначе записи базы о привезённых файлах указывают в
-        // корпус, которого нет, а звенья цепочки их всё равно разбирают.
-        const seeded = seedOfPath().has(
-          norm(path.relative(REPO, at)).split(path.sep).join("/"),
-        );
-        outsideRoots.push(
-          norm(path.relative(REPO, at)).split(path.sep).join("/") +
-            (seeded
-              ? " — код обвязки вне объявленных деревьев: она кладёт свой в `src/`, и это дерево объявляют наравне со своими"
-              : " — код вне объявленных деревьев: его не видит ни одна сверка кода"),
-        );
-      }
-    };
-    walk(norm(REPO));
-  }
-  checkHead("Код лежит в объявленных деревьях", {
-    n: outsideLooked,
-    unit: "файлов кода под корнем репозитория",
+        for (const e of kids) {
+          const at = norm(path.join(dir, e.name));
+          if (outOfTree(e.name, at)) continue;
+          if (e.isDirectory()) {
+            walk(at);
+            continue;
+          }
+          if (!CODE_FILE.test(e.name) && !isStylePath(e.name)) continue;
+          // Файл в самом корне репозитория — настройка, а не код проекта:
+          // тот же признак, что у описи кода.
+          if (norm(dir) === norm(REPO)) continue;
+          // Настройка инструмента названа по обычаю — `*.config.*`, — и лежит
+          // она не только в корне репозитория, но и в корне каждого пакета
+          // монорепозитория. Прежде исключался один корень репозитория, и
+          // конфиг сборщика пакета приложения объявлялся кодом вне деревьев.
+          // Замерено посадкой руками в монорепозиторий.
+          if (/[.]config[.][cm]?[jt]s$/.test(e.name)) continue;
+          outsideLooked += 1;
+          if (insideRoots(at)) continue;
+          if (skip.has(at)) continue;
+          // Файл ОБВЯЗКИ называется особо. Она везёт свой код — общий
+          // помощник и подготовку прогона — и кладёт его в `src/`; проект,
+          // перечисливший свои деревья, это дерево объявить обязан наравне
+          // с ними. Иначе записи базы о привезённых файлах указывают в
+          // корпус, которого нет, а звенья цепочки их всё равно разбирают.
+          const seeded = seedOfPath().has(
+            norm(path.relative(REPO, at)).split(path.sep).join("/"),
+          );
+          outsideRoots.push(
+            norm(path.relative(REPO, at)).split(path.sep).join("/") +
+              (seeded
+                ? " — код обвязки вне объявленных деревьев: она кладёт свой в `src/`, и это дерево объявляют наравне со своими"
+                : " — код вне объявленных деревьев: его не видит ни одна сверка кода"),
+          );
+        }
+      };
+      walk(norm(REPO));
+    }
   });
-  console.log(
-    Array.isArray(CONFIG.src) && CONFIG.src.length > 1
-      ? "  вне деревьев: " + outsideRoots.length
-      : "  дерево исходников одно: корень и есть весь корпус",
-  );
-  for (const one of outsideRoots) console.log("    " + one);
-  checkHead("Пустой папки под корнем исходников нет", {
-    n: dirsWalked,
-    unit: "папок под корнем исходников",
-  });
-  console.log(
-    hollow.length === 0
-      ? "  пустых папок: 0"
-      : "  пустых папок: " + hollow.length,
-  );
-  for (const one of hollow)
+  checkStep(() => {
+    checkHead("Код лежит в объявленных деревьях", () => ({
+      n: outsideLooked,
+      unit: "файлов кода под корнем репозитория",
+    }));
     console.log(
-      "    " +
-        one +
-        ". Убрать: папка без файлов утверждает раскладку, которой нет",
+      Array.isArray(CONFIG.src) && CONFIG.src.length > 1
+        ? "  вне деревьев: " + outsideRoots.length
+        : "  дерево исходников одно: корень и есть весь корпус",
     );
-
-  checkHead("Правила проекта не спорят с реестром решений", {
-    n: (CONFIG.rulesManifest?.rules ?? []).length,
-    unit: "файлов правил",
+    for (const one of outsideRoots) console.log("    " + one);
   });
-  console.log(
-    layoutLie.length === 0
-      ? "  расхождений: 0"
-      : "  расхождений: " + layoutLie.length,
-  );
-  for (const one of layoutLie)
+  checkStep(() => {
+    checkHead("Пустой папки под корнем исходников нет", () => ({
+      n: dirsWalked,
+      unit: "папок под корнем исходников",
+    }));
     console.log(
-      "    " + one + ". Переписать под фактическое устройство проекта",
+      hollow.length === 0
+        ? "  пустых папок: 0"
+        : "  пустых папок: " + hollow.length,
     );
-  checkHead("Новый узел лежит по раскладке", {
-    n: files.length + styleFiles.length,
-    unit: "файлов кода и стилей",
+    for (const one of hollow)
+      console.log(
+        "    " +
+          one +
+          ". Убрать: папка без файлов утверждает раскладку, которой нет",
+      );
   });
-  if (layoutSaid !== null) console.log("  " + layoutSaid);
-  if (layoutStray.length)
-    console.log("  вне объявленных слоёв: " + layoutStray.length);
-  for (const one of layoutStray)
+  checkStep(() => {
+    checkHead("Правила проекта не спорят с реестром решений", () => ({
+      n: (CONFIG.rulesManifest?.rules ?? []).length,
+      unit: "файлов правил",
+    }));
     console.log(
-      "    " +
-        one +
-        ". Объявленные слои: app — корень композиции, " +
-        (CONFIG.componentsAt ?? ["components"])
-          .map((one) => one + "/<Имя>")
-          .join(", ") +
-        " — узел, shared/<область> — общее",
+      layoutLie.length === 0
+        ? "  расхождений: 0"
+        : "  расхождений: " + layoutLie.length,
     );
-  if (layoutStray.length)
-    console.log(
-      "  Раскладка проекта своя — записать пунктом долга перехода со словами «раскладка проекта» и планом приведения; оставить навсегда — решением с теми же словами",
-    );
-  checkHead("Отступление от схемы стилизации объявлено решением", {
-    n: files.length,
-    unit: "файлов кода",
+    for (const one of layoutLie)
+      console.log(
+        "    " + one + ". Переписать под фактическое устройство проекта",
+      );
   });
-  console.log(
-    decidedAt === null
-      ? "  реестр решений не объявлен — спрашивать негде"
-      : "  без записи: " + schemeStray.length,
-  );
-  for (const one of schemeStray)
-    console.log(
-      "    " +
-        one +
-        " — компонент стилизуется не по умолчанию: своего листа не импортирует, весь вид приходит пропом. Записать решением с ценой либо привести к схеме",
-    );
-
-  checkHead("Связи мимо графа импортов", {
-    n: domNames,
-    unit: "строк таблицы связей",
+  checkStep(() => {
+    checkHead("Новый узел лежит по раскладке", () => ({
+      n: files.length + styleFiles.length,
+      unit: "файлов кода и стилей",
+    }));
+    if (layoutSaid !== null) console.log("  " + layoutSaid);
+    if (layoutStray.length)
+      console.log("  вне объявленных слоёв: " + layoutStray.length);
+    for (const one of layoutStray)
+      console.log(
+        "    " +
+          one +
+          ". Объявленные слои: app — корень композиции, " +
+          (CONFIG.componentsAt ?? ["components"])
+            .map((one) => one + "/<Имя>")
+            .join(", ") +
+          " — узел, shared/<область> — общее",
+      );
+    if (layoutStray.length)
+      console.log(
+        "  Раскладка проекта своя — записать пунктом долга перехода со словами «раскладка проекта» и планом приведения; оставить навсегда — решением с теми же словами",
+      );
   });
-  console.log(
-    CONFIG.domTables == null
-      ? "  таблицы не заявлены"
-      : `  названо и не найдено: ${domDrift.length}, чужого не названо: ${domMissed.length}`,
-  );
-  for (const d of domDrift) console.log("    " + d);
-  for (const d of domMissed) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Отступление от схемы стилизации объявлено решением", () => ({
+      n: files.length,
+      unit: "файлов кода",
+    }));
+    console.log(
+      decidedAt === null
+        ? "  реестр решений не объявлен — спрашивать негде"
+        : "  без записи: " + schemeStray.length,
+    );
+    for (const one of schemeStray)
+      console.log(
+        "    " +
+          one +
+          " — компонент стилизуется не по умолчанию: своего листа не импортирует, весь вид приходит пропом. Записать решением с ценой либо привести к схеме",
+      );
+  });
+  checkStep(() => {
+    checkHead("Связи мимо графа импортов", () => ({
+      n: domNames,
+      unit: "строк таблицы связей",
+    }));
+    console.log(
+      CONFIG.domTables == null
+        ? "  таблицы не заявлены"
+        : `  названо и не найдено: ${domDrift.length}, чужого не названо: ${domMissed.length}`,
+    );
+    for (const d of domDrift) console.log("    " + d);
+    for (const d of domMissed) console.log("    " + d);
+  });
 
   // Инструкция посадки называет каждый файл полки.
   //
@@ -24798,115 +25186,121 @@ if (mode === "verify") {
   // ничего. Требование записано в инструкции посадки с критерием выполнения:
   // пакет в манифесте и конфиг на месте. Здесь его машинная половина.
   const toolchainDrift = [];
-  if (CONFIG.toolchain != null) {
-    const manifestAt = path.join(BASE, "..", "package.json");
-    const pkg = existsSync(manifestAt)
-      ? JSON.parse(readFileSync(manifestAt, "utf8"))
-      : {};
-    const deps = Object.keys({
-      ...(pkg.dependencies ?? {}),
-      ...(pkg.devDependencies ?? {}),
-    });
-    for (const link of CONFIG.toolchain) {
-      if (link.config == null) continue;
-      // Звено, для которого в проекте нет ни одного файла его вида, конфига и не
-      // требует: его не дописывают намеренно. Пакеты при этом могут стоять —
-      // они служат и другому звену. Прежде сверка звала это расхождением, то
-      // есть краснела на законном устройстве проекта.
-      if (!linkHasSubject(link.script)) continue;
-      const installed = link.packages.every((p) => deps.includes(p));
-      if (!installed) continue;
-      // Конфиг живого проекта часто лежит под другим именем того же
-      // предмета — `.prettierrc` вместо `.prettierrc.json`.
-      if (linkConfigAt(link) === null)
-        toolchainDrift.push(
-          `${link.script}: пакеты стоят, а конфига нет — ${link.config}`,
-        );
-    }
-  }
-
-  const unexplained = [];
-  {
-    // Спрашивается с СЕМЯН, и спрашивается по КАРТЕ ПОСАДКИ, а не по прозе.
-    //
-    // Остальное — доктрина, инструмент, скиллы — переносится папкой целиком, и
-    // перечислять его незачем: забыть при копировании папки нечего. У семени
-    // назначение своё: оно едет в конкретное место проекта под конкретным
-    // именем, и это соответствие существует только в карте.
-    //
-    // Прежде сверка смотрела в таблицу инструкции, а карта появилась рядом с
-    // теми же данными — и они разошлись бы при первой правке. Источник теперь
-    // один: карту читает и эта сверка, и самопроверка снимка, и посадка.
-    const mapAt = shelfAt("seat/map.json");
-    const seedsAt = shelfAt("seat/templates");
-    if (
-      SHELF !== null &&
-      mapAt !== null &&
-      existsSync(mapAt) &&
-      seedsAt !== null &&
-      existsSync(seedsAt)
-    ) {
-      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      const placed = new Set(
-        [
-          ...(seatMap.copy ?? []),
-          ...(seatMap.onSubject ?? []),
-          // Семя плана перехода: кладётся, когда заводится переход, и у
-          // пустого проекта не кладётся вовсе. Условие своё — и список свой.
-          ...(seatMap.onTransition ?? []),
-        ].map((c) => c.from),
-      );
-      (function walkSeeds(dir) {
-        for (const entry of readdirSync(dir)) {
-          if (OUT_OF_TREE.has(entry)) continue;
-          const full = path.join(dir, entry);
-          if (statSync(full).isDirectory()) {
-            walkSeeds(full);
-            continue;
-          }
-          const rel = path.relative(SHELF, full).split(path.sep).join("/");
-          if (placed.has(rel)) continue;
-          unexplained.push(
-            rel + " — семя без адреса назначения в карте посадки",
-          );
-        }
-      })(seedsAt);
-      // Обратная сторона: карта называет семя, которого нет. Без неё запись
-      // переживает удалённый файл, и посадка падает на копировании.
-      for (const one of placed)
-        if (!existsSync(path.join(SHELF, one)))
-          unexplained.push(one + " — назван в карте посадки, а файла нет");
-      // Адрес назначения решает и то, КАК файл будет прочитан. Семя,
-      // написанное модулем, под именем `.js` читается модулем или сценарием
-      // по полю `type` манифеста ЧУЖОГО проекта: без поля среда на каждом
-      // прогоне печатает предупреждение и разбирает файл дважды, а дописать
-      // поле посадка не вправе — оно меняет, как грузится каждый файл
-      // проекта. Так ложился конфиг линта. Найдено посадкой руками в проект
-      // на обычном JavaScript. Модуль ложится под `.mjs`, и вопроса нет.
-      for (const e of [
-        ...(seatMap.copy ?? []),
-        ...(seatMap.onSubject ?? []),
-        ...(seatMap.onTransition ?? []),
-      ]) {
-        if (!String(e.to ?? "").endsWith(".js")) continue;
-        const at = path.join(SHELF, e.from);
-        if (!existsSync(at)) continue;
-        if (/^\s*(?:import|export)\s/m.test(readFileSync(at, "utf8")))
-          unexplained.push(
-            e.from +
-              " — написано модулем, а ложится как " +
-              e.to +
-              ": тип модуля решит манифест проекта. Класть под .mjs",
+  checkStep(() => {
+    if (CONFIG.toolchain != null) {
+      const manifestAt = path.join(BASE, "..", "package.json");
+      const pkg = existsSync(manifestAt)
+        ? JSON.parse(readFileSync(manifestAt, "utf8"))
+        : {};
+      const deps = Object.keys({
+        ...(pkg.dependencies ?? {}),
+        ...(pkg.devDependencies ?? {}),
+      });
+      for (const link of CONFIG.toolchain) {
+        if (link.config == null) continue;
+        // Звено, для которого в проекте нет ни одного файла его вида, конфига и не
+        // требует: его не дописывают намеренно. Пакеты при этом могут стоять —
+        // они служат и другому звену. Прежде сверка звала это расхождением, то
+        // есть краснела на законном устройстве проекта.
+        if (!linkHasSubject(link.script)) continue;
+        const installed = link.packages.every((p) => deps.includes(p));
+        if (!installed) continue;
+        // Конфиг живого проекта часто лежит под другим именем того же
+        // предмета — `.prettierrc` вместо `.prettierrc.json`.
+        if (linkConfigAt(link) === null)
+          toolchainDrift.push(
+            `${link.script}: пакеты стоят, а конфига нет — ${link.config}`,
           );
       }
     }
-  }
-  checkHead("У каждого семени есть адрес назначения", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
   });
-  console.log(`  расхождений: ${unexplained.length}`);
-  for (const u of unexplained) console.log("    " + u);
+
+  const unexplained = [];
+  checkStep(() => {
+    {
+      // Спрашивается с СЕМЯН, и спрашивается по КАРТЕ ПОСАДКИ, а не по прозе.
+      //
+      // Остальное — доктрина, инструмент, скиллы — переносится папкой целиком, и
+      // перечислять его незачем: забыть при копировании папки нечего. У семени
+      // назначение своё: оно едет в конкретное место проекта под конкретным
+      // именем, и это соответствие существует только в карте.
+      //
+      // Прежде сверка смотрела в таблицу инструкции, а карта появилась рядом с
+      // теми же данными — и они разошлись бы при первой правке. Источник теперь
+      // один: карту читает и эта сверка, и самопроверка снимка, и посадка.
+      const mapAt = shelfAt("seat/map.json");
+      const seedsAt = shelfAt("seat/templates");
+      if (
+        SHELF !== null &&
+        mapAt !== null &&
+        existsSync(mapAt) &&
+        seedsAt !== null &&
+        existsSync(seedsAt)
+      ) {
+        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const placed = new Set(
+          [
+            ...(seatMap.copy ?? []),
+            ...(seatMap.onSubject ?? []),
+            // Семя плана перехода: кладётся, когда заводится переход, и у
+            // пустого проекта не кладётся вовсе. Условие своё — и список свой.
+            ...(seatMap.onTransition ?? []),
+          ].map((c) => c.from),
+        );
+        (function walkSeeds(dir) {
+          for (const entry of readdirSync(dir)) {
+            if (OUT_OF_TREE.has(entry)) continue;
+            const full = path.join(dir, entry);
+            if (statSync(full).isDirectory()) {
+              walkSeeds(full);
+              continue;
+            }
+            const rel = path.relative(SHELF, full).split(path.sep).join("/");
+            if (placed.has(rel)) continue;
+            unexplained.push(
+              rel + " — семя без адреса назначения в карте посадки",
+            );
+          }
+        })(seedsAt);
+        // Обратная сторона: карта называет семя, которого нет. Без неё запись
+        // переживает удалённый файл, и посадка падает на копировании.
+        for (const one of placed)
+          if (!existsSync(path.join(SHELF, one)))
+            unexplained.push(one + " — назван в карте посадки, а файла нет");
+        // Адрес назначения решает и то, КАК файл будет прочитан. Семя,
+        // написанное модулем, под именем `.js` читается модулем или сценарием
+        // по полю `type` манифеста ЧУЖОГО проекта: без поля среда на каждом
+        // прогоне печатает предупреждение и разбирает файл дважды, а дописать
+        // поле посадка не вправе — оно меняет, как грузится каждый файл
+        // проекта. Так ложился конфиг линта. Найдено посадкой руками в проект
+        // на обычном JavaScript. Модуль ложится под `.mjs`, и вопроса нет.
+        for (const e of [
+          ...(seatMap.copy ?? []),
+          ...(seatMap.onSubject ?? []),
+          ...(seatMap.onTransition ?? []),
+        ]) {
+          if (!String(e.to ?? "").endsWith(".js")) continue;
+          const at = path.join(SHELF, e.from);
+          if (!existsSync(at)) continue;
+          if (/^\s*(?:import|export)\s/m.test(readFileSync(at, "utf8")))
+            unexplained.push(
+              e.from +
+                " — написано модулем, а ложится как " +
+                e.to +
+                ": тип модуля решит манифест проекта. Класть под .mjs",
+            );
+        }
+      }
+    }
+  });
+  checkStep(() => {
+    checkHead("У каждого семени есть адрес назначения", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    console.log(`  расхождений: ${unexplained.length}`);
+    for (const u of unexplained) console.log("    " + u);
+  });
 
   // Вторая сторона предыдущей: файл доктрины назван не только в СОСТАВЕ полки,
   // но и в порядке чтения шаблона правил — в списке рядом и в разделе входа.
@@ -24924,107 +25318,109 @@ if (mode === "verify") {
   // они называют то, что в новом проекте ещё предстоит завести.
   const doctrineDrift = [];
   let doctrineListed = 0;
-  if (CONFIG.doctrineReading != null && SHELF !== null) {
-    const at = shelfAt(CONFIG.doctrineReading.template);
-    if (at === null || !existsSync(at))
-      doctrineDrift.push(
-        `шаблона правил нет: ${CONFIG.doctrineReading.template}`,
-      );
-    else {
-      const lines = proseOf(at).split(NEWLINE);
-      // Раздел — от объявленного заголовка до следующего заголовка того же
-      // уровня. Не найден — расхождение, а не пустой разбор: пустой печатался
-      // бы нулём, и выключение читалось бы как здоровье.
-      const section = (heading) => {
-        const from = lines.findIndex((l) => l.trim() === heading);
-        if (from < 0) return null;
-        let to = lines.length;
-        for (let i = from + 1; i < lines.length; i += 1)
-          if (/^##\s/.test(lines[i])) {
-            to = i;
-            break;
+  checkStep(() => {
+    if (CONFIG.doctrineReading != null && SHELF !== null) {
+      const at = shelfAt(CONFIG.doctrineReading.template);
+      if (at === null || !existsSync(at))
+        doctrineDrift.push(
+          `шаблона правил нет: ${CONFIG.doctrineReading.template}`,
+        );
+      else {
+        const lines = proseOf(at).split(NEWLINE);
+        // Раздел — от объявленного заголовка до следующего заголовка того же
+        // уровня. Не найден — расхождение, а не пустой разбор: пустой печатался
+        // бы нулём, и выключение читалось бы как здоровье.
+        const section = (heading) => {
+          const from = lines.findIndex((l) => l.trim() === heading);
+          if (from < 0) return null;
+          let to = lines.length;
+          for (let i = from + 1; i < lines.length; i += 1)
+            if (/^##\s/.test(lines[i])) {
+              to = i;
+              break;
+            }
+          return lines.slice(from, to).join(NEWLINE);
+        };
+        const list = section(CONFIG.doctrineReading.listHeading);
+        const order = section(CONFIG.doctrineReading.orderHeading);
+        if (list === null)
+          doctrineDrift.push(
+            `раздела нет: ${CONFIG.doctrineReading.listHeading}`,
+          );
+        if (order === null)
+          doctrineDrift.push(
+            `раздела нет: ${CONFIG.doctrineReading.orderHeading}`,
+          );
+        // Доктрина — это папка правил, а не всё, что лежит в корне обвязки.
+        // Плоский обход брал и памятку для человека, и требовал назвать её в
+        // порядке чтения — то есть открывать каждой сессией описание папки.
+        const doctrineDir = shelfAt("rules");
+        const doctrine =
+          doctrineDir !== null && existsSync(doctrineDir)
+            ? readdirSync(doctrineDir).filter((n) => n.endsWith(".md"))
+            : [];
+        doctrineListed =
+          list === null ? 0 : doctrine.filter((n) => list.includes(n)).length;
+        for (const name of doctrine) {
+          if (list !== null && !list.includes(name))
+            doctrineDrift.push(`не назван в списке правил: ${name}`);
+          if (order !== null && !order.includes(name))
+            doctrineDrift.push(`не назван в порядке чтения: ${name}`);
+        }
+        // Опись обходит полку ВГЛУБЬ: справочник инструмента лежит подпапкой, и
+        // плоская опись объявляла его отсутствующим — то есть сверка краснела на
+        // живом файле. Найдено при выносе порядка чтения из шаблона правил.
+        const known = new Set();
+        (function walkKnown(dir) {
+          for (const e of readdirSync(dir)) {
+            if (OUT_OF_TREE.has(e)) continue;
+            const full = path.join(dir, e);
+            if (statSync(full).isDirectory()) walkKnown(full);
+            else known.add(e);
           }
-        return lines.slice(from, to).join(NEWLINE);
-      };
-      const list = section(CONFIG.doctrineReading.listHeading);
-      const order = section(CONFIG.doctrineReading.orderHeading);
-      if (list === null)
-        doctrineDrift.push(
-          `раздела нет: ${CONFIG.doctrineReading.listHeading}`,
-        );
-      if (order === null)
-        doctrineDrift.push(
-          `раздела нет: ${CONFIG.doctrineReading.orderHeading}`,
-        );
-      // Доктрина — это папка правил, а не всё, что лежит в корне обвязки.
-      // Плоский обход брал и памятку для человека, и требовал назвать её в
-      // порядке чтения — то есть открывать каждой сессией описание папки.
-      const doctrineDir = shelfAt("rules");
-      const doctrine =
-        doctrineDir !== null && existsSync(doctrineDir)
-          ? readdirSync(doctrineDir).filter((n) => n.endsWith(".md"))
-          : [];
-      doctrineListed =
-        list === null ? 0 : doctrine.filter((n) => list.includes(n)).length;
-      for (const name of doctrine) {
-        if (list !== null && !list.includes(name))
-          doctrineDrift.push(`не назван в списке правил: ${name}`);
-        if (order !== null && !order.includes(name))
-          doctrineDrift.push(`не назван в порядке чтения: ${name}`);
-      }
-      // Опись обходит полку ВГЛУБЬ: справочник инструмента лежит подпапкой, и
-      // плоская опись объявляла его отсутствующим — то есть сверка краснела на
-      // живом файле. Найдено при выносе порядка чтения из шаблона правил.
-      const known = new Set();
-      (function walkKnown(dir) {
-        for (const e of readdirSync(dir)) {
-          if (OUT_OF_TREE.has(e)) continue;
-          const full = path.join(dir, e);
-          if (statSync(full).isDirectory()) walkKnown(full);
-          else known.add(e);
+        })(SHELF);
+        for (const [where, text] of [
+          ["списке правил", list],
+          ["порядке чтения", order],
+        ]) {
+          if (text === null) continue;
+          for (const m of text.matchAll(/`[^`]*?([A-Za-z0-9._-]+\.md)`/g)) {
+            // Файлы базы проекта эти разделы называют законно — вход велит
+            // открыть карту и факты. Их имена узнаются по форме `NN-`, и
+            // спрашивать с них полку значило бы краснеть на законном: на полке
+            // их нет и быть не может, они заводятся в проекте при посадке.
+            if (/^\d\d-/.test(m[1])) continue;
+            // Файл правил проекта — тот же класс: он живёт в проекте, на полке
+            // его нет и быть не может, а порядок чтения обязан его называть.
+            if (m[1] === "CLAUDE.md") continue;
+            if (!known.has(m[1]))
+              doctrineDrift.push(`назван в ${where}, но на полке нет: ${m[1]}`);
+          }
         }
-      })(SHELF);
-      for (const [where, text] of [
-        ["списке правил", list],
-        ["порядке чтения", order],
-      ]) {
-        if (text === null) continue;
-        for (const m of text.matchAll(/`[^`]*?([A-Za-z0-9._-]+\.md)`/g)) {
-          // Файлы базы проекта эти разделы называют законно — вход велит
-          // открыть карту и факты. Их имена узнаются по форме `NN-`, и
-          // спрашивать с них полку значило бы краснеть на законном: на полке
-          // их нет и быть не может, они заводятся в проекте при посадке.
-          if (/^\d\d-/.test(m[1])) continue;
-          // Файл правил проекта — тот же класс: он живёт в проекте, на полке
-          // его нет и быть не может, а порядок чтения обязан его называть.
-          if (m[1] === "CLAUDE.md") continue;
-          if (!known.has(m[1]))
-            doctrineDrift.push(`назван в ${where}, но на полке нет: ${m[1]}`);
-        }
-      }
-      // Состав соседнего файла доктрины описывается ОДИН раз — здесь, в
-      // указателе. Пересказ рядом со ссылкой («`close.md` — коммиты,
-      // необратимые действия, отчёт») никто не сверяет, и он пережил переезд
-      // правил о коммитах в `safety.md`: порядок работы отправлял за ними
-      // туда, где их давно нет. Найдено чтением полки со стороны. Форма
-      // пересказа — ссылка на соседний файл, тире и описание строчными.
-      const index = path.basename(at);
-      for (const name of doctrine) {
-        if (name === index) continue;
-        const body = proseOf(path.join(doctrineDir, name));
-        for (const para of body.split(/\r?\n\s*\r?\n/)) {
-          const one = para.split(/\r?\n/).join(" ");
-          for (const m of one.matchAll(
-            /\[`?[\w.-]+\.md`?\]\(\.\/([\w.-]+\.md)\)\s+—\s+[а-яё]/g,
-          ))
-            if (doctrine.includes(m[1]))
-              doctrineDrift.push(
-                `${name}: состав \`${m[1]}\` пересказан рядом со ссылкой — описание файла живёт в указателе ${index}`,
-              );
+        // Состав соседнего файла доктрины описывается ОДИН раз — здесь, в
+        // указателе. Пересказ рядом со ссылкой («`close.md` — коммиты,
+        // необратимые действия, отчёт») никто не сверяет, и он пережил переезд
+        // правил о коммитах в `safety.md`: порядок работы отправлял за ними
+        // туда, где их давно нет. Найдено чтением полки со стороны. Форма
+        // пересказа — ссылка на соседний файл, тире и описание строчными.
+        const index = path.basename(at);
+        for (const name of doctrine) {
+          if (name === index) continue;
+          const body = proseOf(path.join(doctrineDir, name));
+          for (const para of body.split(/\r?\n\s*\r?\n/)) {
+            const one = para.split(/\r?\n/).join(" ");
+            for (const m of one.matchAll(
+              /\[`?[\w.-]+\.md`?\]\(\.\/([\w.-]+\.md)\)\s+—\s+[а-яё]/g,
+            ))
+              if (doctrine.includes(m[1]))
+                doctrineDrift.push(
+                  `${name}: состав \`${m[1]}\` пересказан рядом со ссылкой — описание файла живёт в указателе ${index}`,
+                );
+          }
         }
       }
     }
-  }
+  });
   // Синоним термина словаря.
   //
   // Второе слово для одного понятия запрещено критерием `H6`, и правило это
@@ -25038,116 +25434,126 @@ if (mode === "verify") {
   const bannedWords = [];
   let bannedTerms = 0;
   let bannedSaid = null;
-  {
-    const at = shelfAt("rules/glossary.banned.json");
-    if (at === null || !existsSync(at))
-      bannedSaid = "списка отвергнутых слов рядом нет";
-    else {
-      const book = JSON.parse(readFileSync(at, "utf8"));
-      bannedTerms = (book.banned ?? []).length;
-      // Корпус — вся проза полки и файлы базы: именно там термин и живёт;
-      // исходники сюда не идут — в них говорят на языке кода. Прежде корпус
-      // брал три папки полки, и обоснования, справочники и `state/` лежали
-      // вне его. Найдено прогоном проб.
-      const walkMd = (dir) => {
-        if (dir === null || !existsSync(dir)) return [];
-        return readdirSync(dir).flatMap((e) => {
-          const full = norm(path.join(dir, e));
-          if (statSync(full).isDirectory()) return walkMd(full);
-          return /.md$/.test(e) ? [full] : [];
-        });
-      };
-      const corpus = [...shelfProse().map(([, full]) => full), ...walkMd(BASE)];
-      // Комментарии кода самой полки — тоже проза: инструмент, его тесты, хук
-      // и семена говорят на языке свода. Код проекта сюда не идёт: в нём
-      // говорят на языке кода. Строки кода не спрашиваются — тест сажает
-      // отвергнутое слово строкой, и это поломка, а не речь. Найдено чтением
-      // сверки языка: синоним крючка стоял в комментарии инструмента, и не
-      // видела его ни одна сверка.
-      const shelfCode = (dir) =>
-        readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-          const full = norm(path.join(dir, e.name));
-          if (e.isDirectory()) return shelfCode(full);
-          return CODE_FILE.test(e.name) || /(?:^|\/)hooks\//.test(full)
-            ? [full]
-            : [];
-        });
-      const commentOnly = new Set(
-        SHELF !== null && existsSync(SHELF) ? shelfCode(SHELF) : [],
-      );
-      for (const f of [...corpus, ...commentOnly]) {
-        // Образец в ограде кода показывает слово, а не употребляет его: проза
-        // читается без оград, код полки — как был, по комментариям.
-        const raw = readFileSync(f, "utf8");
-        const rows = (commentOnly.has(f) ? raw : unfenced(raw)).split(NEWLINE);
-        for (let i = 0; i < rows.length; i += 1) {
-          const line = rows[i].trim();
-          if (commentOnly.has(f) && !/^(?:\/\/|\/\*|\*|#)/.test(line)) continue;
-          const low = rows[i].toLowerCase();
-          for (const one of book.banned ?? []) {
-            if (!one.forms.some((w) => low.includes(w))) continue;
-            bannedWords.push(
-              rel0(f) +
-                ":" +
-                (i + 1) +
-                " — " +
-                one.forms[0] +
-                ", а в словаре это " +
-                one.instead,
-            );
+  checkStep(() => {
+    {
+      const at = shelfAt("rules/glossary.banned.json");
+      if (at === null || !existsSync(at))
+        bannedSaid = "списка отвергнутых слов рядом нет";
+      else {
+        const book = JSON.parse(readFileSync(at, "utf8"));
+        bannedTerms = (book.banned ?? []).length;
+        // Корпус — вся проза полки и файлы базы: именно там термин и живёт;
+        // исходники сюда не идут — в них говорят на языке кода. Прежде корпус
+        // брал три папки полки, и обоснования, справочники и `state/` лежали
+        // вне его. Найдено прогоном проб.
+        const walkMd = (dir) => {
+          if (dir === null || !existsSync(dir)) return [];
+          return readdirSync(dir).flatMap((e) => {
+            const full = norm(path.join(dir, e));
+            if (statSync(full).isDirectory()) return walkMd(full);
+            return /.md$/.test(e) ? [full] : [];
+          });
+        };
+        const corpus = [
+          ...shelfProse().map(([, full]) => full),
+          ...walkMd(BASE),
+        ];
+        // Комментарии кода самой полки — тоже проза: инструмент, его тесты, хук
+        // и семена говорят на языке свода. Код проекта сюда не идёт: в нём
+        // говорят на языке кода. Строки кода не спрашиваются — тест сажает
+        // отвергнутое слово строкой, и это поломка, а не речь. Найдено чтением
+        // сверки языка: синоним крючка стоял в комментарии инструмента, и не
+        // видела его ни одна сверка.
+        const shelfCode = (dir) =>
+          readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+            const full = norm(path.join(dir, e.name));
+            if (e.isDirectory()) return shelfCode(full);
+            return CODE_FILE.test(e.name) || /(?:^|\/)hooks\//.test(full)
+              ? [full]
+              : [];
+          });
+        const commentOnly = new Set(
+          SHELF !== null && existsSync(SHELF) ? shelfCode(SHELF) : [],
+        );
+        for (const f of [...corpus, ...commentOnly]) {
+          // Образец в ограде кода показывает слово, а не употребляет его: проза
+          // читается без оград, код полки — как был, по комментариям.
+          const raw = readFileSync(f, "utf8");
+          const rows = (commentOnly.has(f) ? raw : unfenced(raw)).split(
+            NEWLINE,
+          );
+          for (let i = 0; i < rows.length; i += 1) {
+            const line = rows[i].trim();
+            if (commentOnly.has(f) && !/^(?:\/\/|\/\*|\*|#)/.test(line))
+              continue;
+            const low = rows[i].toLowerCase();
+            for (const one of book.banned ?? []) {
+              if (!one.forms.some((w) => low.includes(w))) continue;
+              bannedWords.push(
+                rel0(f) +
+                  ":" +
+                  (i + 1) +
+                  " — " +
+                  one.forms[0] +
+                  ", а в словаре это " +
+                  one.instead,
+              );
+            }
           }
         }
+        // Тот же термин, определённый в словаре ДВАЖДЫ. Два определения одного
+        // слова — две концепции под одним именем, только спрятанные в одном
+        // файле: читают первое найденное, и какое — дело случая. Найдено
+        // чтением полки со стороны: фальсификация была определена в одной
+        // таблице дважды — процедурой и значением слова. Спрашивается внутри
+        // одной таблицы: краткая таблица в начале словаря законно повторяет
+        // слова полной.
+        const glossaryAt = shelfAt("rules/glossary.md");
+        if (glossaryAt !== null && existsSync(glossaryAt)) {
+          const rows = proseOf(glossaryAt).split(NEWLINE);
+          let seen = null;
+          rows.forEach((line, i) => {
+            if (!line.trimStart().startsWith("|")) {
+              seen = null;
+              return;
+            }
+            if (seen === null) seen = new Map();
+            const term = /^\|\s*\*\*([^*]+)\*\*\s*\|/.exec(line.trim());
+            if (term === null) return;
+            const key = term[1].trim().toLowerCase();
+            if (seen.has(key))
+              bannedWords.push(
+                rel0(glossaryAt) +
+                  ":" +
+                  (i + 1) +
+                  " — «" +
+                  term[1].trim() +
+                  "» определён второй раз, первый — строкой " +
+                  seen.get(key) +
+                  ", а в словаре это одна строка",
+              );
+            else seen.set(key, i + 1);
+          });
+        }
+        if (bannedWords.length === 0)
+          bannedSaid =
+            "отвергнутых слов в корпусе: 0 (список: " +
+            (book.banned ?? []).length +
+            ")";
       }
-      // Тот же термин, определённый в словаре ДВАЖДЫ. Два определения одного
-      // слова — две концепции под одним именем, только спрятанные в одном
-      // файле: читают первое найденное, и какое — дело случая. Найдено
-      // чтением полки со стороны: фальсификация была определена в одной
-      // таблице дважды — процедурой и значением слова. Спрашивается внутри
-      // одной таблицы: краткая таблица в начале словаря законно повторяет
-      // слова полной.
-      const glossaryAt = shelfAt("rules/glossary.md");
-      if (glossaryAt !== null && existsSync(glossaryAt)) {
-        const rows = proseOf(glossaryAt).split(NEWLINE);
-        let seen = null;
-        rows.forEach((line, i) => {
-          if (!line.trimStart().startsWith("|")) {
-            seen = null;
-            return;
-          }
-          if (seen === null) seen = new Map();
-          const term = /^\|\s*\*\*([^*]+)\*\*\s*\|/.exec(line.trim());
-          if (term === null) return;
-          const key = term[1].trim().toLowerCase();
-          if (seen.has(key))
-            bannedWords.push(
-              rel0(glossaryAt) +
-                ":" +
-                (i + 1) +
-                " — «" +
-                term[1].trim() +
-                "» определён второй раз, первый — строкой " +
-                seen.get(key) +
-                ", а в словаре это одна строка",
-            );
-          else seen.set(key, i + 1);
-        });
-      }
-      if (bannedWords.length === 0)
-        bannedSaid =
-          "отвергнутых слов в корпусе: 0 (список: " +
-          (book.banned ?? []).length +
-          ")";
     }
-  }
-  checkHead("Синоним термина словаря не заведён", {
-    n: bannedTerms,
-    unit: "терминов словаря под запретом",
   });
-  if (bannedSaid !== null) console.log("  " + bannedSaid);
-  if (bannedWords.length)
-    console.log("  синонимов в корпусе: " + bannedWords.length);
-  for (const one of bannedWords)
-    console.log("    " + one + ". Один термин — одна концепция");
+  checkStep(() => {
+    checkHead("Синоним термина словаря не заведён", () => ({
+      n: bannedTerms,
+      unit: "терминов словаря под запретом",
+    }));
+    if (bannedSaid !== null) console.log("  " + bannedSaid);
+    if (bannedWords.length)
+      console.log("  синонимов в корпусе: " + bannedWords.length);
+    for (const one of bannedWords)
+      console.log("    " + one + ". Один термин — одна концепция");
+  });
 
   // Проза полки названа.
   //
@@ -25158,42 +25564,50 @@ if (mode === "verify") {
   // семенем, и ни один файл полки её не называл.
   const shelfOrphans = [];
   let proseLooked = 0;
-  if (SHELF !== null && existsSync(SHELF)) {
-    // Называют файл и данные полки, и её код: карта посадки — семена, код
-    // инструмента — свои справочники.
-    const walkAll = (dir) =>
-      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-        const full = norm(path.join(dir, e.name));
-        return e.isDirectory() ? walkAll(full) : [full];
-      });
-    const texts = walkAll(SHELF)
-      .filter((f) => /\.(?:md|json|mjs)$/.test(f) && !PLANT_BOOK.test(f))
-      .map((f) => [f, readFileSync(f, "utf8")]);
-    for (const [, f] of shelfProse()) {
-      const own = norm(path.relative(SHELF, f));
-      if (/^rules\/[^/]+$/.test(own) || /^skills\/[^/]+\/SKILL\.md$/.test(own))
-        continue;
-      proseLooked += 1;
-      const base = path.basename(f);
-      if (
-        !texts.some(
-          ([g, text]) => g !== f && (text.includes(own) || text.includes(base)),
+  checkStep(() => {
+    if (SHELF !== null && existsSync(SHELF)) {
+      // Называют файл и данные полки, и её код: карта посадки — семена, код
+      // инструмента — свои справочники.
+      const walkAll = (dir) =>
+        readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+          const full = norm(path.join(dir, e.name));
+          return e.isDirectory() ? walkAll(full) : [full];
+        });
+      const texts = walkAll(SHELF)
+        .filter((f) => /\.(?:md|json|mjs)$/.test(f) && !PLANT_BOOK.test(f))
+        .map((f) => [f, readFileSync(f, "utf8")]);
+      for (const [, f] of shelfProse()) {
+        const own = norm(path.relative(SHELF, f));
+        if (
+          /^rules\/[^/]+$/.test(own) ||
+          /^skills\/[^/]+\/SKILL\.md$/.test(own)
         )
-      )
-        shelfOrphans.push(own);
+          continue;
+        proseLooked += 1;
+        const base = path.basename(f);
+        if (
+          !texts.some(
+            ([g, text]) =>
+              g !== f && (text.includes(own) || text.includes(base)),
+          )
+        )
+          shelfOrphans.push(own);
+      }
     }
-  }
-  checkHead("Проза полки названа", {
-    n: proseLooked,
-    unit: "файлов прозы полки",
   });
-  console.log("  не названо ни одним файлом полки: " + shelfOrphans.length);
-  for (const one of shelfOrphans)
-    console.log(
-      "    " +
-        one +
-        " — назвать там, где о нём нужно знать, либо удалить: файл, который не называет никто, не читает никто",
-    );
+  checkStep(() => {
+    checkHead("Проза полки названа", () => ({
+      n: proseLooked,
+      unit: "файлов прозы полки",
+    }));
+    console.log("  не названо ни одним файлом полки: " + shelfOrphans.length);
+    for (const one of shelfOrphans)
+      console.log(
+        "    " +
+          one +
+          " — назвать там, где о нём нужно знать, либо удалить: файл, который не называет никто, не читает никто",
+      );
+  });
 
   // Обоснование под заголовками нормы.
   //
@@ -25204,47 +25618,61 @@ if (mode === "verify") {
   // первого уровня у обоснования свой — «Обоснование к …» — и не сличается.
   const rationaleOrphans = [];
   let rationaleLooked = 0;
-  {
-    const ratAt = shelfAt("rationale");
-    const rulesAt = shelfAt("rules");
-    const headsOf = (at, from) =>
-      proseOf(at)
-        .split(NEWLINE)
-        .filter((l) => new RegExp("^#{" + from + ",}\\s").test(l))
-        .map((l) => l.replace(/^#+\s*/, "").trim());
-    if (ratAt !== null && existsSync(ratAt))
-      for (const name of readdirSync(ratAt).filter((n) => n.endsWith(".md"))) {
-        const ruleAt = path.join(rulesAt, name);
-        if (!existsSync(ruleAt)) {
-          rationaleOrphans.push("rationale/" + name + " — нормы rules/" + name + " нет");
-          continue;
-        }
-        const ruleHeads = new Set(headsOf(ruleAt, 1));
-        for (const head of headsOf(path.join(ratAt, name), 2)) {
-          rationaleLooked += 1;
-          if (!ruleHeads.has(head))
+  checkStep(() => {
+    {
+      const ratAt = shelfAt("rationale");
+      const rulesAt = shelfAt("rules");
+      const headsOf = (at, from) =>
+        proseOf(at)
+          .split(NEWLINE)
+          .filter((l) => new RegExp("^#{" + from + ",}\\s").test(l))
+          .map((l) => l.replace(/^#+\s*/, "").trim());
+      if (ratAt !== null && existsSync(ratAt))
+        for (const name of readdirSync(ratAt).filter((n) =>
+          n.endsWith(".md"),
+        )) {
+          const ruleAt = path.join(rulesAt, name);
+          if (!existsSync(ruleAt)) {
             rationaleOrphans.push(
-              "rationale/" + name + ": «" + head + "» — в норме такого раздела нет",
+              "rationale/" + name + " — нормы rules/" + name + " нет",
             );
+            continue;
+          }
+          const ruleHeads = new Set(headsOf(ruleAt, 1));
+          for (const head of headsOf(path.join(ratAt, name), 2)) {
+            rationaleLooked += 1;
+            if (!ruleHeads.has(head))
+              rationaleOrphans.push(
+                "rationale/" +
+                  name +
+                  ": «" +
+                  head +
+                  "» — в норме такого раздела нет",
+              );
+          }
         }
-      }
-  }
-  checkHead("Обоснование под заголовками нормы", {
-    n: rationaleLooked,
-    unit: "разделов обоснования",
+    }
   });
-  console.log("  без раздела нормы: " + rationaleOrphans.length);
-  for (const one of rationaleOrphans) console.log("    " + one);
-  checkHead("Доктрина названа в порядке чтения", {
-    n: doctrineListed,
-    unit: "документов в порядке чтения",
+  checkStep(() => {
+    checkHead("Обоснование под заголовками нормы", () => ({
+      n: rationaleLooked,
+      unit: "разделов обоснования",
+    }));
+    console.log("  без раздела нормы: " + rationaleOrphans.length);
+    for (const one of rationaleOrphans) console.log("    " + one);
   });
-  console.log(
-    CONFIG.doctrineReading == null || SHELF === null
-      ? "  полка не заявлена"
-      : `  расхождений: ${doctrineDrift.length}`,
-  );
-  for (const d of doctrineDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Доктрина названа в порядке чтения", () => ({
+      n: doctrineListed,
+      unit: "документов в порядке чтения",
+    }));
+    console.log(
+      CONFIG.doctrineReading == null || SHELF === null
+        ? "  полка не заявлена"
+        : `  расхождений: ${doctrineDrift.length}`,
+    );
+    for (const d of doctrineDrift) console.log("    " + d);
+  });
 
   // Доктрина в бюджете.
   //
@@ -25262,157 +25690,173 @@ if (mode === "verify") {
   const doctrineOver = [];
   let doctrineFiles = 0;
   let doctrineSaid = null;
-  {
-    const rulesAt = shelfAt("rules");
-    const mapAt = shelfAt("seat/map.json");
-    const budget =
-      mapAt !== null && existsSync(mapAt)
-        ? readJson(mapAt, {}).doctrineBudget
-        : undefined;
-    if (rulesAt === null || !existsSync(rulesAt))
-      doctrineSaid = "доктрины нет: полка не заявлена";
-    else {
-      const fact = { always: 0, paths: 0 };
-      for (const e of readdirSync(rulesAt).filter((n) => n.endsWith(".md"))) {
-        const text = readFileSync(path.join(rulesAt, e), "utf8")
-          .split(String.fromCharCode(13) + NEWLINE)
-          .join(NEWLINE);
-        const head = /^---\n([\s\S]*?)\n---\n/.exec(text);
-        fact[head !== null && /^paths:/m.test(head[1]) ? "paths" : "always"] +=
-          [...text].length;
-        doctrineFiles += 1;
-      }
-      const kinds = [
-        ["always", "без шапки `paths:`"],
-        ["paths", "с шапкой `paths:`"],
-      ];
-      if (
-        budget == null ||
-        kinds.some(([k]) => !Number.isInteger(budget[k]) || budget[k] < 0)
-      )
-        doctrineOver.push(
-          "бюджет не объявлен: поле `doctrineBudget` карты посадки — два целых числа, `always` и `paths`; факт сейчас — " +
-            fact.always +
-            " и " +
-            fact.paths,
-        );
+  checkStep(() => {
+    {
+      const rulesAt = shelfAt("rules");
+      const mapAt = shelfAt("seat/map.json");
+      const budget =
+        mapAt !== null && existsSync(mapAt)
+          ? readJson(mapAt, {}).doctrineBudget
+          : undefined;
+      if (rulesAt === null || !existsSync(rulesAt))
+        doctrineSaid = "доктрины нет: полка не заявлена";
       else {
-        doctrineSaid =
-          kinds
-            .map(([k, label]) => label + " — " + fact[k] + " при бюджете " + budget[k])
-            .join("; ") + " символов";
-        for (const [k, label] of kinds) {
-          if (fact[k] > budget[k])
-            doctrineOver.push(
-              label +
-                ": " +
-                fact[k] +
-                " символов — больше бюджета " +
-                budget[k] +
-                " на " +
-                (fact[k] - budget[k]) +
-                ". Сократить: история и примеры — в обоснование (`writing.md`, раздел «Норма и обоснование»); поднять бюджет — решением с причиной",
-            );
-          else if (budget[k] - fact[k] > DOCTRINE_SLACK_CHARS)
-            doctrineOver.push(
-              label +
-                ": бюджет " +
-                budget[k] +
-                " больше факта " +
-                fact[k] +
-                " на " +
-                (budget[k] - fact[k]) +
-                " — сбавить поле `doctrineBudget` до факта: бюджет держит достигнутое",
-            );
+        const fact = { always: 0, paths: 0 };
+        for (const e of readdirSync(rulesAt).filter((n) => n.endsWith(".md"))) {
+          const text = readFileSync(path.join(rulesAt, e), "utf8")
+            .split(String.fromCharCode(13) + NEWLINE)
+            .join(NEWLINE);
+          const head = /^---\n([\s\S]*?)\n---\n/.exec(text);
+          fact[
+            head !== null && /^paths:/m.test(head[1]) ? "paths" : "always"
+          ] += [...text].length;
+          doctrineFiles += 1;
+        }
+        const kinds = [
+          ["always", "без шапки `paths:`"],
+          ["paths", "с шапкой `paths:`"],
+        ];
+        if (
+          budget == null ||
+          kinds.some(([k]) => !Number.isInteger(budget[k]) || budget[k] < 0)
+        )
+          doctrineOver.push(
+            "бюджет не объявлен: поле `doctrineBudget` карты посадки — два целых числа, `always` и `paths`; факт сейчас — " +
+              fact.always +
+              " и " +
+              fact.paths,
+          );
+        else {
+          doctrineSaid =
+            kinds
+              .map(
+                ([k, label]) =>
+                  label + " — " + fact[k] + " при бюджете " + budget[k],
+              )
+              .join("; ") + " символов";
+          for (const [k, label] of kinds) {
+            if (fact[k] > budget[k])
+              doctrineOver.push(
+                label +
+                  ": " +
+                  fact[k] +
+                  " символов — больше бюджета " +
+                  budget[k] +
+                  " на " +
+                  (fact[k] - budget[k]) +
+                  ". Сократить: история и примеры — в обоснование (`writing.md`, раздел «Норма и обоснование»); поднять бюджет — решением с причиной",
+              );
+            else if (budget[k] - fact[k] > DOCTRINE_SLACK_CHARS)
+              doctrineOver.push(
+                label +
+                  ": бюджет " +
+                  budget[k] +
+                  " больше факта " +
+                  fact[k] +
+                  " на " +
+                  (budget[k] - fact[k]) +
+                  " — сбавить поле `doctrineBudget` до факта: бюджет держит достигнутое",
+              );
+          }
         }
       }
     }
-  }
-  checkHead("Доктрина в бюджете", {
-    n: doctrineFiles,
-    unit: "файлов доктрины",
   });
-  if (doctrineSaid !== null) console.log("  " + doctrineSaid);
-  for (const d of doctrineOver) console.log("    " + d);
-
-  checkHead("Документы названы в указателе", {
-    n: indexDocs,
-    unit: "документов в папке",
+  checkStep(() => {
+    checkHead("Доктрина в бюджете", () => ({
+      n: doctrineFiles,
+      unit: "файлов доктрины",
+    }));
+    if (doctrineSaid !== null) console.log("  " + doctrineSaid);
+    for (const d of doctrineOver) console.log("    " + d);
   });
-  console.log(
-    CONFIG.docsIndex == null
-      ? "  указатель не заявлен"
-      : `  не названо: ${indexDrift.length}`,
-  );
-  for (const d of indexDrift) console.log("    " + d);
-
-  checkHead("Применимость разделов планки", {
-    n: barScopes,
-    unit: "разделов планки",
+  checkStep(() => {
+    checkHead("Документы названы в указателе", () => ({
+      n: indexDocs,
+      unit: "документов в папке",
+    }));
+    console.log(
+      CONFIG.docsIndex == null
+        ? "  указатель не заявлен"
+        : `  не названо: ${indexDrift.length}`,
+    );
+    for (const d of indexDrift) console.log("    " + d);
   });
-  console.log(
-    CONFIG.qualityScope == null
-      ? "  деление на ядро и применимые не заявлено"
-      : `  расхождений: ${scopeDrift.length}` +
-          (liveScopes.length
-            ? `; живые разделы: ${liveScopes.join(", ")}`
-            : ""),
-  );
-  for (const s of scopeDrift) console.log("    " + s);
-
-  checkHead("Сверки, выключенные при живом предмете", {
-    n: disarmedLooked,
-    unit: "пустых полей настройки",
+  checkStep(() => {
+    checkHead("Применимость разделов планки", () => ({
+      n: barScopes,
+      unit: "разделов планки",
+    }));
+    console.log(
+      CONFIG.qualityScope == null
+        ? "  деление на ядро и применимые не заявлено"
+        : `  расхождений: ${scopeDrift.length}` +
+            (liveScopes.length
+              ? `; живые разделы: ${liveScopes.join(", ")}`
+              : ""),
+    );
+    for (const s of scopeDrift) console.log("    " + s);
   });
-  console.log(`  выключено зря: ${disarmed.length}`);
-  for (const d of disarmed) console.log("    " + d);
-
-  checkHead("Скиллы проекта", {
-    n: skillsLooked,
-    unit: "скиллов на диске и в таблице",
+  checkStep(() => {
+    checkHead("Сверки, выключенные при живом предмете", () => ({
+      n: disarmedLooked,
+      unit: "пустых полей настройки",
+    }));
+    console.log(`  выключено зря: ${disarmed.length}`);
+    for (const d of disarmed) console.log("    " + d);
   });
-  console.log(
-    CONFIG.skills == null
-      ? "  скиллы не заявлены"
-      : `  расхождений: ${skillDrift.length}`,
-  );
-  for (const s of skillDrift) console.log("    " + s);
-
-  checkHead("Разделы правил классифицированы", {
-    n: (CONFIG.rulesManifest?.rules ?? []).length,
-    unit: "файлов правил",
+  checkStep(() => {
+    checkHead("Скиллы проекта", () => ({
+      n: skillsLooked,
+      unit: "скиллов на диске и в таблице",
+    }));
+    console.log(
+      CONFIG.skills == null
+        ? "  скиллы не заявлены"
+        : `  расхождений: ${skillDrift.length}`,
+    );
+    for (const s of skillDrift) console.log("    " + s);
   });
-  console.log(
-    CONFIG.rulesManifest == null
-      ? "  файлы правил не заявлены"
-      : `  расхождений: ${unclassified.length}`,
-  );
-  for (const u of unclassified) console.log("    " + u);
-
-  checkHead("Шаблон правил заполнен", {
-    n:
-      (CONFIG.rulesManifest?.rules ?? []).length + (CONFIG.seeded ?? []).length,
-    unit: "засеянных файлов",
+  checkStep(() => {
+    checkHead("Разделы правил классифицированы", () => ({
+      n: (CONFIG.rulesManifest?.rules ?? []).length,
+      unit: "файлов правил",
+    }));
+    console.log(
+      CONFIG.rulesManifest == null
+        ? "  файлы правил не заявлены"
+        : `  расхождений: ${unclassified.length}`,
+    );
+    for (const u of unclassified) console.log("    " + u);
   });
-  console.log(
-    CONFIG.rulesManifest == null
-      ? "  файлы правил не заявлены"
-      : `  осталось незаполненных мест: ${unfilledTemplate.length}`,
-  );
-  for (const u of unfilledTemplate) console.log("    " + u);
-
-  checkHead("Отложенное без закрытых пунктов", {
-    n: todoLooked,
-    unit: "пунктов отложенного",
+  checkStep(() => {
+    checkHead("Шаблон правил заполнен", () => ({
+      n:
+        (CONFIG.rulesManifest?.rules ?? []).length +
+        (CONFIG.seeded ?? []).length,
+      unit: "засеянных файлов",
+    }));
+    console.log(
+      CONFIG.rulesManifest == null
+        ? "  файлы правил не заявлены"
+        : `  осталось незаполненных мест: ${unfilledTemplate.length}`,
+    );
+    for (const u of unfilledTemplate) console.log("    " + u);
   });
-  console.log(
-    CONFIG.todo == null
-      ? "  файл отложенного не заявлен"
-      : `  помечено закрытыми: ${closedTodos.length}`,
-  );
-  for (const t of closedTodos) console.log("    " + t);
-  console.log(`  ссылок на несуществующий пункт: ${danglingTodo.length}`);
-  for (const t of danglingTodo) console.log("    " + t);
+  checkStep(() => {
+    checkHead("Отложенное без закрытых пунктов", () => ({
+      n: todoLooked,
+      unit: "пунктов отложенного",
+    }));
+    console.log(
+      CONFIG.todo == null
+        ? "  файл отложенного не заявлен"
+        : `  помечено закрытыми: ${closedTodos.length}`,
+    );
+    for (const t of closedTodos) console.log("    " + t);
+    console.log(`  ссылок на несуществующий пункт: ${danglingTodo.length}`);
+    for (const t of danglingTodo) console.log("    " + t);
+  });
 
   // 14-16. Три шва, которые до сих пор держались только вниманием.
   // Общий источник для всех трёх: файлы базы (по имени), документация рядом с
@@ -25464,72 +25908,76 @@ if (mode === "verify") {
     /^\d\d-[^/]+\.md$/.test(tok) ||
     tok.startsWith("docs/") ||
     tok.endsWith("settings.local.json");
-  const SHELF_ROOT = SHELF === null ? "\u0000нет полки" : norm(SHELF);
-  const docSources = [
-    // База обходится ВГЛУБЬ. Плоский обход брал только верхний уровень, а база
-    // уже вложена: доктрина лежит подпапкой, и политика качества — самый
-    // читаемый документ проекта — из сверки выпадала целиком. Битый адрес
-    // внутри неё проходил зелёным, при том что в соседнем файле того же
-    // каталога ловился. Найдено пробой; тот же класс однажды уже чинили для
-    // заголовков, и починили тогда только в одном месте из двух.
-    ...(function walkBase(dir) {
-      const out = [];
-      for (const e of readdirSync(dir)) {
-        const full = norm(path.join(dir, e));
-        if (statSync(full).isDirectory()) out.push(...walkBase(full));
-        else if (e.endsWith(".md"))
-          out.push([norm(path.relative(BASE, full)), full]);
-      }
-      return out;
-    })(norm(BASE)),
-    ...docFiles.map((d) => [rel(d), d]),
-    // Файлы правил сюда не входили, и это ловилось только вниманием: битая
-    // ссылка на вложенный `CLAUDE.md` прошла пробу молча. Читают их чаще всего
-    // остального, а проверяли — реже: адреса в них живут ровно так же и
-    // устаревают ровно так же.
-    ...CONFIG.rulesManifest.rules
-      .map((r) => norm(path.join(BASE, r)))
-      .filter((p) => existsSync(p))
-      .map((p) => [path.relative(REPO, p).split(path.sep).join("/"), p]),
-    // Скиллы — те же документы с адресами: скилл начала задачи целиком состоит
-    // из «прочитай вот это». Умерший адрес в нём отправляет туда каждую сессию,
-    // и молча — сверка его не читала.
-    ...(CONFIG.skills == null ? [] : skillDocs()),
-    // ВСЯ проза в корне репозитория: она не лежит ни в папке базы, ни в папке
-    // документов, ни среди файлов правил — то есть проваливается между тремя
-    // источниками сразу. Найдено посадкой полки саму в себя: её README раздаёт
-    // обвязку и не читался ни одной сверкой.
-    //
-    // Брался при этом ОДИН файл по имени, и это была починка на файле вместо
-    // класса: следующая корневая проза провалилась туда же. Замерено вторым
-    // кругом проб — реестр находок, вынесенный в корень, чтобы пережить
-    // клонирование, не читала ни одна сверка.
-    ...readdirSync(REPO)
-      .filter((e) => e.endsWith(".md"))
-      .filter((e) => statSync(norm(path.join(REPO, e))).isFile())
-      .map((e) => [e, norm(path.join(REPO, e))]),
-    // Собственные файлы полки: доктрина, инструкция посадки, справочник
-    // инструмента, памятки. Читают их чаще всего остального, а адреса в них
-    // до сих пор не проверялись ни одной сверкой.
-    ...(SHELF === null
-      ? []
-      : (function walkShelf(dir) {
-          const out = [];
-          for (const e of readdirSync(dir)) {
-            const full = norm(path.join(dir, e));
-            if (statSync(full).isDirectory()) out.push(...walkShelf(full));
-            else if (e.endsWith(".md"))
-              out.push([
-                path.relative(REPO, full).split(path.sep).join("/"),
-                full,
-              ]);
-          }
-          return out;
-        })(norm(SHELF))),
-  ]
-    // Скиллы приходят дважды — своим сборщиком и обходом полки.
-    .filter((one, i, all) => all.findIndex(([, at]) => at === one[1]) === i)
-    .map(([name, at]) => [name, at, at.startsWith(SHELF_ROOT)]);
+  const SHELF_ROOT = checkStep(() =>
+    SHELF === null ? "\u0000нет полки" : norm(SHELF),
+  );
+  const docSources = checkStep(() =>
+    [
+      // База обходится ВГЛУБЬ. Плоский обход брал только верхний уровень, а база
+      // уже вложена: доктрина лежит подпапкой, и политика качества — самый
+      // читаемый документ проекта — из сверки выпадала целиком. Битый адрес
+      // внутри неё проходил зелёным, при том что в соседнем файле того же
+      // каталога ловился. Найдено пробой; тот же класс однажды уже чинили для
+      // заголовков, и починили тогда только в одном месте из двух.
+      ...(function walkBase(dir) {
+        const out = [];
+        for (const e of readdirSync(dir)) {
+          const full = norm(path.join(dir, e));
+          if (statSync(full).isDirectory()) out.push(...walkBase(full));
+          else if (e.endsWith(".md"))
+            out.push([norm(path.relative(BASE, full)), full]);
+        }
+        return out;
+      })(norm(BASE)),
+      ...docFiles.map((d) => [rel(d), d]),
+      // Файлы правил сюда не входили, и это ловилось только вниманием: битая
+      // ссылка на вложенный `CLAUDE.md` прошла пробу молча. Читают их чаще всего
+      // остального, а проверяли — реже: адреса в них живут ровно так же и
+      // устаревают ровно так же.
+      ...CONFIG.rulesManifest.rules
+        .map((r) => norm(path.join(BASE, r)))
+        .filter((p) => existsSync(p))
+        .map((p) => [path.relative(REPO, p).split(path.sep).join("/"), p]),
+      // Скиллы — те же документы с адресами: скилл начала задачи целиком состоит
+      // из «прочитай вот это». Умерший адрес в нём отправляет туда каждую сессию,
+      // и молча — сверка его не читала.
+      ...(CONFIG.skills == null ? [] : skillDocs()),
+      // ВСЯ проза в корне репозитория: она не лежит ни в папке базы, ни в папке
+      // документов, ни среди файлов правил — то есть проваливается между тремя
+      // источниками сразу. Найдено посадкой полки саму в себя: её README раздаёт
+      // обвязку и не читался ни одной сверкой.
+      //
+      // Брался при этом ОДИН файл по имени, и это была починка на файле вместо
+      // класса: следующая корневая проза провалилась туда же. Замерено вторым
+      // кругом проб — реестр находок, вынесенный в корень, чтобы пережить
+      // клонирование, не читала ни одна сверка.
+      ...readdirSync(REPO)
+        .filter((e) => e.endsWith(".md"))
+        .filter((e) => statSync(norm(path.join(REPO, e))).isFile())
+        .map((e) => [e, norm(path.join(REPO, e))]),
+      // Собственные файлы полки: доктрина, инструкция посадки, справочник
+      // инструмента, памятки. Читают их чаще всего остального, а адреса в них
+      // до сих пор не проверялись ни одной сверкой.
+      ...(SHELF === null
+        ? []
+        : (function walkShelf(dir) {
+            const out = [];
+            for (const e of readdirSync(dir)) {
+              const full = norm(path.join(dir, e));
+              if (statSync(full).isDirectory()) out.push(...walkShelf(full));
+              else if (e.endsWith(".md"))
+                out.push([
+                  path.relative(REPO, full).split(path.sep).join("/"),
+                  full,
+                ]);
+            }
+            return out;
+          })(norm(SHELF))),
+    ]
+      // Скиллы приходят дважды — своим сборщиком и обходом полки.
+      .filter((one, i, all) => all.findIndex(([, at]) => at === one[1]) === i)
+      .map(([name, at]) => [name, at, at.startsWith(SHELF_ROOT)]),
+  );
 
   // Скрипты манифеста против прозы — в обе стороны.
   //
@@ -25550,95 +25998,99 @@ if (mode === "verify") {
   // читающих манифест. Причина не в мягкости: посадка в новый проект приходит с
   // готовым набором скриптов и с обобщённым шаблоном правил, и первый же прогон
   // краснел бы на состоянии, которое ещё никто не успел описать.
-  if (CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
-    const scripts = Object.keys(pkg?.scripts ?? {});
-    if (scripts.length) {
-      // Семена в счёт не идут. Файл в `seat/templates/` — ЗАГОТОВКА, а не проза
-      // этого проекта: он называет `npm run dev`, потому что так у приложения,
-      // и в библиотеке такого скрипта нет и не будет. Пока семена читались
-      // наравне с прозой, предупреждение висело вечно и указывало на файл,
-      // который никто не писал под этот проект. Найдено посадкой в чужую
-      // библиотеку.
-      const spans = new Set();
-      for (const [, src] of docSources) {
-        // Вся папка ПОСАДКИ, а не только семена: сама инструкция лежит рядом с
-        // ними и называет команды так же — как образец, а не как утверждение об
-        // этом проекте. Пока исключались только семена, инструкция называла
-        // звено, которого у проекта нет намеренно, и предупреждение висело на
-        // законном устройстве. Найдено посадкой в проект без TypeScript.
-        if (norm(src).includes("/seat/")) continue;
-        for (const hit of readFileSync(src, "utf8").matchAll(/`([^`\n]+)`/g))
-          spans.add(hit[1].trim());
-      }
-      // Команда с доводами называет скрипт так же, как голая: обратная
-      // сторона — «Названное доктриной исполнимо» — читает её именно так, и
-      // дословное равенство здесь давало две мерки одной пары. Замерено на
-      // стенде: `npm run mutate -- --mutate <файлы>` числился неназванным.
-      const runs = new Set(
-        [...spans]
-          .map((s) =>
-            new RegExp(
-              "^" + PACKAGE_MANAGER + " run ([^\\s`]+)(?:\\s|$)",
-            ).exec(s),
-          )
-          .filter((m) => m !== null)
-          .map((m) => m[1]),
-      );
-      const named = (s) =>
-        spans.has(s) ||
-        spans.has(`${PACKAGE_MANAGER} ${s}`) ||
-        runs.has(s);
-      const silent = scripts.filter((s) => !named(s));
-      {
-        checkHead(
-          "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
-          { n: scripts.length, unit: "скриптов манифеста" },
+  checkStep(() => {
+    if (CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
+      const scripts = Object.keys(pkg?.scripts ?? {});
+      if (scripts.length) {
+        // Семена в счёт не идут. Файл в `seat/templates/` — ЗАГОТОВКА, а не проза
+        // этого проекта: он называет `npm run dev`, потому что так у приложения,
+        // и в библиотеке такого скрипта нет и не будет. Пока семена читались
+        // наравне с прозой, предупреждение висело вечно и указывало на файл,
+        // который никто не писал под этот проект. Найдено посадкой в чужую
+        // библиотеку.
+        const spans = new Set();
+        for (const [, src] of docSources) {
+          // Вся папка ПОСАДКИ, а не только семена: сама инструкция лежит рядом с
+          // ними и называет команды так же — как образец, а не как утверждение об
+          // этом проекте. Пока исключались только семена, инструкция называла
+          // звено, которого у проекта нет намеренно, и предупреждение висело на
+          // законном устройстве. Найдено посадкой в проект без TypeScript.
+          if (norm(src).includes("/seat/")) continue;
+          for (const hit of readFileSync(src, "utf8").matchAll(/`([^`\n]+)`/g))
+            spans.add(hit[1].trim());
+        }
+        // Команда с доводами называет скрипт так же, как голая: обратная
+        // сторона — «Названное доктриной исполнимо» — читает её именно так, и
+        // дословное равенство здесь давало две мерки одной пары. Замерено на
+        // стенде: `npm run mutate -- --mutate <файлы>` числился неназванным.
+        const runs = new Set(
+          [...spans]
+            .map((s) =>
+              new RegExp(
+                "^" + PACKAGE_MANAGER + " run ([^\\s`]+)(?:\\s|$)",
+              ).exec(s),
+            )
+            .filter((m) => m !== null)
+            .map((m) => m[1]),
         );
-        console.log(`  не названы нигде: ${silent.length}`);
-        for (const s of silent)
-          console.log(
-            `    ${s} — есть в манифесте, но ни таблица проверок, ни список` +
-              NEWLINE +
-              "      исключённых его не называет: решение о нём не принято",
+        const named = (s) =>
+          spans.has(s) || spans.has(`${PACKAGE_MANAGER} ${s}`) || runs.has(s);
+        const silent = scripts.filter((s) => !named(s));
+        {
+          checkHead(
+            "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
+            { n: scripts.length, unit: "скриптов манифеста" },
           );
-        // Половина «названо в прозе, а скрипта нет» отсюда УБРАНА: это
-        // ошибка, а не предупреждение, и в секции, которая прогон не роняет,
-        // она не краснела никогда. Её спрашивает сверка «Названное доктриной
-        // исполнимо» — там же, где команду без пакета и режим без режима.
+          console.log(`  не названы нигде: ${silent.length}`);
+          for (const s of silent)
+            console.log(
+              `    ${s} — есть в манифесте, но ни таблица проверок, ни список` +
+                NEWLINE +
+                "      исключённых его не называет: решение о нём не принято",
+            );
+          // Половина «названо в прозе, а скрипта нет» отсюда УБРАНА: это
+          // ошибка, а не предупреждение, и в секции, которая прогон не роняет,
+          // она не краснела никогда. Её спрашивает сверка «Названное доктриной
+          // исполнимо» — там же, где команду без пакета и режим без режима.
+        }
       }
     }
-  }
 
-  // 9d, обратная сторона: номер решения, названный где угодно, разрешается в
-  // файл. Корпус тот же, что у адресов, плюс код: на решение ссылаются как раз
-  // из комментария. Номер сравнивается числом, а не строкой, — иначе `ADR-4` и
-  // `ADR-004` считались бы разными решениями, хотя решение одно.
-  if (CONFIG.adr != null) {
-    const dir = norm(path.join(BASE, CONFIG.adr.dir));
-    const known = new Set(
-      (existsSync(dir) ? readdirSync(dir) : [])
-        .filter((n) => /\.md$/.test(n))
-        .map((n) => Number(/^(\d+)/.exec(n)?.[1] ?? NaN))
-        .filter((n) => Number.isFinite(n)),
+    // 9d, обратная сторона: номер решения, названный где угодно, разрешается в
+    // файл. Корпус тот же, что у адресов, плюс код: на решение ссылаются как раз
+    // из комментария. Номер сравнивается числом, а не строкой, — иначе `ADR-4` и
+    // `ADR-004` считались бы разными решениями, хотя решение одно.
+    if (CONFIG.adr != null) {
+      const dir = norm(path.join(BASE, CONFIG.adr.dir));
+      const known = new Set(
+        (existsSync(dir) ? readdirSync(dir) : [])
+          .filter((n) => /\.md$/.test(n))
+          .map((n) => Number(/^(\d+)/.exec(n)?.[1] ?? NaN))
+          .filter((n) => Number.isFinite(n)),
+      );
+      const gone = new Set();
+      for (const [name, at] of [
+        ...docSources,
+        ...[...files, ...styleFiles].map((f) => [rel(f), f]),
+      ])
+        for (const hit of readFileSync(at, "utf8").matchAll(/ADR[-\s](\d+)/g))
+          if (!known.has(Number(hit[1]))) gone.add(`${name}: ${hit[0]}`);
+      for (const g of gone) danglingAdr.push(g);
+    }
+  });
+  checkStep(() => {
+    checkHead("Решения адресуемы", () => ({
+      n: adrLooked,
+      unit: "записей решений",
+    }));
+    console.log(
+      `  без единой ссылки: ${orphanAdr.length}, ссылок на несуществующее решение: ${danglingAdr.length}`,
     );
-    const gone = new Set();
-    for (const [name, at] of [
-      ...docSources,
-      ...[...files, ...styleFiles].map((f) => [rel(f), f]),
-    ])
-      for (const hit of readFileSync(at, "utf8").matchAll(/ADR[-\s](\d+)/g))
-        if (!known.has(Number(hit[1]))) gone.add(`${name}: ${hit[0]}`);
-    for (const g of gone) danglingAdr.push(g);
-  }
-
-  checkHead("Решения адресуемы", { n: adrLooked, unit: "записей решений" });
-  console.log(
-    `  без единой ссылки: ${orphanAdr.length}, ссылок на несуществующее решение: ${danglingAdr.length}`,
-  );
-  for (const a of orphanAdr) console.log("    " + a);
-  for (const a of danglingAdr) console.log("    " + a);
+    for (const a of orphanAdr) console.log("    " + a);
+    for (const a of danglingAdr) console.log("    " + a);
+  });
 
   // 14. путь в обратных кавычках указывает на существующий файл.
   // Якоря `файл:строка` закрыты пунктом 8; здесь — голые адреса без номера
@@ -25652,7 +26104,9 @@ if (mode === "verify") {
   // с перечислениями вырезало все адреса в скрытых папках — то есть всю
   // `.context/**`, самый называемый адрес проекта. Найдено пробой: `.context/
   // graph2.mjs` (файла нет) прошёл молча.
-  const PATH_EXT = new RegExp("\\.(" + CODE_STYLE_ALT + "|md|json|mjs)$");
+  const PATH_EXT = checkStep(
+    () => new RegExp("\\.(" + CODE_STYLE_ALT + "|md|json|mjs)$"),
+  );
   // Составное расширение (`.test.ts`) — тоже расширение, а не адрес: прежний
   // образец требовал одного куска после точки и на нём спотыкался.
   const isExtensionList = (tok) =>
@@ -25668,14 +26122,16 @@ if (mode === "verify") {
   // Опись для голых имён — весь репозиторий, а не `src`: база называет саму
   // себя, свои правила и свои скиллы, и все они лежат вне исходников.
   const bareCount = new Map();
-  (function walkRepo(dir) {
-    for (const e of readdirSync(dir)) {
-      if (OUT_OF_TREE.has(e)) continue;
-      const full = norm(path.join(dir, e));
-      if (statSync(full).isDirectory()) walkRepo(full);
-      else bareCount.set(e, (bareCount.get(e) ?? 0) + 1);
-    }
-  })(norm(REPO));
+  checkStep(() => {
+    (function walkRepo(dir) {
+      for (const e of readdirSync(dir)) {
+        if (OUT_OF_TREE.has(e)) continue;
+        const full = norm(path.join(dir, e));
+        if (statSync(full).isDirectory()) walkRepo(full);
+        else bareCount.set(e, (bareCount.get(e) ?? 0) + 1);
+      }
+    })(norm(REPO));
+  });
   // Только документы. У `.json` и `.ts` голое имя в этом проекте чаще всего
   // проза — «положите рядом `config.json`», «суффикс `.test.ts`», — и сверка по
   // ним краснела бы на законном тексте: замерено, пять таких на 1110 токенов.
@@ -25700,8 +26156,10 @@ if (mode === "verify") {
     // Корень исходников — из настройки, а не имя `src` строкой: см. соседний
     // обход. У проекта, зовущего его иначе, этот список выходил пустым.
   };
-  for (const one of SRC_ROOTS) walkScripts(one);
-  const inventory = [...everyPath, ...scriptFiles];
+  checkStep(() => {
+    for (const one of SRC_ROOTS) walkScripts(one);
+  });
+  const inventory = checkStep(() => [...everyPath, ...scriptFiles]);
   // Ссылка markdown — ВТОРАЯ форма адреса, и её не читала ни одна сверка.
   // Разница с обратными кавычками принципиальная: там адрес может оказаться
   // прозой («положите рядом файл такой-то»), поэтому корпус там сужен, а полка
@@ -25717,44 +26175,46 @@ if (mode === "verify") {
   // даёт по построению.
   const danglingLinks = [];
   let linkFiles = 0;
-  {
-    const skipDirs = new Set([
-      "node_modules",
-      ".stryker-tmp",
-      "dist",
-      "coverage",
-      ".git",
-    ]);
-    const mdFiles = [];
-    (function walkMd(dir) {
-      for (const e of readdirSync(dir)) {
-        if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
-        const full = path.join(dir, e);
-        if (statSync(full).isDirectory()) walkMd(full);
-        else if (e.endsWith(".md")) mdFiles.push(norm(full));
-      }
-    })(norm(REPO));
-    linkFiles = mdFiles.length;
-    for (const f of mdFiles) {
-      for (const m of proseOf(f).matchAll(/\]\(([^)\s]+)\)/g)) {
-        const spec = m[1];
-        // Внешние адреса, якоря внутри страницы, плейсхолдеры и абсолютные
-        // пути к делу не относятся: первое не наше, остальное не адрес файла.
-        if (/^(https?:|#|<|mailto:|\/)/.test(spec)) continue;
-        const target = path.resolve(path.dirname(f), spec.split("#")[0]);
-        // Адрес печатается от корня репозитория, как во всех соседних
-        // секциях. `rel()` тут не годится: он срезает корень ИСХОДНИКОВ, и
-        // файл вне `src` оставался с абсолютным путём — читателю приходилось
-        // вычитывать корень глазами. Найдено пробой.
-        if (!existsSync(target))
-          danglingLinks.push(
-            `${path.relative(REPO, f).split(path.sep).join("/")} → ${spec}`,
-          );
+  checkStep(() => {
+    {
+      const skipDirs = new Set([
+        "node_modules",
+        ".stryker-tmp",
+        "dist",
+        "coverage",
+        ".git",
+      ]);
+      const mdFiles = [];
+      (function walkMd(dir) {
+        for (const e of readdirSync(dir)) {
+          if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
+          const full = path.join(dir, e);
+          if (statSync(full).isDirectory()) walkMd(full);
+          else if (e.endsWith(".md")) mdFiles.push(norm(full));
+        }
+      })(norm(REPO));
+      linkFiles = mdFiles.length;
+      for (const f of mdFiles) {
+        for (const m of proseOf(f).matchAll(/\]\(([^)\s]+)\)/g)) {
+          const spec = m[1];
+          // Внешние адреса, якоря внутри страницы, плейсхолдеры и абсолютные
+          // пути к делу не относятся: первое не наше, остальное не адрес файла.
+          if (/^(https?:|#|<|mailto:|\/)/.test(spec)) continue;
+          const target = path.resolve(path.dirname(f), spec.split("#")[0]);
+          // Адрес печатается от корня репозитория, как во всех соседних
+          // секциях. `rel()` тут не годится: он срезает корень ИСХОДНИКОВ, и
+          // файл вне `src` оставался с абсолютным путём — читателю приходилось
+          // вычитывать корень глазами. Найдено пробой.
+          if (!existsSync(target))
+            danglingLinks.push(
+              `${path.relative(REPO, f).split(path.sep).join("/")} → ${spec}`,
+            );
+        }
       }
     }
-  }
+  });
 
-  const knownDangling = new Set(CONFIG.docPathExceptions);
+  const knownDangling = checkStep(() => new Set(CONFIG.docPathExceptions));
   const knownUsed = new Set();
   const danglingPaths = [];
   // План перехода называет работу, КОТОРОЙ ЕЩЁ НЕТ, и адреса будущих файлов
@@ -25770,102 +26230,113 @@ if (mode === "verify") {
   // «перенести поверхность пакета в `src/app/`» ронял прогон строкой «ведёт
   // в никуда» на плане, который семя велит написать.
   const plannedPaths = [];
-  const planName = CONFIG.transition == null ? null : CONFIG.transition.file;
+  const planName = checkStep(() =>
+    CONFIG.transition == null ? null : CONFIG.transition.file,
+  );
   const isPlan = (name) => planName !== null && name === planName;
   let pathTokens = 0;
-  for (const [name, at, fromShelf] of docSources) {
-    const dir = norm(path.dirname(at));
-    const prose = proseOf(at);
-    for (const hit of prose.matchAll(/`([^`\n]+)`/g)) {
-      // Адрес — с номером строки: файл называет одно имя и дважды, и две
-      // одинаковые строки находки не говорили, где второе.
-      const where =
-        name + ":" + prose.slice(0, hit.index).split(NEWLINE).length;
-      let tok = hit[1].trim();
-      if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
-      tok = tok.replace(/[:#].*$/, "");
-      // Адрес, принадлежащий ЛЮБОМУ проекту, а не этому: в тексте полки его
-      // требовать нельзя — в новом проекте такого файла ещё нет.
-      if (fromShelf === true && (fromTemplates(at) || ofAnyProject(tok)))
-        continue;
-      if (looksLikeBareName(tok)) {
-        // Неоднозначное имя отсутствием не является — тот же принцип, что у
-        // реестра тестов и у карты: список, наполненный живыми файлами,
-        // перестают читать.
-        const seen = bareCount.get(tok) ?? 0;
-        if (seen === 0) {
-          pathTokens++;
-          if (knownDangling.has(`${name}|${tok}`))
-            knownUsed.add(`${name}|${tok}`);
-          else if (isPlan(name)) plannedPaths.push(`${name}: ${tok}`);
-          else danglingPaths.push(`${where}: ${tok}`);
-        } else if (seen === 1) pathTokens++;
-        continue;
+  checkStep(() => {
+    for (const [name, at, fromShelf] of docSources) {
+      const dir = norm(path.dirname(at));
+      const prose = proseOf(at);
+      for (const hit of prose.matchAll(/`([^`\n]+)`/g)) {
+        // Адрес — с номером строки: файл называет одно имя и дважды, и две
+        // одинаковые строки находки не говорили, где второе.
+        const where =
+          name + ":" + prose.slice(0, hit.index).split(NEWLINE).length;
+        let tok = hit[1].trim();
+        if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
+        tok = tok.replace(/[:#].*$/, "");
+        // Адрес, принадлежащий ЛЮБОМУ проекту, а не этому: в тексте полки его
+        // требовать нельзя — в новом проекте такого файла ещё нет.
+        if (fromShelf === true && (fromTemplates(at) || ofAnyProject(tok)))
+          continue;
+        if (looksLikeBareName(tok)) {
+          // Неоднозначное имя отсутствием не является — тот же принцип, что у
+          // реестра тестов и у карты: список, наполненный живыми файлами,
+          // перестают читать.
+          const seen = bareCount.get(tok) ?? 0;
+          if (seen === 0) {
+            pathTokens++;
+            if (knownDangling.has(`${name}|${tok}`))
+              knownUsed.add(`${name}|${tok}`);
+            else if (isPlan(name)) plannedPaths.push(`${name}: ${tok}`);
+            else danglingPaths.push(`${where}: ${tok}`);
+          } else if (seen === 1) pathTokens++;
+          continue;
+        }
+        if (!looksLikePath(tok)) continue;
+        pathTokens++;
+        const asRelative =
+          tok.startsWith("./") || tok.startsWith("../")
+            ? norm(path.resolve(dir, tok))
+            : null;
+        // Текст полки адресует своих соседей от КОРНЯ ОБВЯЗКИ, а не от папки
+        // самого файла: инструкция посадки пишет `seat/map.json`, лёжа в
+        // `seat/`. Разрешение от папки файла давало бы `seat/seat/map.json` —
+        // то есть сверка краснела бы на законной форме записи.
+        const fromShelfRoot =
+          fromShelf === true && SHELF !== null
+            ? norm(path.join(SHELF, tok))
+            : null;
+        if (fromShelfRoot !== null && existsSync(fromShelfRoot)) continue;
+        // `locate` требует ОДНОЗНАЧНОГО разрешения и молчит, когда путь есть в
+        // двух копиях, — а у парных форков так почти всё (`runtime/types.ts`
+        // живёт и в движке, и в форке). Для вопроса «существует ли файл»
+        // неоднозначность отсутствием не является, поэтому запасной шаг —
+        // совпадение по хвосту пути.
+        if (
+          (asRelative !== null && existsSync(asRelative)) ||
+          locate(tok, null) !== null ||
+          inventory.some((f) => f.endsWith("/" + tok))
+        )
+          continue;
+        // Исключение спрашивают ПОСЛЕ разрешения, а не до: спрошенное раньше, оно
+        // считалось бы использованным и для адреса, который давно на месте, — то
+        // есть переживало бы собственный повод.
+        if (knownDangling.has(`${name}|${tok}`)) {
+          knownUsed.add(`${name}|${tok}`);
+          continue;
+        }
+        if (isPlan(name)) {
+          plannedPaths.push(`${name}: ${tok}`);
+          continue;
+        }
+        danglingPaths.push(`${where}: ${tok}`);
       }
-      if (!looksLikePath(tok)) continue;
-      pathTokens++;
-      const asRelative =
-        tok.startsWith("./") || tok.startsWith("../")
-          ? norm(path.resolve(dir, tok))
-          : null;
-      // Текст полки адресует своих соседей от КОРНЯ ОБВЯЗКИ, а не от папки
-      // самого файла: инструкция посадки пишет `seat/map.json`, лёжа в
-      // `seat/`. Разрешение от папки файла давало бы `seat/seat/map.json` —
-      // то есть сверка краснела бы на законной форме записи.
-      const fromShelfRoot =
-        fromShelf === true && SHELF !== null
-          ? norm(path.join(SHELF, tok))
-          : null;
-      if (fromShelfRoot !== null && existsSync(fromShelfRoot)) continue;
-      // `locate` требует ОДНОЗНАЧНОГО разрешения и молчит, когда путь есть в
-      // двух копиях, — а у парных форков так почти всё (`runtime/types.ts`
-      // живёт и в движке, и в форке). Для вопроса «существует ли файл»
-      // неоднозначность отсутствием не является, поэтому запасной шаг —
-      // совпадение по хвосту пути.
-      if (
-        (asRelative !== null && existsSync(asRelative)) ||
-        locate(tok, null) !== null ||
-        inventory.some((f) => f.endsWith("/" + tok))
-      )
-        continue;
-      // Исключение спрашивают ПОСЛЕ разрешения, а не до: спрошенное раньше, оно
-      // считалось бы использованным и для адреса, который давно на месте, — то
-      // есть переживало бы собственный повод.
-      if (knownDangling.has(`${name}|${tok}`)) {
-        knownUsed.add(`${name}|${tok}`);
-        continue;
-      }
-      if (isPlan(name)) {
-        plannedPaths.push(`${name}: ${tok}`);
-        continue;
-      }
-      danglingPaths.push(`${where}: ${tok}`);
     }
-  }
-  for (const one of knownDangling)
-    if (!knownUsed.has(one))
-      deadExceptions.push(`пути в обратных кавычках: ${one} — ничего не гасит`);
-
-  checkHead("Пути в обратных кавычках", {
-    n: pathTokens,
-    unit: "путей в обратных кавычках",
+    for (const one of knownDangling)
+      if (!knownUsed.has(one))
+        deadExceptions.push(
+          `пути в обратных кавычках: ${one} — ничего не гасит`,
+        );
   });
-  console.log(`  ведут в никуда: ${danglingPaths.length}`);
-  for (const d of danglingPaths) console.log("    " + d);
-  if (plannedPaths.length)
-    console.log(
-      "  адресов будущих файлов в планах перехода и приведения: " +
-        plannedPaths.length +
-        " — их заводят шаги плана",
-    );
-  // Отступ здесь ДВА пробела, а не четыре: четыре — признак находки, и
-  // список, напечатанный ими, ронял бы прогон ровно за то, что сверка
-  // только что признала законным.
-  for (const d of plannedPaths) console.log("  · " + d);
-
-  checkHead("Ссылки markdown", { n: linkFiles, unit: "файлов прозы" });
-  console.log(`  ведут в никуда: ${danglingLinks.length}`);
-  for (const d of danglingLinks) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Пути в обратных кавычках", () => ({
+      n: pathTokens,
+      unit: "путей в обратных кавычках",
+    }));
+    console.log(`  ведут в никуда: ${danglingPaths.length}`);
+    for (const d of danglingPaths) console.log("    " + d);
+    if (plannedPaths.length)
+      console.log(
+        "  адресов будущих файлов в планах перехода и приведения: " +
+          plannedPaths.length +
+          " — их заводят шаги плана",
+      );
+    // Отступ здесь ДВА пробела, а не четыре: четыре — признак находки, и
+    // список, напечатанный ими, ронял бы прогон ровно за то, что сверка
+    // только что признала законным.
+    for (const d of plannedPaths) console.log("  · " + d);
+  });
+  checkStep(() => {
+    checkHead("Ссылки markdown", () => ({
+      n: linkFiles,
+      unit: "файлов прозы",
+    }));
+    console.log(`  ведут в никуда: ${danglingLinks.length}`);
+    for (const d of danglingLinks) console.log("    " + d);
+  });
 
   // 14a-2. Проза целиком попадает в корпус сверок.
   //
@@ -25881,44 +26352,48 @@ if (mode === "verify") {
   // тут не отделаться — объявить корень можно и не читать его.
   const corpusGap = [];
   const proseFiles = [];
-  {
-    const inCorpus = new Set(docSources.map(([, at]) => norm(at)));
-    const shortOf = (full) =>
-      path.relative(REPO, full).split(path.sep).join("/");
-    const outside = new Set(
-      (CONFIG.corpusOutside ?? []).map((one) => norm(path.join(REPO, one))),
-    );
-    const outsideUsed = new Set();
-    (function walkProse(dir) {
-      for (const e of readdirSync(dir)) {
-        if (OUT_OF_TREE.has(e)) continue;
-        const full = norm(path.join(dir, e));
-        if (statSync(full).isDirectory()) {
-          walkProse(full);
-          continue;
+  checkStep(() => {
+    {
+      const inCorpus = new Set(docSources.map(([, at]) => norm(at)));
+      const shortOf = (full) =>
+        path.relative(REPO, full).split(path.sep).join("/");
+      const outside = new Set(
+        (CONFIG.corpusOutside ?? []).map((one) => norm(path.join(REPO, one))),
+      );
+      const outsideUsed = new Set();
+      (function walkProse(dir) {
+        for (const e of readdirSync(dir)) {
+          if (OUT_OF_TREE.has(e)) continue;
+          const full = norm(path.join(dir, e));
+          if (statSync(full).isDirectory()) {
+            walkProse(full);
+            continue;
+          }
+          if (!e.endsWith(".md")) continue;
+          proseFiles.push(full);
+          if (inCorpus.has(full)) continue;
+          if (outside.has(full)) {
+            outsideUsed.add(full);
+            continue;
+          }
+          corpusGap.push(shortOf(full) + " — прозу не читает ни одна сверка");
         }
-        if (!e.endsWith(".md")) continue;
-        proseFiles.push(full);
-        if (inCorpus.has(full)) continue;
-        if (outside.has(full)) {
-          outsideUsed.add(full);
-          continue;
-        }
-        corpusGap.push(shortOf(full) + " — прозу не читает ни одна сверка");
-      }
-    })(norm(REPO));
-    for (const one of outside)
-      if (!outsideUsed.has(one))
-        deadExceptions.push(
-          "проза вне корпуса: " + shortOf(one) + " — ничего не исключает",
-        );
-  }
-  checkHead("Проза целиком попадает в корпус сверок", {
-    n: proseFiles.length,
-    unit: "файлов прозы",
+      })(norm(REPO));
+      for (const one of outside)
+        if (!outsideUsed.has(one))
+          deadExceptions.push(
+            "проза вне корпуса: " + shortOf(one) + " — ничего не исключает",
+          );
+    }
   });
-  console.log(`  вне корпуса: ${corpusGap.length}`);
-  for (const c of corpusGap) console.log("    " + c);
+  checkStep(() => {
+    checkHead("Проза целиком попадает в корпус сверок", () => ({
+      n: proseFiles.length,
+      unit: "файлов прозы",
+    }));
+    console.log(`  вне корпуса: ${corpusGap.length}`);
+    for (const c of corpusGap) console.log("    " + c);
+  });
 
   // 14a-3. Строка таблицы по ширине шапки.
   //
@@ -25938,57 +26413,67 @@ if (mode === "verify") {
   // абзац правила.
   const tableWidthDrift = [];
   let tableRowsLooked = 0;
-  {
-    const cellsOf = (line) => {
-      const bare = line.trim();
-      let bars = 0;
-      for (let i = 0; i < bare.length; i += 1) {
-        if (bare[i] === "\\") {
-          i += 1;
-          continue;
+  checkStep(() => {
+    {
+      const cellsOf = (line) => {
+        const bare = line.trim();
+        let bars = 0;
+        for (let i = 0; i < bare.length; i += 1) {
+          if (bare[i] === "\\") {
+            i += 1;
+            continue;
+          }
+          if (bare[i] === "|") bars += 1;
         }
-        if (bare[i] === "|") bars += 1;
-      }
-      const lead = bare.startsWith("|") ? 1 : 0;
-      const tail =
-        bare.length > 1 && bare.endsWith("|") && !bare.endsWith("\\|") ? 1 : 0;
-      return bars - lead - tail + 1;
-    };
-    const SEPARATOR = /^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/;
-    for (const [name, at] of docSources) {
-      const rows = proseOf(at).split(NEWLINE);
-      for (let i = 0; i + 1 < rows.length; i += 1) {
-        if (!rows[i].trimStart().startsWith("|")) continue;
-        if (!SEPARATOR.test(rows[i + 1])) continue;
-        const width = cellsOf(rows[i]);
-        const sepWidth = cellsOf(rows[i + 1]);
-        if (sepWidth !== width)
-          tableWidthDrift.push(
-            `${name}:${i + 2} — разделитель в ${sepWidth} граф под шапкой в ${width}: таблица не собирается`,
-          );
-        let j = i + 2;
-        for (; j < rows.length && rows[j].trimStart().startsWith("|"); j += 1) {
-          tableRowsLooked += 1;
-          const got = cellsOf(rows[j]);
-          if (got > width)
+        const lead = bare.startsWith("|") ? 1 : 0;
+        const tail =
+          bare.length > 1 && bare.endsWith("|") && !bare.endsWith("\\|")
+            ? 1
+            : 0;
+        return bars - lead - tail + 1;
+      };
+      const SEPARATOR = /^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/;
+      for (const [name, at] of docSources) {
+        const rows = proseOf(at).split(NEWLINE);
+        for (let i = 0; i + 1 < rows.length; i += 1) {
+          if (!rows[i].trimStart().startsWith("|")) continue;
+          if (!SEPARATOR.test(rows[i + 1])) continue;
+          const width = cellsOf(rows[i]);
+          const sepWidth = cellsOf(rows[i + 1]);
+          if (sepWidth !== width)
             tableWidthDrift.push(
-              `${name}:${j + 1} — ячеек ${got} при шапке в ${width}: правее последней графы текст не виден`,
+              `${name}:${i + 2} — разделитель в ${sepWidth} граф под шапкой в ${width}: таблица не собирается`,
             );
-          else if (got < width)
-            tableWidthDrift.push(
-              `${name}:${j + 1} — ячеек ${got} при шапке в ${width}: графа по номеру читается пустой`,
-            );
+          let j = i + 2;
+          for (
+            ;
+            j < rows.length && rows[j].trimStart().startsWith("|");
+            j += 1
+          ) {
+            tableRowsLooked += 1;
+            const got = cellsOf(rows[j]);
+            if (got > width)
+              tableWidthDrift.push(
+                `${name}:${j + 1} — ячеек ${got} при шапке в ${width}: правее последней графы текст не виден`,
+              );
+            else if (got < width)
+              tableWidthDrift.push(
+                `${name}:${j + 1} — ячеек ${got} при шапке в ${width}: графа по номеру читается пустой`,
+              );
+          }
+          i = j - 1;
         }
-        i = j - 1;
       }
     }
-  }
-  checkHead("Строка таблицы по ширине шапки", {
-    n: tableRowsLooked,
-    unit: "строк таблиц прозы",
   });
-  console.log(`  ширина разошлась с шапкой: ${tableWidthDrift.length}`);
-  for (const d of tableWidthDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Строка таблицы по ширине шапки", () => ({
+      n: tableRowsLooked,
+      unit: "строк таблиц прозы",
+    }));
+    console.log(`  ширина разошлась с шапкой: ${tableWidthDrift.length}`);
+    for (const d of tableWidthDrift) console.log("    " + d);
+  });
 
   // 14a-4. Ссылка на критерий планки несёт его заголовок.
   //
@@ -26006,65 +26491,73 @@ if (mode === "verify") {
   // обозначения вроде `P5` бывают именами, а не критериями.
   const critRefDrift = [];
   let critRefs = 0;
-  {
-    const policyFiles = ["rules/quality.md", "rules/quality-scoped.md"]
-      .map((one) => shelfAt(one))
-      .filter((one) => one !== null && existsSync(one));
-    const titles = new Map();
-    for (const f of policyFiles)
-      for (const c of barCriteria(f)) titles.set(c.id, c.title);
-    const plain = (s) =>
-      s
-        .toLowerCase()
-        .split("ё")
-        .join("е")
-        .replace(/[^a-zа-я0-9]+/g, " ")
-        .trim();
-    const policy = new Set(policyFiles.map((one) => norm(one)));
-    const rulesMine = new Set(
-      (CONFIG.rulesManifest?.rules ?? []).map((r) => norm(path.join(BASE, r))),
-    );
-    const ID =
-      /(?<![\wА-Яа-яЁё`-])([A-Z]\d{1,2}(?:-(?:бис|тер))?)(?![\wА-Яа-яЁё-])/g;
-    for (const [name, at, fromShelf] of docSources) {
-      if (policy.has(norm(at))) continue;
-      if (fromShelf !== true && !rulesMine.has(norm(at))) continue;
-      const rows = proseOf(at).split(NEWLINE);
-      // Единица — абзац: заголовок ёлочками законно переносится на строку ниже.
-      for (let i = 0; i < rows.length;) {
-        if (rows[i].trim() === "") {
-          i += 1;
-          continue;
-        }
-        const from = i;
-        const para = [];
-        while (i < rows.length && rows[i].trim() !== "") para.push(rows[i++]);
-        const text = para.join(" ");
-        for (const m of text.matchAll(ID)) {
-          const title = titles.get(m[1]);
-          if (title === undefined) continue;
-          critRefs += 1;
-          const quote = /^\s+«([^»]+)»/.exec(text.slice(m.index + m[0].length));
-          const said = quote === null ? "" : plain(quote[1]);
-          if (said.split(" ").length >= 2 && plain(title).startsWith(said))
+  checkStep(() => {
+    {
+      const policyFiles = ["rules/quality.md", "rules/quality-scoped.md"]
+        .map((one) => shelfAt(one))
+        .filter((one) => one !== null && existsSync(one));
+      const titles = new Map();
+      for (const f of policyFiles)
+        for (const c of barCriteria(f)) titles.set(c.id, c.title);
+      const plain = (s) =>
+        s
+          .toLowerCase()
+          .split("ё")
+          .join("е")
+          .replace(/[^a-zа-я0-9]+/g, " ")
+          .trim();
+      const policy = new Set(policyFiles.map((one) => norm(one)));
+      const rulesMine = new Set(
+        (CONFIG.rulesManifest?.rules ?? []).map((r) =>
+          norm(path.join(BASE, r)),
+        ),
+      );
+      const ID =
+        /(?<![\wА-Яа-яЁё`-])([A-Z]\d{1,2}(?:-(?:бис|тер))?)(?![\wА-Яа-яЁё-])/g;
+      for (const [name, at, fromShelf] of docSources) {
+        if (policy.has(norm(at))) continue;
+        if (fromShelf !== true && !rulesMine.has(norm(at))) continue;
+        const rows = proseOf(at).split(NEWLINE);
+        // Единица — абзац: заголовок ёлочками законно переносится на строку ниже.
+        for (let i = 0; i < rows.length;) {
+          if (rows[i].trim() === "") {
+            i += 1;
             continue;
-          critRefDrift.push(
-            `${name}:${from + 1} — ${m[1]} ` +
-              (quote === null
-                ? "без заголовка ёлочками"
-                : `с заголовком «${quote[1]}», а в политике он «${title}»`) +
-              `. Писать: ${m[1]} «${title}»`,
-          );
+          }
+          const from = i;
+          const para = [];
+          while (i < rows.length && rows[i].trim() !== "") para.push(rows[i++]);
+          const text = para.join(" ");
+          for (const m of text.matchAll(ID)) {
+            const title = titles.get(m[1]);
+            if (title === undefined) continue;
+            critRefs += 1;
+            const quote = /^\s+«([^»]+)»/.exec(
+              text.slice(m.index + m[0].length),
+            );
+            const said = quote === null ? "" : plain(quote[1]);
+            if (said.split(" ").length >= 2 && plain(title).startsWith(said))
+              continue;
+            critRefDrift.push(
+              `${name}:${from + 1} — ${m[1]} ` +
+                (quote === null
+                  ? "без заголовка ёлочками"
+                  : `с заголовком «${quote[1]}», а в политике он «${title}»`) +
+                `. Писать: ${m[1]} «${title}»`,
+            );
+          }
         }
       }
     }
-  }
-  checkHead("Ссылка на критерий планки несёт его заголовок", {
-    n: critRefs,
-    unit: "ссылок на критерии в прозе полки и правил",
   });
-  console.log(`  без своего заголовка: ${critRefDrift.length}`);
-  for (const d of critRefDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Ссылка на критерий планки несёт его заголовок", () => ({
+      n: critRefs,
+      unit: "ссылок на критерии в прозе полки и правил",
+    }));
+    console.log(`  без своего заголовка: ${critRefDrift.length}`);
+    for (const d of critRefDrift) console.log("    " + d);
+  });
 
   // 14a-4-бис. Характеристика качества названа в планке.
   //
@@ -26077,131 +26570,147 @@ if (mode === "verify") {
   // функциональной пригодности в ней не было вовсе.
   const qualityMapDrift = [];
   let qualityMapRows = 0;
-  {
-    const core = shelfAt("rules/quality.md");
-    const files = [core, shelfAt("rules/quality-scoped.md")].filter(
-      (one) => one !== null && existsSync(one),
-    );
-    if (core !== null && existsSync(core)) {
-      const letters = new Set();
-      const ids = new Set();
-      for (const f of files) {
-        for (const m of readFileSync(f, "utf8").matchAll(/^## ([A-Z])\. /gm))
-          letters.add(m[1]);
-        for (const c of barCriteria(f)) ids.add(c.id);
-      }
-      // Первый уровень карты лежит в обосновании, рядом со вторым: на
-      // каждую правку кода его не читают, а сверке он нужен целиком.
-      const mapAt = shelfAt("rationale/quality.md");
-      const lines =
-        mapAt !== null && existsSync(mapAt)
-          ? readFileSync(mapAt, "utf8").split(NEWLINE)
-          : [];
-      const at = lines.findIndex((l) => l.trim() === QUALITY_MAP_HEADING);
-      if (at < 0)
-        qualityMapDrift.push(`шапка карты не найдена: ${QUALITY_MAP_HEADING}`);
-      else {
-        const { rows, problem } = tableAfter(lines, at);
-        if (problem !== null) qualityMapDrift.push(problem);
-        const seen = new Set();
-        const level1 = new Map();
-        for (const row of rows) {
-          qualityMapRows += 1;
-          const [name, held, outside] = row
-            .split("|")
-            .slice(1, -1)
-            .map((c) => c.trim());
-          if (!QUALITY_CHARACTERISTICS.includes(name))
-            qualityMapDrift.push(`«${name}»: такой характеристики в модели нет`);
-          else if (seen.has(name))
-            qualityMapDrift.push(`«${name}»: строка задвоена`);
-          seen.add(name);
-          const named =
-            held === "—"
-              ? []
-              : held.split(",").map((s) => s.trim().replace(/^`|`$/g, ""));
-          level1.set(name, named);
-          for (const one of named)
-            if (!letters.has(one) && !ids.has(one))
-              qualityMapDrift.push(
-                `«${name}»: ${one} — ни раздела, ни критерия с таким именем в планке нет`,
-              );
-          if (named.length === 0 && !(outside ?? "").startsWith("вне планки"))
-            qualityMapDrift.push(
-              `«${name}»: разделов не названо, а третья графа не говорит «вне планки»`,
-            );
+  checkStep(() => {
+    {
+      const core = shelfAt("rules/quality.md");
+      const files = [core, shelfAt("rules/quality-scoped.md")].filter(
+        (one) => one !== null && existsSync(one),
+      );
+      if (core !== null && existsSync(core)) {
+        const letters = new Set();
+        const ids = new Set();
+        for (const f of files) {
+          for (const m of readFileSync(f, "utf8").matchAll(/^## ([A-Z])\. /gm))
+            letters.add(m[1]);
+          for (const c of barCriteria(f)) ids.add(c.id);
         }
-        for (const name of QUALITY_CHARACTERISTICS)
-          if (!seen.has(name))
-            qualityMapDrift.push(`«${name}»: строки в карте нет`);
-        // Второй уровень: строка на каждую подхарактеристику, и критерии
-        // сходятся с первым уровнем в обе стороны — иначе две таблицы
-        // описывали бы планку по-разному.
-        const sub = qualitySubMap();
-        if (sub === null)
+        // Первый уровень карты лежит в обосновании, рядом со вторым: на
+        // каждую правку кода его не читают, а сверке он нужен целиком.
+        const mapAt = shelfAt("rationale/quality.md");
+        const lines =
+          mapAt !== null && existsSync(mapAt)
+            ? readFileSync(mapAt, "utf8").split(NEWLINE)
+            : [];
+        const at = lines.findIndex((l) => l.trim() === QUALITY_MAP_HEADING);
+        if (at < 0)
           qualityMapDrift.push(
-            `таблица подхарактеристик в обосновании не найдена: ${QUALITY_SUBMAP_HEADING}`,
+            `шапка карты не найдена: ${QUALITY_MAP_HEADING}`,
           );
         else {
-          if (sub.problem !== null) qualityMapDrift.push(sub.problem);
-          const letterOf = (one) => (/^[A-Z]/.exec(one) ?? [""])[0];
-          const subSeen = new Set();
-          const used = new Map();
-          for (const r of sub.rows) {
+          const { rows, problem } = tableAfter(lines, at);
+          if (problem !== null) qualityMapDrift.push(problem);
+          const seen = new Set();
+          const level1 = new Map();
+          for (const row of rows) {
             qualityMapRows += 1;
-            const where = `«${r.char} / ${r.sub}»`;
-            const subs = QUALITY_SUBCHARACTERISTICS[r.char];
-            if (subs === undefined) {
-              qualityMapDrift.push(`${where}: такой характеристики в модели нет`);
-              continue;
-            }
-            if (!subs.includes(r.sub)) {
-              qualityMapDrift.push(`${where}: такой подхарактеристики у неё в модели нет`);
-              continue;
-            }
-            if (subSeen.has(r.char + "/" + r.sub))
-              qualityMapDrift.push(`${where}: строка задвоена`);
-            subSeen.add(r.char + "/" + r.sub);
-            const top = level1.get(r.char) ?? [];
-            for (const one of r.named) {
+            const [name, held, outside] = row
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim());
+            if (!QUALITY_CHARACTERISTICS.includes(name))
+              qualityMapDrift.push(
+                `«${name}»: такой характеристики в модели нет`,
+              );
+            else if (seen.has(name))
+              qualityMapDrift.push(`«${name}»: строка задвоена`);
+            seen.add(name);
+            const named =
+              held === "—"
+                ? []
+                : held.split(",").map((s) => s.trim().replace(/^`|`$/g, ""));
+            level1.set(name, named);
+            for (const one of named)
               if (!letters.has(one) && !ids.has(one))
                 qualityMapDrift.push(
-                  `${where}: ${one} — ни раздела, ни критерия с таким именем в планке нет`,
+                  `«${name}»: ${one} — ни раздела, ни критерия с таким именем в планке нет`,
                 );
-              else if (!top.includes(one) && !top.includes(letterOf(one)))
-                qualityMapDrift.push(
-                  `${where}: ${one} не назван строкой «${r.char}» первого уровня`,
-                );
-              const mine = used.get(r.char) ?? new Set();
-              mine.add(one);
-              mine.add(letterOf(one));
-              used.set(r.char, mine);
-            }
-            if (r.named.length === 0 && !r.outside.startsWith("вне планки"))
+            if (named.length === 0 && !(outside ?? "").startsWith("вне планки"))
               qualityMapDrift.push(
-                `${where}: критериев не названо, а последняя графа не говорит «вне планки»`,
+                `«${name}»: разделов не названо, а третья графа не говорит «вне планки»`,
               );
           }
-          for (const [char, subs] of Object.entries(QUALITY_SUBCHARACTERISTICS))
-            for (const one of subs)
-              if (!subSeen.has(char + "/" + one))
-                qualityMapDrift.push(`«${char} / ${one}»: строки во втором уровне нет`);
-          for (const [char, named] of level1)
-            for (const one of named)
-              if (!(used.get(char) ?? new Set()).has(one))
+          for (const name of QUALITY_CHARACTERISTICS)
+            if (!seen.has(name))
+              qualityMapDrift.push(`«${name}»: строки в карте нет`);
+          // Второй уровень: строка на каждую подхарактеристику, и критерии
+          // сходятся с первым уровнем в обе стороны — иначе две таблицы
+          // описывали бы планку по-разному.
+          const sub = qualitySubMap();
+          if (sub === null)
+            qualityMapDrift.push(
+              `таблица подхарактеристик в обосновании не найдена: ${QUALITY_SUBMAP_HEADING}`,
+            );
+          else {
+            if (sub.problem !== null) qualityMapDrift.push(sub.problem);
+            const letterOf = (one) => (/^[A-Z]/.exec(one) ?? [""])[0];
+            const subSeen = new Set();
+            const used = new Map();
+            for (const r of sub.rows) {
+              qualityMapRows += 1;
+              const where = `«${r.char} / ${r.sub}»`;
+              const subs = QUALITY_SUBCHARACTERISTICS[r.char];
+              if (subs === undefined) {
                 qualityMapDrift.push(
-                  `«${char}»: ${one} назван первым уровнем, а ни одной подхарактеристикой — нет`,
+                  `${where}: такой характеристики в модели нет`,
                 );
+                continue;
+              }
+              if (!subs.includes(r.sub)) {
+                qualityMapDrift.push(
+                  `${where}: такой подхарактеристики у неё в модели нет`,
+                );
+                continue;
+              }
+              if (subSeen.has(r.char + "/" + r.sub))
+                qualityMapDrift.push(`${where}: строка задвоена`);
+              subSeen.add(r.char + "/" + r.sub);
+              const top = level1.get(r.char) ?? [];
+              for (const one of r.named) {
+                if (!letters.has(one) && !ids.has(one))
+                  qualityMapDrift.push(
+                    `${where}: ${one} — ни раздела, ни критерия с таким именем в планке нет`,
+                  );
+                else if (!top.includes(one) && !top.includes(letterOf(one)))
+                  qualityMapDrift.push(
+                    `${where}: ${one} не назван строкой «${r.char}» первого уровня`,
+                  );
+                const mine = used.get(r.char) ?? new Set();
+                mine.add(one);
+                mine.add(letterOf(one));
+                used.set(r.char, mine);
+              }
+              if (r.named.length === 0 && !r.outside.startsWith("вне планки"))
+                qualityMapDrift.push(
+                  `${where}: критериев не названо, а последняя графа не говорит «вне планки»`,
+                );
+            }
+            for (const [char, subs] of Object.entries(
+              QUALITY_SUBCHARACTERISTICS,
+            ))
+              for (const one of subs)
+                if (!subSeen.has(char + "/" + one))
+                  qualityMapDrift.push(
+                    `«${char} / ${one}»: строки во втором уровне нет`,
+                  );
+            for (const [char, named] of level1)
+              for (const one of named)
+                if (!(used.get(char) ?? new Set()).has(one))
+                  qualityMapDrift.push(
+                    `«${char}»: ${one} назван первым уровнем, а ни одной подхарактеристикой — нет`,
+                  );
+          }
         }
       }
     }
-  }
-  checkHead("Характеристика качества названа в планке", {
-    n: qualityMapRows,
-    unit: "строк карты характеристик",
   });
-  console.log(`  расхождений с моделью качества: ${qualityMapDrift.length}`);
-  for (const d of qualityMapDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Характеристика качества названа в планке", () => ({
+      n: qualityMapRows,
+      unit: "строк карты характеристик",
+    }));
+    console.log(`  расхождений с моделью качества: ${qualityMapDrift.length}`);
+    for (const d of qualityMapDrift) console.log("    " + d);
+  });
 
   // 14a-5. Таблица состава лежит в одном месте.
   //
@@ -26214,55 +26723,62 @@ if (mode === "verify") {
   // объявляется здесь намеренно: его форму законно повторяет план приведения.
   const tableTwin = [];
   const declaredTables = [];
-  if (CONFIG.skills != null) {
-    declaredTables.push([CONFIG.skills.heading, CONFIG.skills.table]);
-    if (CONFIG.skills.memoHeading != null && CONFIG.skills.memo != null)
-      declaredTables.push([
-        CONFIG.skills.memoHeading,
-        path.join(CONFIG.skills.dir, CONFIG.skills.memo),
-      ]);
-  }
-  if (CONFIG.qualityScope != null)
-    declaredTables.push([
-      CONFIG.qualityScope.heading,
-      CONFIG.qualityScope.table,
-    ]);
-  if (CONFIG.checksTable != null)
-    declaredTables.push([CONFIG.checksTable.heading, CONFIG.checksTable.file]);
-  if (CONFIG.findings != null)
-    declaredTables.push([CONFIG.findings.heading, CONFIG.findings.file]);
-  // Таблица, которой в объявленном файле нет, а есть в другом, — не копия, а
-  // переезд, не дошедший до настройки. Совет «сослаться, а не повторять»
-  // велел бы снять единственный её экземпляр. Замерено обновлением стенда:
-  // таблица сверок переехала из правил в справочник, поле настройки
-  // осталось прежним, и сверка звала справочник копией.
-  for (const [head, file] of declaredTables) {
-    const home = norm(path.join(BASE, file));
-    const atHome =
-      existsSync(home) &&
-      proseOf(home)
-        .split(NEWLINE)
-        .some((line) => line.trim() === head.trim());
-    for (const [name, at] of docSources) {
-      if (norm(at) === home || fromTemplates(at)) continue;
-      proseOf(at)
-        .split(NEWLINE)
-        .forEach((line, i) => {
-          if (line.trim() === head.trim())
-            tableTwin.push(
-              atHome
-                ? `${name}:${i + 1} — копия таблицы, объявленной в ${rel0(home)}. Сослаться на неё, а не повторять`
-                : `${name}:${i + 1} — таблица, объявленная в ${rel0(home)}, лежит здесь, а там её нет. Поправить поле настройки, а не снимать таблицу`,
-            );
-        });
+  checkStep(() => {
+    if (CONFIG.skills != null) {
+      declaredTables.push([CONFIG.skills.heading, CONFIG.skills.table]);
+      if (CONFIG.skills.memoHeading != null && CONFIG.skills.memo != null)
+        declaredTables.push([
+          CONFIG.skills.memoHeading,
+          path.join(CONFIG.skills.dir, CONFIG.skills.memo),
+        ]);
     }
-  }
-  checkHead("Таблица состава лежит в одном месте", {
-    n: declaredTables.length,
-    unit: "таблиц, объявленных настройкой",
+    if (CONFIG.qualityScope != null)
+      declaredTables.push([
+        CONFIG.qualityScope.heading,
+        CONFIG.qualityScope.table,
+      ]);
+    if (CONFIG.checksTable != null)
+      declaredTables.push([
+        CONFIG.checksTable.heading,
+        CONFIG.checksTable.file,
+      ]);
+    if (CONFIG.findings != null)
+      declaredTables.push([CONFIG.findings.heading, CONFIG.findings.file]);
+    // Таблица, которой в объявленном файле нет, а есть в другом, — не копия, а
+    // переезд, не дошедший до настройки. Совет «сослаться, а не повторять»
+    // велел бы снять единственный её экземпляр. Замерено обновлением стенда:
+    // таблица сверок переехала из правил в справочник, поле настройки
+    // осталось прежним, и сверка звала справочник копией.
+    for (const [head, file] of declaredTables) {
+      const home = norm(path.join(BASE, file));
+      const atHome =
+        existsSync(home) &&
+        proseOf(home)
+          .split(NEWLINE)
+          .some((line) => line.trim() === head.trim());
+      for (const [name, at] of docSources) {
+        if (norm(at) === home || fromTemplates(at)) continue;
+        proseOf(at)
+          .split(NEWLINE)
+          .forEach((line, i) => {
+            if (line.trim() === head.trim())
+              tableTwin.push(
+                atHome
+                  ? `${name}:${i + 1} — копия таблицы, объявленной в ${rel0(home)}. Сослаться на неё, а не повторять`
+                  : `${name}:${i + 1} — таблица, объявленная в ${rel0(home)}, лежит здесь, а там её нет. Поправить поле настройки, а не снимать таблицу`,
+              );
+          });
+      }
+    }
   });
-  console.log(`  таблиц вне своего файла: ${tableTwin.length}`);
-  for (const d of tableTwin) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Таблица состава лежит в одном месте", () => ({
+      n: declaredTables.length,
+      unit: "таблиц, объявленных настройкой",
+    }));
+    console.log(`  таблиц вне своего файла: ${tableTwin.length}`);
+    for (const d of tableTwin) console.log("    " + d);
+  });
 
   // 14a-6. Перечень папок полки полный.
   //
@@ -26280,54 +26796,56 @@ if (mode === "verify") {
   // знать не обязано и не может.
   const shelfListGap = [];
   let shelfLists = 0;
-  if (IN_TEST_SEAT && SHELF !== null) {
-    const mapAt = shelfAt("seat/map.json");
-    const skipOwn = new Set(
-      (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
-        .projectOwnedInsideHarness ?? [],
-    );
-    const tops = readdirSync(SHELF)
-      .filter((e) => !OUT_OF_TREE.has(e) && !skipOwn.has(e))
-      .filter((e) => statSync(path.join(SHELF, e)).isDirectory())
-      .sort();
-    for (const [name, at] of docSources) {
-      const rows = proseOf(at).split(NEWLINE);
-      const units = [];
-      let unit = null;
-      rows.forEach((line, i) => {
-        const bare = line.trim();
-        const kind = bare === "" ? null : bare.startsWith("|") ? "t" : "p";
-        if (unit !== null && kind !== unit.kind) {
-          units.push(unit);
-          unit = null;
-        }
-        if (kind === null) return;
-        if (unit === null) unit = { kind, from: i, text: "" };
-        unit.text += " " + line;
-      });
-      if (unit !== null) units.push(unit);
-      for (const u of units) {
-        // Папка считается пунктом перечня, когда за её адресом идёт описание —
-        // тире либо граница ячейки. Упоминание внутри определения перечнем не
-        // является: словарь называет папку доктрины, определяя доктрину.
-        const said = tops.filter((t) =>
-          new RegExp("`(?:\\.claude/)?" + t + "/[^`]*`\\s*(?:—|\\|)").test(
-            u.text,
-          ),
-        );
-        if (said.length < 3) continue;
-        shelfLists += 1;
-        if (said.length < tops.length)
-          shelfListGap.push(
-            `${name}:${u.from + 1} — перечень папок полки без ` +
-              tops
-                .filter((t) => !said.includes(t))
-                .map((t) => "`" + t + "/`")
-                .join(", "),
+  checkStep(() => {
+    if (IN_TEST_SEAT && SHELF !== null) {
+      const mapAt = shelfAt("seat/map.json");
+      const skipOwn = new Set(
+        (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+          .projectOwnedInsideHarness ?? [],
+      );
+      const tops = readdirSync(SHELF)
+        .filter((e) => !OUT_OF_TREE.has(e) && !skipOwn.has(e))
+        .filter((e) => statSync(path.join(SHELF, e)).isDirectory())
+        .sort();
+      for (const [name, at] of docSources) {
+        const rows = proseOf(at).split(NEWLINE);
+        const units = [];
+        let unit = null;
+        rows.forEach((line, i) => {
+          const bare = line.trim();
+          const kind = bare === "" ? null : bare.startsWith("|") ? "t" : "p";
+          if (unit !== null && kind !== unit.kind) {
+            units.push(unit);
+            unit = null;
+          }
+          if (kind === null) return;
+          if (unit === null) unit = { kind, from: i, text: "" };
+          unit.text += " " + line;
+        });
+        if (unit !== null) units.push(unit);
+        for (const u of units) {
+          // Папка считается пунктом перечня, когда за её адресом идёт описание —
+          // тире либо граница ячейки. Упоминание внутри определения перечнем не
+          // является: словарь называет папку доктрины, определяя доктрину.
+          const said = tops.filter((t) =>
+            new RegExp("`(?:\\.claude/)?" + t + "/[^`]*`\\s*(?:—|\\|)").test(
+              u.text,
+            ),
           );
+          if (said.length < 3) continue;
+          shelfLists += 1;
+          if (said.length < tops.length)
+            shelfListGap.push(
+              `${name}:${u.from + 1} — перечень папок полки без ` +
+                tops
+                  .filter((t) => !said.includes(t))
+                  .map((t) => "`" + t + "/`")
+                  .join(", "),
+            );
+        }
       }
     }
-  }
+  });
   // 14a-7. Файлы обвязки видны git.
   //
   // Обвязка — файлы проекта: едут с ним коммитом и клоном. Файл полки под
@@ -26340,79 +26858,84 @@ if (mode === "verify") {
   const sandboxOpen = [];
   let shelfFilesLooked = 0;
   let shelfGitBlind = false;
-  if (SHELF !== null) {
-    const mapAt = shelfAt("seat/map.json");
-    const own = new Set(
-      (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
-        .projectOwnedInsideHarness ?? [],
-    );
-    const list = [];
-    (function walkShelfFiles(dir) {
-      for (const e of readdirSync(dir)) {
-        if (OUT_OF_TREE.has(e)) continue;
-        const full = path.join(dir, e);
-        const inShelf = path.relative(SHELF, full).split(path.sep).join("/");
-        if (own.has(inShelf)) continue;
-        if (statSync(full).isDirectory()) walkShelfFiles(full);
-        else list.push(path.relative(REPO_AT, full).split(path.sep).join("/"));
-      }
-    })(SHELF);
-    shelfFilesLooked = list.length;
-    try {
-      // `--no-index`: правило спрашивается и с отслеживаемого файла. Он сам
-      // едет, но правило поджидает следующий: переименованный вслед за
-      // семенем файл новый, и под правилом он уже не отслеживается.
-      const out = execFileSync(
-        "git",
-        ["check-ignore", "--no-index", "--stdin"],
-        {
-          cwd: REPO_AT,
-          encoding: "utf8",
-          input: list.join(NEWLINE) + NEWLINE,
-          stdio: ["pipe", "pipe", "ignore"],
-        },
+  checkStep(() => {
+    if (SHELF !== null) {
+      const mapAt = shelfAt("seat/map.json");
+      const own = new Set(
+        (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+          .projectOwnedInsideHarness ?? [],
       );
-      for (const one of out.split(NEWLINE).filter(Boolean))
-        shelfHidden.push(
-          one.trim() +
-            " — файл обвязки под правилом игнорирования: новый либо переименованный в клон не уедет",
-        );
-    } catch (e) {
-      // Код 1 у `check-ignore` значит «ничего не скрыто»; иное — git
-      // недоступен или репозитория нет, и тогда это слепота, а не чистота.
-      if (e.status !== 1) shelfGitBlind = true;
-    }
-    // Обратная сторона: песочницы, которые порождает сам инструмент, от git
-    // СКРЫТЫ. Каждая — полная копия дерева и живёт минутами, и коммит,
-    // сделанный в это время из соседней консоли, захватил бы копию проекта
-    // целиком. Песочница мутаций была в семени игнорирования, а песочница
-    // фальсификации — нет: замерено `git status` мастерской посреди прогона.
-    if (!shelfGitBlind)
-      for (const dir of [".проба-сверок", ".stryker-tmp"]) {
-        try {
-          execFileSync("git", ["check-ignore", "--no-index", "-q", dir], {
-            cwd: REPO_AT,
-            stdio: ["ignore", "ignore", "ignore"],
-          });
-        } catch (e) {
-          if (e.status === 1)
-            sandboxOpen.push(
-              dir +
-                " — песочница инструмента не скрыта от git: коммит во время прогона захватит копию проекта. Дописать в .gitignore",
-            );
+      const list = [];
+      (function walkShelfFiles(dir) {
+        for (const e of readdirSync(dir)) {
+          if (OUT_OF_TREE.has(e)) continue;
+          const full = path.join(dir, e);
+          const inShelf = path.relative(SHELF, full).split(path.sep).join("/");
+          if (own.has(inShelf)) continue;
+          if (statSync(full).isDirectory()) walkShelfFiles(full);
+          else
+            list.push(path.relative(REPO_AT, full).split(path.sep).join("/"));
         }
+      })(SHELF);
+      shelfFilesLooked = list.length;
+      try {
+        // `--no-index`: правило спрашивается и с отслеживаемого файла. Он сам
+        // едет, но правило поджидает следующий: переименованный вслед за
+        // семенем файл новый, и под правилом он уже не отслеживается.
+        const out = execFileSync(
+          "git",
+          ["check-ignore", "--no-index", "--stdin"],
+          {
+            cwd: REPO_AT,
+            encoding: "utf8",
+            input: list.join(NEWLINE) + NEWLINE,
+            stdio: ["pipe", "pipe", "ignore"],
+          },
+        );
+        for (const one of out.split(NEWLINE).filter(Boolean))
+          shelfHidden.push(
+            one.trim() +
+              " — файл обвязки под правилом игнорирования: новый либо переименованный в клон не уедет",
+          );
+      } catch (e) {
+        // Код 1 у `check-ignore` значит «ничего не скрыто»; иное — git
+        // недоступен или репозитория нет, и тогда это слепота, а не чистота.
+        if (e.status !== 1) shelfGitBlind = true;
       }
-  }
-  checkHead("Файлы обвязки видны git", {
-    n: shelfFilesLooked,
-    unit: "файлов обвязки",
+      // Обратная сторона: песочницы, которые порождает сам инструмент, от git
+      // СКРЫТЫ. Каждая — полная копия дерева и живёт минутами, и коммит,
+      // сделанный в это время из соседней консоли, захватил бы копию проекта
+      // целиком. Песочница мутаций была в семени игнорирования, а песочница
+      // фальсификации — нет: замерено `git status` мастерской посреди прогона.
+      if (!shelfGitBlind)
+        for (const dir of [".проба-сверок", ".stryker-tmp"]) {
+          try {
+            execFileSync("git", ["check-ignore", "--no-index", "-q", dir], {
+              cwd: REPO_AT,
+              stdio: ["ignore", "ignore", "ignore"],
+            });
+          } catch (e) {
+            if (e.status === 1)
+              sandboxOpen.push(
+                dir +
+                  " — песочница инструмента не скрыта от git: коммит во время прогона захватит копию проекта. Дописать в .gitignore",
+              );
+          }
+        }
+    }
   });
-  console.log(
-    shelfGitBlind
-      ? "  репозитория нет либо git недоступен — не сверено"
-      : `  скрытых от git: ${shelfHidden.length}, песочниц на виду: ${sandboxOpen.length}`,
-  );
-  for (const d of [...shelfHidden, ...sandboxOpen]) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Файлы обвязки видны git", () => ({
+      n: shelfFilesLooked,
+      unit: "файлов обвязки",
+    }));
+    console.log(
+      shelfGitBlind
+        ? "  репозитория нет либо git недоступен — не сверено"
+        : `  скрытых от git: ${shelfHidden.length}, песочниц на виду: ${sandboxOpen.length}`,
+    );
+    for (const d of [...shelfHidden, ...sandboxOpen]) console.log("    " + d);
+  });
 
   // 14a-8. Концы строк рабочего дерева сходятся с объявленными.
   //
@@ -26426,47 +26949,52 @@ if (mode === "verify") {
   const eolDrift = [];
   let eolLooked = 0;
   let eolBlind = false;
-  try {
-    const rows = execFileSync("git", ["ls-files", "--eol", "-z"], {
-      cwd: REPO_AT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 64 * 1024 * 1024,
-    }).split("\0");
-    for (const row of rows) {
-      const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\/(.*?)\t(.+)$/.exec(row);
-      if (m === null) continue;
-      if (!/eol=lf/.test(m[3])) continue;
-      eolLooked += 1;
-      if (m[2] === "crlf" || m[2] === "mixed")
-        eolDrift.push(
-          `${m[4]} — объявлен LF, а в рабочем дереве ${m[2] === "crlf" ? "CRLF" : "концы вперемешку"}: не тронутый правкой файл выписать заново из индекса`,
-        );
+  checkStep(() => {
+    try {
+      const rows = execFileSync("git", ["ls-files", "--eol", "-z"], {
+        cwd: REPO_AT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024,
+      }).split("\0");
+      for (const row of rows) {
+        const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\/(.*?)\t(.+)$/.exec(row);
+        if (m === null) continue;
+        if (!/eol=lf/.test(m[3])) continue;
+        eolLooked += 1;
+        if (m[2] === "crlf" || m[2] === "mixed")
+          eolDrift.push(
+            `${m[4]} — объявлен LF, а в рабочем дереве ${m[2] === "crlf" ? "CRLF" : "концы вперемешку"}: не тронутый правкой файл выписать заново из индекса`,
+          );
+      }
+    } catch {
+      eolBlind = true;
     }
-  } catch {
-    eolBlind = true;
-  }
-  checkHead("Концы строк рабочего дерева сходятся с объявленными", {
-    n: eolLooked,
-    unit: "файлов с объявленным LF",
   });
-  console.log(
-    eolBlind
-      ? "  репозитория нет либо git недоступен — не сверено"
-      : `  расходятся: ${eolDrift.length}`,
-  );
-  for (const d of eolDrift) console.log("    " + d);
-
-  checkHead("Перечень папок полки полный", {
-    n: shelfLists,
-    unit: "перечней папок полки",
+  checkStep(() => {
+    checkHead("Концы строк рабочего дерева сходятся с объявленными", () => ({
+      n: eolLooked,
+      unit: "файлов с объявленным LF",
+    }));
+    console.log(
+      eolBlind
+        ? "  репозитория нет либо git недоступен — не сверено"
+        : `  расходятся: ${eolDrift.length}`,
+    );
+    for (const d of eolDrift) console.log("    " + d);
   });
-  console.log(
-    IN_TEST_SEAT
-      ? `  неполных: ${shelfListGap.length}`
-      : IDLE_NOTES["Перечень папок полки полный"],
-  );
-  for (const d of shelfListGap) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Перечень папок полки полный", () => ({
+      n: shelfLists,
+      unit: "перечней папок полки",
+    }));
+    console.log(
+      IN_TEST_SEAT
+        ? `  неполных: ${shelfListGap.length}`
+        : IDLE_NOTES["Перечень папок полки полный"],
+    );
+    for (const d of shelfListGap) console.log("    " + d);
+  });
 
   // Тесты, которым решением разрешено лежать вне своей папки. Считается ЗДЕСЬ,
   // а печатается сверкой «Тесты лежат в `tests/`» ниже: мёртвое исключение
@@ -26479,35 +27007,42 @@ if (mode === "verify") {
   // порог разросшихся списков срабатывал на законном, а новый тест краснел,
   // пока его не вписали. Замерено посадкой в живое приложение: пятнадцать
   // записей на одну раскладку. Решение при этом уже принималось про папку.
-  const testsOutsideRules = (CONFIG.testsOutside ?? []).map((one) => {
-    if (one.includes("*")) {
-      const test = globsToTest([one]);
-      return {
-        one,
-        hit: (f) => test(path.relative(REPO, f).split(path.sep).join("/")),
-      };
-    }
-    const at = norm(path.join(REPO, one));
-    return one.endsWith("/")
-      ? { one, hit: (f) => f.startsWith(at + "/") }
-      : { one, hit: (f) => f === at };
-  });
-  const testsOutsideHit = (f) => testsOutsideRules.some((r) => r.hit(f));
-  const testsOutsideUsed = new Set(
-    files.filter((f) => isTestPath(f) && testsOutsideHit(f)),
+  const testsOutsideRules = checkStep(() =>
+    (CONFIG.testsOutside ?? []).map((one) => {
+      if (one.includes("*")) {
+        const test = globsToTest([one]);
+        return {
+          one,
+          hit: (f) => test(path.relative(REPO, f).split(path.sep).join("/")),
+        };
+      }
+      const at = norm(path.join(REPO, one));
+      return one.endsWith("/")
+        ? { one, hit: (f) => f.startsWith(at + "/") }
+        : { one, hit: (f) => f === at };
+    }),
   );
-  for (const r of testsOutsideRules)
-    if (![...testsOutsideUsed].some((f) => r.hit(f)))
-      deadExceptions.push(
-        "тест вне своей папки: " + r.one + " — ничего не исключает",
-      );
-
-  checkHead("Исключения сверок используются", {
-    n: (CONFIG.testsOutside ?? []).length + (CONFIG.corpusOutside ?? []).length,
-    unit: "объявленных исключений",
+  const testsOutsideHit = (f) => testsOutsideRules.some((r) => r.hit(f));
+  const testsOutsideUsed = checkStep(
+    () => new Set(files.filter((f) => isTestPath(f) && testsOutsideHit(f))),
+  );
+  checkStep(() => {
+    for (const r of testsOutsideRules)
+      if (![...testsOutsideUsed].some((f) => r.hit(f)))
+        deadExceptions.push(
+          "тест вне своей папки: " + r.one + " — ничего не исключает",
+        );
   });
-  console.log(`  мёртвых исключений: ${deadExceptions.length}`);
-  for (const d of deadExceptions) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Исключения сверок используются", () => ({
+      n:
+        (CONFIG.testsOutside ?? []).length +
+        (CONFIG.corpusOutside ?? []).length,
+      unit: "объявленных исключений",
+    }));
+    console.log(`  мёртвых исключений: ${deadExceptions.length}`);
+    for (const d of deadExceptions) console.log("    " + d);
+  });
 
   // 14a. Списки исключений не разрослись.
   //
@@ -26526,8 +27061,8 @@ if (mode === "verify") {
   // **Предупреждает, а не роняет.** Иначе у превышения появился бы дешёвый
   // ответ — удалить нужную запись ради зелёного, — и сверка ослепла бы
   // по-настоящему. Решение принимает разработчик, как с версиями среды.
-  const excLimit = CONFIG.exceptionLimit ?? 0;
-  const excLists = [
+  const excLimit = checkStep(() => CONFIG.exceptionLimit ?? 0);
+  const excLists = checkStep(() => [
     [
       "адреса в обратных кавычках",
       (CONFIG.docPathExceptions ?? []).length,
@@ -26553,27 +27088,30 @@ if (mode === "verify") {
       (CONFIG.testsOutside ?? []).length,
       "перенести тесты в папку слоя, а не копить исключения",
     ],
-  ];
-  const excTotal = excLists.reduce((n, one) => n + one[1], 0);
-  const overgrown =
-    excLimit === 0 ? [] : excLists.filter((one) => one[1] > excLimit);
-  checkHead(
-    "Списки исключений не разрослись (предупреждение, прогон не роняет)",
-    {
-      n: excLists.length,
-      unit: "списков исключений",
-    },
+  ]);
+  const excTotal = checkStep(() => excLists.reduce((n, one) => n + one[1], 0));
+  const overgrown = checkStep(() =>
+    excLimit === 0 ? [] : excLists.filter((one) => one[1] > excLimit),
   );
-  console.log(
-    excLimit === 0
-      ? "  порог не объявлен"
-      : overgrown.length === 0
-        ? `  всего исключений: ${excTotal}, порог на список: ${excLimit}`
-        : `  списков сверх порога: ${overgrown.length}.` +
-          " Чинить надо то, что породило класс; прогон это не роняет",
-  );
-  for (const [what, count, fix] of overgrown)
-    console.log(`    ${what}: ${count} при пороге ${excLimit} — ${fix}`);
+  checkStep(() => {
+    checkHead(
+      "Списки исключений не разрослись (предупреждение, прогон не роняет)",
+      () => ({
+        n: excLists.length,
+        unit: "списков исключений",
+      }),
+    );
+    console.log(
+      excLimit === 0
+        ? "  порог не объявлен"
+        : overgrown.length === 0
+          ? `  всего исключений: ${excTotal}, порог на список: ${excLimit}`
+          : `  списков сверх порога: ${overgrown.length}.` +
+            " Чинить надо то, что породило класс; прогон это не роняет",
+    );
+    for (const [what, count, fix] of overgrown)
+      console.log(`    ${what}: ${count} при пороге ${excLimit} — ${fix}`);
+  });
 
   // 15. ALL_CAPS-имя в обратных кавычках существует в исходниках.
   // Константы база называет поимённо, и переименование оставляет в тексте имя,
@@ -26585,12 +27123,16 @@ if (mode === "verify") {
   // а имени в коде уже нет. Найдено пробой. Комментарий узнаётся тем же
   // помощником, что и пометки решений: два способа отличать комментарий от кода
   // однажды разошлись бы.
-  const WORK_MARKERS = new Set(["TODO", "FIXME", "HACK", "XXX"]);
+  const WORK_MARKERS = checkStep(
+    () => new Set(["TODO", "FIXME", "HACK", "XXX"]),
+  );
   const liveNames = new Set();
-  for (const f of [...files, ...styleFiles])
-    for (const line of readFileSync(f, "utf8").split(NEWLINE))
-      for (const hit of line.matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g))
-        if (!inComment(line, hit.index)) liveNames.add(hit[0]);
+  checkStep(() => {
+    for (const f of [...files, ...styleFiles])
+      for (const line of readFileSync(f, "utf8").split(NEWLINE))
+        for (const hit of line.matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g))
+          if (!inComment(line, hit.index)) liveNames.add(hit[0]);
+  });
 
   // 15b. имя в camelCase, названное базой в кода-спане, существует.
   //
@@ -26611,27 +27153,33 @@ if (mode === "verify") {
   // собственное эхо — ровно как было у заглавных имён: объяснение этой самой
   // проверки, где имя названо в комментарии, удерживало его «живым», и полное
   // переименование по коду проходило зелёным. Поймано на первой же фальсификации.
-  const CAMEL_NAME = /^[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*$/;
-  const CAMEL_TOKEN = /\b[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b/g;
+  const CAMEL_NAME = checkStep(() => /^[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*$/);
+  const CAMEL_TOKEN = checkStep(
+    () => /\b[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b/g,
+  );
   const liveCamel = new Set();
   const fileStems = new Set();
-  (function walkNames(dir) {
-    for (const entry of readdirSync(dir)) {
-      if (OUT_OF_TREE.has(entry)) continue;
-      const full = norm(path.join(dir, entry));
-      if (statSync(full).isDirectory()) walkNames(full);
-      else {
-        // Книга посадок — не исходник: её имена делали бы живым посаженное.
-        if (PLANT_BOOK.test(full)) continue;
-        fileStems.add(entry.replace(/\.[a-z.]+$/, ""));
-        if (!new RegExp("\\.(" + CODE_STYLE_ALT + "|mjs|js|json)$").test(entry))
-          continue;
-        for (const line of readFileSync(full, "utf8").split(NEWLINE))
-          for (const hit of line.matchAll(CAMEL_TOKEN))
-            if (!inComment(line, hit.index)) liveCamel.add(hit[0]);
+  checkStep(() => {
+    (function walkNames(dir) {
+      for (const entry of readdirSync(dir)) {
+        if (OUT_OF_TREE.has(entry)) continue;
+        const full = norm(path.join(dir, entry));
+        if (statSync(full).isDirectory()) walkNames(full);
+        else {
+          // Книга посадок — не исходник: её имена делали бы живым посаженное.
+          if (PLANT_BOOK.test(full)) continue;
+          fileStems.add(entry.replace(/\.[a-z.]+$/, ""));
+          if (
+            !new RegExp("\\.(" + CODE_STYLE_ALT + "|mjs|js|json)$").test(entry)
+          )
+            continue;
+          for (const line of readFileSync(full, "utf8").split(NEWLINE))
+            for (const hit of line.matchAll(CAMEL_TOKEN))
+              if (!inComment(line, hit.index)) liveCamel.add(hit[0]);
+        }
       }
-    }
-  })(norm(path.join(BASE, "..")));
+    })(norm(path.join(BASE, "..")));
+  });
   const goneCamel = [];
   const foreignUsed = new Set();
   let camelTokens = 0;
@@ -26643,52 +27191,57 @@ if (mode === "verify") {
   // доктрине проверяются как раз наоборот — они обязаны разрешаться, и глубокий
   // обход туда заведён именно за этим. Найдено пробой: обход втянул доктрину
   // сразу в обе сверки, и во второй он был неправ.
-  const nameSources = docSources.filter(
-    ([, , fromShelf]) => fromShelf !== true,
+  const nameSources = checkStep(() =>
+    docSources.filter(([, , fromShelf]) => fromShelf !== true),
   );
-  for (const [name, at] of nameSources)
-    for (const [i, line] of proseOf(at).split(NEWLINE).entries())
-      for (const span of line.split(BACKTICK).filter((_, k) => k % 2 === 1)) {
-        const tok = span.trim();
-        if (!CAMEL_NAME.test(tok) || fileStems.has(tok)) continue;
-        if ((CONFIG.foreignNames ?? []).includes(tok)) {
-          foreignUsed.add(tok);
-          continue;
+  checkStep(() => {
+    for (const [name, at] of nameSources)
+      for (const [i, line] of proseOf(at).split(NEWLINE).entries())
+        for (const span of line.split(BACKTICK).filter((_, k) => k % 2 === 1)) {
+          const tok = span.trim();
+          if (!CAMEL_NAME.test(tok) || fileStems.has(tok)) continue;
+          if ((CONFIG.foreignNames ?? []).includes(tok)) {
+            foreignUsed.add(tok);
+            continue;
+          }
+          camelTokens++;
+          if (!liveCamel.has(tok)) goneCamel.push(`${name}:${i + 1} — ${tok}`);
         }
-        camelTokens++;
-        if (!liveCamel.has(tok)) goneCamel.push(`${name}:${i + 1} — ${tok}`);
-      }
-  for (const one of CONFIG.foreignNames ?? [])
-    if (!foreignUsed.has(one))
-      deadExceptions.push(`имена из чужих API: ${one} — ничего не гасит`);
-
-  checkHead("Имена из кода в тексте", {
-    n: camelTokens,
-    unit: "имён из кода в тексте",
+    for (const one of CONFIG.foreignNames ?? [])
+      if (!foreignUsed.has(one))
+        deadExceptions.push(`имена из чужих API: ${one} — ничего не гасит`);
   });
-  console.log(`  нет в исходниках: ${goneCamel.length}`);
-  for (const g of goneCamel) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Имена из кода в тексте", () => ({
+      n: camelTokens,
+      unit: "имён из кода в тексте",
+    }));
+    console.log(`  нет в исходниках: ${goneCamel.length}`);
+    for (const g of goneCamel) console.log("    " + g);
+  });
   const goneNames = [];
   let capsTokens = 0;
-  for (const [name, at] of nameSources) {
-    // Имя ищется ВНУТРИ кода-спана, а не «в кавычках целиком»: база пишет и
-    // `NAME`, и `NAME = 400`, и вторая форма при сверке по целому спану
-    // молча не проверялась бы — на ней проверка и попалась при фальсификации.
-    for (const span of proseOf(at).matchAll(/`([^`\n]+)`/g)) {
-      // Только СОСТАВНОЕ имя, и не часть имени файла. Односложные заглавные
-      // слова в тексте — это `CLAUDE.md`, `LOCALAPPDATA`, `PIPESTATUS`: имена
-      // не из исходников, и проверять их здесь значило бы шуметь. Подчёркивание
-      // отделяет константу проекта от такого слова надёжнее любого списка.
-      for (const hit of span[1].matchAll(
-        /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g,
-      )) {
-        if (WORK_MARKERS.has(hit[0])) continue;
-        if (span[1][hit.index + hit[0].length] === ".") continue;
-        capsTokens++;
-        if (!liveNames.has(hit[0])) goneNames.push(`${name}: ${hit[0]}`);
+  checkStep(() => {
+    for (const [name, at] of nameSources) {
+      // Имя ищется ВНУТРИ кода-спана, а не «в кавычках целиком»: база пишет и
+      // `NAME`, и `NAME = 400`, и вторая форма при сверке по целому спану
+      // молча не проверялась бы — на ней проверка и попалась при фальсификации.
+      for (const span of proseOf(at).matchAll(/`([^`\n]+)`/g)) {
+        // Только СОСТАВНОЕ имя, и не часть имени файла. Односложные заглавные
+        // слова в тексте — это `CLAUDE.md`, `LOCALAPPDATA`, `PIPESTATUS`: имена
+        // не из исходников, и проверять их здесь значило бы шуметь. Подчёркивание
+        // отделяет константу проекта от такого слова надёжнее любого списка.
+        for (const hit of span[1].matchAll(
+          /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g,
+        )) {
+          if (WORK_MARKERS.has(hit[0])) continue;
+          if (span[1][hit.index + hit[0].length] === ".") continue;
+          capsTokens++;
+          if (!liveNames.has(hit[0])) goneNames.push(`${name}: ${hit[0]}`);
+        }
       }
     }
-  }
+  });
   // 15a. счёт сущностей, записанный голой прозой базы.
   //
   // Правило простое: число, которое едет от любой правки, в базе не пишут.
@@ -26737,56 +27290,63 @@ if (mode === "verify") {
   // «четыре пропа» при пяти в контракте, и сверка молчала, потому что искала
   // цифру. Ограничитель общий с цифрой — существительное из списка выше, иначе
   // «две стороны» и «три причины» краснели бы на законной прозе.
-  const NUM_WORD =
-    "дв(?:а|е|ух|ум|умя)" +
-    "|" +
-    "тр(?:и|ёх|ем|емя|ём)" +
-    "|" +
-    "четыр(?:е|ёх|ьмя|ем)" +
-    "|" +
-    "пят(?:ь|и|ью)" +
-    "|" +
-    "шест(?:ь|и|ью)" +
-    "|" +
-    "сем(?:ь|и|ью)" +
-    "|" +
-    "вос(?:емь|ьми|емью)" +
-    "|" +
-    "девят(?:ь|и|ью)" +
-    "|" +
-    "десят(?:ь|и|ью)" +
-    "|" +
-    "(?:один|две|три|четыр|пят|шест|сем|восем|девят)надцат(?:ь|и|ью)" +
-    "|" +
-    "двадцат(?:ь|и|ью)" +
-    "|" +
-    "тридцат(?:ь|и|ью)" +
-    "|" +
-    "сорок(?:а)?" +
-    "|" +
-    "пятидесяти" +
-    "|" +
-    "пятьдесят" +
-    "|" +
-    "ст(?:о|а)";
-  const PROSE_NUM = new RegExp(
-    // Цифра, перед которой буква либо дефис, — часть имени (`G7`, `A1-тер`,
-    // `v2`), а не счёт: обозначение критерия краснело как голое число.
-    `(?:(?<![A-Za-zА-Яа-яЁё\\d-])\\d[\\d.,]*|(?<![а-яёa-z])(?:${NUM_WORD})(?![а-яё]))\\s+(?:[а-яё]+\\s+)?[а-яё]*(?:${NUM_NOUN})[а-яё]*`,
-    "gi",
+  const NUM_WORD = checkStep(
+    () =>
+      "дв(?:а|е|ух|ум|умя)" +
+      "|" +
+      "тр(?:и|ёх|ем|емя|ём)" +
+      "|" +
+      "четыр(?:е|ёх|ьмя|ем)" +
+      "|" +
+      "пят(?:ь|и|ью)" +
+      "|" +
+      "шест(?:ь|и|ью)" +
+      "|" +
+      "сем(?:ь|и|ью)" +
+      "|" +
+      "вос(?:емь|ьми|емью)" +
+      "|" +
+      "девят(?:ь|и|ью)" +
+      "|" +
+      "десят(?:ь|и|ью)" +
+      "|" +
+      "(?:один|две|три|четыр|пят|шест|сем|восем|девят)надцат(?:ь|и|ью)" +
+      "|" +
+      "двадцат(?:ь|и|ью)" +
+      "|" +
+      "тридцат(?:ь|и|ью)" +
+      "|" +
+      "сорок(?:а)?" +
+      "|" +
+      "пятидесяти" +
+      "|" +
+      "пятьдесят" +
+      "|" +
+      "ст(?:о|а)",
   );
-  const DECLARED_NUM = [
+  const PROSE_NUM = checkStep(
+    () =>
+      new RegExp(
+        // Цифра, перед которой буква либо дефис, — часть имени (`G7`, `A1-тер`,
+        // `v2`), а не счёт: обозначение критерия краснело как голое число.
+        `(?:(?<![A-Za-zА-Яа-яЁё\\d-])\\d[\\d.,]*|(?<![а-яёa-z])(?:${NUM_WORD})(?![а-яё]))\\s+(?:[а-яё]+\\s+)?[а-яё]*(?:${NUM_NOUN})[а-яё]*`,
+        "gi",
+      ),
+  );
+  const DECLARED_NUM = checkStep(() => [
     /\(\d+\s+файл[аов]*\)/,
     /—\s+\d+\s+файл[аов]*/,
     /\d+\s+импортёр[а-я]*\s*\(\+\d+/,
-  ];
+  ]);
   // Нумерация: в начале строки, после маркера списка, после решётки заголовка
   // или сразу за вертикальной чертой таблицы. И номер записи в заголовке —
   // «## Вопрос 12. …», «### Пункт 10. …» — вместе со ссылкой на такой раздел
   // ёлочками: номер двузначный, и слово за ним из списка счёта, — прогон
   // краснел на заголовке. Замерено планом перехода стенда.
-  const NUMBERING =
-    /(^|[-*|#]\s*|\*\*|(?:^#+|«)\s*[А-ЯЁA-Z][а-яёa-z]+\s+)[A-ZА-Я]?\d+\.\s/g;
+  const NUMBERING = checkStep(
+    () =>
+      /(^|[-*|#]\s*|\*\*|(?:^#+|«)\s*[А-ЯЁA-Z][а-яёa-z]+\s+)[A-ZА-Я]?\d+\.\s/g,
+  );
   const outsideTicks = (line) =>
     line
       .split(BACKTICK)
@@ -26800,35 +27360,37 @@ if (mode === "verify") {
   // сверка адресов, наоборот, в подпапку заходит: адрес обязан разрешаться, а
   // число — нет. Разница названа здесь, чтобы следующий заход не «починил»
   // обход, приняв его за недосмотр.
-  for (const name of readdirSync(BASE)) {
-    if (!name.endsWith(".md")) continue;
-    // Протокол свода не спрашивается, и это не поблажка, а развязка тупика:
-    // форму протокола проверяет сам режим `bar`, а печать — отпечаток всего,
-    // что ниже неё. Требование этой сверки переписать в нём слово исполнить
-    // нельзя: правка после печати её гасит, а заново печать ставится только
-    // поверх ПУСТОГО скелета — то есть ценой всех ста пятидесяти трёх строк.
-    // Замерено на стенде: сверка потребовала объявить счёт формой, протокол
-    // был закрыт, и выхода из этой пары не было ни одного. Имя — из поля
-    // настройки: проект, назвавший протокол иначе, иначе получал бы ту же
-    // пару без выхода.
-    if (name === CONFIG.barProtocol) continue;
-    let inBaseline = false;
-    // Образец в ограде кода — не запись базы: счёт в нём показан, а не заявлен.
-    for (const [i, line] of proseOf(path.join(BASE, name))
-      .split(NEWLINE)
-      .entries()) {
-      if (/^##\s/.test(line))
-        inBaseline = (CONFIG.baselineSections ?? []).some((one) =>
-          line.includes(one),
-        );
-      if (inBaseline) continue;
-      if (DECLARED_NUM.some((rx) => rx.test(line))) continue;
-      const bare = outsideTicks(line).replace(NUMBERING, " ");
-      const hit = bare.match(PROSE_NUM);
-      if (hit !== null)
-        frozenNumbers.push(`${name}:${i + 1} — ${hit.join(" | ")}`);
+  checkStep(() => {
+    for (const name of readdirSync(BASE)) {
+      if (!name.endsWith(".md")) continue;
+      // Протокол свода не спрашивается, и это не поблажка, а развязка тупика:
+      // форму протокола проверяет сам режим `bar`, а печать — отпечаток всего,
+      // что ниже неё. Требование этой сверки переписать в нём слово исполнить
+      // нельзя: правка после печати её гасит, а заново печать ставится только
+      // поверх ПУСТОГО скелета — то есть ценой всех ста пятидесяти трёх строк.
+      // Замерено на стенде: сверка потребовала объявить счёт формой, протокол
+      // был закрыт, и выхода из этой пары не было ни одного. Имя — из поля
+      // настройки: проект, назвавший протокол иначе, иначе получал бы ту же
+      // пару без выхода.
+      if (name === CONFIG.barProtocol) continue;
+      let inBaseline = false;
+      // Образец в ограде кода — не запись базы: счёт в нём показан, а не заявлен.
+      for (const [i, line] of proseOf(path.join(BASE, name))
+        .split(NEWLINE)
+        .entries()) {
+        if (/^##\s/.test(line))
+          inBaseline = (CONFIG.baselineSections ?? []).some((one) =>
+            line.includes(one),
+          );
+        if (inBaseline) continue;
+        if (DECLARED_NUM.some((rx) => rx.test(line))) continue;
+        const bare = outsideTicks(line).replace(NUMBERING, " ");
+        const hit = bare.match(PROSE_NUM);
+        if (hit !== null)
+          frozenNumbers.push(`${name}:${i + 1} — ${hit.join(" | ")}`);
+      }
     }
-  }
+  });
   // Записи полки О САМОЙ СЕБЕ — отложенное и вопросы в `state/`, памятка
   // папки и витрина репозитория раздачи — того же рода, что база: они
   // описывают, что есть сейчас, и счёт в них застывает так же. Доктрина под
@@ -26838,38 +27400,43 @@ if (mode === "verify") {
   // файла репозитория» при трёх. Витрина корня мастерской держится вниманием
   // по решению разработчика: в посадку она не едет.
   let shelfNumLines = 0;
-  {
-    const own = [];
-    const stateDir = shelfAt("state");
-    if (stateDir !== null && existsSync(stateDir))
-      for (const e of readdirSync(stateDir))
-        if (e.endsWith(".md")) own.push(path.join(stateDir, e));
-    const memo = shelfAt("README.md");
-    if (memo !== null && existsSync(memo)) own.push(memo);
-    for (const at of own) {
-      const rows = proseOf(at).split(NEWLINE);
-      shelfNumLines += rows.length;
-      rows.forEach((line, i) => {
-        const bare = outsideTicks(line).replace(NUMBERING, " ");
-        const hit = bare.match(PROSE_NUM);
-        if (hit !== null)
-          frozenNumbers.push(`${rel0(at)}:${i + 1} — ${hit.join(" | ")}`);
-      });
+  checkStep(() => {
+    {
+      const own = [];
+      const stateDir = shelfAt("state");
+      if (stateDir !== null && existsSync(stateDir))
+        for (const e of readdirSync(stateDir))
+          if (e.endsWith(".md")) own.push(path.join(stateDir, e));
+      const memo = shelfAt("README.md");
+      if (memo !== null && existsSync(memo)) own.push(memo);
+      for (const at of own) {
+        const rows = proseOf(at).split(NEWLINE);
+        shelfNumLines += rows.length;
+        rows.forEach((line, i) => {
+          const bare = outsideTicks(line).replace(NUMBERING, " ");
+          const hit = bare.match(PROSE_NUM);
+          if (hit !== null)
+            frozenNumbers.push(`${rel0(at)}:${i + 1} — ${hit.join(" | ")}`);
+        });
+      }
     }
-  }
-  checkHead("Числа в прозе базы", {
-    n: dossierLines().base.length + shelfNumLines,
-    unit: "строк прозы базы и записей полки о себе",
   });
-  console.log(`  счётов вне формы: ${frozenNumbers.length}`);
-  for (const f of frozenNumbers) console.log("    " + f);
-
-  checkHead("Имена констант в тексте", {
-    n: capsTokens,
-    unit: "имён констант в тексте",
+  checkStep(() => {
+    checkHead("Числа в прозе базы", () => ({
+      n: dossierLines().base.length + shelfNumLines,
+      unit: "строк прозы базы и записей полки о себе",
+    }));
+    console.log(`  счётов вне формы: ${frozenNumbers.length}`);
+    for (const f of frozenNumbers) console.log("    " + f);
   });
-  console.log(`  нет в исходниках: ${goneNames.length}`);
-  for (const g of goneNames) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Имена констант в тексте", () => ({
+      n: capsTokens,
+      unit: "имён констант в тексте",
+    }));
+    console.log(`  нет в исходниках: ${goneNames.length}`);
+    for (const g of goneNames) console.log("    " + g);
+  });
 
   // Имя сверки в тексте есть среди сверок.
   //
@@ -26883,50 +27450,54 @@ if (mode === "verify") {
   // кавычках там не ссылка. Ограда кода не читается: показанный образец.
   const goneChecks = [];
   let checkMentions = 0;
-  if (SHELF !== null && existsSync(SHELF)) {
-    const known = CHECK_SECTIONS.map((n) => n.toLowerCase());
-    const namedProseFiles = (dir) =>
-      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) return namedProseFiles(full);
-        return e.name.endsWith(".md") && e.name !== "checks.md" ? [full] : [];
-      });
-    // Проза проекта цитирует сверки тем же словом: графа «чем держится» записи
-    // базы называет сверку по имени, и после переименования имя остаётся.
-    const projectProse = [
-      ...(existsSync(BASE) ? readdirSync(BASE) : [])
-        .filter((n) => n.endsWith(".md") && n !== CONFIG.barProtocol)
-        .map((n) => path.join(BASE, n)),
-      ...(CONFIG.rulesManifest?.rules ?? [])
-        .map((r) => path.join(BASE, r))
-        .filter((r) => existsSync(r)),
-    ];
-    // Проза перенесена по ширине: слово «сверка» и её имя в кавычках стоят на
-    // разных строках, а имя бывает перенесено внутри. Читается текст целиком,
-    // номер строки считается по смещению. Список имён после одного слова
-    // («А» и «Б») читается весь; запись без буквы («…») — образец, а не имя.
-    const named = /сверк[а-яё]*\s+(«[^»]+»(?:\s*(?:,|и|или)\s*«[^»]+»)*)/gi;
-    for (const at of new Set([...namedProseFiles(SHELF), ...projectProse])) {
-      const text = proseOf(at);
-      for (const m of text.matchAll(named)) {
-        const line = text.slice(0, m.index).split(NEWLINE).length;
-        for (const one of m[1].matchAll(/«([^»]+)»/g)) {
-          const name = one[1].replace(/\s+/g, " ").trim();
-          if (!/\p{L}/u.test(name)) continue;
-          checkMentions += 1;
-          const low = name.toLowerCase();
-          if (!known.some((n) => n === low || n.startsWith(low + " (")))
-            goneChecks.push(`${rel0(at)}:${line} — «${name}»`);
+  checkStep(() => {
+    if (SHELF !== null && existsSync(SHELF)) {
+      const known = CHECK_SECTIONS.map((n) => n.toLowerCase());
+      const namedProseFiles = (dir) =>
+        readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) return namedProseFiles(full);
+          return e.name.endsWith(".md") && e.name !== "checks.md" ? [full] : [];
+        });
+      // Проза проекта цитирует сверки тем же словом: графа «чем держится» записи
+      // базы называет сверку по имени, и после переименования имя остаётся.
+      const projectProse = [
+        ...(existsSync(BASE) ? readdirSync(BASE) : [])
+          .filter((n) => n.endsWith(".md") && n !== CONFIG.barProtocol)
+          .map((n) => path.join(BASE, n)),
+        ...(CONFIG.rulesManifest?.rules ?? [])
+          .map((r) => path.join(BASE, r))
+          .filter((r) => existsSync(r)),
+      ];
+      // Проза перенесена по ширине: слово «сверка» и её имя в кавычках стоят на
+      // разных строках, а имя бывает перенесено внутри. Читается текст целиком,
+      // номер строки считается по смещению. Список имён после одного слова
+      // («А» и «Б») читается весь; запись без буквы («…») — образец, а не имя.
+      const named = /сверк[а-яё]*\s+(«[^»]+»(?:\s*(?:,|и|или)\s*«[^»]+»)*)/gi;
+      for (const at of new Set([...namedProseFiles(SHELF), ...projectProse])) {
+        const text = proseOf(at);
+        for (const m of text.matchAll(named)) {
+          const line = text.slice(0, m.index).split(NEWLINE).length;
+          for (const one of m[1].matchAll(/«([^»]+)»/g)) {
+            const name = one[1].replace(/\s+/g, " ").trim();
+            if (!/\p{L}/u.test(name)) continue;
+            checkMentions += 1;
+            const low = name.toLowerCase();
+            if (!known.some((n) => n === low || n.startsWith(low + " (")))
+              goneChecks.push(`${rel0(at)}:${line} — «${name}»`);
+          }
         }
       }
     }
-  }
-  checkHead("Имя сверки в тексте есть среди сверок", {
-    n: checkMentions,
-    unit: "названий сверок в прозе полки и проекта",
   });
-  console.log(`  нет среди сверок: ${goneChecks.length}`);
-  for (const g of goneChecks) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Имя сверки в тексте есть среди сверок", () => ({
+      n: checkMentions,
+      unit: "названий сверок в прозе полки и проекта",
+    }));
+    console.log(`  нет среди сверок: ${goneChecks.length}`);
+    for (const g of goneChecks) console.log("    " + g);
+  });
 
   // Ограда кода в прозе закрыта.
   //
@@ -26938,37 +27509,41 @@ if (mode === "verify") {
   // открытую четырьмя кавычками, три не закрывают.
   const openFences = [];
   let fencedFiles = 0;
-  {
-    const prose = new Set();
-    for (const name of existsSync(BASE) ? readdirSync(BASE) : [])
-      if (name.endsWith(".md")) prose.add(path.join(BASE, name));
-    for (const r of CONFIG.rulesManifest?.rules ?? [])
-      if (existsSync(path.join(BASE, r))) prose.add(path.join(BASE, r));
-    const walkProse = (dir) =>
-      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) return walkProse(full);
-        return e.name.endsWith(".md") ? [full] : [];
-      });
-    if (SHELF !== null && existsSync(SHELF))
-      for (const at of walkProse(SHELF)) prose.add(at);
-    for (const at of prose) {
-      fencedFiles += 1;
-      const open = fenceSpans(readFileSync(at, "utf8").split(NEWLINE)).find(
-        (span) => !span.closed,
-      );
-      if (open !== undefined)
-        openFences.push(
-          `${rel0(at)}:${open.from + 1} — ограда открыта и не закрыта`,
+  checkStep(() => {
+    {
+      const prose = new Set();
+      for (const name of existsSync(BASE) ? readdirSync(BASE) : [])
+        if (name.endsWith(".md")) prose.add(path.join(BASE, name));
+      for (const r of CONFIG.rulesManifest?.rules ?? [])
+        if (existsSync(path.join(BASE, r))) prose.add(path.join(BASE, r));
+      const walkProse = (dir) =>
+        readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) return walkProse(full);
+          return e.name.endsWith(".md") ? [full] : [];
+        });
+      if (SHELF !== null && existsSync(SHELF))
+        for (const at of walkProse(SHELF)) prose.add(at);
+      for (const at of prose) {
+        fencedFiles += 1;
+        const open = fenceSpans(readFileSync(at, "utf8").split(NEWLINE)).find(
+          (span) => !span.closed,
         );
+        if (open !== undefined)
+          openFences.push(
+            `${rel0(at)}:${open.from + 1} — ограда открыта и не закрыта`,
+          );
+      }
     }
-  }
-  checkHead("Ограда кода в прозе закрыта", {
-    n: fencedFiles,
-    unit: "файлов прозы",
   });
-  console.log(`  не закрыто: ${openFences.length}`);
-  for (const g of openFences) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Ограда кода в прозе закрыта", () => ({
+      n: fencedFiles,
+      unit: "файлов прозы",
+    }));
+    console.log(`  не закрыто: ${openFences.length}`);
+    for (const g of openFences) console.log("    " + g);
+  });
 
   // Таблица файлов базы сходится с семенами.
   //
@@ -26980,73 +27555,81 @@ if (mode === "verify") {
   // там файлы, которые создаёт работа.
   const baseTableDrift = [];
   let baseTableLooked = 0;
-  {
-    const doc = shelfAt("rules/base.md");
-    const mapAt = shelfAt("seat/map.json");
-    if (
-      doc !== null &&
-      mapAt !== null &&
-      existsSync(doc) &&
-      existsSync(mapAt)
-    ) {
-      const seatMap = readJson(mapAt, {});
-      const text = proseOf(doc);
-      const from = text.indexOf(NEWLINE + "## Файлы");
-      const upTo = text.indexOf(NEWLINE + "## ", from + 1);
-      const section =
-        from < 0 ? "" : text.slice(from, upTo < 0 ? undefined : upTo);
-      const rows = [...section.matchAll(/^\| `([^`]+)` \|/gm)].map((m) => m[1]);
-      // Семена лежат не только в `copy`: состояние и порядок приезжают, когда
-      // предмет найден в коде (`onSubject`), план перехода — на переходе.
-      const targets = [];
-      const walk = (node) => {
-        if (Array.isArray(node)) node.forEach(walk);
-        else if (node !== null && typeof node === "object") {
-          if (typeof node.to === "string") targets.push(node.to);
-          Object.values(node).forEach(walk);
-        }
-      };
-      walk(seatMap);
-      const seeded = [...new Set(targets)]
-        .filter((t) => /^\.context\/[^/]+$/.test(t))
-        .map((t) => t.slice(".context/".length));
-      const made = seatMap.baseFilesNotSeeded?.files ?? [];
-      baseTableLooked = rows.length;
-      // Таблица, которой не нашли, не «сошлась»: разбор вхолостую печатал бы
-      // ноль расхождений. Раздел переименовали или строки перестали быть
-      // строками таблицы — это и называется.
-      if (from < 0 || rows.length === 0)
-        baseTableDrift.push(
-          "в `base.md` не найден раздел «Файлы» с таблицей, строки которой начинаются файлом в обратных кавычках",
+  checkStep(() => {
+    {
+      const doc = shelfAt("rules/base.md");
+      const mapAt = shelfAt("seat/map.json");
+      if (
+        doc !== null &&
+        mapAt !== null &&
+        existsSync(doc) &&
+        existsSync(mapAt)
+      ) {
+        const seatMap = readJson(mapAt, {});
+        const text = proseOf(doc);
+        const from = text.indexOf(NEWLINE + "## Файлы");
+        const upTo = text.indexOf(NEWLINE + "## ", from + 1);
+        const section =
+          from < 0 ? "" : text.slice(from, upTo < 0 ? undefined : upTo);
+        const rows = [...section.matchAll(/^\| `([^`]+)` \|/gm)].map(
+          (m) => m[1],
         );
-      else {
-        for (const f of new Set(rows))
-          if (rows.indexOf(f) !== rows.lastIndexOf(f))
-            baseTableDrift.push(`строка ${f} в таблице \`base.md\` повторена`);
-        for (const f of seeded)
-          if (!rows.includes(f))
-            baseTableDrift.push(
-              `семя ${f} посадка кладёт, а в таблице \`base.md\` строки о нём нет`,
-            );
-        for (const f of rows)
-          if (!seeded.includes(f) && !made.includes(f))
-            baseTableDrift.push(
-              `строка ${f} в таблице \`base.md\` есть, а семени нет и среди созданных работой (\`baseFilesNotSeeded\`) он не назван`,
-            );
-        for (const f of made)
-          if (!rows.includes(f))
-            baseTableDrift.push(
-              `${f} назван в \`baseFilesNotSeeded\`, а строки о нём в таблице \`base.md\` нет`,
-            );
+        // Семена лежат не только в `copy`: состояние и порядок приезжают, когда
+        // предмет найден в коде (`onSubject`), план перехода — на переходе.
+        const targets = [];
+        const walk = (node) => {
+          if (Array.isArray(node)) node.forEach(walk);
+          else if (node !== null && typeof node === "object") {
+            if (typeof node.to === "string") targets.push(node.to);
+            Object.values(node).forEach(walk);
+          }
+        };
+        walk(seatMap);
+        const seeded = [...new Set(targets)]
+          .filter((t) => /^\.context\/[^/]+$/.test(t))
+          .map((t) => t.slice(".context/".length));
+        const made = seatMap.baseFilesNotSeeded?.files ?? [];
+        baseTableLooked = rows.length;
+        // Таблица, которой не нашли, не «сошлась»: разбор вхолостую печатал бы
+        // ноль расхождений. Раздел переименовали или строки перестали быть
+        // строками таблицы — это и называется.
+        if (from < 0 || rows.length === 0)
+          baseTableDrift.push(
+            "в `base.md` не найден раздел «Файлы» с таблицей, строки которой начинаются файлом в обратных кавычках",
+          );
+        else {
+          for (const f of new Set(rows))
+            if (rows.indexOf(f) !== rows.lastIndexOf(f))
+              baseTableDrift.push(
+                `строка ${f} в таблице \`base.md\` повторена`,
+              );
+          for (const f of seeded)
+            if (!rows.includes(f))
+              baseTableDrift.push(
+                `семя ${f} посадка кладёт, а в таблице \`base.md\` строки о нём нет`,
+              );
+          for (const f of rows)
+            if (!seeded.includes(f) && !made.includes(f))
+              baseTableDrift.push(
+                `строка ${f} в таблице \`base.md\` есть, а семени нет и среди созданных работой (\`baseFilesNotSeeded\`) он не назван`,
+              );
+          for (const f of made)
+            if (!rows.includes(f))
+              baseTableDrift.push(
+                `${f} назван в \`baseFilesNotSeeded\`, а строки о нём в таблице \`base.md\` нет`,
+              );
+        }
       }
     }
-  }
-  checkHead("Таблица файлов базы сходится с семенами", {
-    n: baseTableLooked,
-    unit: "строк таблицы файлов базы",
   });
-  console.log(`  расхождений: ${baseTableDrift.length}`);
-  for (const g of baseTableDrift) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Таблица файлов базы сходится с семенами", () => ({
+      n: baseTableLooked,
+      unit: "строк таблицы файлов базы",
+    }));
+    console.log(`  расхождений: ${baseTableDrift.length}`);
+    for (const g of baseTableDrift) console.log("    " + g);
+  });
 
   // Таблица базы не разорвана комментарием.
   //
@@ -27060,38 +27643,42 @@ if (mode === "verify") {
   // каркасе узнаётся по адресу и по совпадению со строкой семени.
   const tornTables = [];
   const tornFiles = [];
-  if (existsSync(BASE)) {
-    for (const name of readdirSync(BASE))
-      if (name.endsWith(".md")) tornFiles.push(path.join(BASE, name));
-    for (const r of CONFIG.rulesManifest?.rules ?? []) {
-      const at = path.join(BASE, r);
-      if (existsSync(at) && !tornFiles.includes(at)) tornFiles.push(at);
-    }
-  }
-  for (const at of tornFiles) {
-    const lines = proseOf(at).split(NEWLINE);
-    for (let i = 1; i < lines.length; i += 1) {
-      if (!lines[i].trim().startsWith("<!--")) continue;
-      if (!lines[i - 1].trim().startsWith("|")) continue;
-      let shut = i;
-      while (shut < lines.length && !lines[shut].includes("-->")) shut += 1;
-      if ((lines[shut + 1] ?? "").trim().startsWith("|")) {
-        const where = norm(path.relative(REPO, at)) + ":" + (i + 1);
-        tornTables.push(where + " — " + lines[i].trim());
+  checkStep(() => {
+    if (existsSync(BASE)) {
+      for (const name of readdirSync(BASE))
+        if (name.endsWith(".md")) tornFiles.push(path.join(BASE, name));
+      for (const r of CONFIG.rulesManifest?.rules ?? []) {
+        const at = path.join(BASE, r);
+        if (existsSync(at) && !tornFiles.includes(at)) tornFiles.push(at);
       }
     }
-  }
-  checkHead("Таблица базы не разорвана комментарием", {
-    n: tornFiles.length,
-    unit: "файлов базы и правил проекта",
+    for (const at of tornFiles) {
+      const lines = proseOf(at).split(NEWLINE);
+      for (let i = 1; i < lines.length; i += 1) {
+        if (!lines[i].trim().startsWith("<!--")) continue;
+        if (!lines[i - 1].trim().startsWith("|")) continue;
+        let shut = i;
+        while (shut < lines.length && !lines[shut].includes("-->")) shut += 1;
+        if ((lines[shut + 1] ?? "").trim().startsWith("|")) {
+          const where = norm(path.relative(REPO, at)) + ":" + (i + 1);
+          tornTables.push(where + " — " + lines[i].trim());
+        }
+      }
+    }
   });
-  console.log("  комментариев между строками таблицы: " + tornTables.length);
-  for (const t of tornTables)
-    console.log(
-      "    " +
-        t +
-        " — таблица кончается на нём, строки ниже читаются прозой: вынести за таблицу либо снять",
-    );
+  checkStep(() => {
+    checkHead("Таблица базы не разорвана комментарием", () => ({
+      n: tornFiles.length,
+      unit: "файлов базы и правил проекта",
+    }));
+    console.log("  комментариев между строками таблицы: " + tornTables.length);
+    for (const t of tornTables)
+      console.log(
+        "    " +
+          t +
+          " — таблица кончается на нём, строки ниже читаются прозой: вынести за таблицу либо снять",
+      );
+  });
 
   // 16. тест лежит в папке `tests/` своего слоя.
   // Соглашение несущее: база описывает каждый тест ПУТЁМ, а размер папки
@@ -27118,8 +27705,10 @@ if (mode === "verify") {
   // объявленной, и об этом не говорила ни одна строка. Найдено сразу после
   // того, как сбор научился видеть второе написание: видимость появилась,
   // несогласие осталось немым.
-  const strayTests = files.filter(
-    (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutsideHit(f),
+  const strayTests = checkStep(() =>
+    files.filter(
+      (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutsideHit(f),
+    ),
   );
   // Исключение обязано стоять на РЕШЕНИИ: поле снимает красное, а причину
   // снять не может. Настройка говорила «обязан иметь запись в реестре
@@ -27134,73 +27723,80 @@ if (mode === "verify") {
   // всякого решения о себе. Замерено снятием папки тестов из записи решения:
   // прогон остался зелёным.
   const reasonlessTests = [];
-  {
-    const decidedAt =
-      CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-    const decided =
-      (decidedAt !== null && existsSync(decidedAt)
-        ? readFileSync(decidedAt, "utf8")
-        : "") + debtPlanText();
-    for (const f of testsOutsideUsed) {
-      const own = path.relative(REPO, f).split(path.sep).join("/");
-      const said = [
-        own,
-        path.posix.dirname(own) + "/",
-        ...testsOutsideRules.filter((r) => r.hit(f)).map((r) => r.one),
-      ];
-      if (!said.some((one) => namesAddress(one + "|" + decided)))
-        reasonlessTests.push(
-          own +
-            " — объявлен вне папки, а ни решение, ни пункт долга перехода не называет ни его адреса, ни адреса его папки",
-        );
+  checkStep(() => {
+    {
+      const decidedAt =
+        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+      const decided =
+        (decidedAt !== null && existsSync(decidedAt)
+          ? readFileSync(decidedAt, "utf8")
+          : "") + debtPlanText();
+      for (const f of testsOutsideUsed) {
+        const own = path.relative(REPO, f).split(path.sep).join("/");
+        const said = [
+          own,
+          path.posix.dirname(own) + "/",
+          ...testsOutsideRules.filter((r) => r.hit(f)).map((r) => r.one),
+        ];
+        if (!said.some((one) => namesAddress(one + "|" + decided)))
+          reasonlessTests.push(
+            own +
+              " — объявлен вне папки, а ни решение, ни пункт долга перехода не называет ни его адреса, ни адреса его папки",
+          );
+      }
     }
-  }
-  checkHead("Тесты лежат в `tests/`", {
-    n: files.filter(isTest).length,
-    unit: "тестовых файлов",
   });
-  console.log(
-    `  вне своей папки: ${strayTests.length}` +
-      (testsOutsideUsed.size
-        ? `, объявлено решением: ${testsOutsideUsed.size}`
-        : ""),
-  );
-  for (const s of strayTests) console.log("    " + rel(s));
-  for (const s of reasonlessTests) console.log("    " + s);
-  // Как держат тест, пришедший с кодом до посадки, сверка говорит сама:
-  // одного пункта долга перехода тут мало, нужен и адрес в поле. Прежде это
-  // знала только настройка, и переход стенда записал пункт, а сверка
-  // осталась красной, не объяснив почему.
-  if (strayTests.length)
+  checkStep(() => {
+    checkHead("Тесты лежат в `tests/`", () => ({
+      n: files.filter(isTest).length,
+      unit: "тестовых файлов",
+    }));
     console.log(
-      "  перенести в `tests/` своего слоя; тест, пришедший до посадки, держат" +
-        " адресом в поле `testsOutside` вместе с пунктом долга перехода либо" +
-        " решением, называющим его",
+      `  вне своей папки: ${strayTests.length}` +
+        (testsOutsideUsed.size
+          ? `, объявлено решением: ${testsOutsideUsed.size}`
+          : ""),
     );
-
-  checkHead("Объявленный состав папок и радиусы", {
-    n: dirs + radii,
-    unit: "объявленных папок и радиусов",
+    for (const s of strayTests) console.log("    " + rel(s));
+    for (const s of reasonlessTests) console.log("    " + s);
+    // Как держат тест, пришедший с кодом до посадки, сверка говорит сама:
+    // одного пункта долга перехода тут мало, нужен и адрес в поле. Прежде это
+    // знала только настройка, и переход стенда записал пункт, а сверка
+    // осталась красной, не объяснив почему.
+    if (strayTests.length)
+      console.log(
+        "  перенести в `tests/` своего слоя; тест, пришедший до посадки, держат" +
+          " адресом в поле `testsOutside` вместе с пунктом долга перехода либо" +
+          " решением, называющим его",
+      );
   });
-  console.log(`  разошлось: ${wrong.length}`);
-  for (const w of wrong) console.log("    " + w);
-  {
-    checkHead("Не разобрано (проверкой не покрыто)", {
-      n: unresolved.length,
-      unit: "нерасшифрованных адресов",
-    });
-    console.log("  не разобрано: " + unresolved.length);
-    for (const u of unresolved) console.log("    " + u);
-  }
-  // Печатается заголовками, а не числом: число рядом с сорока другими числами
-  // проглядывают, а вопрос, названный своими словами, — нет. Ради того же он
-  // стоит последней секцией: последнее прочитанное и есть прочитанное.
-  checkHead("Конфиг звена цепочки на месте", {
-    n: chainDeclared.length,
-    unit: "звеньев цепочки",
+  checkStep(() => {
+    checkHead("Объявленный состав папок и радиусы", () => ({
+      n: dirs + radii,
+      unit: "объявленных папок и радиусов",
+    }));
+    console.log(`  разошлось: ${wrong.length}`);
+    for (const w of wrong) console.log("    " + w);
+    {
+      checkHead("Не разобрано (проверкой не покрыто)", {
+        n: unresolved.length,
+        unit: "нерасшифрованных адресов",
+      });
+      console.log("  не разобрано: " + unresolved.length);
+      for (const u of unresolved) console.log("    " + u);
+    }
   });
-  console.log(`  расхождений: ${toolchainDrift.length}`);
-  for (const d of toolchainDrift) console.log("    " + d);
+  checkStep(() => {
+    // Печатается заголовками, а не числом: число рядом с сорока другими числами
+    // проглядывают, а вопрос, названный своими словами, — нет. Ради того же он
+    // стоит последней секцией: последнее прочитанное и есть прочитанное.
+    checkHead("Конфиг звена цепочки на месте", () => ({
+      n: chainDeclared.length,
+      unit: "звеньев цепочки",
+    }));
+    console.log(`  расхождений: ${toolchainDrift.length}`);
+    for (const d of toolchainDrift) console.log("    " + d);
+  });
 
   // 44. Таблица сверок доктрины описывает существующие сверки.
   //
@@ -27218,67 +27814,73 @@ if (mode === "verify") {
   //     часть сверок печатается только при живом предмете, и молчание в прогоне
   //     отсутствием не является.
   const checksTableDrift = [];
-  if (CONFIG.checksTable != null) {
-    const at = path.join(BASE, CONFIG.checksTable.file);
-    if (!existsSync(at))
-      checksTableDrift.push(`нет файла таблицы: ${CONFIG.checksTable.file}`);
-    else {
-      const rows = readFileSync(at, "utf8").split(NEWLINE);
-      const head = rows.findIndex((l) =>
-        l.startsWith(CONFIG.checksTable.heading),
-      );
-      if (head < 0) {
-        const shelfHas =
-          SHELF_CHECKS_TABLE !== null &&
-          path.resolve(at) !== path.resolve(SHELF_CHECKS_TABLE) &&
-          existsSync(SHELF_CHECKS_TABLE) &&
-          readFileSync(SHELF_CHECKS_TABLE, "utf8").includes(
-            CONFIG.checksTable.heading,
-          );
-        checksTableDrift.push(
-          `шапка таблицы не найдена: ${CONFIG.checksTable.heading}` +
-            (shelfHas
-              ? ` — таблица лежит в ${path.relative(BASE, SHELF_CHECKS_TABLE)}: поправьте поле checksTable.file`
-              : ""),
+  checkStep(() => {
+    if (CONFIG.checksTable != null) {
+      const at = path.join(BASE, CONFIG.checksTable.file);
+      if (!existsSync(at))
+        checksTableDrift.push(`нет файла таблицы: ${CONFIG.checksTable.file}`);
+      else {
+        const rows = readFileSync(at, "utf8").split(NEWLINE);
+        const head = rows.findIndex((l) =>
+          l.startsWith(CONFIG.checksTable.heading),
         );
-      } else {
-        const named = [];
-        const { rows: tableRows, problem: tableProblem } = tableAfter(
-          rows,
-          head,
-        );
-        if (tableProblem !== null)
+        if (head < 0) {
+          const shelfHas =
+            SHELF_CHECKS_TABLE !== null &&
+            path.resolve(at) !== path.resolve(SHELF_CHECKS_TABLE) &&
+            existsSync(SHELF_CHECKS_TABLE) &&
+            readFileSync(SHELF_CHECKS_TABLE, "utf8").includes(
+              CONFIG.checksTable.heading,
+            );
           checksTableDrift.push(
-            `${CONFIG.checksTable.heading}: ${tableProblem}`,
+            `шапка таблицы не найдена: ${CONFIG.checksTable.heading}` +
+              (shelfHas
+                ? ` — таблица лежит в ${path.relative(BASE, SHELF_CHECKS_TABLE)}: поправьте поле checksTable.file`
+                : ""),
           );
-        for (const row of tableRows) named.push(row.split("|")[1].trim());
-        const seen = new Set();
-        for (const one of named) {
-          if (seen.has(one)) checksTableDrift.push(`строка задвоена: ${one}`);
-          seen.add(one);
-          if (!CHECK_SECTIONS.includes(one))
-            checksTableDrift.push(`строка есть, сверки нет: ${one}`);
+        } else {
+          const named = [];
+          const { rows: tableRows, problem: tableProblem } = tableAfter(
+            rows,
+            head,
+          );
+          if (tableProblem !== null)
+            checksTableDrift.push(
+              `${CONFIG.checksTable.heading}: ${tableProblem}`,
+            );
+          for (const row of tableRows) named.push(row.split("|")[1].trim());
+          const seen = new Set();
+          for (const one of named) {
+            if (seen.has(one)) checksTableDrift.push(`строка задвоена: ${one}`);
+            seen.add(one);
+            if (!CHECK_SECTIONS.includes(one))
+              checksTableDrift.push(`строка есть, сверки нет: ${one}`);
+          }
+          for (const one of CHECK_SECTIONS)
+            if (!seen.has(one))
+              checksTableDrift.push(`сверка есть, строки нет: ${one}`);
+          const own = readFileSync(path.join(TOOL_DIR, "graph.mjs"), "utf8");
+          for (const one of CHECK_SECTIONS)
+            if (own.split(JSON.stringify(one)).length < 3)
+              checksTableDrift.push(
+                `сверка объявлена, а в коде её нет: ${one}`,
+              );
         }
-        for (const one of CHECK_SECTIONS)
-          if (!seen.has(one))
-            checksTableDrift.push(`сверка есть, строки нет: ${one}`);
-        const own = readFileSync(path.join(TOOL_DIR, "graph.mjs"), "utf8");
-        for (const one of CHECK_SECTIONS)
-          if (own.split(JSON.stringify(one)).length < 3)
-            checksTableDrift.push(`сверка объявлена, а в коде её нет: ${one}`);
       }
     }
-  }
-  checkHead("Таблица сверок описывает существующие сверки", {
-    n: CHECK_SECTIONS.length,
-    unit: "сверок прогона",
   });
-  console.log(
-    CONFIG.checksTable == null
-      ? "  таблица сверок не заявлена"
-      : `  сверок объявлено: ${CHECK_SECTIONS.length}, расхождений: ${checksTableDrift.length}`,
-  );
-  for (const d of checksTableDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Таблица сверок описывает существующие сверки", () => ({
+      n: CHECK_SECTIONS.length,
+      unit: "сверок прогона",
+    }));
+    console.log(
+      CONFIG.checksTable == null
+        ? "  таблица сверок не заявлена"
+        : `  сверок объявлено: ${CHECK_SECTIONS.length}, расхождений: ${checksTableDrift.length}`,
+    );
+    for (const d of checksTableDrift) console.log("    " + d);
+  });
 
   // Рецепт фальсификации находит место в СВЕЖЕЙ посадке.
   //
@@ -27303,113 +27905,124 @@ if (mode === "verify") {
   // что рецепт работает хотя бы там, откуда начинает каждый проект.
   const recipeAdrift = [];
   let recipeAnchors = 0;
-  {
-    const recipesAt = path.join(TOOL_DIR, "falsify.json");
-    const mapAt = shelfAt("seat/map.json");
-    if (existsSync(recipesAt) && mapAt !== null && existsSync(mapAt)) {
-      const seat = readJson(mapAt, {});
-      const seedFrom = new Map(
-        [
-          ...(seat.copy ?? []),
-          ...(seat.onSubject ?? []),
-          ...(seat.onTransition ?? []),
-        ].map((e) => [e.to, e.from]),
-      );
-      const shelfRel = path.relative(REPO, SHELF).split(path.sep).join("/");
-      const seedConfigAt = shelfAt("seat/templates/graph.config.mjs");
-      const seedConfig = existsSync(seedConfigAt)
-        ? readFileSync(seedConfigAt, "utf8")
-        : "";
-      const idleInSeat = (section) => {
-        const field = RECIPE_NEEDS[section];
-        return (
-          field !== undefined &&
-          seedConfig.includes(NEWLINE + "  " + field + ": null,")
+  checkStep(() => {
+    {
+      const recipesAt = path.join(TOOL_DIR, "falsify.json");
+      const mapAt = shelfAt("seat/map.json");
+      if (existsSync(recipesAt) && mapAt !== null && existsSync(mapAt)) {
+        const seat = readJson(mapAt, {});
+        const seedFrom = new Map(
+          [
+            ...(seat.copy ?? []),
+            ...(seat.onSubject ?? []),
+            ...(seat.onTransition ?? []),
+          ].map((e) => [e.to, e.from]),
         );
-      };
-      // Текст файла в свежей посадке: семя, если посадка его кладёт; сам
-      // файл, если он из обвязки; иначе такого файла там нет.
-      const freshText = (file) => {
-        const at = seedFrom.has(file)
-          ? shelfAt(seedFrom.get(file))
-          : file.startsWith(shelfRel + "/")
-            ? path.join(REPO, file)
+        const shelfRel = path.relative(REPO, SHELF).split(path.sep).join("/");
+        const seedConfigAt = shelfAt("seat/templates/graph.config.mjs");
+        const seedConfig = existsSync(seedConfigAt)
+          ? readFileSync(seedConfigAt, "utf8")
+          : "";
+        const idleInSeat = (section) => {
+          const field = RECIPE_NEEDS[section];
+          return (
+            field !== undefined &&
+            seedConfig.includes(NEWLINE + "  " + field + ": null,")
+          );
+        };
+        // Текст файла в свежей посадке: семя, если посадка его кладёт; сам
+        // файл, если он из обвязки; иначе такого файла там нет.
+        const freshText = (file) => {
+          const at = seedFrom.has(file)
+            ? shelfAt(seedFrom.get(file))
+            : file.startsWith(shelfRel + "/")
+              ? path.join(REPO, file)
+              : null;
+          return at !== null && existsSync(at)
+            ? readFileSync(at, "utf8")
             : null;
-        return at !== null && existsSync(at) ? readFileSync(at, "utf8") : null;
-      };
-      const freshVars = recipeVars(true);
-      for (const r0 of readJson(recipesAt, {}).recipes ?? []) {
-        const r = recipeSubst(r0, freshVars);
-        if (idleInSeat(r.section)) continue;
-        for (const step of r.edits ?? [r]) {
-          // Шаг без адреса заводит свой предмет сам: файл или папку.
-          if (step.file === undefined) continue;
-          recipeAnchors += 1;
-          const say = (why) =>
-            recipeAdrift.push(
-              "«" + r.section + "» — " + step.file + ": " + why,
-            );
-          const text = freshText(step.file);
-          if (text === null) {
-            say(
-              "в свежей посадке такого файла нет — рецепт обязан завести его сам",
-            );
-            continue;
-          }
-          if (step.find !== undefined && !text.includes(step.find))
-            say("якоря нет в семени — «" + step.find.split("\n")[0] + "»");
-          if (
-            step.after !== undefined &&
-            !text.split(NEWLINE).some((l) => l.trim() === step.after)
-          )
-            say("якоря дописывания нет в семени — «" + step.after + "»");
-          // Строка, которую рецепт берёт из семени: переименованная в семени,
-          // она не находится, и рецепт молча перестаёт ломать свою сверку.
-          // Замерено переименованием раздела планки в семени фактов.
-          if (step.appendFrom !== undefined) {
-            const fromAt = path.join(REPO, step.appendFrom.seed);
-            if (!existsSync(fromAt))
-              say("семени, из которого рецепт берёт строку, нет — " + step.appendFrom.seed);
-            else if (
-              !readFileSync(fromAt, "utf8")
-                .split(NEWLINE)
-                .some((l) => l.startsWith(step.appendFrom.startsWith))
-            )
-              say(
-                "строки, которую рецепт берёт из семени, нет — «" +
-                  step.appendFrom.startsWith +
-                  "»",
+        };
+        const freshVars = recipeVars(true);
+        for (const r0 of readJson(recipesAt, {}).recipes ?? []) {
+          const r = recipeSubst(r0, freshVars);
+          if (idleInSeat(r.section)) continue;
+          for (const step of r.edits ?? [r]) {
+            // Шаг без адреса заводит свой предмет сам: файл или папку.
+            if (step.file === undefined) continue;
+            recipeAnchors += 1;
+            const say = (why) =>
+              recipeAdrift.push(
+                "«" + r.section + "» — " + step.file + ": " + why,
               );
+            const text = freshText(step.file);
+            if (text === null) {
+              say(
+                "в свежей посадке такого файла нет — рецепт обязан завести его сам",
+              );
+              continue;
+            }
+            if (step.find !== undefined && !text.includes(step.find))
+              say("якоря нет в семени — «" + step.find.split("\n")[0] + "»");
+            if (
+              step.after !== undefined &&
+              !text.split(NEWLINE).some((l) => l.trim() === step.after)
+            )
+              say("якоря дописывания нет в семени — «" + step.after + "»");
+            // Строка, которую рецепт берёт из семени: переименованная в семени,
+            // она не находится, и рецепт молча перестаёт ломать свою сверку.
+            // Замерено переименованием раздела планки в семени фактов.
+            if (step.appendFrom !== undefined) {
+              const fromAt = path.join(REPO, step.appendFrom.seed);
+              if (!existsSync(fromAt))
+                say(
+                  "семени, из которого рецепт берёт строку, нет — " +
+                    step.appendFrom.seed,
+                );
+              else if (
+                !readFileSync(fromAt, "utf8")
+                  .split(NEWLINE)
+                  .some((l) => l.startsWith(step.appendFrom.startsWith))
+              )
+                say(
+                  "строки, которую рецепт берёт из семени, нет — «" +
+                    step.appendFrom.startsWith +
+                    "»",
+                );
+            }
           }
         }
       }
     }
-  }
-  checkHead("Рецепт находит место в свежей посадке", {
-    n: recipeAnchors,
-    unit: "шагов рецептов с адресом файла",
   });
-  console.log("  не найдут места: " + recipeAdrift.length);
-  for (const one of recipeAdrift) console.log("    " + one);
+  checkStep(() => {
+    checkHead("Рецепт находит место в свежей посадке", () => ({
+      n: recipeAnchors,
+      unit: "шагов рецептов с адресом файла",
+    }));
+    console.log("  не найдут места: " + recipeAdrift.length);
+    for (const one of recipeAdrift) console.log("    " + one);
 
-  // Флаг посадки читается ОДНИМ способом на весь инструмент.
-  //
-  // Значений в ходу три, и прежде баннер смотрел «не null», а две сверки —
-  // «не ноль». Посадка, снявшая флаг в ноль (естественное прочтение слов
-  // «снять флаг»), получала вечный баннер при зелёном прогоне. Замерено
-  // посадкой начисто.
-  if (seatingIsUp()) {
-    console.log("");
-    banner("ПОСАДКА НЕ ЗАВЕРШЕНА");
-    console.log(
-      "  Флаг посадки стоит: фаза 2 ещё не закончена. Пока он стоит,",
-    );
-    console.log("  прогон не роняют сверки, чей предмет доделывает фаза 2.");
-    console.log("  Найденное они печатают целиком — это и есть её работа:");
-    for (const one of SOFT_WHILE_SEATING) console.log("  «" + one + "»");
-    console.log("  Снять флаг — отдельное действие, и делает его фаза 2, а не");
-    console.log("  прогон.");
-  }
+    // Флаг посадки читается ОДНИМ способом на весь инструмент.
+    //
+    // Значений в ходу три, и прежде баннер смотрел «не null», а две сверки —
+    // «не ноль». Посадка, снявшая флаг в ноль (естественное прочтение слов
+    // «снять флаг»), получала вечный баннер при зелёном прогоне. Замерено
+    // посадкой начисто.
+    if (seatingIsUp()) {
+      console.log("");
+      banner("ПОСАДКА НЕ ЗАВЕРШЕНА");
+      console.log(
+        "  Флаг посадки стоит: фаза 2 ещё не закончена. Пока он стоит,",
+      );
+      console.log("  прогон не роняют сверки, чей предмет доделывает фаза 2.");
+      console.log("  Найденное они печатают целиком — это и есть её работа:");
+      for (const one of SOFT_WHILE_SEATING) console.log("  «" + one + "»");
+      console.log(
+        "  Снять флаг — отдельное действие, и делает его фаза 2, а не",
+      );
+      console.log("  прогон.");
+    }
+  });
 
   // 44b. Вопрос о планке задан на конечном виде правки.
   //
@@ -27431,56 +28044,64 @@ if (mode === "verify") {
   // Слепота сверки — отдельное состояние, и держит его своя переменная:
   // «правленого нет» и «смотреть нечем» печатаются разными строками.
   let ledgerBlind = false;
-  if (CONFIG.testedLedger != null) {
-    const at = path.join(BASE, CONFIG.testedLedger);
-    const seen = readJson(at, {});
-    ledgerSeen = Object.keys(seen).length;
-    // Правка берётся у состояния репозитория тем же способом, что и в режиме
-    // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
-    // не про то, что тронуто сейчас.
-    let changedNow = await changedPaths(path.join(BASE, ".."));
-    if (changedNow === null)
-      // Репозитория нет или git недоступен. Это НЕ «правленого нет»: сверке
-      // нечего смотреть, и молчать об этом нельзя. Проект без репозитория
-      // существует — на таком стенде сверка печатала «правленого без вопроса
-      // нет» и проходила зелёной, то есть была зелена оттого, что ей нечего
-      // проверять. Прогон при этом не роняется: жить без репозитория законно,
-      // а красный навсегда перестают читать.
-      ledgerBlind = true;
-    else
-      changedNow = changedNow
-        .map((f) => norm(path.join(BASE, "..", f)))
-        .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
-        // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
-        // вопроса о планке тоже. Признак общий со сводом намеренно.
-        .filter((f) => !untouchedSeed(f, path.join(BASE, ".."), seedOfPath()));
-    // Приведение формата вопроса о планке не требует — ответ общий с воротами.
-    if (changedNow !== null)
-      changedNow = await withoutFormatOnly(changedNow, path.join(BASE, ".."));
-    for (const f of changedNow ?? []) {
-      const now = createHash("sha1")
-        .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
-        .digest("hex")
-        .slice(0, 12);
-      if (seen[rel(f)] !== now) unasked.push(rel(f));
+  await checkStepAsync(async () => {
+    if (CONFIG.testedLedger != null) {
+      const at = path.join(BASE, CONFIG.testedLedger);
+      const seen = readJson(at, {});
+      ledgerSeen = Object.keys(seen).length;
+      // Правка берётся у состояния репозитория тем же способом, что и в режиме
+      // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
+      // не про то, что тронуто сейчас.
+      let changedNow = await changedPaths(path.join(BASE, ".."));
+      if (changedNow === null)
+        // Репозитория нет или git недоступен. Это НЕ «правленого нет»: сверке
+        // нечего смотреть, и молчать об этом нельзя. Проект без репозитория
+        // существует — на таком стенде сверка печатала «правленого без вопроса
+        // нет» и проходила зелёной, то есть была зелена оттого, что ей нечего
+        // проверять. Прогон при этом не роняется: жить без репозитория законно,
+        // а красный навсегда перестают читать.
+        ledgerBlind = true;
+      else
+        changedNow = changedNow
+          .map((f) => norm(path.join(BASE, "..", f)))
+          .filter(
+            (f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"),
+          )
+          // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
+          // вопроса о планке тоже. Признак общий со сводом намеренно.
+          .filter(
+            (f) => !untouchedSeed(f, path.join(BASE, ".."), seedOfPath()),
+          );
+      // Приведение формата вопроса о планке не требует — ответ общий с воротами.
+      if (changedNow !== null)
+        changedNow = await withoutFormatOnly(changedNow, path.join(BASE, ".."));
+      for (const f of changedNow ?? []) {
+        const now = createHash("sha1")
+          .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
+          .digest("hex")
+          .slice(0, 12);
+        if (seen[rel(f)] !== now) unasked.push(rel(f));
+      }
     }
-  }
-  checkHead("Вопрос о планке задан на конечном виде правки", {
-    n: ledgerSeen,
-    unit: "записей следа прогона",
   });
-  console.log(
-    CONFIG.testedLedger == null
-      ? "  след прогона не ведётся — вопрос держится памятью целиком"
-      : ledgerBlind
-        ? "  состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет"
-        : unasked.length === 0
-          ? "  правленого без вопроса нет"
-          : "  правлено после последнего вопроса: " +
-            unasked.length +
-            ". Позвать `node .claude/tools/graph.mjs tested` и пройти по планке",
-  );
-  for (const u of unasked) console.log("    " + u);
+  checkStep(() => {
+    checkHead("Вопрос о планке задан на конечном виде правки", () => ({
+      n: ledgerSeen,
+      unit: "записей следа прогона",
+    }));
+    console.log(
+      CONFIG.testedLedger == null
+        ? "  след прогона не ведётся — вопрос держится памятью целиком"
+        : ledgerBlind
+          ? "  состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет"
+          : unasked.length === 0
+            ? "  правленого без вопроса нет"
+            : "  правлено после последнего вопроса: " +
+              unasked.length +
+              ". Позвать `node .claude/tools/graph.mjs tested` и пройти по планке",
+    );
+    for (const u of unasked) console.log("    " + u);
+  });
 
   // 44c. Планка пройдена ПОКРИТЕРИАЛЬНО.
   //
@@ -27501,86 +28122,89 @@ if (mode === "verify") {
   const barGaps = [];
   let barCriteriaLive = 0;
   let barSaid = null;
-  {
-    const at =
-      CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
-    const nested = process.env[BAR_NESTED] === "1";
-    // Цепочка на дереве промежуточной части серии: протокол называет всю
-    // пачку, а правлено только до этой части. Код части обязан быть назван
-    // печатью на том же виде; всю правку и приём сверяет последняя часть —
-    // её дерево равно рабочему.
-    const part = /^([0-9]+)\/([0-9]+)$/.exec(process.env[SERIES_PART] ?? "");
-    const midSeries = part !== null && Number(part[1]) < Number(part[2]);
-    const subject = at === null || nested ? [] : await barChangedSubject(REPO);
+  await checkStepAsync(async () => {
     {
-      const all = liveBarCriteria();
-      barCriteriaLive = all === null ? 0 : all.all.length;
-    }
-    if (at === null)
-      barSaid =
-        "протокол не ведётся — проход по планке держится памятью целиком";
-    else if (nested)
-      barSaid =
-        "прогон для свода: протокол принимает тот, кто его позвал, — режим `bar` либо ворота";
-    else if (subject === null)
-      barSaid =
-        "состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет";
-    else if (subject.length === 0) barSaid = "правленого кода и стилей нет";
-    else {
-      const was = barHeader(at);
-      const marks = barMarks(subject);
-      if (was === null) barGaps.push("протокола нет: свод не делался");
-      else if (was.kind !== "на изменение")
-        barGaps.push(
-          "протокол сделан на задаче чтения, а правленое есть: свод не о нём",
-        );
-      else if (midSeries) {
-        const fault =
-          barSealFault(was.body) || barNamedFault(marks, was.body, false);
-        if (fault !== "")
-          barGaps.push("часть серии не накрыта сводом: " + fault);
-        else
-          barSaid =
-            "часть " +
-            part[1] +
-            " из " +
-            part[2] +
-            " серии: код части назван печатью на том же виде — всю правку и приём сверяет последняя часть";
-      } else if (!barSameMarks(was.marks, marks))
-        barGaps.push(
-          "протокол сделан на другом виде предмета: файлов в нём " +
-            was.marks.length +
-            ", правленых " +
-            marks.length,
-        );
-      else if (was.seal === null || was.seal === "нет")
-        barGaps.push("печати нет: свод начат и не закончен");
-      else if (was.seal !== barSealOf(was.body))
-        barGaps.push(
-          "печать не сходится: протокол правлен после того, как закрыт",
-        );
+      const at =
+        CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
+      const nested = process.env[BAR_NESTED] === "1";
+      // Цепочка на дереве промежуточной части серии: протокол называет всю
+      // пачку, а правлено только до этой части. Код части обязан быть назван
+      // печатью на том же виде; всю правку и приём сверяет последняя часть —
+      // её дерево равно рабочему.
+      const part = /^([0-9]+)\/([0-9]+)$/.exec(process.env[SERIES_PART] ?? "");
+      const midSeries = part !== null && Number(part[1]) < Number(part[2]);
+      const subject =
+        at === null || nested ? [] : await barChangedSubject(REPO);
+      {
+        const all = liveBarCriteria();
+        barCriteriaLive = all === null ? 0 : all.all.length;
+      }
+      if (at === null)
+        barSaid =
+          "протокол не ведётся — проход по планке держится памятью целиком";
+      else if (nested)
+        barSaid =
+          "прогон для свода: протокол принимает тот, кто его позвал, — режим `bar` либо ворота";
+      else if (subject === null)
+        barSaid =
+          "состояние репозитория прочитать не удалось: репозитория нет либо git недоступен — предмета у сверки нет";
+      else if (subject.length === 0) barSaid = "правленого кода и стилей нет";
       else {
-        // Печать — открытый отпечаток: протокол, собранный мимо режима, с
-        // «чисто» во всех строках и печатью, посчитанной руками, по ней одной
-        // сошёлся бы. Поэтому протокол принимают тем же приёмом, что режим
-        // делает перед печатью: тот ли предмет, нет ли дыр. Исход сверяется со
-        // словарём там же, в приёме, а не с непустотой.
-        const { faults, rows } = await barRefusalOf(was, REPO);
-        for (const one of faults.slice(0, 10))
-          barGaps.push("протокол не принят: " + one);
-        if (faults.length > 10)
-          barGaps.push("и ещё нарушений: " + (faults.length - 10));
-        if (faults.length === 0)
-          barSaid =
-            "свод закрыт печатью и принят: критериев " +
-            barCriteriaLive +
-            ", строк исходов " +
-            rows +
-            ", файлов " +
-            marks.length;
+        const was = barHeader(at);
+        const marks = barMarks(subject);
+        if (was === null) barGaps.push("протокола нет: свод не делался");
+        else if (was.kind !== "на изменение")
+          barGaps.push(
+            "протокол сделан на задаче чтения, а правленое есть: свод не о нём",
+          );
+        else if (midSeries) {
+          const fault =
+            barSealFault(was.body) || barNamedFault(marks, was.body, false);
+          if (fault !== "")
+            barGaps.push("часть серии не накрыта сводом: " + fault);
+          else
+            barSaid =
+              "часть " +
+              part[1] +
+              " из " +
+              part[2] +
+              " серии: код части назван печатью на том же виде — всю правку и приём сверяет последняя часть";
+        } else if (!barSameMarks(was.marks, marks))
+          barGaps.push(
+            "протокол сделан на другом виде предмета: файлов в нём " +
+              was.marks.length +
+              ", правленых " +
+              marks.length,
+          );
+        else if (was.seal === null || was.seal === "нет")
+          barGaps.push("печати нет: свод начат и не закончен");
+        else if (was.seal !== barSealOf(was.body))
+          barGaps.push(
+            "печать не сходится: протокол правлен после того, как закрыт",
+          );
+        else {
+          // Печать — открытый отпечаток: протокол, собранный мимо режима, с
+          // «чисто» во всех строках и печатью, посчитанной руками, по ней одной
+          // сошёлся бы. Поэтому протокол принимают тем же приёмом, что режим
+          // делает перед печатью: тот ли предмет, нет ли дыр. Исход сверяется со
+          // словарём там же, в приёме, а не с непустотой.
+          const { faults, rows } = await barRefusalOf(was, REPO);
+          for (const one of faults.slice(0, 10))
+            barGaps.push("протокол не принят: " + one);
+          if (faults.length > 10)
+            barGaps.push("и ещё нарушений: " + (faults.length - 10));
+          if (faults.length === 0)
+            barSaid =
+              "свод закрыт печатью и принят: критериев " +
+              barCriteriaLive +
+              ", строк исходов " +
+              rows +
+              ", файлов " +
+              marks.length;
+        }
       }
     }
-  }
+  });
   // Предложенное сводом по планке живёт в реестре, а не в отчёте.
   //
   // На задаче ЧТЕНИЯ находка получает судьбу «предложено»: чинить нечего,
@@ -27599,58 +28223,65 @@ if (mode === "verify") {
   // открытой строкой реестра, называющей критерий ёлочками.
   const barLoose = [];
   let barProposed = 0;
-  {
-    const at =
-      CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
-    if (at !== null && existsSync(at)) {
-      // Разбор протокола общий с режимом: свой, делящий строку по любой
-      // черте, сбивался на экранированной черте внутри клетки.
-      const proto = barRowsOf(readFileSync(at, "utf8"));
-      for (const one of proto.outcomes) {
-        if (one.outcome !== "нашлось" || one.fate !== "предложено") continue;
-        barProposed += 1;
-        // Строка реестра отвечает за находку, только если называет и
-        // критерий, и её файл. Прежде хватало критерия: одна открытая строка
-        // «E1» закрывала любую будущую находку E1 в любом файле — замерено на
-        // стенде, где строка об одном узле гасила находку о другом.
-        const file = one.addr.split(BAR_TICK).join("").replace(/:[0-9]+$/, "");
-        const tail = file.slice(file.lastIndexOf("/") + 1);
-        // Критерий назван словом — «H4» реестра либо `H4 «Заголовок»` пункта
-        // долга: пункт долга и есть запись о находке, вторая ей не нужна.
-        // Известный дефект, записанный фактом, модель протокола называет
-        // пометкой сама — его держит пункт, называющий файлы факта.
-        const named =
-          openFindingRows().some(
-            (row) =>
-              namesCriterion(row, one.id) &&
-              (row.includes(file) ||
-                (row.includes(tail) &&
-                  [...files, ...styleFiles].filter((f) =>
-                    f.endsWith("/" + tail),
-                  ).length === 1)),
-          ) ||
-          proto.model.some(
-            (m) =>
-              barOwedOf(m.mark) !== "" &&
-              (BAR_FACT_CRITERIA[m.sort] ?? []).includes(one.id) &&
-              (m.where + " " + m.what).includes(tail),
-          );
-        if (!named)
-          barLoose.push(
-            one.id +
-              " — предложено сводом и не названо открытой строкой реестра с его файлом: адрес " +
-              one.addr,
-          );
+  checkStep(() => {
+    {
+      const at =
+        CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
+      if (at !== null && existsSync(at)) {
+        // Разбор протокола общий с режимом: свой, делящий строку по любой
+        // черте, сбивался на экранированной черте внутри клетки.
+        const proto = barRowsOf(readFileSync(at, "utf8"));
+        for (const one of proto.outcomes) {
+          if (one.outcome !== "нашлось" || one.fate !== "предложено") continue;
+          barProposed += 1;
+          // Строка реестра отвечает за находку, только если называет и
+          // критерий, и её файл. Прежде хватало критерия: одна открытая строка
+          // «E1» закрывала любую будущую находку E1 в любом файле — замерено на
+          // стенде, где строка об одном узле гасила находку о другом.
+          const file = one.addr
+            .split(BAR_TICK)
+            .join("")
+            .replace(/:[0-9]+$/, "");
+          const tail = file.slice(file.lastIndexOf("/") + 1);
+          // Критерий назван словом — «H4» реестра либо `H4 «Заголовок»` пункта
+          // долга: пункт долга и есть запись о находке, вторая ей не нужна.
+          // Известный дефект, записанный фактом, модель протокола называет
+          // пометкой сама — его держит пункт, называющий файлы факта.
+          const named =
+            openFindingRows().some(
+              (row) =>
+                namesCriterion(row, one.id) &&
+                (row.includes(file) ||
+                  (row.includes(tail) &&
+                    [...files, ...styleFiles].filter((f) =>
+                      f.endsWith("/" + tail),
+                    ).length === 1)),
+            ) ||
+            proto.model.some(
+              (m) =>
+                barOwedOf(m.mark) !== "" &&
+                (BAR_FACT_CRITERIA[m.sort] ?? []).includes(one.id) &&
+                (m.where + " " + m.what).includes(tail),
+            );
+          if (!named)
+            barLoose.push(
+              one.id +
+                " — предложено сводом и не названо открытой строкой реестра с его файлом: адрес " +
+                one.addr,
+            );
+        }
       }
     }
-  }
-  checkHead("Предложенное сводом названо находкой", {
-    n: barProposed,
-    unit: "предложенного в протоколе свода",
   });
-  console.log("  без строки реестра: " + barLoose.length);
-  for (const one of barLoose)
-    console.log("    " + one + ". Завести строку открытой");
+  checkStep(() => {
+    checkHead("Предложенное сводом названо находкой", () => ({
+      n: barProposed,
+      unit: "предложенного в протоколе свода",
+    }));
+    console.log("  без строки реестра: " + barLoose.length);
+    for (const one of barLoose)
+      console.log("    " + one + ". Завести строку открытой");
+  });
   // Архитектурный проход перехода запечатан.
   //
   // Переход читает весь код один раз, и суждения по архитектуре — узел с
@@ -27668,73 +28299,77 @@ if (mode === "verify") {
   const archGaps = [];
   let archLooked = 0;
   let archSaid = null;
-  {
-    const dir = barTransitionDir();
-    const planAt =
-      CONFIG.transition?.file == null
-        ? null
-        : path.join(BASE, CONFIG.transition.file);
-    const planLives = planAt !== null && existsSync(planAt);
-    const protocols =
-      dir !== null && existsSync(dir)
-        ? readdirSync(dir)
-            .filter((n) => n.endsWith(".md"))
-            .map((n) => path.join(dir, n))
-        : [];
-    archLooked = protocols.length;
-    const sealedOf = (p) => {
-      const h = barHeader(p);
-      if (h.kind !== "на переход") return "род не «на переход»";
-      if (h.seal === null || h.seal === "нет") return "не запечатан";
-      if (h.seal !== barSealOf(h.body))
-        return "печать не сходится: правлен после неё";
-      return "";
-    };
-    if (!planLives) {
-      if (protocols.length)
-        archGaps.push(
-          "перехода нет, а протоколы его прохода лежат: " +
-            rel0(dir) +
-            " — снять папку вместе с закрытым переходом",
+  checkStep(() => {
+    {
+      const dir = barTransitionDir();
+      const planAt =
+        CONFIG.transition?.file == null
+          ? null
+          : path.join(BASE, CONFIG.transition.file);
+      const planLives = planAt !== null && existsSync(planAt);
+      const protocols =
+        dir !== null && existsSync(dir)
+          ? readdirSync(dir)
+              .filter((n) => n.endsWith(".md"))
+              .map((n) => path.join(dir, n))
+          : [];
+      archLooked = protocols.length;
+      const sealedOf = (p) => {
+        const h = barHeader(p);
+        if (h.kind !== "на переход") return "род не «на переход»";
+        if (h.seal === null || h.seal === "нет") return "не запечатан";
+        if (h.seal !== barSealOf(h.body))
+          return "печать не сходится: правлен после неё";
+        return "";
+      };
+      if (!planLives) {
+        if (protocols.length)
+          archGaps.push(
+            "перехода нет, а протоколы его прохода лежат: " +
+              rel0(dir) +
+              " — снять папку вместе с закрытым переходом",
+          );
+        else archSaid = "перехода нет — протоколов прохода не нужно";
+      } else {
+        const stepOpen = (transitionOpen() ?? []).some((s) =>
+          /bar\s+--transition/.test(s.line),
         );
-      else archSaid = "перехода нет — протоколов прохода не нужно";
-    } else {
-      const stepOpen = (transitionOpen() ?? []).some((s) =>
-        /bar\s+--transition/.test(s.line),
-      );
-      if (stepOpen) {
-        const subjects = barTransitionSubjects();
-        const fresh = subjects.filter((s) => {
-          if (!existsSync(s.at) || sealedOf(s.at) !== "") return false;
-          return barSameMarks(barHeader(s.at).marks, barMarks(s.files));
-        }).length;
-        archSaid =
-          "шаг открыт: запечатано на нынешнем коде " +
-          fresh +
-          " из " +
-          subjects.length +
-          " предметов";
-      } else if (protocols.length === 0)
-        archGaps.push(
-          "шаг «архитектурный проход» закрыт, а протоколов нет: вернуть шаг в таблицу знания и пройти `graph.mjs bar --transition`",
-        );
-      else {
-        for (const p of protocols) {
-          const why = sealedOf(p);
-          if (why !== "") archGaps.push(rel0(p) + " — " + why);
-        }
-        if (!archGaps.length)
+        if (stepOpen) {
+          const subjects = barTransitionSubjects();
+          const fresh = subjects.filter((s) => {
+            if (!existsSync(s.at) || sealedOf(s.at) !== "") return false;
+            return barSameMarks(barHeader(s.at).marks, barMarks(s.files));
+          }).length;
           archSaid =
-            "шаг закрыт: протоколов " + protocols.length + ", все запечатаны";
+            "шаг открыт: запечатано на нынешнем коде " +
+            fresh +
+            " из " +
+            subjects.length +
+            " предметов";
+        } else if (protocols.length === 0)
+          archGaps.push(
+            "шаг «архитектурный проход» закрыт, а протоколов нет: вернуть шаг в таблицу знания и пройти `graph.mjs bar --transition`",
+          );
+        else {
+          for (const p of protocols) {
+            const why = sealedOf(p);
+            if (why !== "") archGaps.push(rel0(p) + " — " + why);
+          }
+          if (!archGaps.length)
+            archSaid =
+              "шаг закрыт: протоколов " + protocols.length + ", все запечатаны";
+        }
       }
     }
-  }
-  checkHead("Архитектурный проход перехода запечатан", {
-    n: archLooked,
-    unit: "протоколов перехода",
   });
-  if (archSaid !== null) console.log("  " + archSaid);
-  for (const one of archGaps) console.log("    " + one);
+  checkStep(() => {
+    checkHead("Архитектурный проход перехода запечатан", () => ({
+      n: archLooked,
+      unit: "протоколов перехода",
+    }));
+    if (archSaid !== null) console.log("  " + archSaid);
+    for (const one of archGaps) console.log("    " + one);
+  });
   // Архитектурный факт назван записью.
   //
   // Факт, который машина видит сама, — ребро против правила, цикл, обход
@@ -27750,33 +28385,41 @@ if (mode === "verify") {
   const factLoose = [];
   let factsLooked = 0;
   let factsSaid = null;
-  {
-    const facts = levelFacts();
-    factsLooked = facts.length;
-    const loose = facts.filter((fact) => factNamedBy(fact) === null);
-    const stepOpen = (transitionOpen() ?? []).some((one) =>
-      /\blevels\b|bar\s+--transition/.test(one.line),
-    );
-    if (stepOpen)
-      factsSaid =
-        "шаг архитектурного прохода открыт: не названо " +
-        loose.length +
-        " — их называет переход";
-    else
-      for (const fact of loose)
-        factLoose.push(
-          fact.kind +
-            ": " +
-            fact.text +
-            ". Назвать пунктом долга, решением, строкой реестра либо вопросом — путём все файлы факта",
-        );
-  }
-  checkHead("Архитектурный факт назван записью", {
-    n: factsLooked,
-    unit: "архитектурных фактов",
+  checkStep(() => {
+    {
+      const facts = levelFacts();
+      factsLooked = facts.length;
+      const loose = facts.filter((fact) => factNamedBy(fact) === null);
+      const stepOpen = (transitionOpen() ?? []).some((one) =>
+        /\blevels\b|bar\s+--transition/.test(one.line),
+      );
+      if (stepOpen)
+        factsSaid =
+          "шаг архитектурного прохода открыт: не названо " +
+          loose.length +
+          " — их называет переход";
+      else
+        for (const fact of loose)
+          factLoose.push(
+            fact.kind +
+              ": " +
+              fact.text +
+              ". Назвать пунктом долга, решением, строкой реестра либо вопросом — путём все файлы факта",
+          );
+    }
   });
-  console.log(factsSaid !== null ? "  " + factsSaid : "  не названо: " + factLoose.length);
-  for (const one of factLoose) console.log("    " + one);
+  checkStep(() => {
+    checkHead("Архитектурный факт назван записью", () => ({
+      n: factsLooked,
+      unit: "архитектурных фактов",
+    }));
+    console.log(
+      factsSaid !== null
+        ? "  " + factsSaid
+        : "  не названо: " + factLoose.length,
+    );
+    for (const one of factLoose) console.log("    " + one);
+  });
   // Коммит с кодом накрыт запечатанным сводом — ревизия по ИСТОРИИ.
   //
   // Соседняя сверка спрашивает свод с правленого, то есть с рабочего дерева.
@@ -27790,233 +28433,239 @@ if (mode === "verify") {
   const barPast = [];
   let barPastLooked = 0;
   let barPastNote = null;
-  {
-    const at =
-      CONFIG.barProtocol == null
-        ? null
-        : path.posix.join(
-            path.relative(REPO_AT, BASE).split(path.sep).join("/"),
-            CONFIG.barProtocol,
-          );
-    if (at === null) barPastNote = "протоколу негде лежать: поле не объявлено";
-    else if (CONFIG.barSince == null)
-      barPastNote =
-        "коммит-основание сводов не объявлено — история не сверяется";
-    else {
-      const { execFileSync } = await import("node:child_process");
-      const git = (args) =>
-        execFileSync("git", args, {
-          cwd: REPO_AT,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-      const seeds = seedOfPath();
-      let log;
-      try {
-        log = git(["log", "--format=%H", CONFIG.barSince + "..HEAD"])
-          .split(NEWLINE)
-          .map((l) => l.trim())
-          .filter(Boolean);
-      } catch {
-        log = null;
-      }
-      // Коммиты серии: после её основания коммит с кодом — коммит части, и
-      // его узнают по строке `Bar-series` в сообщении.
-      let inSeries = new Set();
-      if (log !== null && CONFIG.seriesSince != null)
-        try {
-          inSeries = new Set(
-            git(["log", "--format=%H", CONFIG.seriesSince + "..HEAD"])
-              .split(NEWLINE)
-              .map((l) => l.trim())
-              .filter(Boolean),
-          );
-        } catch {
-          barPastNote =
-            "коммита-основания серии " +
-            CONFIG.seriesSince +
-            " в истории этой копии нет — коммиты частей не сверены";
-        }
-      // Пары «буква, путь», без поиска переименований — как у ворот.
-      const touchedOf = (args) => {
-        const said = zList(
-          git([...args, "--relative", "--name-status", "-z", "--no-renames"]),
-        );
-        const out = [];
-        for (let i = 0; i + 1 < said.length; i += 2)
-          out.push({ status: said[i], one: said[i + 1] });
-        return out;
-      };
-      const lineOf = (ref) => {
-        let body = "";
-        try {
-          body = git(["log", "-1", "--format=%B", ref]);
-        } catch {
-          return null;
-        }
-        const m =
-          /^Bar-series: ([0-9a-f]+) ([0-9]+)\/([0-9]+) ([0-9a-f]{40})$/m.exec(
-            body,
-          );
-        return m === null
+  await checkStepAsync(async () => {
+    {
+      const at =
+        CONFIG.barProtocol == null
           ? null
-          : { seal: m[1], k: Number(m[2]), n: Number(m[3]), tree: m[4] };
-      };
-      // Приведение формата свода не требует — тот же ответ, что у ворот.
-      // Спрашивается лениво: только у коммита, который иначе красный.
-      const meantOf = async (want, before) => {
-        const meant = [];
-        for (const w of want) {
-          let was = null;
-          try {
-            was = git(["show", before + ":./" + w.one]);
-          } catch {
-            was = null;
-          }
-          if (!(await formatOnly(was, w.was, w.abs))) meant.push(w);
-        }
-        return meant;
-      };
-      const coverOf = async (want, said, before, whole) => {
-        const fault = barNamedFault(want, said, whole);
-        return fault === ""
-          ? ""
-          : barNamedFault(await meantOf(want, before), said, whole);
-      };
-      const subjectOf = async (touched, hash) => {
-        const want = [];
-        for (const { status, one } of touched) {
-          const abs = norm(path.join(REPO_AT, one));
-          // Удалённый этим коммитом код — в предмете, как у ворот.
-          if (status === "D") {
-            if (codeByPlace(abs))
-              want.push({
-                file: rel(abs),
-                mark: "нет файла",
-                one,
-                abs,
-                was: null,
-              });
-            continue;
-          }
-          // Предикат тот же, что у предмета свода и у ворот: корпус кода и
-          // корпус стилей. Свой предикат здесь отбирал иначе — тесты в него
-          // не попадали, — и ревизия объявляла непокрытым коммит, накрытый
-          // сводом полностью. Та же болезнь, от которой эта пара и лечит.
-          //
-          // Цена у общего предиката одна: файл, снесённый после того
-          // коммита, в корпусе не значится, и коммит, только сносивший код,
-          // ревизией не спрашивается.
-          //
-          // Но свод того коммита снесённый позже файл НАЗЫВАЕТ, и коммит,
-          // накрытый сводом полностью, краснел «назван сводом, а в правке
-          // его нет» от каждого сноса узла — задним числом и навсегда.
-          // Замерено удалением узла на стенде. Такой файл судится видом и
-          // местом — тем же признаком, каким его собирает обход корпуса:
-          // модуль, тест или стиль под корнем исходников.
-          const goneSince = !existsSync(abs) && codeByPlace(abs);
-          if (!files.includes(abs) && !styleFiles.includes(abs) && !goneSince)
-            continue;
-          if (abs.endsWith(".d.ts")) continue;
-          let was;
-          try {
-            was = git(["show", hash + ":./" + one]);
-          } catch {
-            continue;
-          }
-          // Семя берётся ИЗ ТОГО ЖЕ коммита: семя правится своей жизнью,
-          // и сравнение с сегодняшним сделало бы старую посадку красной
-          // задним числом.
-          let seedWas = null;
-          if (seeds.has(one)) {
-            const from = seeds.get(one);
-            try {
-              seedWas = git(["show", hash + ":./.claude/" + from]);
-            } catch {
-              seedWas = null;
-            }
-          }
-          if (sameAsSeed(was, seedWas) || (await formatOnly(seedWas, was, abs)))
-            continue;
-          want.push({ file: rel(abs), mark: barDigest(was), one, abs, was });
-        }
-        return want.sort((x, y) => (x.file < y.file ? -1 : 1));
-      };
-      if (log === null)
+          : path.posix.join(
+              path.relative(REPO_AT, BASE).split(path.sep).join("/"),
+              CONFIG.barProtocol,
+            );
+      if (at === null)
+        barPastNote = "протоколу негде лежать: поле не объявлено";
+      else if (CONFIG.barSince == null)
         barPastNote =
-          "коммита-основания " +
-          CONFIG.barSince +
-          " в истории этой копии нет — своды по истории не сверены";
-      else
-        for (const hash of log) {
-          let touched;
-          try {
-            touched = touchedOf(["show", "--format=", hash]);
-          } catch {
-            continue;
-          }
-          const want = await subjectOf(touched, hash);
-          if (!want.length) continue;
-          barPastLooked += 1;
-          let said = null;
-          try {
-            said = git(["show", hash + ":./" + at]);
-          } catch {
-            said = null;
-          }
-          let fault = barSealFault(said);
-          if (!inSeries.has(hash)) {
-            if (fault === "")
-              fault = await coverOf(want, said, hash + "^", true);
-            if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
-            continue;
-          }
-          // Коммит части: строка серии называет его дерево и печать его
-          // протокола, часть лежит на предыдущей той же серии, код части
-          // назван печатью на том же виде. Всю правку — что протокол называет
-          // ровно её — спрашивают с последней части, от основания серии.
-          const line = lineOf(hash);
-          if (line === null)
-            fault =
-              "коммит с кодом без строки серии: части коммитят через ворота, `node .claude/tools/graph.mjs series`";
-          else if (line.tree !== git(["rev-parse", hash + "^{tree}"]).trim())
-            fault = "строка серии называет не дерево этого коммита";
-          else if (fault === "" && line.seal !== barHeaderOf(said).seal)
-            fault = "строка серии называет не печать протокола этого коммита";
-          if (fault === "" && line.k > 1) {
-            const prev = lineOf(hash + "^");
-            if (
-              prev === null ||
-              prev.seal !== line.seal ||
-              prev.n !== line.n ||
-              prev.k !== line.k - 1
-            )
-              fault =
-                "часть " +
-                line.k +
-                " лежит не на части " +
-                (line.k - 1) +
-                " той же серии";
-          }
-          if (fault === "")
-            fault = await coverOf(want, said, hash + "^", false);
-          if (fault === "" && line.k === line.n) {
-            const base = hash + "~" + line.n;
-            let all = null;
-            try {
-              all = await subjectOf(touchedOf(["diff", base, hash]), hash);
-            } catch {
-              all = null;
-            }
-            fault =
-              all === null
-                ? "основания серии " + base + " в истории нет"
-                : await coverOf(all, said, base, true);
-          }
-          if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
+          "коммит-основание сводов не объявлено — история не сверяется";
+      else {
+        const { execFileSync } = await import("node:child_process");
+        const git = (args) =>
+          execFileSync("git", args, {
+            cwd: REPO_AT,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+        const seeds = seedOfPath();
+        let log;
+        try {
+          log = git(["log", "--format=%H", CONFIG.barSince + "..HEAD"])
+            .split(NEWLINE)
+            .map((l) => l.trim())
+            .filter(Boolean);
+        } catch {
+          log = null;
         }
+        // Коммиты серии: после её основания коммит с кодом — коммит части, и
+        // его узнают по строке `Bar-series` в сообщении.
+        let inSeries = new Set();
+        if (log !== null && CONFIG.seriesSince != null)
+          try {
+            inSeries = new Set(
+              git(["log", "--format=%H", CONFIG.seriesSince + "..HEAD"])
+                .split(NEWLINE)
+                .map((l) => l.trim())
+                .filter(Boolean),
+            );
+          } catch {
+            barPastNote =
+              "коммита-основания серии " +
+              CONFIG.seriesSince +
+              " в истории этой копии нет — коммиты частей не сверены";
+          }
+        // Пары «буква, путь», без поиска переименований — как у ворот.
+        const touchedOf = (args) => {
+          const said = zList(
+            git([...args, "--relative", "--name-status", "-z", "--no-renames"]),
+          );
+          const out = [];
+          for (let i = 0; i + 1 < said.length; i += 2)
+            out.push({ status: said[i], one: said[i + 1] });
+          return out;
+        };
+        const lineOf = (ref) => {
+          let body = "";
+          try {
+            body = git(["log", "-1", "--format=%B", ref]);
+          } catch {
+            return null;
+          }
+          const m =
+            /^Bar-series: ([0-9a-f]+) ([0-9]+)\/([0-9]+) ([0-9a-f]{40})$/m.exec(
+              body,
+            );
+          return m === null
+            ? null
+            : { seal: m[1], k: Number(m[2]), n: Number(m[3]), tree: m[4] };
+        };
+        // Приведение формата свода не требует — тот же ответ, что у ворот.
+        // Спрашивается лениво: только у коммита, который иначе красный.
+        const meantOf = async (want, before) => {
+          const meant = [];
+          for (const w of want) {
+            let was = null;
+            try {
+              was = git(["show", before + ":./" + w.one]);
+            } catch {
+              was = null;
+            }
+            if (!(await formatOnly(was, w.was, w.abs))) meant.push(w);
+          }
+          return meant;
+        };
+        const coverOf = async (want, said, before, whole) => {
+          const fault = barNamedFault(want, said, whole);
+          return fault === ""
+            ? ""
+            : barNamedFault(await meantOf(want, before), said, whole);
+        };
+        const subjectOf = async (touched, hash) => {
+          const want = [];
+          for (const { status, one } of touched) {
+            const abs = norm(path.join(REPO_AT, one));
+            // Удалённый этим коммитом код — в предмете, как у ворот.
+            if (status === "D") {
+              if (codeByPlace(abs))
+                want.push({
+                  file: rel(abs),
+                  mark: "нет файла",
+                  one,
+                  abs,
+                  was: null,
+                });
+              continue;
+            }
+            // Предикат тот же, что у предмета свода и у ворот: корпус кода и
+            // корпус стилей. Свой предикат здесь отбирал иначе — тесты в него
+            // не попадали, — и ревизия объявляла непокрытым коммит, накрытый
+            // сводом полностью. Та же болезнь, от которой эта пара и лечит.
+            //
+            // Цена у общего предиката одна: файл, снесённый после того
+            // коммита, в корпусе не значится, и коммит, только сносивший код,
+            // ревизией не спрашивается.
+            //
+            // Но свод того коммита снесённый позже файл НАЗЫВАЕТ, и коммит,
+            // накрытый сводом полностью, краснел «назван сводом, а в правке
+            // его нет» от каждого сноса узла — задним числом и навсегда.
+            // Замерено удалением узла на стенде. Такой файл судится видом и
+            // местом — тем же признаком, каким его собирает обход корпуса:
+            // модуль, тест или стиль под корнем исходников.
+            const goneSince = !existsSync(abs) && codeByPlace(abs);
+            if (!files.includes(abs) && !styleFiles.includes(abs) && !goneSince)
+              continue;
+            if (abs.endsWith(".d.ts")) continue;
+            let was;
+            try {
+              was = git(["show", hash + ":./" + one]);
+            } catch {
+              continue;
+            }
+            // Семя берётся ИЗ ТОГО ЖЕ коммита: семя правится своей жизнью,
+            // и сравнение с сегодняшним сделало бы старую посадку красной
+            // задним числом.
+            let seedWas = null;
+            if (seeds.has(one)) {
+              const from = seeds.get(one);
+              try {
+                seedWas = git(["show", hash + ":./.claude/" + from]);
+              } catch {
+                seedWas = null;
+              }
+            }
+            if (
+              sameAsSeed(was, seedWas) ||
+              (await formatOnly(seedWas, was, abs))
+            )
+              continue;
+            want.push({ file: rel(abs), mark: barDigest(was), one, abs, was });
+          }
+          return want.sort((x, y) => (x.file < y.file ? -1 : 1));
+        };
+        if (log === null)
+          barPastNote =
+            "коммита-основания " +
+            CONFIG.barSince +
+            " в истории этой копии нет — своды по истории не сверены";
+        else
+          for (const hash of log) {
+            let touched;
+            try {
+              touched = touchedOf(["show", "--format=", hash]);
+            } catch {
+              continue;
+            }
+            const want = await subjectOf(touched, hash);
+            if (!want.length) continue;
+            barPastLooked += 1;
+            let said = null;
+            try {
+              said = git(["show", hash + ":./" + at]);
+            } catch {
+              said = null;
+            }
+            let fault = barSealFault(said);
+            if (!inSeries.has(hash)) {
+              if (fault === "")
+                fault = await coverOf(want, said, hash + "^", true);
+              if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
+              continue;
+            }
+            // Коммит части: строка серии называет его дерево и печать его
+            // протокола, часть лежит на предыдущей той же серии, код части
+            // назван печатью на том же виде. Всю правку — что протокол называет
+            // ровно её — спрашивают с последней части, от основания серии.
+            const line = lineOf(hash);
+            if (line === null)
+              fault =
+                "коммит с кодом без строки серии: части коммитят через ворота, `node .claude/tools/graph.mjs series`";
+            else if (line.tree !== git(["rev-parse", hash + "^{tree}"]).trim())
+              fault = "строка серии называет не дерево этого коммита";
+            else if (fault === "" && line.seal !== barHeaderOf(said).seal)
+              fault = "строка серии называет не печать протокола этого коммита";
+            if (fault === "" && line.k > 1) {
+              const prev = lineOf(hash + "^");
+              if (
+                prev === null ||
+                prev.seal !== line.seal ||
+                prev.n !== line.n ||
+                prev.k !== line.k - 1
+              )
+                fault =
+                  "часть " +
+                  line.k +
+                  " лежит не на части " +
+                  (line.k - 1) +
+                  " той же серии";
+            }
+            if (fault === "")
+              fault = await coverOf(want, said, hash + "^", false);
+            if (fault === "" && line.k === line.n) {
+              const base = hash + "~" + line.n;
+              let all = null;
+              try {
+                all = await subjectOf(touchedOf(["diff", base, hash]), hash);
+              } catch {
+                all = null;
+              }
+              fault =
+                all === null
+                  ? "основания серии " + base + " в истории нет"
+                  : await coverOf(all, said, base, true);
+            }
+            if (fault !== "") barPast.push(hash.slice(0, 7) + " — " + fault);
+          }
+      }
     }
-  }
+  });
   // Ворота перед коммитом УСТАНОВЛЕНЫ.
   //
   // Хуки git лежат в `.git/hooks`, а `.git` с клоном не копируется. Поэтому
@@ -28030,132 +28679,139 @@ if (mode === "verify") {
   const gateGap = [];
   let gateLooked = 0;
   let gateNote = null;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    const said = mapAt === null ? null : readJson(mapAt, {}).gitHooks;
-    if (said == null) gateGap.push("папка хуков не объявлена картой посадки");
-    else {
-      gateLooked = (said.hooks ?? []).length;
-      for (const one of said.hooks ?? []) {
-        const at = path.join(REPO_AT, said.dir, one);
-        if (!existsSync(at))
-          gateGap.push(
-            said.dir + "/" + one + " — объявлен картой, а файла нет",
-          );
-        // Хук без бита исполнения git пропускает одной подсказкой, и коммит
-        // идёт мимо ворот. Замерено посадкой из свежего клона полки: хук
-        // лежал там с режимом `100644`, и ворота не срабатывали ни разу.
-        else if (
-          process.platform !== "win32" &&
-          (statSync(at).mode & 0o111) === 0
-        )
-          gateGap.push(
-            said.dir +
-              "/" +
-              one +
-              " — не исполняемый: git его пропускает, и коммит идёт мимо ворот. `chmod +x " +
+  await checkStepAsync(async () => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      const said = mapAt === null ? null : readJson(mapAt, {}).gitHooks;
+      if (said == null) gateGap.push("папка хуков не объявлена картой посадки");
+      else {
+        gateLooked = (said.hooks ?? []).length;
+        for (const one of said.hooks ?? []) {
+          const at = path.join(REPO_AT, said.dir, one);
+          if (!existsSync(at))
+            gateGap.push(
+              said.dir + "/" + one + " — объявлен картой, а файла нет",
+            );
+          // Хук без бита исполнения git пропускает одной подсказкой, и коммит
+          // идёт мимо ворот. Замерено посадкой из свежего клона полки: хук
+          // лежал там с режимом `100644`, и ворота не срабатывали ни разу.
+          else if (
+            process.platform !== "win32" &&
+            (statSync(at).mode & 0o111) === 0
+          )
+            gateGap.push(
               said.dir +
-              "/" +
-              one +
+                "/" +
+                one +
+                " — не исполняемый: git его пропускает, и коммит идёт мимо ворот. `chmod +x " +
+                said.dir +
+                "/" +
+                one +
+                "`",
+            );
+        }
+        // «Репозитория нет» и «настройка не задана» — разные ответы, и обе
+        // команды падают одинаково. Проект без git коммитов не делает, дыры у
+        // него нет, и краснеть тут не на что: сверка это НАЗЫВАЕТ, а не молчит.
+        const { execFileSync } = await import("node:child_process");
+        const gitSays = (args) => {
+          try {
+            return execFileSync("git", args, {
+              cwd: REPO_AT,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim();
+          } catch {
+            return null;
+          }
+        };
+        const repo = gitSays(["rev-parse", "--git-dir"]);
+        const where =
+          repo === null ? null : gitSays(["config", "core.hooksPath"]);
+        // Сличается путь, по которому git ИЩЕТ хук, а не строка настройки:
+        // относительный путь git читает от корня репозитория, и у проекта,
+        // вложенного в чужой, та же строка вела мимо ворот. Найдено прогоном
+        // проб: хук не исполнялся, а сверка была зелёной.
+        const looks =
+          where === null ? null : gitSays(["rev-parse", "--git-path", "hooks"]);
+        const looksAt =
+          looks === null ? null : norm(path.resolve(REPO_AT, looks));
+        const setHooks =
+          'git config core.hooksPath "$(git rev-parse --show-prefix)' +
+          said.dir +
+          '"';
+        // Проект со своим менеджером хуков держит `core.hooksPath` за собой и
+        // возвращает его при каждой установке пакетов: husky делает это
+        // сценарием `prepare`. Направить git к нам там нельзя — следующая
+        // установка молча вернёт своё. Ворота тогда зовутся ИЗ его хука, и
+        // сверка принимает это, найдя вызов режима в хуке, который git
+        // исполнит: у husky девятой версии это хук папкой выше служебной `_`.
+        // Замерено посадкой в проект на husky: после установки пакетов ворота
+        // молчали, а сверка требовала настройки, которая не держится.
+        // Хуков два: ворота перед коммитом и строка серии в его сообщении, —
+        // без второго ревизия по истории не узнаёт коммит части.
+        const callsGate = (dir) => {
+          const calls = (hook, line) =>
+            [
+              path.join(dir, hook),
+              ...(path.basename(dir) === "_"
+                ? [path.join(path.dirname(dir), hook)]
+                : []),
+            ].some(
+              (at) => existsSync(at) && line.test(readFileSync(at, "utf8")),
+            );
+          return (
+            calls(
+              "pre-commit",
+              /graph\.mjs["']?\s+gate\b(?![ \t]+--message)/,
+            ) &&
+            calls("prepare-commit-msg", /graph\.mjs["']?\s+gate\s+--message\b/)
+          );
+        };
+        // Конвейер — тот же свежий клон, только коммитов в нём не делают:
+        // настройка ворот там не нужна, а коммит без свода ловит ревизия по
+        // истории. Прежде сверка краснела в любом конвейере, и требование
+        // звать из него связку проверок делало его красным навсегда.
+        // Замерено на стенде: клон без `core.hooksPath` ронял только её.
+        // Пробелы самих файлов хуков — содержимое репозитория — печатаются
+        // и там.
+        const inPipeline = !["", "0", "false"].includes(
+          String(process.env.CI ?? "").toLowerCase(),
+        );
+        if (repo === null)
+          gateNote = "репозитория нет: коммитов не делают, и ворота не нужны";
+        else if (inPipeline) {
+          if (gateGap.length === 0)
+            gateNote =
+              "конвейер (`CI`): коммитов здесь не делают, и настройка ворот не нужна — коммит без свода ловит ревизия по истории";
+        } else if (where === null)
+          gateGap.push(
+            "`core.hooksPath` не задан — ворота не установлены: `" +
+              setHooks +
               "`",
           );
+        else if (
+          looksAt !== norm(path.resolve(REPO_AT, said.dir)) &&
+          (looksAt === null || !callsGate(looksAt))
+        )
+          gateGap.push(
+            "`core.hooksPath` = " +
+              where +
+              ": git ищет хук в " +
+              (looksAt === null
+                ? "неизвестной папке"
+                : norm(path.relative(REPO_AT, looksAt)) || ".") +
+              ", а ворота лежат в " +
+              said.dir +
+              ", и хуки там ворот не зовут. Путь — от корня репозитория: `" +
+              setHooks +
+              "`; свой менеджер хуков — вызов " +
+              "`node .claude/tools/graph.mjs gate` в его хуке перед коммитом " +
+              'и `node .claude/tools/graph.mjs gate --message "$1"` в хуке сообщения',
+          );
       }
-      // «Репозитория нет» и «настройка не задана» — разные ответы, и обе
-      // команды падают одинаково. Проект без git коммитов не делает, дыры у
-      // него нет, и краснеть тут не на что: сверка это НАЗЫВАЕТ, а не молчит.
-      const { execFileSync } = await import("node:child_process");
-      const gitSays = (args) => {
-        try {
-          return execFileSync("git", args, {
-            cwd: REPO_AT,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"],
-          }).trim();
-        } catch {
-          return null;
-        }
-      };
-      const repo = gitSays(["rev-parse", "--git-dir"]);
-      const where =
-        repo === null ? null : gitSays(["config", "core.hooksPath"]);
-      // Сличается путь, по которому git ИЩЕТ хук, а не строка настройки:
-      // относительный путь git читает от корня репозитория, и у проекта,
-      // вложенного в чужой, та же строка вела мимо ворот. Найдено прогоном
-      // проб: хук не исполнялся, а сверка была зелёной.
-      const looks =
-        where === null ? null : gitSays(["rev-parse", "--git-path", "hooks"]);
-      const looksAt =
-        looks === null ? null : norm(path.resolve(REPO_AT, looks));
-      const setHooks =
-        'git config core.hooksPath "$(git rev-parse --show-prefix)' +
-        said.dir +
-        '"';
-      // Проект со своим менеджером хуков держит `core.hooksPath` за собой и
-      // возвращает его при каждой установке пакетов: husky делает это
-      // сценарием `prepare`. Направить git к нам там нельзя — следующая
-      // установка молча вернёт своё. Ворота тогда зовутся ИЗ его хука, и
-      // сверка принимает это, найдя вызов режима в хуке, который git
-      // исполнит: у husky девятой версии это хук папкой выше служебной `_`.
-      // Замерено посадкой в проект на husky: после установки пакетов ворота
-      // молчали, а сверка требовала настройки, которая не держится.
-      // Хуков два: ворота перед коммитом и строка серии в его сообщении, —
-      // без второго ревизия по истории не узнаёт коммит части.
-      const callsGate = (dir) => {
-        const calls = (hook, line) =>
-          [
-            path.join(dir, hook),
-            ...(path.basename(dir) === "_"
-              ? [path.join(path.dirname(dir), hook)]
-              : []),
-          ].some((at) => existsSync(at) && line.test(readFileSync(at, "utf8")));
-        return (
-          calls("pre-commit", /graph\.mjs["']?\s+gate\b(?![ \t]+--message)/) &&
-          calls("prepare-commit-msg", /graph\.mjs["']?\s+gate\s+--message\b/)
-        );
-      };
-      // Конвейер — тот же свежий клон, только коммитов в нём не делают:
-      // настройка ворот там не нужна, а коммит без свода ловит ревизия по
-      // истории. Прежде сверка краснела в любом конвейере, и требование
-      // звать из него связку проверок делало его красным навсегда.
-      // Замерено на стенде: клон без `core.hooksPath` ронял только её.
-      // Пробелы самих файлов хуков — содержимое репозитория — печатаются
-      // и там.
-      const inPipeline = !["", "0", "false"].includes(
-        String(process.env.CI ?? "").toLowerCase(),
-      );
-      if (repo === null)
-        gateNote = "репозитория нет: коммитов не делают, и ворота не нужны";
-      else if (inPipeline) {
-        if (gateGap.length === 0)
-          gateNote =
-            "конвейер (`CI`): коммитов здесь не делают, и настройка ворот не нужна — коммит без свода ловит ревизия по истории";
-      } else if (where === null)
-        gateGap.push(
-          "`core.hooksPath` не задан — ворота не установлены: `" +
-            setHooks +
-            "`",
-        );
-      else if (
-        looksAt !== norm(path.resolve(REPO_AT, said.dir)) &&
-        (looksAt === null || !callsGate(looksAt))
-      )
-        gateGap.push(
-          "`core.hooksPath` = " +
-            where +
-            ": git ищет хук в " +
-            (looksAt === null
-              ? "неизвестной папке"
-              : norm(path.relative(REPO_AT, looksAt)) || ".") +
-            ", а ворота лежат в " +
-            said.dir +
-            ", и хуки там ворот не зовут. Путь — от корня репозитория: `" +
-            setHooks +
-            "`; свой менеджер хуков — вызов " +
-            "`node .claude/tools/graph.mjs gate` в его хуке перед коммитом " +
-            'и `node .claude/tools/graph.mjs gate --message "$1"` в хуке сообщения',
-        );
     }
-  }
+  });
   // Мутационный прогон, объявленный проектом, ИСПОЛНИМ.
   //
   // Доктрина требует его по новым файлам — `code.md`, шаг прогона. Держался
@@ -28173,104 +28829,108 @@ if (mode === "verify") {
   const mutGap = [];
   let mutLooked = 0;
   let mutNote = null;
-  {
-    if (CONFIG.mutationConfig == null)
-      mutNote = "мутационный прогон в этом проекте не заявлен";
-    else {
-      mutLooked = 1;
-      const at = path.join(BASE, CONFIG.mutationConfig);
-      if (!existsSync(at))
-        mutGap.push(
-          "конфиг объявлен полем `mutationConfig`, а файла нет: " +
-            CONFIG.mutationConfig,
-        );
+  checkStep(() => {
+    {
+      if (CONFIG.mutationConfig == null)
+        mutNote = "мутационный прогон в этом проекте не заявлен";
       else {
-        const mutConf = readJson(at, {});
-        const area = mutConf.mutate ?? [];
-        // Папка обвязки в песочнице прогона — чужой груз с последствием:
-        // прогон вписывает `// @ts-nocheck` первой строкой в файлы кода под
-        // `src/`, `lib/` и `test/` где угодно в дереве, в том числе в семена
-        // обвязки, и её тест, сажающий снимок в пустую папку, падает в
-        // пробном прогоне — мутационный прогон проекта не стартует вовсе.
-        // Замерено посадкой руками.
-        const shelfName =
-          SHELF === null ? null : path.relative(REPO, SHELF).split(path.sep)[0];
-        if (
-          shelfName !== null &&
-          !(mutConf.ignorePatterns ?? []).some(
-            (one) => String(one).replace(/^\/|\/$/g, "") === shelfName,
+        mutLooked = 1;
+        const at = path.join(BASE, CONFIG.mutationConfig);
+        if (!existsSync(at))
+          mutGap.push(
+            "конфиг объявлен полем `mutationConfig`, а файла нет: " +
+              CONFIG.mutationConfig,
+          );
+        else {
+          const mutConf = readJson(at, {});
+          const area = mutConf.mutate ?? [];
+          // Папка обвязки в песочнице прогона — чужой груз с последствием:
+          // прогон вписывает `// @ts-nocheck` первой строкой в файлы кода под
+          // `src/`, `lib/` и `test/` где угодно в дереве, в том числе в семена
+          // обвязки, и её тест, сажающий снимок в пустую папку, падает в
+          // пробном прогоне — мутационный прогон проекта не стартует вовсе.
+          // Замерено посадкой руками.
+          const shelfName =
+            SHELF === null
+              ? null
+              : path.relative(REPO, SHELF).split(path.sep)[0];
+          if (
+            shelfName !== null &&
+            !(mutConf.ignorePatterns ?? []).some(
+              (one) => String(one).replace(/^\/|\/$/g, "") === shelfName,
+            )
           )
-        )
-          mutGap.push(
-            'песочница прогона копирует папку обвязки и правит её семена: тест обвязки падает, прогон не стартует. Нужно `ignorePatterns: ["' +
-              shelfName +
-              '"]`',
-          );
-        // Раннер тестов по умолчанию ищет тесты, СВЯЗАННЫЕ с мутируемым
-        // файлом. Узел без своих тестов — обычное дело в живом проекте — не
-        // даёт ни одного, и прогон падает стеком «No tests were executed…
-        // check your configuration»: вместо замера «убито ноль» разработчик
-        // получает ошибку, указывающую на настройку обвязки. Замерено
-        // посадкой руками в живой проект с одним компонентом без тестов.
-        if (
-          mutConf.testRunner === "vitest" &&
-          mutConf.vitest?.related !== false
-        )
-          mutGap.push(
-            "раннер ищет только тесты, связанные с мутируемым файлом: узел без своих тестов роняет прогон ошибкой настройки вместо замера. Нужно `vitest.related: false`",
-          );
-        if (
-          area.length === 0 ||
-          area.every((g) => /^<.*>$/.test(String(g).trim()))
-        )
-          mutGap.push(
-            "область прогона не заполнена: в конфиге стоит заглушка с посадки",
-          );
-        // Область, ЗАПОЛНЕННАЯ путями, по которым ничего не лежит, бесполезна
-        // так же, как заглушка, и выглядит наоборот — заполненной. Случай не
-        // выдуманный: семя кладёт умолчание под раскладку обвязки, а проект со
-        // своей раскладкой держит узлы под другим именем слоя.
-        // ...но у ПУСТОГО проекта узлов ещё нет вовсе, и мерить мутациями
-        // нечего по построению. Слой компонентов заводится с первым
-        // компонентом, а не посадкой: каркас кладёт приложение и общее, и
-        // пустую папку под узлы завести нельзя — её запрещает соседняя
-        // сверка. Пока это считалось находкой, пустой проект не мог пройти
-        // СВОЙ ЖЕ рубеж: он требует нулевого кода возврата. Замерено первой
-        // посадкой в пустой проект за всю серию.
-        else if (mutationArea().length === 0) {
-          const seeds = seedOfPath();
-          const own = [...files, ...styleFiles].filter((f) => {
-            if (isTest(f) || f.endsWith(".d.ts")) return false;
-            const to = norm(path.relative(path.join(BASE, ".."), f));
-            const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
-            if (from === null || !existsSync(from)) return true;
-            if (SEEDS_REFORMATTED.has(to)) return false;
-            return !sameAsSeed(
-              readFileSync(f, "utf8"),
-              readFileSync(from, "utf8"),
-            );
-          });
-          if (own.length > 0)
             mutGap.push(
-              "область прогона не совпала ни с одним файлом: пути есть, предмета нет",
+              'песочница прогона копирует папку обвязки и правит её семена: тест обвязки падает, прогон не стартует. Нужно `ignorePatterns: ["' +
+                shelfName +
+                '"]`',
             );
-          else
-            mutNote =
-              "мерить мутациями нечего: своих узлов в проекте ещё нет. Область заполнится вместе с первым";
+          // Раннер тестов по умолчанию ищет тесты, СВЯЗАННЫЕ с мутируемым
+          // файлом. Узел без своих тестов — обычное дело в живом проекте — не
+          // даёт ни одного, и прогон падает стеком «No tests were executed…
+          // check your configuration»: вместо замера «убито ноль» разработчик
+          // получает ошибку, указывающую на настройку обвязки. Замерено
+          // посадкой руками в живой проект с одним компонентом без тестов.
+          if (
+            mutConf.testRunner === "vitest" &&
+            mutConf.vitest?.related !== false
+          )
+            mutGap.push(
+              "раннер ищет только тесты, связанные с мутируемым файлом: узел без своих тестов роняет прогон ошибкой настройки вместо замера. Нужно `vitest.related: false`",
+            );
+          if (
+            area.length === 0 ||
+            area.every((g) => /^<.*>$/.test(String(g).trim()))
+          )
+            mutGap.push(
+              "область прогона не заполнена: в конфиге стоит заглушка с посадки",
+            );
+          // Область, ЗАПОЛНЕННАЯ путями, по которым ничего не лежит, бесполезна
+          // так же, как заглушка, и выглядит наоборот — заполненной. Случай не
+          // выдуманный: семя кладёт умолчание под раскладку обвязки, а проект со
+          // своей раскладкой держит узлы под другим именем слоя.
+          // ...но у ПУСТОГО проекта узлов ещё нет вовсе, и мерить мутациями
+          // нечего по построению. Слой компонентов заводится с первым
+          // компонентом, а не посадкой: каркас кладёт приложение и общее, и
+          // пустую папку под узлы завести нельзя — её запрещает соседняя
+          // сверка. Пока это считалось находкой, пустой проект не мог пройти
+          // СВОЙ ЖЕ рубеж: он требует нулевого кода возврата. Замерено первой
+          // посадкой в пустой проект за всю серию.
+          else if (mutationArea().length === 0) {
+            const seeds = seedOfPath();
+            const own = [...files, ...styleFiles].filter((f) => {
+              if (isTest(f) || f.endsWith(".d.ts")) return false;
+              const to = norm(path.relative(path.join(BASE, ".."), f));
+              const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
+              if (from === null || !existsSync(from)) return true;
+              if (SEEDS_REFORMATTED.has(to)) return false;
+              return !sameAsSeed(
+                readFileSync(f, "utf8"),
+                readFileSync(from, "utf8"),
+              );
+            });
+            if (own.length > 0)
+              mutGap.push(
+                "область прогона не совпала ни с одним файлом: пути есть, предмета нет",
+              );
+            else
+              mutNote =
+                "мерить мутациями нечего: своих узлов в проекте ещё нет. Область заполнится вместе с первым";
+          }
         }
+        const manifest = path.join(BASE, "..", "package.json");
+        const pkg = readJson(manifest, {});
+        const deps = Object.keys({
+          ...(pkg.dependencies ?? {}),
+          ...(pkg.devDependencies ?? {}),
+        });
+        if (!deps.some((d) => /^@stryker-mutator\//.test(d)))
+          mutGap.push(
+            "прогон объявлен, а инструмента нет: ни одного пакета `@stryker-mutator/` в манифесте",
+          );
       }
-      const manifest = path.join(BASE, "..", "package.json");
-      const pkg = readJson(manifest, {});
-      const deps = Object.keys({
-        ...(pkg.dependencies ?? {}),
-        ...(pkg.devDependencies ?? {}),
-      });
-      if (!deps.some((d) => /^@stryker-mutator\//.test(d)))
-        mutGap.push(
-          "прогон объявлен, а инструмента нет: ни одного пакета `@stryker-mutator/` в манифесте",
-        );
     }
-  }
+  });
   // В корне папки узла — только то, что отвечает за узел целиком.
   //
   // Раскладка проекта отвечает, куда кладут узел; внутри его папки раскладки
@@ -28287,55 +28947,62 @@ if (mode === "verify") {
   // же, и файл узла лежит её именем со строчной буквы либо точно её именем.
   const nodeLitter = [];
   let nodeLooked = 0;
-  {
-    // Слой компонентов — СПИСОК имён под корнем исходников, и умолчание у
-    // него то же, что у соседних сверок. Своя форма здесь разошлась бы с ними
-    // при первом же проекте, объявившем два слоя.
-    for (const layer of CONFIG.componentsAt ?? ["components"]) {
-      const root = path.join(ROOT, layer);
-      if (!existsSync(root)) continue;
-      for (const name of readdirSync(root)) {
-        const folder = path.join(root, name);
-        if (!statSync(folder).isDirectory()) continue;
-        nodeLooked += 1;
-        const loose = [];
-        for (const one of readdirSync(folder)) {
-          const inside = path.join(folder, one);
-          if (statSync(inside).isDirectory()) continue;
-          const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
-          if (bare.toLowerCase() === name.toLowerCase()) continue;
-          if (one === "types.ts" || one === "index.ts" || one === "index.tsx")
-            continue;
-          if (!isCodePath(norm(inside)) && !isStylePath(norm(inside))) continue;
-          loose.push(one);
+  checkStep(() => {
+    {
+      // Слой компонентов — СПИСОК имён под корнем исходников, и умолчание у
+      // него то же, что у соседних сверок. Своя форма здесь разошлась бы с ними
+      // при первом же проекте, объявившем два слоя.
+      for (const layer of CONFIG.componentsAt ?? ["components"]) {
+        const root = path.join(ROOT, layer);
+        if (!existsSync(root)) continue;
+        for (const name of readdirSync(root)) {
+          const folder = path.join(root, name);
+          if (!statSync(folder).isDirectory()) continue;
+          nodeLooked += 1;
+          const loose = [];
+          for (const one of readdirSync(folder)) {
+            const inside = path.join(folder, one);
+            if (statSync(inside).isDirectory()) continue;
+            const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
+            if (bare.toLowerCase() === name.toLowerCase()) continue;
+            if (one === "types.ts" || one === "index.ts" || one === "index.tsx")
+              continue;
+            if (!isCodePath(norm(inside)) && !isStylePath(norm(inside)))
+              continue;
+            loose.push(one);
+          }
+          // Один в корне законен: папка на один файл — лишний уровень.
+          if (loose.length > 1)
+            nodeLitter.push(
+              layer +
+                "/" +
+                name +
+                " — в корне узла лежит не только он: " +
+                loose.join(", ") +
+                ". Развести по папкам по смыслу",
+            );
         }
-        // Один в корне законен: папка на один файл — лишний уровень.
-        if (loose.length > 1)
-          nodeLitter.push(
-            layer +
-              "/" +
-              name +
-              " — в корне узла лежит не только он: " +
-              loose.join(", ") +
-              ". Развести по папкам по смыслу",
-          );
       }
     }
-  }
+  });
   // Разложить узел по папкам — правка кода, а посадка код не трогает: живой
   // проект держит свалку пунктом долга перехода, числом узлов в нём.
-  const litterOpen = Math.min(
-    nodeLitter.length,
-    openFindings().get("В корне узла только сам узел") ?? 0,
+  const litterOpen = checkStep(() =>
+    Math.min(
+      nodeLitter.length,
+      openFindings().get("В корне узла только сам узел") ?? 0,
+    ),
   );
-  checkHead("В корне узла только сам узел", {
-    n: nodeLooked,
-    unit: "папок узлов",
+  checkStep(() => {
+    checkHead("В корне узла только сам узел", () => ({
+      n: nodeLooked,
+      unit: "папок узлов",
+    }));
+    console.log("  со свалкой в корне: " + (nodeLitter.length - litterOpen));
+    if (litterOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + litterOpen);
+    for (const one of nodeLitter.slice(litterOpen)) console.log("    " + one);
   });
-  console.log("  со свалкой в корне: " + (nodeLitter.length - litterOpen));
-  if (litterOpen > 0)
-    console.log("  держатся долгом перехода или реестром: " + litterOpen);
-  for (const one of nodeLitter.slice(litterOpen)) console.log("    " + one);
   // Файл узла держит модульным объявлением только сам узел — его функцию и
   // обёртку (`code.md`). Правило стояло без крючка, и переход живого проекта
   // не мог записать такой долг: держать пункт было нечем. Замерено переходом
@@ -28343,50 +29010,66 @@ if (mode === "verify") {
   // называется, как папка; типы объявлениями узла не считаются.
   const nodeExtras = [];
   let nodeFilesLooked = 0;
-  {
-    const DECL =
-      /^(?:export\s+)?(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|enum)\s+([A-Za-z_$][\w$]*)/;
-    for (const layer of CONFIG.componentsAt ?? ["components"]) {
-      const root = path.join(ROOT, layer);
-      if (!existsSync(root)) continue;
-      for (const name of readdirSync(root)) {
-        const folder = path.join(root, name);
-        if (!statSync(folder).isDirectory()) continue;
-        for (const one of readdirSync(folder)) {
-          const at = path.join(folder, one);
-          if (statSync(at).isDirectory() || !isCodePath(norm(at))) continue;
-          if (one.replace(/\.[^.]+$/, "").toLowerCase() !== name.toLowerCase())
-            continue;
-          nodeFilesLooked += 1;
-          const text = readFileSync(at, "utf8");
-          for (const line of text.split(NEWLINE)) {
-            const m = DECL.exec(line);
-            if (m === null || m[1].toLowerCase() === name.toLowerCase()) continue;
-            // Функция, которую узел оборачивает: `memo(Inner)`, `forwardRef(Inner)`.
-            const wrapped = new RegExp(
-              "(?:memo|forwardRef)\\(\\s*" + m[1].replace(/\$/g, "\\$") + "\\b",
-            );
-            if (wrapped.test(text)) continue;
-            nodeExtras.push(
-              rel(at) + ": `" + m[1] + "` объявлен рядом с узлом. Перенести в папку по смыслу",
-            );
+  checkStep(() => {
+    {
+      const DECL =
+        /^(?:export\s+)?(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|enum)\s+([A-Za-z_$][\w$]*)/;
+      for (const layer of CONFIG.componentsAt ?? ["components"]) {
+        const root = path.join(ROOT, layer);
+        if (!existsSync(root)) continue;
+        for (const name of readdirSync(root)) {
+          const folder = path.join(root, name);
+          if (!statSync(folder).isDirectory()) continue;
+          for (const one of readdirSync(folder)) {
+            const at = path.join(folder, one);
+            if (statSync(at).isDirectory() || !isCodePath(norm(at))) continue;
+            if (
+              one.replace(/\.[^.]+$/, "").toLowerCase() !== name.toLowerCase()
+            )
+              continue;
+            nodeFilesLooked += 1;
+            const text = readFileSync(at, "utf8");
+            for (const line of text.split(NEWLINE)) {
+              const m = DECL.exec(line);
+              if (m === null || m[1].toLowerCase() === name.toLowerCase())
+                continue;
+              // Функция, которую узел оборачивает: `memo(Inner)`, `forwardRef(Inner)`.
+              const wrapped = new RegExp(
+                "(?:memo|forwardRef)\\(\\s*" +
+                  m[1].replace(/\$/g, "\\$") +
+                  "\\b",
+              );
+              if (wrapped.test(text)) continue;
+              nodeExtras.push(
+                rel(at) +
+                  ": `" +
+                  m[1] +
+                  "` объявлен рядом с узлом. Перенести в папку по смыслу",
+              );
+            }
           }
         }
       }
     }
-  }
-  const extrasOpen = Math.min(
-    nodeExtras.length,
-    openFindings().get("В файле узла только сам узел") ?? 0,
-  );
-  checkHead("В файле узла только сам узел", {
-    n: nodeFilesLooked,
-    unit: "файлов узлов",
   });
-  console.log("  объявлений рядом с узлом: " + (nodeExtras.length - extrasOpen));
-  if (extrasOpen > 0)
-    console.log("  держатся долгом перехода или реестром: " + extrasOpen);
-  for (const one of nodeExtras.slice(extrasOpen)) console.log("    " + one);
+  const extrasOpen = checkStep(() =>
+    Math.min(
+      nodeExtras.length,
+      openFindings().get("В файле узла только сам узел") ?? 0,
+    ),
+  );
+  checkStep(() => {
+    checkHead("В файле узла только сам узел", () => ({
+      n: nodeFilesLooked,
+      unit: "файлов узлов",
+    }));
+    console.log(
+      "  объявлений рядом с узлом: " + (nodeExtras.length - extrasOpen),
+    );
+    if (extrasOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + extrasOpen);
+    for (const one of nodeExtras.slice(extrasOpen)) console.log("    " + one);
+  });
   // Названное доктриной ИСПОЛНИМО.
   //
   // Класс находки: требование стояло, а инструмента не было. Замерено на
@@ -28403,205 +29086,220 @@ if (mode === "verify") {
   // же причине, что у прочих сканеров прозы.
   const unrunnable = [];
   let runnableLooked = 0;
-  {
-    const seedAt = shelfAt("seat/templates/package.json");
-    const seed = seedAt === null ? {} : readJson(seedAt, {});
-    const scripts = new Set(Object.keys(seed.scripts ?? {}));
-    const deps = Object.keys({
-      ...(seed.dependencies ?? {}),
-      ...(seed.devDependencies ?? {}),
-    });
-    const said = new Set();
-    const say = (what, why, where) => {
-      if (said.has(what)) return;
-      said.add(what);
-      unrunnable.push(what + " — " + why + " (" + where + ")");
-    };
-    const RUN = /npm run ([a-z:]+)/g;
-    // Флаги перед пакетом и версия после него — не имя: `npx -y eslint@9`
-    // зовёт `eslint`, а читался флаг, и сверка краснела на законном.
-    const NPX =
-      /npx (?:--?[a-z][a-z-]* )*(@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?)/g;
-    const MODE = /graph\.mjs ([a-z-]+)/g;
-    const BASE_FILE = /`(\d\d-[a-z]+\.md)`/g;
-    const SEED_PATH = /seat\/templates\/([A-Za-z0-9_./-]*[A-Za-z0-9_])/g;
-    // Семя → кладёт ли его посадка. Кладёт — всё из `copy`, кроме помеченного
-    // `notAtSeating`; семена по предмету и по переходу — нет.
-    const seatEntries = (() => {
-      const out = new Map();
-      const mapAt = shelfAt("seat/map.json");
-      if (mapAt === null || !existsSync(mapAt)) return out;
-      const seat = readJson(mapAt, {});
-      for (const e of seat.copy ?? [])
-        out.set(e.from, { laidBySeat: e.notAtSeating == null });
-      for (const e of [...(seat.onSubject ?? []), ...(seat.onTransition ?? [])])
-        out.set(e.from, { laidBySeat: false });
-      return out;
-    })();
-    // Помощник прозы отдаёт ПАРУ ПУТЕЙ — короткий для сообщений и полный для
-    // чтения, — а не текст. Первая редакция сканировала строку полного пути и
-    // молчала всегда: сверка, заведённая против зелёного без проверки, сама им
-    // и была. Найдено подсадкой всех трёх видов сразу.
-    // Корпус — проза ПОЛКИ и проза БАЗЫ ПРОЕКТА. Вопрос к ним один и тот
-    // же: названа команда — она обязана существовать. Пока спрашивалась
-    // одна полка, план перехода мог звать режим, которого у инструмента
-    // нет, и прогон молчал. Замерено на собственном плане: последний шаг
-    // звал `graph.mjs snapshot` — режим, которого не было никогда.
-    const baseProse = readdirSync(BASE)
-      .filter((e) => e.endsWith(".md"))
-      .map((e) => [e, path.join(BASE, e)]);
-    // Проза ОБВЯЗКИ говорит семенными именами — она одна на все проекты, —
-    // и спрашивается с манифестом семени. Проза БАЗЫ пишется про этот проект
-    // и его же командами, и спрашивается с его манифестом. Прежде обе шли
-    // по семени: живой проект держит звено типов под именем `types`, базовая
-    // линия записала замер его командой — и сверка ответила «звена нет в
-    // манифесте проекта» про звено, которое там есть. Замерено посадкой
-    // руками в проект со своим именем звена.
-    const own = readJson(path.join(BASE, "..", "package.json"), {});
-    const ownScripts = new Set(Object.keys(own.scripts ?? {}));
-    const ownDeps = Object.keys({
-      ...(own.dependencies ?? {}),
-      ...(own.devDependencies ?? {}),
-    });
-    const shelfSide = new Set(shelfProse().map(([, full]) => full));
-    for (const [where, full] of [...shelfProse(), ...baseProse]) {
-      runnableLooked += 1;
-      const flat = proseOf(full);
-      const fromShelf = shelfSide.has(full);
-      const names = fromShelf ? scripts : ownScripts;
-      const packs = fromShelf ? deps : ownDeps;
-      const whose = fromShelf ? "манифесте семени" : "манифесте проекта";
-      for (const m of flat.matchAll(RUN))
-        if (!names.has(m[1]))
-          say("npm run " + m[1], "звена нет в " + whose, where);
-      for (const m of flat.matchAll(NPX))
-        if (!packs.some((d) => d === m[1] || d.includes(m[1])))
-          say("npx " + m[1], "пакета нет в " + whose, where);
-      for (const m of flat.matchAll(MODE))
-        if (!toolModes().includes(m[1]))
-          say("graph.mjs " + m[1], "такого режима у инструмента нет", where);
-      // Четвёртый вид: файл базы, названный прозой по имени. Запускать его не
-      // велят, но требование он несёт то же самое — «запиши это туда», — и без
-      // семени исполнить его нечем: разработчик выдумывает и файл, и форму
-      // таблицы в нём. Замерено на переходе живого проекта: сверка потребовала
-      // объявить таблицу связей через разметку и стили, доктрина назвала для
-      // неё `03-graph.md`, а полка не везла ни семени, ни записи в карте — и
-      // шапки таблицы пришлось вычитывать из разбора вот в этом файле.
-      for (const m of flat.matchAll(BASE_FILE))
-        if (!seededBase().has(m[1]))
-          say(m[1], "файла базы нет ни в семенах, ни в карте посадки", where);
-      // Пятый вид: СЕМЯ, названное прозой по пути. Что откуда куда и КОГДА
-      // кладётся, объявляет карта, и она единственный источник; проза,
-      // повторяющая это, расходится с ней при первой же правке карты.
-      // Замерено посадкой руками: конфиг мутационного прогона переехал в
-      // посадку, починку записали в шаге 1 — а последний раздел инструкции
-      // по-прежнему велел класть его «не при посадке», руками и потом.
-      //
-      // Спрашивается узко: названное семя существует, и абзац, говорящий
-      // о нём «не при посадке», говорит это про семя, которое карта и правда
-      // не кладёт посадкой. Семена по предмету и по переходу — законно такие.
-      // Единица — абзац, а у таблицы строка: строки таблицы идут подряд без
-      // пустой, и «не на посадке» одной строки иначе цеплялось к семени,
-      // названному другой.
-      const units = flat
-        .split(NEWLINE + NEWLINE)
-        .flatMap((p) =>
-          p.trimStart().startsWith("|") ? p.split(NEWLINE) : [p],
-        );
-      for (const para of units) {
-        const deferred = /не (?:при|на) посадке/.test(para);
-        for (const m of para.matchAll(SEED_PATH)) {
-          const seed = "seat/templates/" + m[1];
-          const entry = seatEntries.get(seed);
-          if (entry === undefined) {
-            const seedAt = shelfAt(seed);
-            if (seedAt === null || !existsSync(seedAt))
-              say(seed, "такого семени на полке нет", where);
-            continue;
+  checkStep(() => {
+    {
+      const seedAt = shelfAt("seat/templates/package.json");
+      const seed = seedAt === null ? {} : readJson(seedAt, {});
+      const scripts = new Set(Object.keys(seed.scripts ?? {}));
+      const deps = Object.keys({
+        ...(seed.dependencies ?? {}),
+        ...(seed.devDependencies ?? {}),
+      });
+      const said = new Set();
+      const say = (what, why, where) => {
+        if (said.has(what)) return;
+        said.add(what);
+        unrunnable.push(what + " — " + why + " (" + where + ")");
+      };
+      const RUN = /npm run ([a-z:]+)/g;
+      // Флаги перед пакетом и версия после него — не имя: `npx -y eslint@9`
+      // зовёт `eslint`, а читался флаг, и сверка краснела на законном.
+      const NPX =
+        /npx (?:--?[a-z][a-z-]* )*(@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?)/g;
+      const MODE = /graph\.mjs ([a-z-]+)/g;
+      const BASE_FILE = /`(\d\d-[a-z]+\.md)`/g;
+      const SEED_PATH = /seat\/templates\/([A-Za-z0-9_./-]*[A-Za-z0-9_])/g;
+      // Семя → кладёт ли его посадка. Кладёт — всё из `copy`, кроме помеченного
+      // `notAtSeating`; семена по предмету и по переходу — нет.
+      const seatEntries = (() => {
+        const out = new Map();
+        const mapAt = shelfAt("seat/map.json");
+        if (mapAt === null || !existsSync(mapAt)) return out;
+        const seat = readJson(mapAt, {});
+        for (const e of seat.copy ?? [])
+          out.set(e.from, { laidBySeat: e.notAtSeating == null });
+        for (const e of [
+          ...(seat.onSubject ?? []),
+          ...(seat.onTransition ?? []),
+        ])
+          out.set(e.from, { laidBySeat: false });
+        return out;
+      })();
+      // Помощник прозы отдаёт ПАРУ ПУТЕЙ — короткий для сообщений и полный для
+      // чтения, — а не текст. Первая редакция сканировала строку полного пути и
+      // молчала всегда: сверка, заведённая против зелёного без проверки, сама им
+      // и была. Найдено подсадкой всех трёх видов сразу.
+      // Корпус — проза ПОЛКИ и проза БАЗЫ ПРОЕКТА. Вопрос к ним один и тот
+      // же: названа команда — она обязана существовать. Пока спрашивалась
+      // одна полка, план перехода мог звать режим, которого у инструмента
+      // нет, и прогон молчал. Замерено на собственном плане: последний шаг
+      // звал `graph.mjs snapshot` — режим, которого не было никогда.
+      const baseProse = readdirSync(BASE)
+        .filter((e) => e.endsWith(".md"))
+        .map((e) => [e, path.join(BASE, e)]);
+      // Проза ОБВЯЗКИ говорит семенными именами — она одна на все проекты, —
+      // и спрашивается с манифестом семени. Проза БАЗЫ пишется про этот проект
+      // и его же командами, и спрашивается с его манифестом. Прежде обе шли
+      // по семени: живой проект держит звено типов под именем `types`, базовая
+      // линия записала замер его командой — и сверка ответила «звена нет в
+      // манифесте проекта» про звено, которое там есть. Замерено посадкой
+      // руками в проект со своим именем звена.
+      const own = readJson(path.join(BASE, "..", "package.json"), {});
+      const ownScripts = new Set(Object.keys(own.scripts ?? {}));
+      const ownDeps = Object.keys({
+        ...(own.dependencies ?? {}),
+        ...(own.devDependencies ?? {}),
+      });
+      const shelfSide = new Set(shelfProse().map(([, full]) => full));
+      for (const [where, full] of [...shelfProse(), ...baseProse]) {
+        runnableLooked += 1;
+        const flat = proseOf(full);
+        const fromShelf = shelfSide.has(full);
+        const names = fromShelf ? scripts : ownScripts;
+        const packs = fromShelf ? deps : ownDeps;
+        const whose = fromShelf ? "манифесте семени" : "манифесте проекта";
+        for (const m of flat.matchAll(RUN))
+          if (!names.has(m[1]))
+            say("npm run " + m[1], "звена нет в " + whose, where);
+        for (const m of flat.matchAll(NPX))
+          if (!packs.some((d) => d === m[1] || d.includes(m[1])))
+            say("npx " + m[1], "пакета нет в " + whose, where);
+        for (const m of flat.matchAll(MODE))
+          if (!toolModes().includes(m[1]))
+            say("graph.mjs " + m[1], "такого режима у инструмента нет", where);
+        // Четвёртый вид: файл базы, названный прозой по имени. Запускать его не
+        // велят, но требование он несёт то же самое — «запиши это туда», — и без
+        // семени исполнить его нечем: разработчик выдумывает и файл, и форму
+        // таблицы в нём. Замерено на переходе живого проекта: сверка потребовала
+        // объявить таблицу связей через разметку и стили, доктрина назвала для
+        // неё `03-graph.md`, а полка не везла ни семени, ни записи в карте — и
+        // шапки таблицы пришлось вычитывать из разбора вот в этом файле.
+        for (const m of flat.matchAll(BASE_FILE))
+          if (!seededBase().has(m[1]))
+            say(m[1], "файла базы нет ни в семенах, ни в карте посадки", where);
+        // Пятый вид: СЕМЯ, названное прозой по пути. Что откуда куда и КОГДА
+        // кладётся, объявляет карта, и она единственный источник; проза,
+        // повторяющая это, расходится с ней при первой же правке карты.
+        // Замерено посадкой руками: конфиг мутационного прогона переехал в
+        // посадку, починку записали в шаге 1 — а последний раздел инструкции
+        // по-прежнему велел класть его «не при посадке», руками и потом.
+        //
+        // Спрашивается узко: названное семя существует, и абзац, говорящий
+        // о нём «не при посадке», говорит это про семя, которое карта и правда
+        // не кладёт посадкой. Семена по предмету и по переходу — законно такие.
+        // Единица — абзац, а у таблицы строка: строки таблицы идут подряд без
+        // пустой, и «не на посадке» одной строки иначе цеплялось к семени,
+        // названному другой.
+        const units = flat
+          .split(NEWLINE + NEWLINE)
+          .flatMap((p) =>
+            p.trimStart().startsWith("|") ? p.split(NEWLINE) : [p],
+          );
+        for (const para of units) {
+          const deferred = /не (?:при|на) посадке/.test(para);
+          for (const m of para.matchAll(SEED_PATH)) {
+            const seed = "seat/templates/" + m[1];
+            const entry = seatEntries.get(seed);
+            if (entry === undefined) {
+              const seedAt = shelfAt(seed);
+              if (seedAt === null || !existsSync(seedAt))
+                say(seed, "такого семени на полке нет", where);
+              continue;
+            }
+            if (deferred && entry.laidBySeat)
+              say(
+                seed,
+                "проза кладёт его не при посадке, а карта — посадкой",
+                where,
+              );
           }
-          if (deferred && entry.laidBySeat)
-            say(
-              seed,
-              "проза кладёт его не при посадке, а карта — посадкой",
-              where,
-            );
         }
       }
     }
-  }
-  // Команда долга мутаций в правилах проекта — ровно тогда, когда мутационный
-  // прогон объявлен. Семя правил описывало эту команду абзацем, а в его
-  // таблице её не было вовсе; проект без мутаций получал абзац о команде,
-  // которой ему нечего спрашивать. Найдено ревизией правил посаженных
-  // стендов. Спрашивается в обе стороны: названа без прогона — требование
-  // без предмета; прогон есть, а команды нет — отчёт о правке её не спросит.
-  {
-    const mine = (CONFIG.rulesManifest?.rules ?? [])
-      .map((one) => path.join(BASE, one))
-      .filter((one) => existsSync(one));
-    if (mine.length) {
-      const said = mine
-        .map((one) => readFileSync(one, "utf8"))
-        .some((body) => /graph\.mjs mutated/.test(body));
-      if (said && CONFIG.mutationConfig == null)
-        unrunnable.push(
-          "правила проекта называют `graph.mjs mutated`, а мутационного прогона у проекта нет: снять строку таблицы и слова о команде",
-        );
-      if (!said && CONFIG.mutationConfig != null)
-        unrunnable.push(
-          "мутационный прогон объявлен, а правила проекта не называют `graph.mjs mutated` — команду его долга, часть каждого отчёта о правке",
-        );
+    // Команда долга мутаций в правилах проекта — ровно тогда, когда мутационный
+    // прогон объявлен. Семя правил описывало эту команду абзацем, а в его
+    // таблице её не было вовсе; проект без мутаций получал абзац о команде,
+    // которой ему нечего спрашивать. Найдено ревизией правил посаженных
+    // стендов. Спрашивается в обе стороны: названа без прогона — требование
+    // без предмета; прогон есть, а команды нет — отчёт о правке её не спросит.
+    {
+      const mine = (CONFIG.rulesManifest?.rules ?? [])
+        .map((one) => path.join(BASE, one))
+        .filter((one) => existsSync(one));
+      if (mine.length) {
+        const said = mine
+          .map((one) => readFileSync(one, "utf8"))
+          .some((body) => /graph\.mjs mutated/.test(body));
+        if (said && CONFIG.mutationConfig == null)
+          unrunnable.push(
+            "правила проекта называют `graph.mjs mutated`, а мутационного прогона у проекта нет: снять строку таблицы и слова о команде",
+          );
+        if (!said && CONFIG.mutationConfig != null)
+          unrunnable.push(
+            "мутационный прогон объявлен, а правила проекта не называют `graph.mjs mutated` — команду его долга, часть каждого отчёта о правке",
+          );
+      }
     }
-  }
-  checkHead("Названное доктриной исполнимо", {
-    n: runnableLooked,
-    unit: "файлов прозы обвязки и базы",
   });
-  console.log("  требований без инструмента: " + unrunnable.length);
-  for (const one of unrunnable) console.log("    " + one);
-  checkHead("Мутационный прогон исполним", {
-    n: mutLooked,
-    unit: "объявлений мутационного прогона",
+  checkStep(() => {
+    checkHead("Названное доктриной исполнимо", () => ({
+      n: runnableLooked,
+      unit: "файлов прозы обвязки и базы",
+    }));
+    console.log("  требований без инструмента: " + unrunnable.length);
+    for (const one of unrunnable) console.log("    " + one);
   });
-  console.log(
-    mutNote === null ? "  нечем исполнить: " + mutGap.length : "  " + mutNote,
-  );
-  for (const one of mutGap) console.log("    " + one);
-  checkHead("Ворота перед коммитом установлены", {
-    n: gateLooked,
-    unit: "объявленных хуков git",
-  });
-  console.log(
-    gateNote === null ? "  не на месте: " + gateGap.length : "  " + gateNote,
-  );
-  for (const one of gateGap) console.log("    " + one);
-  checkHead("Коммит с кодом накрыт сводом", {
-    n: barPastLooked,
-    unit: "коммитов с кодом после основания",
-  });
-  console.log(
-    barPastNote === null
-      ? "  без свода: " + barPast.length
-      : "  " + barPastNote,
-  );
-  for (const one of barPast)
+  checkStep(() => {
+    checkHead("Мутационный прогон исполним", () => ({
+      n: mutLooked,
+      unit: "объявлений мутационного прогона",
+    }));
     console.log(
-      "    " + one + ". Свод делают до коммита и кладут в тот же коммит",
+      mutNote === null ? "  нечем исполнить: " + mutGap.length : "  " + mutNote,
     );
-  checkHead("Планка пройдена покритериально", {
-    n: barCriteriaLive,
-    unit: "живых критериев планки",
+    for (const one of mutGap) console.log("    " + one);
   });
-  if (barSaid !== null) console.log("  " + barSaid);
-  // Находка печатается отступом в ЧЕТЫРЕ пробела: именно по нему её узнаёт
-  // разбор вывода, которым фальсификация отличает выросшую секцию от
-  // прежней. Напечатанная мельче, она видна глазу и не видна прогону.
-  if (barGaps.length) console.log("  дыр: " + barGaps.length);
-  for (const g of barGaps) console.log("    " + g);
-  if (barGaps.length)
+  checkStep(() => {
+    checkHead("Ворота перед коммитом установлены", () => ({
+      n: gateLooked,
+      unit: "объявленных хуков git",
+    }));
     console.log(
-      "  Позвать режим `bar` и пройти по критериям: свод без печати не свод.",
+      gateNote === null ? "  не на месте: " + gateGap.length : "  " + gateNote,
     );
+    for (const one of gateGap) console.log("    " + one);
+  });
+  checkStep(() => {
+    checkHead("Коммит с кодом накрыт сводом", () => ({
+      n: barPastLooked,
+      unit: "коммитов с кодом после основания",
+    }));
+    console.log(
+      barPastNote === null
+        ? "  без свода: " + barPast.length
+        : "  " + barPastNote,
+    );
+    for (const one of barPast)
+      console.log(
+        "    " + one + ". Свод делают до коммита и кладут в тот же коммит",
+      );
+  });
+  checkStep(() => {
+    checkHead("Планка пройдена покритериально", () => ({
+      n: barCriteriaLive,
+      unit: "живых критериев планки",
+    }));
+    if (barSaid !== null) console.log("  " + barSaid);
+    // Находка печатается отступом в ЧЕТЫРЕ пробела: именно по нему её узнаёт
+    // разбор вывода, которым фальсификация отличает выросшую секцию от
+    // прежней. Напечатанная мельче, она видна глазу и не видна прогону.
+    if (barGaps.length) console.log("  дыр: " + barGaps.length);
+    for (const g of barGaps) console.log("    " + g);
+    if (barGaps.length)
+      console.log(
+        "  Позвать режим `bar` и пройти по критериям: свод без печати не свод.",
+      );
+  });
 
   // 44a. Файл базы заведён под свой предмет.
   //
@@ -28618,48 +29316,54 @@ if (mode === "verify") {
   const SUBJECTS = BRIEF_SUBJECTS;
   const baseGap = [];
   const baseMute = [];
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt)) {
-      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      for (const one of seatMap.onSubject ?? [])
-        if (SUBJECTS[one.subject] === undefined)
-          baseGap.push(one.to + " — предмет «" + one.subject + "» неизвестен");
-      // Пофайловый разбор — тот же, что у досье, `owedFor`: второй сканер
-      // одного вопроса здесь уже стоял и принимал упоминание где угодно,
-      // когда досье спрашивало точнее.
-      const gaps = new Set();
-      for (const f of files) {
-        if (isTest(f)) continue;
-        for (const one of owedFor(f)) {
-          if (one.why === "нет файла") {
-            gaps.add(
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt)) {
+        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        for (const one of seatMap.onSubject ?? [])
+          if (SUBJECTS[one.subject] === undefined)
+            baseGap.push(
+              one.to + " — предмет «" + one.subject + "» неизвестен",
+            );
+        // Пофайловый разбор — тот же, что у досье, `owedFor`: второй сканер
+        // одного вопроса здесь уже стоял и принимал упоминание где угодно,
+        // когда досье спрашивало точнее.
+        const gaps = new Set();
+        for (const f of files) {
+          if (isTest(f)) continue;
+          for (const one of owedFor(f)) {
+            if (one.why === "нет файла") {
+              gaps.add(
+                one.to +
+                  " — предмет в коде есть, а файла базы нет: " +
+                  one.subject,
+              );
+              continue;
+            }
+            baseMute.push(
               one.to +
-                " — предмет в коде есть, а файла базы нет: " +
+                " — " +
+                one.why +
+                " " +
+                rel(f) +
+                ", а предмет в нём есть: " +
                 one.subject,
             );
-            continue;
           }
-          baseMute.push(
-            one.to +
-              " — " +
-              one.why +
-              " " +
-              rel(f) +
-              ", а предмет в нём есть: " +
-              one.subject,
-          );
         }
+        baseGap.push(...gaps);
       }
-      baseGap.push(...gaps);
     }
-  }
-  checkHead("Файлы базы заведены под свой предмет", {
-    n: subjectsDeclared.length,
-    unit: "предметов базы",
   });
-  console.log("  предмет есть, файла нет: " + baseGap.length);
-  for (const g of baseGap) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Файлы базы заведены под свой предмет", () => ({
+      n: subjectsDeclared.length,
+      unit: "предметов базы",
+    }));
+    console.log("  предмет есть, файла нет: " + baseGap.length);
+    for (const g of baseGap) console.log("    " + g);
+  });
 
   // 45a. Каркас обвязки не лежит в живом проекте.
   //
@@ -28719,383 +29423,392 @@ if (mode === "verify") {
   let frameLaid = 0;
   let frameOwn = 0;
   let frameLives = true;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt)) {
-      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      const frame = (seatMap.copy ?? []).filter((e) => e.onlyWhenEmpty);
-      // Концы строк приводятся к одному виду: снимок едет между машинами, и на
-      // машине с иной политикой побайтовое сравнение расходилось бы на каждой
-      // строке, не говоря ничего о содержимом.
-      const eol = String.fromCharCode(13) + NEWLINE;
-      const same = (a, b) =>
-        readFileSync(a, "utf8").split(eol).join(NEWLINE) ===
-        readFileSync(b, "utf8").split(eol).join(NEWLINE);
-      const laid = frame.filter((e) => {
-        const to = path.join(REPO, e.to);
-        const from = shelfAt(e.from);
-        return (
-          existsSync(to) && from !== null && existsSync(from) && same(to, from)
-        );
-      });
-      // Свой код — всё, что НЕ равно своему семени побайтово.
-      //
-      // Прежде исключались адреса каркаса, и пока семенами кода был один
-      // каркас, это совпадало. Как только помощник слияния и файл подготовки
-      // тестов поехали в каждый проект, они стали считаться собственным
-      // кодом — и пустой проект, только что посаженный, объявлялся живым:
-      // сверка докладывала, что каркас лежит при чужом коде, хотя этим
-      // «чужим кодом» были её же семена.
-      //
-      // Признак верен в обе стороны: положенное посадкой семя своим кодом не
-      // является, а файл живого проекта по тому же адресу семени не равен и
-      // своим кодом остаётся.
-      const seedAt = new Map();
-      for (const e of seatMap.copy ?? []) {
-        const from0 = shelfAt(e.from);
-        if (from0 !== null) seedAt.set(norm(path.join(REPO, e.to)), from0);
-      }
-      const fromSeed = (f) => {
-        const src = seedAt.get(f);
-        return (
-          src !== undefined && existsSync(src) && existsSync(f) && same(f, src)
-        );
-      };
-      // Ищется свой код ПО ВСЕМУ РЕПОЗИТОРИЮ, а не под объявленным корнем
-      // исходников. Корень объявляет настройка, а настройку правят ШАГОМ 2 —
-      // после того, как шаг 1 уже решил, класть ли каркас. Проект, чьи
-      // исходники лежат не в `src/`, на этом шаге виден пустым: каркас
-      // ложится целиком, а потом и эта сверка смотрит в им же созданную
-      // папку и докладывает «проект живёт каркасом».
-      //
-      // Замерено посадкой стенда с ДВУМЯ деревьями, `client/` и `server/`:
-      // папки `src/` у него нет вовсе, и в живой проект легли чужая точка
-      // входа, чужой корневой компонент и чужая страница.
-      const everywhere = [];
-      {
-        const skip = new Set([
-          ".claude",
-          ".context",
-          ".git",
-          "node_modules",
-          "docs",
-          "dist",
-          "coverage",
-        ]);
-        const walk = (dir) => {
-          let kids = [];
-          try {
-            kids = readdirSync(dir, { withFileTypes: true });
-          } catch {
-            return;
-          }
-          for (const e of kids) {
-            if (skip.has(e.name) || OUT_OF_TREE.has(e.name)) continue;
-            const at = norm(path.join(dir, e.name));
-            if (e.isDirectory()) walk(at);
-            else if (
-              (CODE_FILE.test(e.name) || isStylePath(e.name)) &&
-              norm(dir) !== norm(REPO)
-            )
-              everywhere.push(at);
-          }
-        };
-        // Файлы В САМОМ КОРНЕ репозитория не считаются: там лежат конфиги
-        // — сборщика, линтера, мутационного прогона, — и код проекта в корне
-        // не держат. Иначе привезённый и правленый проектом конфиг сошёл бы
-        // за свой код и объявил живым любой посаженный проект.
-        walk(norm(REPO));
-      }
-      const own = everywhere.filter((f) => !fromSeed(f) && !isTest(f));
-      // Обратная сторона того же признака: пока СВОЕГО КОДА НЕТ, проект
-      // живёт каркасом — и каркас обязан быть тем самым, который проект
-      // раздаёт. Это случай полки: она держит свою копию, чтобы цепочке
-      // было на чём прогоняться, правит обе стороны руками, и правку
-      // одной не ловило ничто. Появился свой код — сверка молчит, а про
-      // оставшийся каркас спрашивает соседняя.
-      // Признак «проект живёт каркасом» считается по НЕ-каркасным файлам.
-      //
-      // По всем считать нельзя: расхождение, которое сверка ищет, само делает
-      // каркасный файл «своим кодом» и гасит её. Замерено посаженной
-      // поломкой — строка, дописанная в корневой компонент, сверку не
-      // разбудила, а усыпила.
-      const frameTo = new Set(frame.map((e) => norm(path.join(REPO, e.to))));
-      const ownOutsideFrame = own.filter((f) => !frameTo.has(f));
-      frameLives = ownOutsideFrame.length === 0;
-      // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
-      // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
-      // с текстом. Признак тот же, что у каркаса: свой код вне каркаса.
-      // Спрашивается САМО УТВЕРЖДЕНИЕ, а не пометка при нём.
-      //
-      // Пометка стоит в СЕМЕНИ и там же называет свои строки: всё, что
-      // внутри неё, — текст, верный только для пустого проекта. Сверка
-      // читает семя, берёт эти строки и ищет их в файле проекта.
-      //
-      // Прежде искалась пометка в файле ПРОЕКТА, и это ловилось снятием
-      // одной строки. Замерено круговым прогоном стенда: переход снял пять
-      // пометок, не тронув ни слова под ними, — свод идиом остался с
-      // привезённым «Здесь пока нечего описывать» при готовом компоненте
-      // рядом, и сверка вышла зелёной. То есть механизм закрывал ровно ту
-      // работу, ради которой заведён, и закрывался жестом.
-      //
-      // Утверждение уходит только вместе с текстом, потому что спрашивают
-      // текст. Пометка в файле проекта тоже считается: её оставили — значит
-      // оставили и то, что она накрывает.
-      {
-        const OPEN = "<!-- ПУСТО -->";
-        const SHUT = "<!-- /ПУСТО -->";
-        for (const e of seatMap.copy ?? []) {
-          const seedAt = shelfAt(e.from);
-          if (seedAt === null || !existsSync(seedAt)) continue;
-          const seed = proseOf(seedAt).split(NEWLINE);
-          const claim = [];
-          for (let i = 0; i < seed.length; i += 1) {
-            if (seed[i].trim() !== OPEN) continue;
-            let shut = i + 1;
-            while (shut < seed.length && seed[shut].trim() !== SHUT) {
-              const row = seed[shut].trim();
-              if (row !== "") claim.push(row);
-              // Место под заполнение ВНУТРИ записи о пустоте — противоречие в
-              // самом семени: пометка велит снять блок целиком с первой
-              // строкой своего кода, и заполненное уйдёт вместе с ним. Так
-              // стояли сводка о проекте в карте и базовая линия в фактах:
-              // заполнив их в фазе 2, пустой проект с первой строкой кода
-              // получил бы требование их снять. Найдено посадкой руками.
-              if (/<(?!!--)[^<>]{3,}>/.test(row))
-                emptySlots.push(
-                  e.from +
-                    ":" +
-                    (shut + 1) +
-                    " — внутри записи о пустоте стоит место под заполнение: заполненное уйдёт вместе с пометкой",
-                );
-              shut += 1;
-            }
-            i = shut;
-          }
-          if (!claim.length) continue;
-          const at = path.join(REPO, e.to);
-          if (!existsSync(at)) continue;
-          // Корпус считается в СТРОКАХ, а не в файлах: находки — строки, и
-          // пока счёт шёл по файлам, прогон печатал «осмотрено 5» над
-          // списком из 36 находок. Найдено больше, чем осмотрено, —
-          // отличить здоровье от слепоты по такому числу нельзя вовсе.
-          const rows = proseOf(at).split(NEWLINE);
-          emptyLooked += rows.length;
-          if (frameLives) continue;
-          for (let i = 0; i < rows.length; i += 1) {
-            const row = rows[i].trim();
-            if (!claim.includes(row) && row !== OPEN) continue;
-            emptyClaims.push(
-              norm(at).slice(norm(REPO).length + 1) +
-                ":" +
-                (i + 1) +
-                " — утверждает пустоту, а свой код уже есть",
-            );
-          }
-        }
-      }
-      if (frameLives)
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt)) {
+        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const frame = (seatMap.copy ?? []).filter((e) => e.onlyWhenEmpty);
+        // Концы строк приводятся к одному виду: снимок едет между машинами, и на
+        // машине с иной политикой побайтовое сравнение расходилось бы на каждой
+        // строке, не говоря ничего о содержимом.
+        const eol = String.fromCharCode(13) + NEWLINE;
+        const same = (a, b) =>
+          readFileSync(a, "utf8").split(eol).join(NEWLINE) ===
+          readFileSync(b, "utf8").split(eol).join(NEWLINE);
+        const laid = frame.filter((e) => {
+          const to = path.join(REPO, e.to);
+          const from = shelfAt(e.from);
+          return (
+            existsSync(to) &&
+            from !== null &&
+            existsSync(from) &&
+            same(to, from)
+          );
+        });
+        // Свой код — всё, что НЕ равно своему семени побайтово.
+        //
+        // Прежде исключались адреса каркаса, и пока семенами кода был один
+        // каркас, это совпадало. Как только помощник слияния и файл подготовки
+        // тестов поехали в каждый проект, они стали считаться собственным
+        // кодом — и пустой проект, только что посаженный, объявлялся живым:
+        // сверка докладывала, что каркас лежит при чужом коде, хотя этим
+        // «чужим кодом» были её же семена.
+        //
+        // Признак верен в обе стороны: положенное посадкой семя своим кодом не
+        // является, а файл живого проекта по тому же адресу семени не равен и
+        // своим кодом остаётся.
+        const seedAt = new Map();
         for (const e of seatMap.copy ?? []) {
           const from0 = shelfAt(e.from);
-          const to0 = norm(path.join(REPO, e.to));
-          if (from0 === null || !existsSync(from0)) continue;
-          if (!existsSync(to0) || !files.includes(to0)) continue;
-          if (same(to0, from0)) continue;
-          staleFrame.push(
-            e.to +
-              " — расходится со своим семенем " +
-              e.from +
-              ". Править обе стороны одной правкой",
-          );
+          if (from0 !== null) seedAt.set(norm(path.join(REPO, e.to)), from0);
         }
-      // Законный выход: запись решения, называющая адрес. Проект, выросший
-      // из пустого, вправе оставить файл каркаса как есть — менять в нём
-      // могло быть нечего, — и тогда это решение с причиной, а не мусор.
-      // Без выхода сверка краснела бы навсегда, а красное навсегда
-      // перестают читать.
-      const decidedAt =
-        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-      const decided =
-        decidedAt !== null && existsSync(decidedAt)
-          ? readFileSync(decidedAt, "utf8")
-          : "";
-      frameLaid = laid.length;
-      frameOwn = own.length;
-      if (laid.length && own.length)
-        for (const e of laid.filter((e) => !decided.includes(e.to)))
-          frameLitter.push(
-            e.to +
-              " — приехал семенем каркаса и своим не стал, а в проекте уже " +
-              own.length +
-              " своих файлов. Переписать под проект либо назвать решением",
+        const fromSeed = (f) => {
+          const src = seedAt.get(f);
+          return (
+            src !== undefined &&
+            existsSync(src) &&
+            existsSync(f) &&
+            same(f, src)
           );
-
-      // Вторая сторона: не сам каркас, а ЗАПИСИ семян базы о нём.
-      //
-      // Каркас в живой проект не кладётся, а семена базы описывают его
-      // безусловно: карта несёт таблицу его файлов, реестр тестов — строку про
-      // тест корневого компонента, реестр решений — два решения с якорями в
-      // него. В живом проекте все они указывают в пустоту с первого прогона.
-      //
-      // Прежде список того, что снять, стоял в инструкции ПРОЗОЙ и был
-      // неполон: он называл два файла базы из трёх. Карту снимали руками три
-      // посадки подряд, и инструкция сама же предупреждала, что список
-      // закрытый и может отстать. Отстал. Теперь он не список, а замер:
-      // адреса каркаса известны карте посадки, и запись, называющая
-      // несуществующий адрес каркаса, находится пофайлово и построчно.
-      //
-      // Признаков два, и одного было мало.
-      //
-      // Первый: адреса каркаса на диске нет вовсе — запись указывает в пустоту.
-      //
-      // Второй заведён по дыре: живой проект держит свой корневой компонент
-      // РОВНО ПО ТОМУ ЖЕ АДРЕСУ, куда каркас кладёт семя. Существование файла
-      // там ничего не говорит о записи — приехавшая строка карты садится на
-      // чужой файл как его описание, и никто этого файла не читал. Прежде такая
-      // запись проходила молча, а сверка покрытия карты считала файл описанным:
-      // замерено посадкой в живой проект — `4` неописанных файла вместо `6`,
-      // то есть заниженный на два долг.
-      //
-      // Различается это дословным совпадением со строкой СЕМЕНИ базы: семена
-      // едут вместе с обвязкой, и строку, написанную самим проектом, там не
-      // найти. Ложного срабатывания, ради которого стоял первый признак, при
-      // этом не возникает: описав файл своими словами, проект выходит из-под
-      // сверки той же правкой.
-      // Семена берутся ТОЛЬКО из папки базы: сверка ниже перебирает её файлы
-      // по именам, и семя с тем же базовым именем, лежащее в корне проекта,
-      // молча заслонило бы настоящее. Совпадения сегодня нет, но это свойство
-      // нынешней карты, а не правило.
-      const seedText = new Map();
-      for (const e of seatMap.copy ?? []) {
-        const to = path.resolve(REPO, e.to);
-        if (norm(path.dirname(to)) !== norm(BASE)) continue;
-        const from = shelfAt(e.from);
-        if (from === null || !existsSync(from)) continue;
-        seedText.set(path.basename(e.to), readFileSync(from, "utf8"));
-      }
-      const laidTo = new Set(laid.map((e) => e.to));
-      if (own.length)
-        for (const e of frame) {
-          if (laidTo.has(e.to)) continue;
-          // База пишет адреса и полностью, и от корня исходников: тест
-          // каркаса назван в реестре как `tests/App.test.tsx`, а в карте
-          // посадки он `src/tests/App.test.tsx`. Ищутся обе формы.
-          //
-          // Но короткая форма берётся, ТОЛЬКО пока она остаётся путём. У
-          // `src/App.tsx` она вырождается в голое имя файла и совпадает с чем
-          // угодно: живой проект держит свой `app/App.tsx`, и запись о нём
-          // объявлялась записью о каркасе. Ложное срабатывание, и первое, что
-          // оно сделало, — велело снять верную запись карты. Голое имя
-          // неоднозначно по построению, и спрашивать по нему нельзя.
-          const short = e.to.replace(/^src\//, "");
-          const forms = short.includes("/") ? [e.to, short] : [e.to];
-          for (const f of readdirSync(BASE)) {
-            if (!f.endsWith(".md")) continue;
-            const lines = readFileSync(path.join(BASE, f), "utf8").split(
-              NEWLINE,
-            );
-            const covered = markedLines(lines);
-            for (let i = 0; i < lines.length; i += 1) {
-              if (covered.has(i)) continue;
-              // Адрес сверяется ЦЕЛИКОМ, а не вхождением: живой проект держит
-              // свой `app/App.tsx`, и вхождением он читался бы как запись о
-              // каркасном `src/App.tsx` — ложное срабатывание на здоровом
-              // проекте, поймано первым же таким проектом. Хвост `:строка`
-              // снимается: реестр решений ссылается якорем с номером.
-              const named = [...lines[i].matchAll(/`([^`]+)`/g)].map((m) =>
-                // Обратный слэш здесь несёт весь смысл: без него это образец из
-                // буквы «d», и хвост номера строки не снимался НИКОГДА. Сверка
-                // тогда не могла увидеть ни одной записи, адресующей каркас
-                // якорем, — то есть ровно реестр решений, который эта строка и
-                // названа обслуживать. Замерено посадкой в живой проект: из двух
-                // записей о несуществующем каркасе нашлась одна, голая, а запись
-                // с якорем `src/App.tsx:4` прошла молча.
-                m[1].replace(/:\d+(-\d+)?$/, ""),
-              );
-              if (!named.some((one) => forms.includes(one))) continue;
-              // Адрес занят своим файлом проекта: тогда запись уличает
-              // только дословное совпадение со строкой семени.
-              let why =
-                " — запись семени о каркасе, которого в этом проекте нет: ";
-              if (existsSync(path.join(REPO, e.to))) {
-                const seed = seedText.get(f);
-                if (seed === undefined) continue;
-                if (!seed.split(NEWLINE).includes(lines[i])) continue;
-                why =
-                  " — запись семени о каркасе, а по адресу лежит свой файл проекта, и он не читан: ";
+        };
+        // Ищется свой код ПО ВСЕМУ РЕПОЗИТОРИЮ, а не под объявленным корнем
+        // исходников. Корень объявляет настройка, а настройку правят ШАГОМ 2 —
+        // после того, как шаг 1 уже решил, класть ли каркас. Проект, чьи
+        // исходники лежат не в `src/`, на этом шаге виден пустым: каркас
+        // ложится целиком, а потом и эта сверка смотрит в им же созданную
+        // папку и докладывает «проект живёт каркасом».
+        //
+        // Замерено посадкой стенда с ДВУМЯ деревьями, `client/` и `server/`:
+        // папки `src/` у него нет вовсе, и в живой проект легли чужая точка
+        // входа, чужой корневой компонент и чужая страница.
+        const everywhere = [];
+        {
+          const skip = new Set([
+            ".claude",
+            ".context",
+            ".git",
+            "node_modules",
+            "docs",
+            "dist",
+            "coverage",
+          ]);
+          const walk = (dir) => {
+            let kids = [];
+            try {
+              kids = readdirSync(dir, { withFileTypes: true });
+            } catch {
+              return;
+            }
+            for (const e of kids) {
+              if (skip.has(e.name) || OUT_OF_TREE.has(e.name)) continue;
+              const at = norm(path.join(dir, e.name));
+              if (e.isDirectory()) walk(at);
+              else if (
+                (CODE_FILE.test(e.name) || isStylePath(e.name)) &&
+                norm(dir) !== norm(REPO)
+              )
+                everywhere.push(at);
+            }
+          };
+          // Файлы В САМОМ КОРНЕ репозитория не считаются: там лежат конфиги
+          // — сборщика, линтера, мутационного прогона, — и код проекта в корне
+          // не держат. Иначе привезённый и правленый проектом конфиг сошёл бы
+          // за свой код и объявил живым любой посаженный проект.
+          walk(norm(REPO));
+        }
+        const own = everywhere.filter((f) => !fromSeed(f) && !isTest(f));
+        // Обратная сторона того же признака: пока СВОЕГО КОДА НЕТ, проект
+        // живёт каркасом — и каркас обязан быть тем самым, который проект
+        // раздаёт. Это случай полки: она держит свою копию, чтобы цепочке
+        // было на чём прогоняться, правит обе стороны руками, и правку
+        // одной не ловило ничто. Появился свой код — сверка молчит, а про
+        // оставшийся каркас спрашивает соседняя.
+        // Признак «проект живёт каркасом» считается по НЕ-каркасным файлам.
+        //
+        // По всем считать нельзя: расхождение, которое сверка ищет, само делает
+        // каркасный файл «своим кодом» и гасит её. Замерено посаженной
+        // поломкой — строка, дописанная в корневой компонент, сверку не
+        // разбудила, а усыпила.
+        const frameTo = new Set(frame.map((e) => norm(path.join(REPO, e.to))));
+        const ownOutsideFrame = own.filter((f) => !frameTo.has(f));
+        frameLives = ownOutsideFrame.length === 0;
+        // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
+        // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
+        // с текстом. Признак тот же, что у каркаса: свой код вне каркаса.
+        // Спрашивается САМО УТВЕРЖДЕНИЕ, а не пометка при нём.
+        //
+        // Пометка стоит в СЕМЕНИ и там же называет свои строки: всё, что
+        // внутри неё, — текст, верный только для пустого проекта. Сверка
+        // читает семя, берёт эти строки и ищет их в файле проекта.
+        //
+        // Прежде искалась пометка в файле ПРОЕКТА, и это ловилось снятием
+        // одной строки. Замерено круговым прогоном стенда: переход снял пять
+        // пометок, не тронув ни слова под ними, — свод идиом остался с
+        // привезённым «Здесь пока нечего описывать» при готовом компоненте
+        // рядом, и сверка вышла зелёной. То есть механизм закрывал ровно ту
+        // работу, ради которой заведён, и закрывался жестом.
+        //
+        // Утверждение уходит только вместе с текстом, потому что спрашивают
+        // текст. Пометка в файле проекта тоже считается: её оставили — значит
+        // оставили и то, что она накрывает.
+        {
+          const OPEN = "<!-- ПУСТО -->";
+          const SHUT = "<!-- /ПУСТО -->";
+          for (const e of seatMap.copy ?? []) {
+            const seedAt = shelfAt(e.from);
+            if (seedAt === null || !existsSync(seedAt)) continue;
+            const seed = proseOf(seedAt).split(NEWLINE);
+            const claim = [];
+            for (let i = 0; i < seed.length; i += 1) {
+              if (seed[i].trim() !== OPEN) continue;
+              let shut = i + 1;
+              while (shut < seed.length && seed[shut].trim() !== SHUT) {
+                const row = seed[shut].trim();
+                if (row !== "") claim.push(row);
+                // Место под заполнение ВНУТРИ записи о пустоте — противоречие в
+                // самом семени: пометка велит снять блок целиком с первой
+                // строкой своего кода, и заполненное уйдёт вместе с ним. Так
+                // стояли сводка о проекте в карте и базовая линия в фактах:
+                // заполнив их в фазе 2, пустой проект с первой строкой кода
+                // получил бы требование их снять. Найдено посадкой руками.
+                if (/<(?!!--)[^<>]{3,}>/.test(row))
+                  emptySlots.push(
+                    e.from +
+                      ":" +
+                      (shut + 1) +
+                      " — внутри записи о пустоте стоит место под заполнение: заполненное уйдёт вместе с пометкой",
+                  );
+                shut += 1;
               }
-              {
-                frameLitter.push(f + ":" + (i + 1) + why + e.to);
+              i = shut;
+            }
+            if (!claim.length) continue;
+            const at = path.join(REPO, e.to);
+            if (!existsSync(at)) continue;
+            // Корпус считается в СТРОКАХ, а не в файлах: находки — строки, и
+            // пока счёт шёл по файлам, прогон печатал «осмотрено 5» над
+            // списком из 36 находок. Найдено больше, чем осмотрено, —
+            // отличить здоровье от слепоты по такому числу нельзя вовсе.
+            const rows = proseOf(at).split(NEWLINE);
+            emptyLooked += rows.length;
+            if (frameLives) continue;
+            for (let i = 0; i < rows.length; i += 1) {
+              const row = rows[i].trim();
+              if (!claim.includes(row) && row !== OPEN) continue;
+              emptyClaims.push(
+                norm(at).slice(norm(REPO).length + 1) +
+                  ":" +
+                  (i + 1) +
+                  " — утверждает пустоту, а свой код уже есть",
+              );
+            }
+          }
+        }
+        if (frameLives)
+          for (const e of seatMap.copy ?? []) {
+            const from0 = shelfAt(e.from);
+            const to0 = norm(path.join(REPO, e.to));
+            if (from0 === null || !existsSync(from0)) continue;
+            if (!existsSync(to0) || !files.includes(to0)) continue;
+            if (same(to0, from0)) continue;
+            staleFrame.push(
+              e.to +
+                " — расходится со своим семенем " +
+                e.from +
+                ". Править обе стороны одной правкой",
+            );
+          }
+        // Законный выход: запись решения, называющая адрес. Проект, выросший
+        // из пустого, вправе оставить файл каркаса как есть — менять в нём
+        // могло быть нечего, — и тогда это решение с причиной, а не мусор.
+        // Без выхода сверка краснела бы навсегда, а красное навсегда
+        // перестают читать.
+        const decidedAt =
+          CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+        const decided =
+          decidedAt !== null && existsSync(decidedAt)
+            ? readFileSync(decidedAt, "utf8")
+            : "";
+        frameLaid = laid.length;
+        frameOwn = own.length;
+        if (laid.length && own.length)
+          for (const e of laid.filter((e) => !decided.includes(e.to)))
+            frameLitter.push(
+              e.to +
+                " — приехал семенем каркаса и своим не стал, а в проекте уже " +
+                own.length +
+                " своих файлов. Переписать под проект либо назвать решением",
+            );
+
+        // Вторая сторона: не сам каркас, а ЗАПИСИ семян базы о нём.
+        //
+        // Каркас в живой проект не кладётся, а семена базы описывают его
+        // безусловно: карта несёт таблицу его файлов, реестр тестов — строку про
+        // тест корневого компонента, реестр решений — два решения с якорями в
+        // него. В живом проекте все они указывают в пустоту с первого прогона.
+        //
+        // Прежде список того, что снять, стоял в инструкции ПРОЗОЙ и был
+        // неполон: он называл два файла базы из трёх. Карту снимали руками три
+        // посадки подряд, и инструкция сама же предупреждала, что список
+        // закрытый и может отстать. Отстал. Теперь он не список, а замер:
+        // адреса каркаса известны карте посадки, и запись, называющая
+        // несуществующий адрес каркаса, находится пофайлово и построчно.
+        //
+        // Признаков два, и одного было мало.
+        //
+        // Первый: адреса каркаса на диске нет вовсе — запись указывает в пустоту.
+        //
+        // Второй заведён по дыре: живой проект держит свой корневой компонент
+        // РОВНО ПО ТОМУ ЖЕ АДРЕСУ, куда каркас кладёт семя. Существование файла
+        // там ничего не говорит о записи — приехавшая строка карты садится на
+        // чужой файл как его описание, и никто этого файла не читал. Прежде такая
+        // запись проходила молча, а сверка покрытия карты считала файл описанным:
+        // замерено посадкой в живой проект — `4` неописанных файла вместо `6`,
+        // то есть заниженный на два долг.
+        //
+        // Различается это дословным совпадением со строкой СЕМЕНИ базы: семена
+        // едут вместе с обвязкой, и строку, написанную самим проектом, там не
+        // найти. Ложного срабатывания, ради которого стоял первый признак, при
+        // этом не возникает: описав файл своими словами, проект выходит из-под
+        // сверки той же правкой.
+        // Семена берутся ТОЛЬКО из папки базы: сверка ниже перебирает её файлы
+        // по именам, и семя с тем же базовым именем, лежащее в корне проекта,
+        // молча заслонило бы настоящее. Совпадения сегодня нет, но это свойство
+        // нынешней карты, а не правило.
+        const seedText = new Map();
+        for (const e of seatMap.copy ?? []) {
+          const to = path.resolve(REPO, e.to);
+          if (norm(path.dirname(to)) !== norm(BASE)) continue;
+          const from = shelfAt(e.from);
+          if (from === null || !existsSync(from)) continue;
+          seedText.set(path.basename(e.to), readFileSync(from, "utf8"));
+        }
+        const laidTo = new Set(laid.map((e) => e.to));
+        if (own.length)
+          for (const e of frame) {
+            if (laidTo.has(e.to)) continue;
+            // База пишет адреса и полностью, и от корня исходников: тест
+            // каркаса назван в реестре как `tests/App.test.tsx`, а в карте
+            // посадки он `src/tests/App.test.tsx`. Ищутся обе формы.
+            //
+            // Но короткая форма берётся, ТОЛЬКО пока она остаётся путём. У
+            // `src/App.tsx` она вырождается в голое имя файла и совпадает с чем
+            // угодно: живой проект держит свой `app/App.tsx`, и запись о нём
+            // объявлялась записью о каркасе. Ложное срабатывание, и первое, что
+            // оно сделало, — велело снять верную запись карты. Голое имя
+            // неоднозначно по построению, и спрашивать по нему нельзя.
+            const short = e.to.replace(/^src\//, "");
+            const forms = short.includes("/") ? [e.to, short] : [e.to];
+            for (const f of readdirSync(BASE)) {
+              if (!f.endsWith(".md")) continue;
+              const lines = readFileSync(path.join(BASE, f), "utf8").split(
+                NEWLINE,
+              );
+              const covered = markedLines(lines);
+              for (let i = 0; i < lines.length; i += 1) {
+                if (covered.has(i)) continue;
+                // Адрес сверяется ЦЕЛИКОМ, а не вхождением: живой проект держит
+                // свой `app/App.tsx`, и вхождением он читался бы как запись о
+                // каркасном `src/App.tsx` — ложное срабатывание на здоровом
+                // проекте, поймано первым же таким проектом. Хвост `:строка`
+                // снимается: реестр решений ссылается якорем с номером.
+                const named = [...lines[i].matchAll(/`([^`]+)`/g)].map((m) =>
+                  // Обратный слэш здесь несёт весь смысл: без него это образец из
+                  // буквы «d», и хвост номера строки не снимался НИКОГДА. Сверка
+                  // тогда не могла увидеть ни одной записи, адресующей каркас
+                  // якорем, — то есть ровно реестр решений, который эта строка и
+                  // названа обслуживать. Замерено посадкой в живой проект: из двух
+                  // записей о несуществующем каркасе нашлась одна, голая, а запись
+                  // с якорем `src/App.tsx:4` прошла молча.
+                  m[1].replace(/:\d+(-\d+)?$/, ""),
+                );
+                if (!named.some((one) => forms.includes(one))) continue;
+                // Адрес занят своим файлом проекта: тогда запись уличает
+                // только дословное совпадение со строкой семени.
+                let why =
+                  " — запись семени о каркасе, которого в этом проекте нет: ";
+                if (existsSync(path.join(REPO, e.to))) {
+                  const seed = seedText.get(f);
+                  if (seed === undefined) continue;
+                  if (!seed.split(NEWLINE).includes(lines[i])) continue;
+                  why =
+                    " — запись семени о каркасе, а по адресу лежит свой файл проекта, и он не читан: ";
+                }
+                {
+                  frameLitter.push(f + ":" + (i + 1) + why + e.to);
+                }
               }
             }
+          }
+      }
+    }
+    // Третья сторона: ПРОЗА семян о каркасе.
+    //
+    // Две стороны выше опознают запись по названному в ней АДРЕСУ каркаса.
+    // Абзац «Каркас, приехавший семенами: точка монтирования и корневой
+    // компонент» адресов не называет вовсе — и в живом проекте оставался
+    // стоять, утверждая заведомо ложное. Обоснования в таблице применимости
+    // ссылались на него же.
+    //
+    // Список такого текста жил прозой в инструкции посадки и в рукописных
+    // скриптах — и ровно так отставал: снимали руками, каждый раз заново, а
+    // сверка при этом называла одну запись из пяти и молчала о прозе. Свод
+    // требует обратного: список, обязанный догонять данные, данными и должен
+    // быть. Поэтому текст помечен В САМИХ СЕМЕНАХ парой комментариев разметки
+    // — пометка уезжает вместе с семенем и разойтись с текстом не может.
+    //
+    // Помеченное законно ровно тогда, когда каркас ПОЛОЖЕН. Не положен, а свой
+    // код есть — это мусор посадки, и снимает его шаг 4.
+    {
+      const OPEN = FRAME_OPEN;
+      const SHUT = FRAME_SHUT;
+      if (frameLaid === 0 && frameOwn > 0 && existsSync(BASE))
+        for (const f of readdirSync(BASE)) {
+          if (!f.endsWith(".md")) continue;
+          const lines = readFileSync(path.join(BASE, f), "utf8").split(NEWLINE);
+          for (let i = 0; i < lines.length; i += 1) {
+            if (lines[i].trim() !== OPEN) continue;
+            let shut = i + 1;
+            while (shut < lines.length && lines[shut].trim() !== SHUT)
+              shut += 1;
+            // Блок из одних СТРОК ТАБЛИЦЫ не спрашивается прозой: строки карты
+            // и реестров разбираются поадресно веткой выше, а помеченный блок
+            // растёт вместе с проектом — новая строка приписывается в конец
+            // таблицы и попадает внутрь него. Замерено задачей от разработчика:
+            // снять помеченное значило снести собственную карту проекта.
+            // Признак тот же, по которому поадресная ветка такой блок берёт:
+            // один помощник на обе стороны, и разойтись им нечем.
+            if (tableOnly(lines.slice(i + 1, shut))) {
+              i = shut;
+              continue;
+            }
+            frameLitter.push(
+              f +
+                ":" +
+                (i + 1) +
+                " — текст семени о каркасе, которого в этом проекте нет: строк " +
+                (shut - i - 1),
+            );
+            i = shut;
           }
         }
     }
-  }
-  // Третья сторона: ПРОЗА семян о каркасе.
-  //
-  // Две стороны выше опознают запись по названному в ней АДРЕСУ каркаса.
-  // Абзац «Каркас, приехавший семенами: точка монтирования и корневой
-  // компонент» адресов не называет вовсе — и в живом проекте оставался
-  // стоять, утверждая заведомо ложное. Обоснования в таблице применимости
-  // ссылались на него же.
-  //
-  // Список такого текста жил прозой в инструкции посадки и в рукописных
-  // скриптах — и ровно так отставал: снимали руками, каждый раз заново, а
-  // сверка при этом называла одну запись из пяти и молчала о прозе. Свод
-  // требует обратного: список, обязанный догонять данные, данными и должен
-  // быть. Поэтому текст помечен В САМИХ СЕМЕНАХ парой комментариев разметки
-  // — пометка уезжает вместе с семенем и разойтись с текстом не может.
-  //
-  // Помеченное законно ровно тогда, когда каркас ПОЛОЖЕН. Не положен, а свой
-  // код есть — это мусор посадки, и снимает его шаг 4.
-  {
-    const OPEN = FRAME_OPEN;
-    const SHUT = FRAME_SHUT;
-    if (frameLaid === 0 && frameOwn > 0 && existsSync(BASE))
-      for (const f of readdirSync(BASE)) {
-        if (!f.endsWith(".md")) continue;
-        const lines = readFileSync(path.join(BASE, f), "utf8").split(NEWLINE);
-        for (let i = 0; i < lines.length; i += 1) {
-          if (lines[i].trim() !== OPEN) continue;
-          let shut = i + 1;
-          while (shut < lines.length && lines[shut].trim() !== SHUT) shut += 1;
-          // Блок из одних СТРОК ТАБЛИЦЫ не спрашивается прозой: строки карты
-          // и реестров разбираются поадресно веткой выше, а помеченный блок
-          // растёт вместе с проектом — новая строка приписывается в конец
-          // таблицы и попадает внутрь него. Замерено задачей от разработчика:
-          // снять помеченное значило снести собственную карту проекта.
-          // Признак тот же, по которому поадресная ветка такой блок берёт:
-          // один помощник на обе стороны, и разойтись им нечем.
-          if (tableOnly(lines.slice(i + 1, shut))) {
-            i = shut;
-            continue;
-          }
-          frameLitter.push(
-            f +
-              ":" +
-              (i + 1) +
-              " — текст семени о каркасе, которого в этом проекте нет: строк " +
-              (shut - i - 1),
-          );
-          i = shut;
-        }
-      }
-  }
-  checkHead("Предмет из кода назван в своём файле базы", {
-    n: subjectsDeclared.length,
-    unit: "предметов базы",
   });
-  console.log(
-    "  файлов с предметом без записи: " +
-      baseMute.length +
-      debtTail("subjects"),
-  );
-  debtNote("subjects", baseMute.length);
-  for (const g of debtList("subjects", baseMute))
+  checkStep(() => {
+    checkHead("Предмет из кода назван в своём файле базы", () => ({
+      n: subjectsDeclared.length,
+      unit: "предметов базы",
+    }));
     console.log(
-      "    " + g + ". Завести строку, называющую этот файл",
+      "  файлов с предметом без записи: " +
+        baseMute.length +
+        debtTail("subjects"),
     );
+    debtNote("subjects", baseMute.length);
+    for (const g of debtList("subjects", baseMute))
+      console.log("    " + g + ". Завести строку, называющую этот файл");
+  });
 
   // Запись о ключе хранилища — не только то, что она есть, но и то, что она
   // говорит. Соседняя сверка требует назвать файл с предметом хоть где-то в
@@ -29108,39 +29821,47 @@ if (mode === "verify") {
   // однофамилец — состояние экрана с тем же именем — ключ не описывает.
   const stateLies = [];
   let stateKeys = 0;
-  for (const [key, byFile] of storeWriters()) {
-    const literal = key.slice(key.indexOf("«") + 1, -1);
-    const kind = WRITER_KINDS.find((one) => key.startsWith(one.kind + " «"));
-    const own = stateRecords().filter(
-      (r) => r.what.includes("`" + literal + "`") && kind.named.test(r.what),
-    );
-    if (own.length === 0) continue;
-    stateKeys += 1;
-    const at = own[0].at + " — ключ `" + literal + "`";
-    for (const f of [...byFile.keys()].sort(barByRel))
-      if (!own.some((r) => namesFileIn(r.owner + " " + r.writers, f)))
+  checkStep(() => {
+    for (const [key, byFile] of storeWriters()) {
+      const literal = key.slice(key.indexOf("«") + 1, -1);
+      const kind = WRITER_KINDS.find((one) => key.startsWith(one.kind + " «"));
+      const own = stateRecords().filter(
+        (r) => r.what.includes("`" + literal + "`") && kind.named.test(r.what),
+      );
+      if (own.length === 0) continue;
+      stateKeys += 1;
+      const at = own[0].at + " — ключ `" + literal + "`";
+      for (const f of [...byFile.keys()].sort(barByRel))
+        if (!own.some((r) => namesFileIn(r.owner + " " + r.writers, f)))
+          stateLies.push(
+            at +
+              ": код пишет его в `" +
+              rel(f) +
+              "`, а запись этот файл не называет ни владельцем, ни писателем",
+          );
+      if (!own.some((r) => r.life !== ""))
         stateLies.push(
-          at +
-            ": код пишет его в `" +
-            rel(f) +
-            "`, а запись этот файл не называет ни владельцем, ни писателем",
+          at + ": графа «Время жизни» пуста — конец записи не назван",
         );
-    if (!own.some((r) => r.life !== ""))
-      stateLies.push(at + ": графа «Время жизни» пуста — конец записи не назван");
-  }
-  checkHead("Запись о состоянии не спорит с кодом", {
-    n: stateKeys,
-    unit: "ключей хранилища с записью",
+    }
   });
-  console.log("  расхождений: " + stateLies.length);
-  for (const one of stateLies) console.log("    " + one);
-  checkHead("Запись карты не спорит с кодом", {
-    n: mapClaims,
-    unit: "отрицаний в графах состояния и эффектов",
+  checkStep(() => {
+    checkHead("Запись о состоянии не спорит с кодом", () => ({
+      n: stateKeys,
+      unit: "ключей хранилища с записью",
+    }));
+    console.log("  расхождений: " + stateLies.length);
+    for (const one of stateLies) console.log("    " + one);
   });
-  console.log("  опровергнуто кодом: " + mapLies.length);
-  for (const one of mapLies)
-    console.log("    " + one + ". Переписать строку по тому, что код делает");
+  checkStep(() => {
+    checkHead("Запись карты не спорит с кодом", () => ({
+      n: mapClaims,
+      unit: "отрицаний в графах состояния и эффектов",
+    }));
+    console.log("  опровергнуто кодом: " + mapLies.length);
+    for (const one of mapLies)
+      console.log("    " + one + ". Переписать строку по тому, что код делает");
+  });
 
   // Файл базы о живом коде обязан назвать из него хоть один адрес.
   //
@@ -29162,50 +29883,54 @@ if (mode === "verify") {
   // свежепосаженного проекта, и сверка краснела бы на пустом.
   const codeMute = [];
   let codeMuteLooked = 0;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt)) {
-      const declared =
-        JSON.parse(readFileSync(mapAt, "utf8")).namesOwnCode ?? [];
-      const own = files.filter((f) => !isTest(f));
-      const tokens = new Set();
-      const GENERIC = new Set(["index", "main", "app", "types", "utils"]);
-      for (const f of own) {
-        const address = rel(f);
-        tokens.add(address);
-        const parts = address.split("/");
-        const base = (parts[parts.length - 1] ?? "").replace(/.[^.]+$/, "");
-        if (base.length > 3 && !GENERIC.has(base.toLowerCase()))
-          tokens.add(base);
-        const folder = parts[parts.length - 2] ?? "";
-        if (folder.length > 3 && /^[A-ZА-Я]/.test(folder)) tokens.add(folder);
-      }
-      for (const to of declared) {
-        const at = path.join(REPO, to);
-        if (!existsSync(at)) continue;
-        codeMuteLooked += 1;
-        if (frameLives) continue;
-        const said = readFileSync(at, "utf8");
-        let named = false;
-        for (const t of tokens)
-          if (said.includes(t)) {
-            named = true;
-            break;
-          }
-        if (!named)
-          codeMute.push(
-            to + " — свой код есть, а в файле не назван ни один его адрес",
-          );
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt)) {
+        const declared =
+          JSON.parse(readFileSync(mapAt, "utf8")).namesOwnCode ?? [];
+        const own = files.filter((f) => !isTest(f));
+        const tokens = new Set();
+        const GENERIC = new Set(["index", "main", "app", "types", "utils"]);
+        for (const f of own) {
+          const address = rel(f);
+          tokens.add(address);
+          const parts = address.split("/");
+          const base = (parts[parts.length - 1] ?? "").replace(/.[^.]+$/, "");
+          if (base.length > 3 && !GENERIC.has(base.toLowerCase()))
+            tokens.add(base);
+          const folder = parts[parts.length - 2] ?? "";
+          if (folder.length > 3 && /^[A-ZА-Я]/.test(folder)) tokens.add(folder);
+        }
+        for (const to of declared) {
+          const at = path.join(REPO, to);
+          if (!existsSync(at)) continue;
+          codeMuteLooked += 1;
+          if (frameLives) continue;
+          const said = readFileSync(at, "utf8");
+          let named = false;
+          for (const t of tokens)
+            if (said.includes(t)) {
+              named = true;
+              break;
+            }
+          if (!named)
+            codeMute.push(
+              to + " — свой код есть, а в файле не назван ни один его адрес",
+            );
+        }
       }
     }
-  }
-  checkHead("Файл базы о живом коде назвал его адрес", {
-    n: codeMuteLooked,
-    unit: "файлов базы, обязанных назвать код",
   });
-  console.log("  молчат о своём коде: " + codeMute.length);
-  for (const g of codeMute)
-    console.log("    " + g + ". Прочитать код и написать, что в нём есть");
+  checkStep(() => {
+    checkHead("Файл базы о живом коде назвал его адрес", () => ({
+      n: codeMuteLooked,
+      unit: "файлов базы, обязанных назвать код",
+    }));
+    console.log("  молчат о своём коде: " + codeMute.length);
+    for (const g of codeMute)
+      console.log("    " + g + ". Прочитать код и написать, что в нём есть");
+  });
   // Раздел планки объявлен по СВОЕМУ замеру, а не словом семени.
   //
   // Таблица применимости приезжает заполненной — под ПУСТОЙ проект, где
@@ -29227,63 +29952,71 @@ if (mode === "verify") {
   // прикасался, ловится вся.
   const scopeSeeded = [];
   let scopeSeededLooked = 0;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt) && CONFIG.qualityScope != null) {
-      const tableAt = path.join(BASE, CONFIG.qualityScope.table);
-      const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
-      let seedAt = null;
-      for (const e of copy) {
-        if (norm(path.join(REPO, e.to)) !== norm(tableAt)) continue;
-        seedAt = shelfAt(e.from);
-      }
-      if (seedAt !== null && existsSync(seedAt) && existsSync(tableAt)) {
-        // Строка таблицы: `| X. имя | приговор | обоснование |`.
-        // Строка помнит свой НОМЕР: находка называет адрес, и поломка даёт
-        // новую строку вывода и там, где все разделы уже объявлены словом
-        // семени. Без номера сверка, красная на всём предмете, — обычное
-        // состояние живого проекта до перехода, — не могла показать ни одной
-        // новой находки, и её рецепт уходил «не туда». Замерено посадкой
-        // руками в живой проект.
-        const rows = (text) => {
-          const out = new Map();
-          const lines = text.split(NEWLINE);
-          for (let n = 0; n < lines.length; n += 1) {
-            const m = /^\|\s*([K-U])\.[^|]*\|([^|]*)\|([^|]*)\|/.exec(lines[n]);
-            if (m !== null) out.set(m[1], { said: m[3].trim(), at: n + 1 });
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt) && CONFIG.qualityScope != null) {
+        const tableAt = path.join(BASE, CONFIG.qualityScope.table);
+        const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+        let seedAt = null;
+        for (const e of copy) {
+          if (norm(path.join(REPO, e.to)) !== norm(tableAt)) continue;
+          seedAt = shelfAt(e.from);
+        }
+        if (seedAt !== null && existsSync(seedAt) && existsSync(tableAt)) {
+          // Строка таблицы: `| X. имя | приговор | обоснование |`.
+          // Строка помнит свой НОМЕР: находка называет адрес, и поломка даёт
+          // новую строку вывода и там, где все разделы уже объявлены словом
+          // семени. Без номера сверка, красная на всём предмете, — обычное
+          // состояние живого проекта до перехода, — не могла показать ни одной
+          // новой находки, и её рецепт уходил «не туда». Замерено посадкой
+          // руками в живой проект.
+          const rows = (text) => {
+            const out = new Map();
+            const lines = text.split(NEWLINE);
+            for (let n = 0; n < lines.length; n += 1) {
+              const m = /^\|\s*([K-U])\.[^|]*\|([^|]*)\|([^|]*)\|/.exec(
+                lines[n],
+              );
+              if (m !== null) out.set(m[1], { said: m[3].trim(), at: n + 1 });
+            }
+            return out;
+          };
+          const seeded = rows(readFileSync(seedAt, "utf8"));
+          const mine = rows(readFileSync(tableAt, "utf8"));
+          for (const [letter, row] of mine) {
+            scopeSeededLooked += 1;
+            if (frameLives) continue;
+            if (seeded.get(letter)?.said !== row.said) continue;
+            scopeSeeded.push(
+              letter + " (" + CONFIG.qualityScope.table + ":" + row.at + ")",
+            );
           }
-          return out;
-        };
-        const seeded = rows(readFileSync(seedAt, "utf8"));
-        const mine = rows(readFileSync(tableAt, "utf8"));
-        for (const [letter, row] of mine) {
-          scopeSeededLooked += 1;
-          if (frameLives) continue;
-          if (seeded.get(letter)?.said !== row.said) continue;
-          scopeSeeded.push(
-            letter + " (" + CONFIG.qualityScope.table + ":" + row.at + ")",
-          );
         }
       }
     }
-  }
-  checkHead("Раздел планки объявлен по своему замеру", {
-    n: scopeSeededLooked,
-    unit: "разделов планки в таблице",
   });
-  console.log("  объявлены словом семени: " + scopeSeeded.length);
-  for (const g of scopeSeeded)
-    console.log(
-      "    раздел " +
-        g +
-        " — обоснование приехало семенем и не переписано. Прочитать код и написать, что замерено",
-    );
-  checkHead("Каркас обвязки не лежит в живом проекте", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
+  checkStep(() => {
+    checkHead("Раздел планки объявлен по своему замеру", () => ({
+      n: scopeSeededLooked,
+      unit: "разделов планки в таблице",
+    }));
+    console.log("  объявлены словом семени: " + scopeSeeded.length);
+    for (const g of scopeSeeded)
+      console.log(
+        "    раздел " +
+          g +
+          " — обоснование приехало семенем и не переписано. Прочитать код и написать, что замерено",
+      );
   });
-  console.log("  семян каркаса при живом коде: " + frameLitter.length);
-  for (const g of frameLitter) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Каркас обвязки не лежит в живом проекте", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    console.log("  семян каркаса при живом коде: " + frameLitter.length);
+    for (const g of frameLitter) console.log("    " + g);
+  });
 
   // 45b. Один предмет — один файл настройки.
   //
@@ -29302,78 +30035,87 @@ if (mode === "verify") {
   // список растёт вместе с составом семян, и держать его в инструменте значило
   // бы править инструмент при заведении каждого нового.
   const twinConfigs = [];
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt)) {
-      const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
-      for (const e of seatMap.copy ?? []) {
-        if (!Array.isArray(e.alsoKnownAs) || !e.alsoKnownAs.length) continue;
-        if (!existsSync(path.join(REPO, e.to))) continue;
-        for (const other of e.alsoKnownAs)
-          if (existsSync(path.join(REPO, other)))
-            twinConfigs.push(
-              e.to + " и " + other + " — один предмет, два файла настройки",
-            );
-        // Поле манифеста — то же другое имя: prettier читает настройку и из
-        // `package.json`.
-        const manifestAt = path.join(REPO, "package.json");
-        if (e.inManifest !== undefined && existsSync(manifestAt))
-          if (Object.hasOwn(readJson(manifestAt, {}), e.inManifest))
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt)) {
+        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        for (const e of seatMap.copy ?? []) {
+          if (!Array.isArray(e.alsoKnownAs) || !e.alsoKnownAs.length) continue;
+          if (!existsSync(path.join(REPO, e.to))) continue;
+          for (const other of e.alsoKnownAs)
+            if (existsSync(path.join(REPO, other)))
+              twinConfigs.push(
+                e.to + " и " + other + " — один предмет, два файла настройки",
+              );
+          // Поле манифеста — то же другое имя: prettier читает настройку и из
+          // `package.json`.
+          const manifestAt = path.join(REPO, "package.json");
+          if (e.inManifest !== undefined && existsSync(manifestAt))
+            if (Object.hasOwn(readJson(manifestAt, {}), e.inManifest))
+              twinConfigs.push(
+                e.to +
+                  " и поле `" +
+                  e.inManifest +
+                  "` в package.json — один предмет, два места настройки",
+              );
+        }
+        // Затеняющий файл — другой случай: сборка в одном, тесты в другом, и
+        // пара у проекта законна. Дефект одно — нетронутое семя рядом с ним:
+        // инструмент его не читает. Замерено посадкой в библиотеку со своим
+        // `vitest.config.ts`: семя сборщика легло рядом мёртвым.
+        for (const e of seatMap.copy ?? []) {
+          if (!Array.isArray(e.shadowedBy)) continue;
+          const at = path.join(REPO, e.to);
+          const seedAt = shelfAt(e.from);
+          if (!existsSync(at) || seedAt === null || !existsSync(seedAt))
+            continue;
+          if (readFileSync(at, "utf8") !== readFileSync(seedAt, "utf8"))
+            continue;
+          const reader = e.shadowedBy.find((n) =>
+            existsSync(path.join(REPO, n)),
+          );
+          if (reader !== undefined)
             twinConfigs.push(
               e.to +
-                " и поле `" +
-                e.inManifest +
-                "` в package.json — один предмет, два места настройки",
+                " лежит семенем, а читают " +
+                reader +
+                " — семя не действует: слить его в " +
+                reader +
+                " и снять",
             );
-      }
-      // Затеняющий файл — другой случай: сборка в одном, тесты в другом, и
-      // пара у проекта законна. Дефект одно — нетронутое семя рядом с ним:
-      // инструмент его не читает. Замерено посадкой в библиотеку со своим
-      // `vitest.config.ts`: семя сборщика легло рядом мёртвым.
-      for (const e of seatMap.copy ?? []) {
-        if (!Array.isArray(e.shadowedBy)) continue;
-        const at = path.join(REPO, e.to);
-        const seedAt = shelfAt(e.from);
-        if (!existsSync(at) || seedAt === null || !existsSync(seedAt)) continue;
-        if (readFileSync(at, "utf8") !== readFileSync(seedAt, "utf8")) continue;
-        const reader = e.shadowedBy.find((n) => existsSync(path.join(REPO, n)));
-        if (reader !== undefined)
-          twinConfigs.push(
-            e.to +
-              " лежит семенем, а читают " +
-              reader +
-              " — семя не действует: слить его в " +
-              reader +
-              " и снять",
-          );
+        }
       }
     }
-  }
-  checkHead("Запись о пустоте не пережила появление кода", {
-    n: emptyLooked,
-    unit: "строк в файлах, куда приехала пометка пустоты",
   });
-  console.log(
-    frameLives
-      ? "  своего кода нет: записи о пустоте верны"
-      : "  переживших: " + emptyClaims.length,
-  );
-  for (const one of emptyClaims)
+  checkStep(() => {
+    checkHead("Запись о пустоте не пережила появление кода", () => ({
+      n: emptyLooked,
+      unit: "строк в файлах, куда приехала пометка пустоты",
+    }));
     console.log(
-      "    " + one + ". Снять маркер вместе с текстом и написать, что есть",
+      frameLives
+        ? "  своего кода нет: записи о пустоте верны"
+        : "  переживших: " + emptyClaims.length,
     );
-  for (const one of emptySlots) console.log("    " + one);
-
-  checkHead("Каркас не отстал от семени", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
+    for (const one of emptyClaims)
+      console.log(
+        "    " + one + ". Снять маркер вместе с текстом и написать, что есть",
+      );
+    for (const one of emptySlots) console.log("    " + one);
   });
-  console.log(
-    frameLives
-      ? "  расходится с семенем: " + staleFrame.length
-      : IDLE_NOTES["Каркас не отстал от семени"],
-  );
-  for (const one of staleFrame) console.log("    " + one);
+  checkStep(() => {
+    checkHead("Каркас не отстал от семени", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    console.log(
+      frameLives
+        ? "  расходится с семенем: " + staleFrame.length
+        : IDLE_NOTES["Каркас не отстал от семени"],
+    );
+    for (const one of staleFrame) console.log("    " + one);
+  });
 
   // Якорь семени базы обязан попадать в семя кода.
   //
@@ -29388,66 +30130,72 @@ if (mode === "verify") {
   const seedAnchors = [];
   let seedAnchorSaid = null;
   let seedAnchorCount = 0;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt === null || !existsSync(mapAt))
-      seedAnchorSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
-    else {
-      const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
-      const seedOf = new Map();
-      for (const e of copy) {
-        const from0 = shelfAt(e.from);
-        if (from0 !== null) seedOf.set(e.to, from0);
-      }
-      for (const e of copy) {
-        const from0 = shelfAt(e.from);
-        if (from0 === null || !existsSync(from0)) continue;
-        if (!e.to.endsWith(".md")) continue;
-        for (const line of readFileSync(from0, "utf8").split(NEWLINE)) {
-          const m = /`([^`]+):([0-9]+)`\s+`([^`]+)`/.exec(line);
-          if (m === null) continue;
-          const [, at, no, quote] = m;
-          const target = seedOf.get(at);
-          seedAnchorCount += 1;
-          if (target === undefined || !existsSync(target)) {
-            seedAnchors.push(
-              e.from + " → " + at + ": такого семени карта не везёт",
-            );
-            continue;
-          }
-          const rows = readFileSync(target, "utf8").split(NEWLINE);
-          const row = rows[Number(no) - 1] ?? "";
-          if (row.includes(quote)) continue;
-          seedAnchors.push(
-            e.from +
-              " → " +
-              at +
-              ":" +
-              no +
-              " — цитаты " +
-              barQuoted(quote) +
-              " на этой строке нет",
-          );
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt === null || !existsSync(mapAt))
+        seedAnchorSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+      else {
+        const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+        const seedOf = new Map();
+        for (const e of copy) {
+          const from0 = shelfAt(e.from);
+          if (from0 !== null) seedOf.set(e.to, from0);
         }
+        for (const e of copy) {
+          const from0 = shelfAt(e.from);
+          if (from0 === null || !existsSync(from0)) continue;
+          if (!e.to.endsWith(".md")) continue;
+          for (const line of readFileSync(from0, "utf8").split(NEWLINE)) {
+            const m = /`([^`]+):([0-9]+)`\s+`([^`]+)`/.exec(line);
+            if (m === null) continue;
+            const [, at, no, quote] = m;
+            const target = seedOf.get(at);
+            seedAnchorCount += 1;
+            if (target === undefined || !existsSync(target)) {
+              seedAnchors.push(
+                e.from + " → " + at + ": такого семени карта не везёт",
+              );
+              continue;
+            }
+            const rows = readFileSync(target, "utf8").split(NEWLINE);
+            const row = rows[Number(no) - 1] ?? "";
+            if (row.includes(quote)) continue;
+            seedAnchors.push(
+              e.from +
+                " → " +
+                at +
+                ":" +
+                no +
+                " — цитаты " +
+                barQuoted(quote) +
+                " на этой строке нет",
+            );
+          }
+        }
+        if (seedAnchors.length === 0 && seedAnchorSaid === null)
+          seedAnchorSaid = "якорей проверено: " + seedAnchorCount;
       }
-      if (seedAnchors.length === 0 && seedAnchorSaid === null)
-        seedAnchorSaid = "якорей проверено: " + seedAnchorCount;
     }
-  }
-  checkHead("Якоря семени ведут в семя", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
   });
-  if (seedAnchorSaid !== null) console.log("  " + seedAnchorSaid);
-  if (seedAnchors.length) console.log("  мимо семени: " + seedAnchors.length);
-  for (const one of seedAnchors)
-    console.log("    " + one + ". Править семя записи вместе с семенем кода");
-  checkHead("Один предмет — один файл настройки", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
+  checkStep(() => {
+    checkHead("Якоря семени ведут в семя", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    if (seedAnchorSaid !== null) console.log("  " + seedAnchorSaid);
+    if (seedAnchors.length) console.log("  мимо семени: " + seedAnchors.length);
+    for (const one of seedAnchors)
+      console.log("    " + one + ". Править семя записи вместе с семенем кода");
   });
-  console.log("  предметов с двумя файлами: " + twinConfigs.length);
-  for (const g of twinConfigs) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Один предмет — один файл настройки", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    console.log("  предметов с двумя файлами: " + twinConfigs.length);
+    for (const g of twinConfigs) console.log("    " + g);
+  });
 
   // 45c. Одноранговая зависимость не продублирована.
   //
@@ -29461,17 +30209,19 @@ if (mode === "verify") {
   // одном приложении ломают хуки в рантайме — дефект ПОСТАВКИ, которого не
   // видят ни типы, ни тесты, ни линтер.
   const peerDup = [];
-  if (CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    if (existsSync(at)) {
-      const pkg = JSON.parse(readFileSync(at, "utf8"));
-      for (const name of Object.keys(pkg.peerDependencies ?? {}))
-        if (pkg.dependencies?.[name] !== undefined)
-          peerDup.push(
-            name + " — объявлен и одноранговым, и обычной зависимостью",
-          );
+  checkStep(() => {
+    if (CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      if (existsSync(at)) {
+        const pkg = JSON.parse(readFileSync(at, "utf8"));
+        for (const name of Object.keys(pkg.peerDependencies ?? {}))
+          if (pkg.dependencies?.[name] !== undefined)
+            peerDup.push(
+              name + " — объявлен и одноранговым, и обычной зависимостью",
+            );
+      }
     }
-  }
+  });
   // 45d. Объявленная цепочка проверок и семя манифеста сходятся.
   //
   // Какие скрипты составляют цепочку, объявлено ДАННЫМИ в карте посадки:
@@ -29486,100 +30236,106 @@ if (mode === "verify") {
   // проекту его не допишут, и звено у него не появится вовсе). Сверяется
   // поэтому В ОБЕ СТОРОНЫ, как у таблицы сверок.
   const chainDrift = [];
-  {
-    const mapAt = shelfAt("seat/map.json");
-    const seedAt = shelfAt("seat/templates/package.json");
-    if (
-      mapAt !== null &&
-      existsSync(mapAt) &&
-      seedAt !== null &&
-      existsSync(seedAt)
-    ) {
-      const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
-      if (Array.isArray(declared)) {
-        const seedScripts =
-          JSON.parse(readFileSync(seedAt, "utf8")).scripts ?? {};
-        const names = declared.map((e) => e.name);
-        for (const one of names)
-          if (seedScripts[one] === undefined)
-            chainDrift.push(one + " — звено объявлено, а скрипта в семени нет");
-        // Обратная сторона названа списком исключений, а не догадкой: скрипты
-        // каркаса нужны пустому проекту и не нужны живому, и это НЕ дыра.
-        const frameScripts = new Set(["dev", "build", "preview"]);
-        for (const one of Object.keys(seedScripts))
-          if (!names.includes(one) && !frameScripts.has(one))
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      const seedAt = shelfAt("seat/templates/package.json");
+      if (
+        mapAt !== null &&
+        existsSync(mapAt) &&
+        seedAt !== null &&
+        existsSync(seedAt)
+      ) {
+        const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
+        if (Array.isArray(declared)) {
+          const seedScripts =
+            JSON.parse(readFileSync(seedAt, "utf8")).scripts ?? {};
+          const names = declared.map((e) => e.name);
+          for (const one of names)
+            if (seedScripts[one] === undefined)
+              chainDrift.push(
+                one + " — звено объявлено, а скрипта в семени нет",
+              );
+          // Обратная сторона названа списком исключений, а не догадкой: скрипты
+          // каркаса нужны пустому проекту и не нужны живому, и это НЕ дыра.
+          const frameScripts = new Set(["dev", "build", "preview"]);
+          for (const one of Object.keys(seedScripts))
+            if (!names.includes(one) && !frameScripts.has(one))
+              chainDrift.push(
+                one + " — скрипт в семени есть, а в цепочке не объявлен",
+              );
+          // Образец опознания обязан узнавать СВОЙ скрипт в семени, и только его.
+          // Образец, не узнающий ничего, молча превращает слияние обратно в
+          // сопоставление по имени; образец, узнающий лишнее, объявит чужой
+          // скрипт звеном. Ни то, ни другое изнутри посадки не видно.
+          for (const e of declared) {
+            if (e.recognise == null) continue;
+            const re = new RegExp(e.recognise);
+            const hits = Object.entries(seedScripts)
+              .filter(([, body]) => re.test(body))
+              .map(([n]) => n);
+            if (hits.length !== 1 || hits[0] !== e.name)
+              chainDrift.push(
+                e.name +
+                  " — образец опознания находит в семени: " +
+                  (hits.length ? hits.join(", ") : "ничего"),
+              );
+          }
+        }
+      }
+    }
+    // Вторая сторона: связка проверок зовёт звенья именем менеджера, который
+    // объявил ПРОЕКТ. Семя связки написано умолчанием — словом `npm`, — и
+    // правило о переходе на другой менеджер говорило только про таблицу
+    // проверок в правилах. Про связку не говорило ничего, и она уезжала в
+    // проект чужим словом.
+    //
+    // Цена не в том, что связка не запустится: менеджеры чужие скрипты зовут.
+    // Цена в том, что ЧИТАТЬ её инструмент будет именем объявленного менеджера
+    // и не увидит в ней ни одного звена — то есть обратная сторона сверки
+    // инструментов замолчит навсегда. Замерено на проекте, объявившем yarn.
+    if (CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      if (existsSync(at)) {
+        const body = (JSON.parse(readFileSync(at, "utf8")).scripts ?? {}).check;
+        if (typeof body === "string") {
+          const alien = /\b(npm|pnpm|yarn|bun)\s+(run\s+[\w:-]+|test\b)/.exec(
+            body,
+          );
+          // Последнее звено связки — СВЕРКА БАЗЫ, и без неё зелёная цепочка
+          // не значит ничего из того, что держит обвязка.
+          //
+          // Живой проект приходит со своей связкой, и правило слияния «тот же
+          // скрипт, другое тело — оставить проектный» её сохраняет. Сохраняет
+          // вместе с тем, что вызова сверки в ней нет. Замерено на копии
+          // настоящего проекта в четыреста файлов: `check` вышел кодом НОЛЬ, а
+          // сверка базы тем же заходом — кодом ОДИН. Цепочка зелёная, база
+          // красная, и никто об этом не сказал: всё, что проверяет обвязка,
+          // молча перестало проверяться.
+          if (!/graph\.mjs[^&|]*\bverify\b/.test(body))
             chainDrift.push(
-              one + " — скрипт в семени есть, а в цепочке не объявлен",
+              "связка не зовёт сверку базы: цепочка будет зелёной, не проверив ничего из того, что держит обвязка",
             );
-        // Образец опознания обязан узнавать СВОЙ скрипт в семени, и только его.
-        // Образец, не узнающий ничего, молча превращает слияние обратно в
-        // сопоставление по имени; образец, узнающий лишнее, объявит чужой
-        // скрипт звеном. Ни то, ни другое изнутри посадки не видно.
-        for (const e of declared) {
-          if (e.recognise == null) continue;
-          const re = new RegExp(e.recognise);
-          const hits = Object.entries(seedScripts)
-            .filter(([, body]) => re.test(body))
-            .map(([n]) => n);
-          if (hits.length !== 1 || hits[0] !== e.name)
+          if (scriptCallsIn(body).length === 0 && alien !== null)
             chainDrift.push(
-              e.name +
-                " — образец опознания находит в семени: " +
-                (hits.length ? hits.join(", ") : "ничего"),
+              "связка зовёт звенья через «" +
+                alien[1] +
+                "», а проект объявил менеджером «" +
+                PACKAGE_MANAGER +
+                "»: читать её инструмент будет вторым именем и не увидит ни одного звена",
             );
         }
       }
     }
-  }
-  // Вторая сторона: связка проверок зовёт звенья именем менеджера, который
-  // объявил ПРОЕКТ. Семя связки написано умолчанием — словом `npm`, — и
-  // правило о переходе на другой менеджер говорило только про таблицу
-  // проверок в правилах. Про связку не говорило ничего, и она уезжала в
-  // проект чужим словом.
-  //
-  // Цена не в том, что связка не запустится: менеджеры чужие скрипты зовут.
-  // Цена в том, что ЧИТАТЬ её инструмент будет именем объявленного менеджера
-  // и не увидит в ней ни одного звена — то есть обратная сторона сверки
-  // инструментов замолчит навсегда. Замерено на проекте, объявившем yarn.
-  if (CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    if (existsSync(at)) {
-      const body = (JSON.parse(readFileSync(at, "utf8")).scripts ?? {}).check;
-      if (typeof body === "string") {
-        const alien = /\b(npm|pnpm|yarn|bun)\s+(run\s+[\w:-]+|test\b)/.exec(
-          body,
-        );
-        // Последнее звено связки — СВЕРКА БАЗЫ, и без неё зелёная цепочка
-        // не значит ничего из того, что держит обвязка.
-        //
-        // Живой проект приходит со своей связкой, и правило слияния «тот же
-        // скрипт, другое тело — оставить проектный» её сохраняет. Сохраняет
-        // вместе с тем, что вызова сверки в ней нет. Замерено на копии
-        // настоящего проекта в четыреста файлов: `check` вышел кодом НОЛЬ, а
-        // сверка базы тем же заходом — кодом ОДИН. Цепочка зелёная, база
-        // красная, и никто об этом не сказал: всё, что проверяет обвязка,
-        // молча перестало проверяться.
-        if (!/graph\.mjs[^&|]*\bverify\b/.test(body))
-          chainDrift.push(
-            "связка не зовёт сверку базы: цепочка будет зелёной, не проверив ничего из того, что держит обвязка",
-          );
-        if (scriptCallsIn(body).length === 0 && alien !== null)
-          chainDrift.push(
-            "связка зовёт звенья через «" +
-              alien[1] +
-              "», а проект объявил менеджером «" +
-              PACKAGE_MANAGER +
-              "»: читать её инструмент будет вторым именем и не увидит ни одного звена",
-          );
-      }
-    }
-  }
-  checkHead("Цепочка проверок объявлена данными", {
-    n: chainDeclared.length,
-    unit: "звеньев цепочки",
   });
-  console.log("  расхождений списка и семени: " + chainDrift.length);
-  for (const g of chainDrift) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Цепочка проверок объявлена данными", () => ({
+      n: chainDeclared.length,
+      unit: "звеньев цепочки",
+    }));
+    console.log("  расхождений списка и семени: " + chainDrift.length);
+    for (const g of chainDrift) console.log("    " + g);
+  });
 
   // 45e. Звено цепочки не задвоено в манифесте проекта.
   //
@@ -29595,44 +30351,49 @@ if (mode === "verify") {
   // одного инструмента — источник вопроса «какой из них прав», и отвечать на
   // него приходится по очереди.
   const chainTwins = [];
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt) && CONFIG.manifest != null) {
-      const at = path.join(BASE, CONFIG.manifest);
-      const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
-      if (existsSync(at) && Array.isArray(declared)) {
-        const scripts = JSON.parse(readFileSync(at, "utf8")).scripts ?? {};
-        for (const e of declared) {
-          if (e.recognise == null) continue;
-          const re = new RegExp(e.recognise);
-          const hits = Object.entries(scripts)
-            .filter(([, body]) => re.test(body))
-            .map(([n]) => n);
-          // Делегирующий корневой скрипт — то же звено, и рядом со своим
-          // вызовом инструмента в корне он близнец.
-          const handed = delegatedLink(re, scripts);
-          if (handed !== null && !hits.includes(handed)) hits.push(handed);
-          if (hits.length > 1)
-            chainTwins.push(
-              e.name + " — одно звено под именами: " + hits.join(", "),
-            );
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt) && CONFIG.manifest != null) {
+        const at = path.join(BASE, CONFIG.manifest);
+        const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
+        if (existsSync(at) && Array.isArray(declared)) {
+          const scripts = JSON.parse(readFileSync(at, "utf8")).scripts ?? {};
+          for (const e of declared) {
+            if (e.recognise == null) continue;
+            const re = new RegExp(e.recognise);
+            const hits = Object.entries(scripts)
+              .filter(([, body]) => re.test(body))
+              .map(([n]) => n);
+            // Делегирующий корневой скрипт — то же звено, и рядом со своим
+            // вызовом инструмента в корне он близнец.
+            const handed = delegatedLink(re, scripts);
+            if (handed !== null && !hits.includes(handed)) hits.push(handed);
+            if (hits.length > 1)
+              chainTwins.push(
+                e.name + " — одно звено под именами: " + hits.join(", "),
+              );
+          }
         }
       }
     }
-  }
-  checkHead("Звено цепочки не задвоено", {
-    n: chainDeclared.length,
-    unit: "звеньев цепочки",
   });
-  console.log("  задвоенных звеньев: " + chainTwins.length);
-  for (const g of chainTwins) console.log("    " + g);
-
-  checkHead("Одноранговая зависимость не продублирована", {
-    n: chainDeclared.length,
-    unit: "звеньев цепочки",
+  checkStep(() => {
+    checkHead("Звено цепочки не задвоено", () => ({
+      n: chainDeclared.length,
+      unit: "звеньев цепочки",
+    }));
+    console.log("  задвоенных звеньев: " + chainTwins.length);
+    for (const g of chainTwins) console.log("    " + g);
   });
-  console.log("  продублировано: " + peerDup.length);
-  for (const g of peerDup) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Одноранговая зависимость не продублирована", () => ({
+      n: chainDeclared.length,
+      unit: "звеньев цепочки",
+    }));
+    console.log("  продублировано: " + peerDup.length);
+    for (const g of peerDup) console.log("    " + g);
+  });
 
   // Поставка не несёт лишнего: у пакета, который ПУБЛИКУЕТСЯ, каждая обычная
   // зависимость уезжает к каждому потребителю, и держать её вправе только
@@ -29649,35 +30410,39 @@ if (mode === "verify") {
   // `main`, `module` или `files` — и не объявлен закрытым.
   const shipDead = [];
   let shipLooked = 0;
-  if (CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    const pkg = readJson(at, {});
-    const published =
-      pkg.private !== true &&
-      ["exports", "main", "module", "files"].some((k) => pkg[k] != null);
-    if (published) {
-      const imported = new Set();
-      for (const specs of specsOf.values())
-        for (const one of specs) imported.add(one);
-      for (const name of Object.keys(pkg.dependencies ?? {})) {
-        shipLooked += 1;
-        const used = [...imported].some(
-          (s) => s === name || s.startsWith(name + "/"),
-        );
-        if (!used)
-          shipDead.push(
-            name +
-              " — обычная зависимость пакета, который публикуется, а код пакета её не импортирует: уедет к каждому потребителю. Инструменту разработки место в devDependencies",
+  checkStep(() => {
+    if (CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      const pkg = readJson(at, {});
+      const published =
+        pkg.private !== true &&
+        ["exports", "main", "module", "files"].some((k) => pkg[k] != null);
+      if (published) {
+        const imported = new Set();
+        for (const specs of specsOf.values())
+          for (const one of specs) imported.add(one);
+        for (const name of Object.keys(pkg.dependencies ?? {})) {
+          shipLooked += 1;
+          const used = [...imported].some(
+            (s) => s === name || s.startsWith(name + "/"),
           );
+          if (!used)
+            shipDead.push(
+              name +
+                " — обычная зависимость пакета, который публикуется, а код пакета её не импортирует: уедет к каждому потребителю. Инструменту разработки место в devDependencies",
+            );
+        }
       }
     }
-  }
-  checkHead("Поставка не несёт лишнего", {
-    n: shipLooked,
-    unit: "обычных зависимостей публикуемого пакета",
   });
-  console.log("  не нужны коду пакета: " + shipDead.length);
-  for (const g of shipDead) console.log("    " + g);
+  checkStep(() => {
+    checkHead("Поставка не несёт лишнего", () => ({
+      n: shipLooked,
+      unit: "обычных зависимостей публикуемого пакета",
+    }));
+    console.log("  не нужны коду пакета: " + shipDead.length);
+    for (const g of shipDead) console.log("    " + g);
+  });
 
   // 44-а. Заготовки на полке не попадают под разбор линтера проекта.
   //
@@ -29703,77 +30468,81 @@ if (mode === "verify") {
   // Ложное срабатывание тут дешевле пропуска: цена пропуска замерена и равна
   // всему звену.
   const seedLint = [];
-  if (SHELF !== null && CONFIG.toolchain != null) {
-    const link = CONFIG.toolchain.find((l) => l.script === "lint");
-    const shelfRel = path.relative(REPO, SHELF).split(path.sep).join("/");
-    const mustCover = shelfRel + "/seat/templates";
-    // Область разбора задаёт СКРИПТ, а не только конфиг. Проект вправе звать
-    // линтер по двум своим папкам — тогда до полки он не доходит вовсе, и
-    // требовать исключения значит краснеть на здоровом устройстве. Ложное
-    // срабатывание тут дороже пропуска: оно учит не читать вывод, и поймано
-    // оно было первым же проектом с таким скриптом.
-    //
-    // Разбор скрипта простой: после имени инструмента берутся лексемы, не
-    // начинающиеся с тире и не идущие сразу за такой лексемой — значение ключа
-    // не область. Областей нет вовсе — линтер идёт от текущей папки, то есть
-    // достаёт до всего.
-    const lintArea = () => {
-      if (CONFIG.manifest == null) return null;
-      const mAt = path.join(BASE, CONFIG.manifest);
-      if (!existsSync(mAt)) return null;
-      const scripts = JSON.parse(readFileSync(mAt, "utf8")).scripts ?? {};
-      const own = linkOwnName("lint", scripts);
-      const body = scripts[own ?? "lint"];
-      if (typeof body !== "string") return null;
-      // Храповик долга оборачивает команду линтера: область — у неё, а не у
-      // обёртки. Без снятия обёртки область выходила чужой, и сверка молчала.
-      const parts = body
-        .replace(/^\s*node\s+\S*graph\.mjs\s+lint\s+--\s+/, "")
-        .trim()
-        .split(/\s+/)
-        .slice(1);
-      const areas = [];
-      for (let i = 0; i < parts.length; i += 1) {
-        if (parts[i].startsWith("-")) continue;
-        if (i > 0 && parts[i - 1].startsWith("-")) continue;
-        areas.push(parts[i].replace(/^\.\//, ""));
-      }
-      return areas;
-    };
+  checkStep(() => {
+    if (SHELF !== null && CONFIG.toolchain != null) {
+      const link = CONFIG.toolchain.find((l) => l.script === "lint");
+      const shelfRel = path.relative(REPO, SHELF).split(path.sep).join("/");
+      const mustCover = shelfRel + "/seat/templates";
+      // Область разбора задаёт СКРИПТ, а не только конфиг. Проект вправе звать
+      // линтер по двум своим папкам — тогда до полки он не доходит вовсе, и
+      // требовать исключения значит краснеть на здоровом устройстве. Ложное
+      // срабатывание тут дороже пропуска: оно учит не читать вывод, и поймано
+      // оно было первым же проектом с таким скриптом.
+      //
+      // Разбор скрипта простой: после имени инструмента берутся лексемы, не
+      // начинающиеся с тире и не идущие сразу за такой лексемой — значение ключа
+      // не область. Областей нет вовсе — линтер идёт от текущей папки, то есть
+      // достаёт до всего.
+      const lintArea = () => {
+        if (CONFIG.manifest == null) return null;
+        const mAt = path.join(BASE, CONFIG.manifest);
+        if (!existsSync(mAt)) return null;
+        const scripts = JSON.parse(readFileSync(mAt, "utf8")).scripts ?? {};
+        const own = linkOwnName("lint", scripts);
+        const body = scripts[own ?? "lint"];
+        if (typeof body !== "string") return null;
+        // Храповик долга оборачивает команду линтера: область — у неё, а не у
+        // обёртки. Без снятия обёртки область выходила чужой, и сверка молчала.
+        const parts = body
+          .replace(/^\s*node\s+\S*graph\.mjs\s+lint\s+--\s+/, "")
+          .trim()
+          .split(/\s+/)
+          .slice(1);
+        const areas = [];
+        for (let i = 0; i < parts.length; i += 1) {
+          if (parts[i].startsWith("-")) continue;
+          if (i > 0 && parts[i - 1].startsWith("-")) continue;
+          areas.push(parts[i].replace(/^\.\//, ""));
+        }
+        return areas;
+      };
 
-    if (link != null && link.config != null) {
-      // Конфиг в силе — не обязательно семенной: у живого проекта он свой и
-      // часто под другим именем. Берётся тот, что лежит.
-      const at = linkConfigAt(link);
-      if (at !== null) {
-        let text = readFileSync(at, "utf8");
-        const sideCar = path.join(REPO, ".eslintignore");
-        if (existsSync(sideCar))
-          text += NEWLINE + readFileSync(sideCar, "utf8");
-        const covered = literalsOf(text).some((one) =>
-          mustCover.startsWith(one.replace(/\/\*\*?$/, "")),
-        );
-        const areas = lintArea();
-        const reaches =
-          areas === null ||
-          areas.length === 0 ||
-          areas.some((one) => one === "." || mustCover.startsWith(one));
-        if (!covered && reaches)
-          seedLint.push(
-            path.relative(REPO, at).split(path.sep).join("/") +
-              " — не исключает " +
-              mustCover +
-              ": линтер с типами найдёт там второй корень проекта и откажется разбирать что-либо",
+      if (link != null && link.config != null) {
+        // Конфиг в силе — не обязательно семенной: у живого проекта он свой и
+        // часто под другим именем. Берётся тот, что лежит.
+        const at = linkConfigAt(link);
+        if (at !== null) {
+          let text = readFileSync(at, "utf8");
+          const sideCar = path.join(REPO, ".eslintignore");
+          if (existsSync(sideCar))
+            text += NEWLINE + readFileSync(sideCar, "utf8");
+          const covered = literalsOf(text).some((one) =>
+            mustCover.startsWith(one.replace(/\/\*\*?$/, "")),
           );
+          const areas = lintArea();
+          const reaches =
+            areas === null ||
+            areas.length === 0 ||
+            areas.some((one) => one === "." || mustCover.startsWith(one));
+          if (!covered && reaches)
+            seedLint.push(
+              path.relative(REPO, at).split(path.sep).join("/") +
+                " — не исключает " +
+                mustCover +
+                ": линтер с типами найдёт там второй корень проекта и откажется разбирать что-либо",
+            );
+        }
       }
     }
-  }
-  checkHead("Заготовки обвязки не разбираются линтом проекта", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
   });
-  console.log("  расхождений: " + seedLint.length);
-  for (const d of seedLint) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Заготовки обвязки не разбираются линтом проекта", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    console.log("  расхождений: " + seedLint.length);
+    for (const d of seedLint) console.log("    " + d);
+  });
   // 44-б. Звено, написанное в манифест, может делать свою работу.
   //
   // Два условия, и оба найдены одной посадкой в монорепозиторий.
@@ -29796,98 +30565,102 @@ if (mode === "verify") {
   // лежит в проекте — значит, хоть один скрипт манифеста обязан звать его
   // инструмент. Не лежит — звено проекта не касается, и спрашивать не с чего.
   const idleConfig = [];
-  if (CONFIG.toolchain != null && CONFIG.manifest != null) {
-    const at = path.join(BASE, CONFIG.manifest);
-    const scripts = existsSync(at)
-      ? (JSON.parse(readFileSync(at, "utf8")).scripts ?? {})
-      : {};
-    const mapAt = shelfAt("seat/map.json");
-    const chain =
-      mapAt !== null && existsSync(mapAt)
-        ? (JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [])
-        : [];
-    const idleSaid = new Set();
-    // Конфиг звена без предмета, нужный ЖИВОМУ звену, законен: его требует
-    // соседняя сверка «Конфиг снятого звена служит живому». Прежде эта
-    // сверка требовала звать его инструмент — то есть обе вместе требовали
-    // противоположного от одного файла, и проект на обычном JavaScript не
-    // мог стать зелёным ни с конфигом компилятора, ни без него. Замерено
-    // посадкой руками.
-    const livePacks = new Set(
-      CONFIG.toolchain
-        .filter((one) => linkHasSubject(one.script))
-        .flatMap((one) => one.packages ?? []),
-    );
-    for (const link of CONFIG.toolchain) {
-      const configAt = linkConfigAt(link);
-      if (configAt === null) continue;
-      if (
-        !linkHasSubject(link.script) &&
-        (link.packages ?? []).some((one) => livePacks.has(one))
-      )
-        continue;
-      const one = chain.find((e) => e.name === link.script);
-      if (one === undefined || one.recognise == null) continue;
-      const re = new RegExp(one.recognise);
-      if (linkCalled(re, scripts)) continue;
-      idleSaid.add(link.config);
-      idleConfig.push(
-        path.relative(REPO_AT, configAt).split(path.sep).join("/") +
-          " — конфиг звена «" +
-          link.script +
-          "» лежит, а инструмент его не зовёт ни один скрипт манифеста",
+  checkStep(() => {
+    if (CONFIG.toolchain != null && CONFIG.manifest != null) {
+      const at = path.join(BASE, CONFIG.manifest);
+      const scripts = existsSync(at)
+        ? (JSON.parse(readFileSync(at, "utf8")).scripts ?? {})
+        : {};
+      const mapAt = shelfAt("seat/map.json");
+      const chain =
+        mapAt !== null && existsSync(mapAt)
+          ? (JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [])
+          : [];
+      const idleSaid = new Set();
+      // Конфиг звена без предмета, нужный ЖИВОМУ звену, законен: его требует
+      // соседняя сверка «Конфиг снятого звена служит живому». Прежде эта
+      // сверка требовала звать его инструмент — то есть обе вместе требовали
+      // противоположного от одного файла, и проект на обычном JavaScript не
+      // мог стать зелёным ни с конфигом компилятора, ни без него. Замерено
+      // посадкой руками.
+      const livePacks = new Set(
+        CONFIG.toolchain
+          .filter((one) => linkHasSubject(one.script))
+          .flatMap((one) => one.packages ?? []),
       );
-    }
-    // То же спрашивается с ЛЮБОГО семени, которое карта отдаёт звену полем
-    // `neededBy`, а не только с конфига. Подготовка тестов и тест помощника
-    // стилей написаны под свой раннер; в проект со своим раннером jest они
-    // легли, не запускались ничем, а линт краснел на них двадцатью пятью
-    // ошибками — пакетов раннера в проекте нет, и типы их не разрешались.
-    // Замерено посадкой руками.
-    const seatCopy =
-      mapAt !== null && existsSync(mapAt)
-        ? (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
-        : [];
-    for (const e of seatCopy) {
-      if (e.neededBy == null || idleSaid.has(e.to)) continue;
-      if (!existsSync(path.join(REPO, e.to))) continue;
-      const one = chain.find((c) => c.name === e.neededBy);
-      if (one === undefined || one.recognise == null) continue;
-      const re = new RegExp(one.recognise);
-      if (linkCalled(re, scripts)) continue;
-      idleConfig.push(
-        e.to +
-          " — семя звена «" +
-          e.neededBy +
-          "» лежит, а инструмент звена не зовёт ни один скрипт манифеста",
-      );
-    }
+      for (const link of CONFIG.toolchain) {
+        const configAt = linkConfigAt(link);
+        if (configAt === null) continue;
+        if (
+          !linkHasSubject(link.script) &&
+          (link.packages ?? []).some((one) => livePacks.has(one))
+        )
+          continue;
+        const one = chain.find((e) => e.name === link.script);
+        if (one === undefined || one.recognise == null) continue;
+        const re = new RegExp(one.recognise);
+        if (linkCalled(re, scripts)) continue;
+        idleSaid.add(link.config);
+        idleConfig.push(
+          path.relative(REPO_AT, configAt).split(path.sep).join("/") +
+            " — конфиг звена «" +
+            link.script +
+            "» лежит, а инструмент его не зовёт ни один скрипт манифеста",
+        );
+      }
+      // То же спрашивается с ЛЮБОГО семени, которое карта отдаёт звену полем
+      // `neededBy`, а не только с конфига. Подготовка тестов и тест помощника
+      // стилей написаны под свой раннер; в проект со своим раннером jest они
+      // легли, не запускались ничем, а линт краснел на них двадцатью пятью
+      // ошибками — пакетов раннера в проекте нет, и типы их не разрешались.
+      // Замерено посадкой руками.
+      const seatCopy =
+        mapAt !== null && existsSync(mapAt)
+          ? (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+          : [];
+      for (const e of seatCopy) {
+        if (e.neededBy == null || idleSaid.has(e.to)) continue;
+        if (!existsSync(path.join(REPO, e.to))) continue;
+        const one = chain.find((c) => c.name === e.neededBy);
+        if (one === undefined || one.recognise == null) continue;
+        const re = new RegExp(one.recognise);
+        if (linkCalled(re, scripts)) continue;
+        idleConfig.push(
+          e.to +
+            " — семя звена «" +
+            e.neededBy +
+            "» лежит, а инструмент звена не зовёт ни один скрипт манифеста",
+        );
+      }
 
-    // Второе условие: ЗВЕНО-СПУТНИК. Оно работает тем же инструментом и той
-    // же настройкой, что и звено, за которым следует, и в одиночку ему
-    // работать не на чем. Покрытие уехало в корень монорепозитория
-    // самостоятельным скриптом — раннера там нет, конфига тоже, — собрало
-    // тесты без окружения и дало пять красных на здоровом коде.
-    for (const e of chain) {
-      if (e.follows == null) continue;
-      if (scripts[e.name] == null) continue;
-      const master = chain.find((c) => c.name === e.follows);
-      if (master === undefined || master.recognise == null) continue;
-      if (linkCalledAny(master, chain, scripts)) continue;
-      idleConfig.push(
-        e.name +
-          " — звено-спутник написано, а звена «" +
-          e.follows +
-          "», за которым оно следует, в проекте нет",
-      );
+      // Второе условие: ЗВЕНО-СПУТНИК. Оно работает тем же инструментом и той
+      // же настройкой, что и звено, за которым следует, и в одиночку ему
+      // работать не на чем. Покрытие уехало в корень монорепозитория
+      // самостоятельным скриптом — раннера там нет, конфига тоже, — собрало
+      // тесты без окружения и дало пять красных на здоровом коде.
+      for (const e of chain) {
+        if (e.follows == null) continue;
+        if (scripts[e.name] == null) continue;
+        const master = chain.find((c) => c.name === e.follows);
+        if (master === undefined || master.recognise == null) continue;
+        if (linkCalledAny(master, chain, scripts)) continue;
+        idleConfig.push(
+          e.name +
+            " — звено-спутник написано, а звена «" +
+            e.follows +
+            "», за которым оно следует, в проекте нет",
+        );
+      }
     }
-  }
-  checkHead("Звену цепочки есть на чём работать", {
-    n: chainDeclared.length,
-    unit: "звеньев цепочки",
   });
-  console.log("  звеньев без опоры: " + idleConfig.length);
-  for (const d of idleConfig) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Звену цепочки есть на чём работать", () => ({
+      n: chainDeclared.length,
+      unit: "звеньев цепочки",
+    }));
+    console.log("  звеньев без опоры: " + idleConfig.length);
+    for (const d of idleConfig) console.log("    " + d);
+  });
   // 44-в. Каждый пакет семени манифеста принадлежит объявленному звену.
   //
   // Объявление `toolchain` называет, какие пакеты у какого звена, и на нём
@@ -29907,103 +30680,109 @@ if (mode === "verify") {
   // платформы, — забытый. Пакет, названный звеном и отсутствующий в семени, —
   // звено без инструмента.
   const packDrift = [];
-  {
-    const seedAt = shelfAt("seat/templates/package.json");
-    const mapAt = shelfAt("seat/map.json");
-    if (
-      CONFIG.toolchain != null &&
-      seedAt !== null &&
-      existsSync(seedAt) &&
-      mapAt !== null &&
-      existsSync(mapAt)
-    ) {
-      const seed = JSON.parse(readFileSync(seedAt, "utf8"));
-      const seatMapNow = JSON.parse(readFileSync(mapAt, "utf8"));
-      const inSeed = new Set([
-        ...Object.keys(seed.dependencies ?? {}),
-        ...Object.keys(seed.devDependencies ?? {}),
-      ]);
-      const byLink = new Map();
-      for (const l of CONFIG.toolchain)
-        for (const p of l.packages ?? [])
-          byLink.set(p, (byLink.get(p) ?? []).concat(l.script ?? "звено"));
-      const platform = new Set(seatMapNow.platformPackages?.packages ?? []);
-      // Второй список — стек приложения: пакеты, не нужные ни звену, ни
-      // платформе, привезённые заранее под будущее приложение. Держатся
-      // отдельно от платформы, потому что смысл у списков разный: платформа
-      // работает с первого дня, стек лежит неиспользованным. Свалить их в
-      // один список значило бы сделать описание платформы ложью.
-      const stack = new Set(seatMapNow.stackPackages?.packages ?? []);
-      // Половин у сверки две, и опоры у них РАЗНЫЕ.
-      //
-      // Гигиена СЕМЕНИ: каждый пакет семени назван связкой СЕМЕНИ. Она не
-      // зависит от того, что проект у себя оставил, и потому ловит пакет,
-      // который положили в манифест обвязки и забыли объявить.
-      //
-      // Здравость ПРОЕКТА: каждый пакет, который проект ДЕРЖИТ, назван
-      // связкой ПРОЕКТА. Снять неприменимое звено вместе с пакетами доктрина
-      // велит дважды, и карать за это нельзя: пока опора была одна, снявший
-      // звено получал красный прогон без выхода. Замерено на проекте, чей
-      // конфиг линта лежит в старом формате.
-      const seedLinks = (() => {
-        const at = shelfAt("seat/templates/graph.config.mjs");
-        if (at === null || !existsSync(at)) return null;
-        const body = readFileSync(at, "utf8");
-        if (!body.includes("toolchain: [")) return null;
-        // Читается только то, что семя называет ПАКЕТАМИ. Взять любую
-        // строку в кавычках было бы поблажкой: имена шаблонов и сценариев
-        // оправдывали бы совпавший с ними пакет.
-        const names = new Set();
-        let mark = body.indexOf("packages:");
-        while (mark >= 0) {
-          const end = body.indexOf("]", mark);
-          if (end < 0) break;
-          const parts = body.slice(mark, end).split('"');
-          for (let i = 1; i < parts.length; i += 2) names.add(parts[i]);
-          mark = body.indexOf("packages:", end);
+  checkStep(() => {
+    {
+      const seedAt = shelfAt("seat/templates/package.json");
+      const mapAt = shelfAt("seat/map.json");
+      if (
+        CONFIG.toolchain != null &&
+        seedAt !== null &&
+        existsSync(seedAt) &&
+        mapAt !== null &&
+        existsSync(mapAt)
+      ) {
+        const seed = JSON.parse(readFileSync(seedAt, "utf8"));
+        const seatMapNow = JSON.parse(readFileSync(mapAt, "utf8"));
+        const inSeed = new Set([
+          ...Object.keys(seed.dependencies ?? {}),
+          ...Object.keys(seed.devDependencies ?? {}),
+        ]);
+        const byLink = new Map();
+        for (const l of CONFIG.toolchain)
+          for (const p of l.packages ?? [])
+            byLink.set(p, (byLink.get(p) ?? []).concat(l.script ?? "звено"));
+        const platform = new Set(seatMapNow.platformPackages?.packages ?? []);
+        // Второй список — стек приложения: пакеты, не нужные ни звену, ни
+        // платформе, привезённые заранее под будущее приложение. Держатся
+        // отдельно от платформы, потому что смысл у списков разный: платформа
+        // работает с первого дня, стек лежит неиспользованным. Свалить их в
+        // один список значило бы сделать описание платформы ложью.
+        const stack = new Set(seatMapNow.stackPackages?.packages ?? []);
+        // Половин у сверки две, и опоры у них РАЗНЫЕ.
+        //
+        // Гигиена СЕМЕНИ: каждый пакет семени назван связкой СЕМЕНИ. Она не
+        // зависит от того, что проект у себя оставил, и потому ловит пакет,
+        // который положили в манифест обвязки и забыли объявить.
+        //
+        // Здравость ПРОЕКТА: каждый пакет, который проект ДЕРЖИТ, назван
+        // связкой ПРОЕКТА. Снять неприменимое звено вместе с пакетами доктрина
+        // велит дважды, и карать за это нельзя: пока опора была одна, снявший
+        // звено получал красный прогон без выхода. Замерено на проекте, чей
+        // конфиг линта лежит в старом формате.
+        const seedLinks = (() => {
+          const at = shelfAt("seat/templates/graph.config.mjs");
+          if (at === null || !existsSync(at)) return null;
+          const body = readFileSync(at, "utf8");
+          if (!body.includes("toolchain: [")) return null;
+          // Читается только то, что семя называет ПАКЕТАМИ. Взять любую
+          // строку в кавычках было бы поблажкой: имена шаблонов и сценариев
+          // оправдывали бы совпавший с ними пакет.
+          const names = new Set();
+          let mark = body.indexOf("packages:");
+          while (mark >= 0) {
+            const end = body.indexOf("]", mark);
+            if (end < 0) break;
+            const parts = body.slice(mark, end).split('"');
+            for (let i = 1; i < parts.length; i += 2) names.add(parts[i]);
+            mark = body.indexOf("packages:", end);
+          }
+          return names.size === 0 ? null : names;
+        })();
+        const manifestAt = path.join(BASE, "..", "package.json");
+        const held = new Set([
+          ...Object.keys(readJson(manifestAt, {}).dependencies ?? {}),
+          ...Object.keys(readJson(manifestAt, {}).devDependencies ?? {}),
+        ]);
+        for (const one of inSeed) {
+          if (platform.has(one) || stack.has(one)) continue;
+          if (seedLinks !== null && !seedLinks.has(one))
+            packDrift.push(
+              one +
+                " — пакет семени не назван ни звеном семени, ни списком платформы, ни стеком",
+            );
+          else if (held.has(one) && !byLink.has(one))
+            packDrift.push(
+              one +
+                " — проект держит пакет, которого не называет ни одно его звено",
+            );
         }
-        return names.size === 0 ? null : names;
-      })();
-      const manifestAt = path.join(BASE, "..", "package.json");
-      const held = new Set([
-        ...Object.keys(readJson(manifestAt, {}).dependencies ?? {}),
-        ...Object.keys(readJson(manifestAt, {}).devDependencies ?? {}),
-      ]);
-      for (const one of inSeed) {
-        if (platform.has(one) || stack.has(one)) continue;
-        if (seedLinks !== null && !seedLinks.has(one))
-          packDrift.push(
-            one +
-              " — пакет семени не назван ни звеном семени, ни списком платформы, ни стеком",
-          );
-        else if (held.has(one) && !byLink.has(one))
-          packDrift.push(
-            one +
-              " — проект держит пакет, которого не называет ни одно его звено",
-          );
+        // Обратная сторона: имя в списке, которого нет в семени. Без неё
+        // список копит пакеты, давно выброшенные из манифеста, и перестаёт
+        // говорить о том, что действительно приезжает.
+        for (const p of stack)
+          if (!inSeed.has(p))
+            packDrift.push(
+              p + " — назван стеком, а в семени манифеста его нет",
+            );
+        for (const [p, links] of byLink)
+          if (!inSeed.has(p))
+            packDrift.push(
+              p +
+                " — назван звеном «" +
+                links.join(", ") +
+                "», а в семени манифеста его нет",
+            );
       }
-      // Обратная сторона: имя в списке, которого нет в семени. Без неё
-      // список копит пакеты, давно выброшенные из манифеста, и перестаёт
-      // говорить о том, что действительно приезжает.
-      for (const p of stack)
-        if (!inSeed.has(p))
-          packDrift.push(p + " — назван стеком, а в семени манифеста его нет");
-      for (const [p, links] of byLink)
-        if (!inSeed.has(p))
-          packDrift.push(
-            p +
-              " — назван звеном «" +
-              links.join(", ") +
-              "», а в семени манифеста его нет",
-          );
     }
-  }
-  checkHead("Пакеты семени разобраны по звеньям", {
-    n: chainDeclared.length,
-    unit: "звеньев цепочки",
   });
-  console.log("  неразобранных: " + packDrift.length);
-  for (const d of packDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Пакеты семени разобраны по звеньям", () => ({
+      n: chainDeclared.length,
+      unit: "звеньев цепочки",
+    }));
+    console.log("  неразобранных: " + packDrift.length);
+    for (const d of packDrift) console.log("    " + d);
+  });
 
   // 44-в-бис. Пакет платформы не второй ответ.
   //
@@ -30014,36 +30793,40 @@ if (mode === "verify") {
   // посадки, а не здесь: список растёт вместе с платформой.
   const secondAnswers = [];
   let alternativesDeclared = 0;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    const alternatives =
-      mapAt !== null && existsSync(mapAt)
-        ? (readJson(mapAt, {}).platformPackages?.alternatives ?? {})
-        : {};
-    const manifest = readJson(path.join(REPO_AT, "package.json"), {});
-    const held = new Set([
-      ...Object.keys(manifest.dependencies ?? {}),
-      ...Object.keys(manifest.devDependencies ?? {}),
-    ]);
-    for (const [one, others] of Object.entries(alternatives)) {
-      alternativesDeclared += 1;
-      if (!held.has(one)) continue;
-      const other = others.find((n) => held.has(n));
-      if (other !== undefined)
-        secondAnswers.push(
-          one +
-            " рядом с " +
-            other +
-            " — два пакета на один вопрос. Оставить тот, что проект выбрал сам",
-        );
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      const alternatives =
+        mapAt !== null && existsSync(mapAt)
+          ? (readJson(mapAt, {}).platformPackages?.alternatives ?? {})
+          : {};
+      const manifest = readJson(path.join(REPO_AT, "package.json"), {});
+      const held = new Set([
+        ...Object.keys(manifest.dependencies ?? {}),
+        ...Object.keys(manifest.devDependencies ?? {}),
+      ]);
+      for (const [one, others] of Object.entries(alternatives)) {
+        alternativesDeclared += 1;
+        if (!held.has(one)) continue;
+        const other = others.find((n) => held.has(n));
+        if (other !== undefined)
+          secondAnswers.push(
+            one +
+              " рядом с " +
+              other +
+              " — два пакета на один вопрос. Оставить тот, что проект выбрал сам",
+          );
+      }
     }
-  }
-  checkHead("Пакет платформы не второй ответ", {
-    n: alternativesDeclared,
-    unit: "пакетов платформы с объявленной заменой",
   });
-  console.log("  вторых ответов: " + secondAnswers.length);
-  for (const d of secondAnswers) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Пакет платформы не второй ответ", () => ({
+      n: alternativesDeclared,
+      unit: "пакетов платформы с объявленной заменой",
+    }));
+    console.log("  вторых ответов: " + secondAnswers.length);
+    for (const d of secondAnswers) console.log("    " + d);
+  });
 
   // 44-г. Семя, которое кладут НЕ на посадке, посадкой не положено.
   //
@@ -30066,25 +30849,27 @@ if (mode === "verify") {
    * когда срок настал, — и счёт у них обязан быть один: разойдясь, они
    * начали бы противоречить друг другу на одном и том же файле.
    */
-  const ownTestExists = (() => {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt === null || !existsSync(mapAt)) return false;
-    const seedOf = new Map();
-    for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
-      const from0 = shelfAt(e.from);
-      if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
-    }
-    const eol = String.fromCharCode(13) + NEWLINE;
-    return files.some((f) => {
-      if (!isTest(f)) return false;
-      const src = seedOf.get(f);
-      if (src === undefined || !existsSync(src)) return true;
-      return (
-        readFileSync(f, "utf8").split(eol).join(NEWLINE) !==
-        readFileSync(src, "utf8").split(eol).join(NEWLINE)
-      );
-    });
-  })();
+  const ownTestExists = checkStep(() =>
+    (() => {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt === null || !existsSync(mapAt)) return false;
+      const seedOf = new Map();
+      for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
+        const from0 = shelfAt(e.from);
+        if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
+      }
+      const eol = String.fromCharCode(13) + NEWLINE;
+      return files.some((f) => {
+        if (!isTest(f)) return false;
+        const src = seedOf.get(f);
+        if (src === undefined || !existsSync(src)) return true;
+        return (
+          readFileSync(f, "utf8").split(eol).join(NEWLINE) !==
+          readFileSync(src, "utf8").split(eol).join(NEWLINE)
+        );
+      });
+    })(),
+  );
 
   const earlySeed = [];
   // Раньше срока — значит ИДЁТ ПОСАДКА, и признак её — флаг настройки.
@@ -30098,19 +30883,21 @@ if (mode === "verify") {
   // потребовала его положить. Первая попытка дала обеим сверкам один
   // предмет — свои тесты, — и противоречие ушло, а фальсификация осталась
   // без зацепки: в проекте со своими тестами эту сверку не разбудить ничем.
-  if (seatingIsUp()) {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt !== null && existsSync(mapAt))
-      for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
-        if (e.notAtSeating === undefined) continue;
-        const there = path.join(REPO, e.to);
-        const seedFile = shelfAt(e.from);
-        if (!existsSync(there) || seedFile === null || !existsSync(seedFile))
-          continue;
-        if (readFileSync(there).equals(readFileSync(seedFile)))
-          earlySeed.push(e.to + " — " + e.notAtSeating);
-      }
-  }
+  checkStep(() => {
+    if (seatingIsUp()) {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt !== null && existsSync(mapAt))
+        for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
+          if (e.notAtSeating === undefined) continue;
+          const there = path.join(REPO, e.to);
+          const seedFile = shelfAt(e.from);
+          if (!existsSync(there) || seedFile === null || !existsSync(seedFile))
+            continue;
+          if (readFileSync(there).equals(readFileSync(seedFile)))
+            earlySeed.push(e.to + " — " + e.notAtSeating);
+        }
+    }
+  });
   // Семя, столкнувшееся с проектным файлом, лежит рядом как `<имя>.seat`, а
   // слияние объявлено работой фазы 2 — и не проверялось ничем. Забыли —
   // файл лежит вечно, проект остаётся при своём, содержимое обвязки не
@@ -30125,21 +30912,23 @@ if (mode === "verify") {
   // поднятом флаге сверка не смотрела вовсе: отчёт посадки не называл, что
   // ещё предстоит слить, — ровно тогда, когда это нужнее всего, — а прогон
   // рецепта докладывал промолчавшую сверку как слепую.
-  const seatingUp = seatingIsUp();
-  {
-    const look = (dir) => {
-      for (const e of readdirSync(dir)) {
-        if (OUT_OF_TREE.has(e)) continue;
-        const at = path.join(dir, e);
-        if (statSync(at).isDirectory()) look(at);
-        else if ((seatWalked += 1) && e.endsWith(".seat"))
-          unmerged.push(
-            norm(path.relative(REPO, at)).split(path.sep).join("/"),
-          );
-      }
-    };
-    look(REPO);
-  }
+  const seatingUp = checkStep(() => seatingIsUp());
+  checkStep(() => {
+    {
+      const look = (dir) => {
+        for (const e of readdirSync(dir)) {
+          if (OUT_OF_TREE.has(e)) continue;
+          const at = path.join(dir, e);
+          if (statSync(at).isDirectory()) look(at);
+          else if ((seatWalked += 1) && e.endsWith(".seat"))
+            unmerged.push(
+              norm(path.relative(REPO, at)).split(path.sep).join("/"),
+            );
+        }
+      };
+      look(REPO);
+    }
+  });
   // Семена кода носят суффикс отложенного, чтобы их не собрал ни раннер
   // тестов, ни разбор кода. Ценой этого форматтер их тоже не видит:
   // расширение ему незнакомо. Семя приезжало неотформатированным, и звено
@@ -30150,61 +30939,63 @@ if (mode === "verify") {
   const roughSeeds = [];
   let seedFmtSaid = null;
   let seedFmtLooked = 0;
-  {
-    const seedDir = shelfAt("seat/templates");
-    if (seedDir === null || !existsSync(seedDir))
-      seedFmtSaid = "семян рядом нет: полка не раздаётся из этого проекта";
-    else {
-      const found = [];
-      const look = (dir) => {
-        for (const e of readdirSync(dir)) {
-          const at = path.join(dir, e);
-          if (statSync(at).isDirectory()) look(at);
-          else if (e.endsWith(".seed")) found.push(at);
-        }
-      };
-      look(seedDir);
-      seedFmtLooked = found.length;
-      if (found.length === 0) seedFmtSaid = "семян с суффиксом нет";
+  await checkStepAsync(async () => {
+    {
+      const seedDir = shelfAt("seat/templates");
+      if (seedDir === null || !existsSync(seedDir))
+        seedFmtSaid = "семян рядом нет: полка не раздаётся из этого проекта";
       else {
-        // Форматтер проекта зовётся в процессе, а не через `npx`: запуск
-        // `npx` стоил около `400` мс на каждый прогон сверки, а сама
-        // проверка — десятки. Список исключений проекта сюда не попадает
-        // по построению: проект исключает папку обвязки из форматтера, и,
-        // прочитав его список, проверка пропускала каждое семя и отвечала
-        // «расходится: 0» — замерено фальсификацией стенда.
-        const prettier = await prettierHere();
-        if (prettier === null)
-          seedFmtSaid =
-            "форматтера нет — сверить нечем, и это не поломка: звено формата в проекте может быть неприменимо";
-        else {
-          for (const at of found) {
-            const shown = norm(path.relative(path.join(BASE, ".."), at));
-            try {
-              const options = (await prettier.resolveConfig(at)) ?? {};
-              const body = readFileSync(at, "utf8");
-              if (
-                !(await prettier.check(body, {
-                  ...options,
-                  parser: "typescript",
-                }))
-              )
-                roughSeeds.push(shown);
-            } catch (e) {
-              roughSeeds.push(
-                shown +
-                  " — не разбирается: " +
-                  String(e.message).split(NEWLINE)[0],
-              );
-            }
+        const found = [];
+        const look = (dir) => {
+          for (const e of readdirSync(dir)) {
+            const at = path.join(dir, e);
+            if (statSync(at).isDirectory()) look(at);
+            else if (e.endsWith(".seed")) found.push(at);
           }
-          if (roughSeeds.length === 0)
+        };
+        look(seedDir);
+        seedFmtLooked = found.length;
+        if (found.length === 0) seedFmtSaid = "семян с суффиксом нет";
+        else {
+          // Форматтер проекта зовётся в процессе, а не через `npx`: запуск
+          // `npx` стоил около `400` мс на каждый прогон сверки, а сама
+          // проверка — десятки. Список исключений проекта сюда не попадает
+          // по построению: проект исключает папку обвязки из форматтера, и,
+          // прочитав его список, проверка пропускала каждое семя и отвечала
+          // «расходится: 0» — замерено фальсификацией стенда.
+          const prettier = await prettierHere();
+          if (prettier === null)
             seedFmtSaid =
-              "семян проверено: " + found.length + ", расходится: 0";
+              "форматтера нет — сверить нечем, и это не поломка: звено формата в проекте может быть неприменимо";
+          else {
+            for (const at of found) {
+              const shown = norm(path.relative(path.join(BASE, ".."), at));
+              try {
+                const options = (await prettier.resolveConfig(at)) ?? {};
+                const body = readFileSync(at, "utf8");
+                if (
+                  !(await prettier.check(body, {
+                    ...options,
+                    parser: "typescript",
+                  }))
+                )
+                  roughSeeds.push(shown);
+              } catch (e) {
+                roughSeeds.push(
+                  shown +
+                    " — не разбирается: " +
+                    String(e.message).split(NEWLINE)[0],
+                );
+              }
+            }
+            if (roughSeeds.length === 0)
+              seedFmtSaid =
+                "семян проверено: " + found.length + ", расходится: 0";
+          }
         }
       }
     }
-  }
+  });
   // Семя настройки не должно называть файл, которого посадка не кладёт.
   //
   // Замерено посадкой в живой проект: слияние конфига сборщика внесло
@@ -30216,57 +31007,61 @@ if (mode === "verify") {
   // разложенные по разным местам, обязаны ехать вместе.
   const seedRefs = [];
   let seedRefSaid = null;
-  {
-    const seedDir = shelfAt("seat/templates");
-    const mapAt = shelfAt("seat/map.json");
-    if (seedDir === null || mapAt === null || !existsSync(mapAt))
-      seedRefSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
-    else {
-      // Считается не «есть ли адрес в карте», а «ПОЕДЕТ ли он в живой
-      // проект». Настройки сливаются в живой проект всегда, а семя с пометкой
-      // каркаса туда не кладётся вовсе — и ровно на этом расхождении звено
-      // тестов и сломалось: адрес в карте был, файла в проекте не было.
-      const addressed = new Set(
-        (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
-          .filter(
-            (c) =>
-              c.onlyWhenEmpty !== true &&
-              c.onSubject === undefined &&
-              c.onTransition === undefined,
-          )
-          .map((c) => c.to),
-      );
-      // Смотрятся семена НАСТРОЕК: они и есть то, что сливается в проект.
-      // Семена кода ссылаются друг на друга импортами, и их держит
-      // компилятор.
-      const configs = [];
-      const look = (dir) => {
-        for (const e of readdirSync(dir)) {
-          const at = path.join(dir, e);
-          if (statSync(at).isDirectory()) {
-            if (e !== "src" && e !== "docs") look(at);
-            continue;
+  checkStep(() => {
+    {
+      const seedDir = shelfAt("seat/templates");
+      const mapAt = shelfAt("seat/map.json");
+      if (seedDir === null || mapAt === null || !existsSync(mapAt))
+        seedRefSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+      else {
+        // Считается не «есть ли адрес в карте», а «ПОЕДЕТ ли он в живой
+        // проект». Настройки сливаются в живой проект всегда, а семя с пометкой
+        // каркаса туда не кладётся вовсе — и ровно на этом расхождении звено
+        // тестов и сломалось: адрес в карте был, файла в проекте не было.
+        const addressed = new Set(
+          (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+            .filter(
+              (c) =>
+                c.onlyWhenEmpty !== true &&
+                c.onSubject === undefined &&
+                c.onTransition === undefined,
+            )
+            .map((c) => c.to),
+        );
+        // Смотрятся семена НАСТРОЕК: они и есть то, что сливается в проект.
+        // Семена кода ссылаются друг на друга импортами, и их держит
+        // компилятор.
+        const configs = [];
+        const look = (dir) => {
+          for (const e of readdirSync(dir)) {
+            const at = path.join(dir, e);
+            if (statSync(at).isDirectory()) {
+              if (e !== "src" && e !== "docs") look(at);
+              continue;
+            }
+            if (/[.](ts|js|mjs|cjs|json)$/.test(e)) configs.push(at);
           }
-          if (/[.](ts|js|mjs|cjs|json)$/.test(e)) configs.push(at);
+        };
+        look(seedDir);
+        for (const f of configs) {
+          const body = readFileSync(f, "utf8");
+          for (const m of body.matchAll(
+            /["'](\.\/(?:src|docs)\/[^"']+)["']/g,
+          )) {
+            const to = m[1].replace(/^\.\//, "");
+            if (addressed.has(to)) continue;
+            seedRefs.push(
+              norm(path.relative(SHELF, f)).split(path.sep).join("/") +
+                " называет " +
+                m[1] +
+                " — такого адреса назначения в карте нет",
+            );
+          }
         }
-      };
-      look(seedDir);
-      for (const f of configs) {
-        const body = readFileSync(f, "utf8");
-        for (const m of body.matchAll(/["'](\.\/(?:src|docs)\/[^"']+)["']/g)) {
-          const to = m[1].replace(/^\.\//, "");
-          if (addressed.has(to)) continue;
-          seedRefs.push(
-            norm(path.relative(SHELF, f)).split(path.sep).join("/") +
-              " называет " +
-              m[1] +
-              " — такого адреса назначения в карте нет",
-          );
-        }
+        if (seedRefs.length === 0) seedRefSaid = "ссылок мимо карты: 0";
       }
-      if (seedRefs.length === 0) seedRefSaid = "ссылок мимо карты: 0";
     }
-  }
+  });
   // Запись о семени, которое НЕ каркас, не лежит внутри пометок каркаса.
   //
   // Пометка стоит на ЗАПИСИ, условие приезда — на СЕМЕНИ, и разъезжаются
@@ -30275,110 +31070,120 @@ if (mode === "verify") {
   // же не написала. Замерено посадкой в живой проект.
   const wrapped = [];
   let wrapSaid = null;
-  {
-    const seedDir = shelfAt("seat/templates");
-    const mapAt = shelfAt("seat/map.json");
-    if (seedDir === null || mapAt === null || !existsSync(mapAt))
-      wrapSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
-    else {
-      const travels = (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
-        .filter((c) => c.onlyWhenEmpty !== true)
-        .map((c) => c.to);
-      for (const name of readdirSync(seedDir)) {
-        if (!name.endsWith(".md")) continue;
-        const rows = readFileSync(path.join(seedDir, name), "utf8").split(
-          /\r?\n/,
-        );
-        let inside = false;
-        for (let i = 0; i < rows.length; i += 1) {
-          if (rows[i].trim() === "<!-- КАРКАС -->") {
-            inside = true;
-            continue;
+  checkStep(() => {
+    {
+      const seedDir = shelfAt("seat/templates");
+      const mapAt = shelfAt("seat/map.json");
+      if (seedDir === null || mapAt === null || !existsSync(mapAt))
+        wrapSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
+      else {
+        const travels = (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+          .filter((c) => c.onlyWhenEmpty !== true)
+          .map((c) => c.to);
+        for (const name of readdirSync(seedDir)) {
+          if (!name.endsWith(".md")) continue;
+          const rows = readFileSync(path.join(seedDir, name), "utf8").split(
+            /\r?\n/,
+          );
+          let inside = false;
+          for (let i = 0; i < rows.length; i += 1) {
+            if (rows[i].trim() === "<!-- КАРКАС -->") {
+              inside = true;
+              continue;
+            }
+            if (rows[i].trim() === "<!-- /КАРКАС -->") {
+              inside = false;
+              continue;
+            }
+            if (!inside) continue;
+            for (const to of travels)
+              if (
+                rows[i].includes(to) ||
+                rows[i].includes(to.replace(/^src\//, ""))
+              )
+                wrapped.push(
+                  name +
+                    ":" +
+                    (i + 1) +
+                    " — запись о `" +
+                    to +
+                    "`, а это не каркас",
+                );
           }
-          if (rows[i].trim() === "<!-- /КАРКАС -->") {
-            inside = false;
-            continue;
-          }
-          if (!inside) continue;
-          for (const to of travels)
-            if (
-              rows[i].includes(to) ||
-              rows[i].includes(to.replace(/^src\//, ""))
-            )
-              wrapped.push(
-                name +
-                  ":" +
-                  (i + 1) +
-                  " — запись о `" +
-                  to +
-                  "`, а это не каркас",
-              );
         }
+        if (wrapped.length === 0) wrapSaid = "записей не по своей пометке: 0";
       }
-      if (wrapped.length === 0) wrapSaid = "записей не по своей пометке: 0";
     }
-  }
-  checkHead("Запись о семени помечена каркасом вместе с ним", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
   });
-  if (wrapSaid !== null) console.log("  " + wrapSaid);
-  if (wrapped.length)
-    console.log("  записей не по своей пометке: " + wrapped.length);
-  for (const one of wrapped)
-    console.log(
-      "    " +
-        one +
-        " — живой проект снимет пометку вместе с записью и получит файл, о котором посадка не написала",
-    );
+  checkStep(() => {
+    checkHead("Запись о семени помечена каркасом вместе с ним", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    if (wrapSaid !== null) console.log("  " + wrapSaid);
+    if (wrapped.length)
+      console.log("  записей не по своей пометке: " + wrapped.length);
+    for (const one of wrapped)
+      console.log(
+        "    " +
+          one +
+          " — живой проект снимет пометку вместе с записью и получит файл, о котором посадка не написала",
+      );
+  });
   // Поля, заведённые обвязкой ПОСЛЕ посадки, до проекта не доезжают: папку
   // обвязки обновляют копированием, а настройку проекта — нет. Молчание тут
   // хуже всего: инструмент читает отсутствующее поле как осознанный отказ.
   const seedFields = [];
-  {
-    const at = shelfAt("seat/templates/graph.config.mjs");
-    if (at !== null && existsSync(at)) {
-      const body = readFileSync(at, "utf8");
-      // Верхний уровень: строка вида «  имя:» с отступом ровно в два пробела.
-      for (const m of body.matchAll(/^ {2}([A-Za-z][\w]*):/gm))
-        seedFields.push([m[1], null]);
-      // Вложенное в долг: отступ в четыре пробела внутри блока debt.
-      const from = body.indexOf("  debt: {");
-      if (from >= 0) {
-        const to = body.indexOf(NEWLINE + "  },", from);
-        for (const m of body
-          .slice(from, to)
-          .matchAll(/^ {4}([A-Za-z][\w]*):/gm))
-          seedFields.push(["debt", m[1]]);
+  checkStep(() => {
+    {
+      const at = shelfAt("seat/templates/graph.config.mjs");
+      if (at !== null && existsSync(at)) {
+        const body = readFileSync(at, "utf8");
+        // Верхний уровень: строка вида «  имя:» с отступом ровно в два пробела.
+        for (const m of body.matchAll(/^ {2}([A-Za-z][\w]*):/gm))
+          seedFields.push([m[1], null]);
+        // Вложенное в долг: отступ в четыре пробела внутри блока debt.
+        const from = body.indexOf("  debt: {");
+        if (from >= 0) {
+          const to = body.indexOf(NEWLINE + "  },", from);
+          for (const m of body
+            .slice(from, to)
+            .matchAll(/^ {4}([A-Za-z][\w]*):/gm))
+            seedFields.push(["debt", m[1]]);
+        }
       }
     }
-  }
+  });
   const fieldGone = [];
-  for (const [top, inner] of seedFields) {
-    if (inner === null) {
-      if (!(top in CONFIG))
+  checkStep(() => {
+    for (const [top, inner] of seedFields) {
+      if (inner === null) {
+        if (!(top in CONFIG))
+          fieldGone.push(
+            top +
+              " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
+          );
+        continue;
+      }
+      const held = CONFIG[top];
+      if (held == null || typeof held !== "object") continue;
+      if (!(inner in held))
         fieldGone.push(
           top +
+            "." +
+            inner +
             " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
         );
-      continue;
     }
-    const held = CONFIG[top];
-    if (held == null || typeof held !== "object") continue;
-    if (!(inner in held))
-      fieldGone.push(
-        top +
-          "." +
-          inner +
-          " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
-      );
-  }
-  checkHead("Настройка проекта знает все поля семени", {
-    n: seedFields.length,
-    unit: "полей семени настройки",
   });
-  console.log("  полей нет у проекта: " + fieldGone.length);
-  for (const one of fieldGone) console.log("    " + one);
+  checkStep(() => {
+    checkHead("Настройка проекта знает все поля семени", () => ({
+      n: seedFields.length,
+      unit: "полей семени настройки",
+    }));
+    console.log("  полей нет у проекта: " + fieldGone.length);
+    for (const one of fieldGone) console.log("    " + one);
+  });
 
   // Поле семени без объяснения узнают ОШИБКОЙ: пишут значение наугад,
   // получают «настройка задана неверно» и оттуда вычитывают форму. Семя
@@ -30387,119 +31192,132 @@ if (mode === "verify") {
   // Замерено посадкой: поле плана перехода приехало голым, форму его —
   // объект с частями — назвал только текст ошибки инструмента.
   const fieldMute = [];
-  {
-    const at = shelfAt("seat/templates/graph.config.mjs");
-    if (at !== null && existsSync(at)) {
-      const rows = readFileSync(at, "utf8").split(NEWLINE);
-      for (let i = 0; i < rows.length; i += 1) {
-        const m = /^ {2}([A-Za-z][A-Za-z0-9_]*):/.exec(rows[i]);
-        if (m === null) continue;
-        let up = i - 1;
-        while (up >= 0 && rows[up].trim() === "") up -= 1;
-        const near = up < 0 ? "" : rows[up].trim();
-        const told =
-          near.startsWith("*") || near.startsWith("//") || near.endsWith("*/");
-        if (!told)
+  checkStep(() => {
+    {
+      const at = shelfAt("seat/templates/graph.config.mjs");
+      if (at !== null && existsSync(at)) {
+        const rows = readFileSync(at, "utf8").split(NEWLINE);
+        for (let i = 0; i < rows.length; i += 1) {
+          const m = /^ {2}([A-Za-z][A-Za-z0-9_]*):/.exec(rows[i]);
+          if (m === null) continue;
+          let up = i - 1;
+          while (up >= 0 && rows[up].trim() === "") up -= 1;
+          const near = up < 0 ? "" : rows[up].trim();
+          const told =
+            near.startsWith("*") ||
+            near.startsWith("//") ||
+            near.endsWith("*/");
+          if (!told)
+            fieldMute.push(
+              m[1] +
+                " — поле семени настройки без объяснения: форму его узнают ошибкой инструмента",
+            );
+        }
+        // Обратная сторона: объяснение БЕЗ поля. Блок, за которым сразу идёт
+        // другой блок, ни к какому полю не относится — а поле, о котором он,
+        // стоит ниже голым либо со вторым, коротким объяснением. Замерено
+        // посадкой руками: объяснение списка тестов вне своей папки стояло над
+        // полем слоёв компонентов, у самого списка было второе, а в настройке
+        // мастерской список не был объяснён вовсе. Сверка выше смотрела только
+        // «есть ли над полем объяснение» и не видела ни того, ни другого.
+        for (let i = 0; i < rows.length; i += 1) {
+          if (!/^ {2}\/\*\*|^ {3}\*/.test(rows[i])) continue;
+          if (!rows[i].trimEnd().endsWith("*/")) continue;
+          let down = i + 1;
+          while (down < rows.length && rows[down].trim() === "") down += 1;
+          if (down >= rows.length || !/^ {2}\/\*\*/.test(rows[down])) continue;
+          let head = i;
+          while (head > 0 && !/^ {2}\/\*\*/.test(rows[head])) head -= 1;
           fieldMute.push(
-            m[1] +
-              " — поле семени настройки без объяснения: форму его узнают ошибкой инструмента",
+            "«" +
+              rows[head].replace(/^ {2}\/\*\*\s*/, "").slice(0, 60) +
+              "…» — объяснение без поля: за ним сразу другое. Поставить над полем, о котором оно",
           );
-      }
-      // Обратная сторона: объяснение БЕЗ поля. Блок, за которым сразу идёт
-      // другой блок, ни к какому полю не относится — а поле, о котором он,
-      // стоит ниже голым либо со вторым, коротким объяснением. Замерено
-      // посадкой руками: объяснение списка тестов вне своей папки стояло над
-      // полем слоёв компонентов, у самого списка было второе, а в настройке
-      // мастерской список не был объяснён вовсе. Сверка выше смотрела только
-      // «есть ли над полем объяснение» и не видела ни того, ни другого.
-      for (let i = 0; i < rows.length; i += 1) {
-        if (!/^ {2}\/\*\*|^ {3}\*/.test(rows[i])) continue;
-        if (!rows[i].trimEnd().endsWith("*/")) continue;
-        let down = i + 1;
-        while (down < rows.length && rows[down].trim() === "") down += 1;
-        if (down >= rows.length || !/^ {2}\/\*\*/.test(rows[down])) continue;
-        let head = i;
-        while (head > 0 && !/^ {2}\/\*\*/.test(rows[head])) head -= 1;
-        fieldMute.push(
-          "«" +
-            rows[head].replace(/^ {2}\/\*\*\s*/, "").slice(0, 60) +
-            "…» — объяснение без поля: за ним сразу другое. Поставить над полем, о котором оно",
-        );
-      }
-      // Звено цепочки объясняет себя полем `why`: его печатает сверка
-      // инструментов, когда звену чего-то не хватает. Звено мутаций приехало
-      // без него, и сверка печатала «зачем: undefined» — объяснение, которого
-      // нет, выглядело объяснением. Найдено посадкой руками в проект на
-      // `jest`. Спрашивается каждое звено списка `toolchain`.
-      const from = rows.findIndex((l) => /^ {2}toolchain:\s*\[/.test(l));
-      if (from >= 0) {
-        let link = null;
-        for (let i = from + 1; i < rows.length; i += 1) {
-          if (/^ {2}\]/.test(rows[i])) break;
-          if (/^ {4}\{/.test(rows[i])) link = { script: null, why: false };
-          const s = /^ {6}script:\s*"([^"]+)"/.exec(rows[i]);
-          if (s !== null && link !== null) link.script = s[1];
-          if (/^ {6}why:\s*\S/.test(rows[i]) && link !== null) link.why = true;
-          if (/^ {4}\},?\s*$/.test(rows[i]) && link !== null) {
-            if (!link.why)
-              fieldMute.push(
-                "toolchain «" +
-                  (link.script ?? "звено без имени") +
-                  "» — звено без `why`: сверка инструментов напечатает объяснение, которого нет",
-              );
-            link = null;
+        }
+        // Звено цепочки объясняет себя полем `why`: его печатает сверка
+        // инструментов, когда звену чего-то не хватает. Звено мутаций приехало
+        // без него, и сверка печатала «зачем: undefined» — объяснение, которого
+        // нет, выглядело объяснением. Найдено посадкой руками в проект на
+        // `jest`. Спрашивается каждое звено списка `toolchain`.
+        const from = rows.findIndex((l) => /^ {2}toolchain:\s*\[/.test(l));
+        if (from >= 0) {
+          let link = null;
+          for (let i = from + 1; i < rows.length; i += 1) {
+            if (/^ {2}\]/.test(rows[i])) break;
+            if (/^ {4}\{/.test(rows[i])) link = { script: null, why: false };
+            const s = /^ {6}script:\s*"([^"]+)"/.exec(rows[i]);
+            if (s !== null && link !== null) link.script = s[1];
+            if (/^ {6}why:\s*\S/.test(rows[i]) && link !== null)
+              link.why = true;
+            if (/^ {4}\},?\s*$/.test(rows[i]) && link !== null) {
+              if (!link.why)
+                fieldMute.push(
+                  "toolchain «" +
+                    (link.script ?? "звено без имени") +
+                    "» — звено без `why`: сверка инструментов напечатает объяснение, которого нет",
+                );
+              link = null;
+            }
           }
         }
       }
     }
-  }
-  checkHead("Поле семени настройки объяснено", {
-    n: seedFields.filter((one) => one[1] === null).length,
-    unit: "полей верхнего уровня в семени настройки",
   });
-  console.log("  без объяснения: " + fieldMute.length);
-  for (const one of fieldMute) console.log("    " + one);
-  checkHead("Настройка семени не ссылается на непривезённое", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
+  checkStep(() => {
+    checkHead("Поле семени настройки объяснено", () => ({
+      n: seedFields.filter((one) => one[1] === null).length,
+      unit: "полей верхнего уровня в семени настройки",
+    }));
+    console.log("  без объяснения: " + fieldMute.length);
+    for (const one of fieldMute) console.log("    " + one);
   });
-  if (seedRefSaid !== null) console.log("  " + seedRefSaid);
-  if (seedRefs.length) console.log("  ссылок мимо карты: " + seedRefs.length);
-  for (const one of seedRefs)
-    console.log(
-      "    " +
-        one +
-        " — в проекте настройка будет указывать в пустоту, и звено сломается посадкой",
-    );
-  // Корпус — семена с суффиксом: остальные формат проекта видит сам.
-  checkHead("Семена приезжают отформатированными", {
-    n: seedFmtLooked,
-    unit: "семян с суффиксом `.seed`",
+  checkStep(() => {
+    checkHead("Настройка семени не ссылается на непривезённое", () => ({
+      n: seedsDeclared.length,
+      unit: "семян в карте посадки",
+    }));
+    if (seedRefSaid !== null) console.log("  " + seedRefSaid);
+    if (seedRefs.length) console.log("  ссылок мимо карты: " + seedRefs.length);
+    for (const one of seedRefs)
+      console.log(
+        "    " +
+          one +
+          " — в проекте настройка будет указывать в пустоту, и звено сломается посадкой",
+      );
   });
-  if (seedFmtSaid !== null) console.log("  " + seedFmtSaid);
-  if (roughSeeds.length) console.log("  расходится: " + roughSeeds.length);
-  for (const one of roughSeeds)
-    console.log(
-      "    " +
-        one +
-        " — в проекте суффикс снимается, и звено формата краснеет в первый же день",
-    );
-  // Корпус — файлы, осмотренные на суффикс отложенного. Пока он считался
-  // семенами карты, прогон печатал «осмотрено 0» над списком из двух
-  // непрослитых: найдено больше, чем осмотрено.
-  checkHead("Отложенное семя слито", {
-    n: seatWalked,
-    unit: "файлов проекта под суффикс отложенного",
+  checkStep(() => {
+    // Корпус — семена с суффиксом: остальные формат проекта видит сам.
+    checkHead("Семена приезжают отформатированными", () => ({
+      n: seedFmtLooked,
+      unit: "семян с суффиксом `.seed`",
+    }));
+    if (seedFmtSaid !== null) console.log("  " + seedFmtSaid);
+    if (roughSeeds.length) console.log("  расходится: " + roughSeeds.length);
+    for (const one of roughSeeds)
+      console.log(
+        "    " +
+          one +
+          " — в проекте суффикс снимается, и звено формата краснеет в первый же день",
+      );
   });
-  console.log("  не слито: " + unmerged.length);
-  for (const u of unmerged)
-    console.log(
-      "    " + u + " — перенести нужное в проектный файл и удалить это",
-    );
-  if (unmerged.length && seatingUp)
-    console.log(
-      "  Посадка не закончена — пока это не поломка, а список работы фазы 2.",
-    );
+  checkStep(() => {
+    // Корпус — файлы, осмотренные на суффикс отложенного. Пока он считался
+    // семенами карты, прогон печатал «осмотрено 0» над списком из двух
+    // непрослитых: найдено больше, чем осмотрено.
+    checkHead("Отложенное семя слито", () => ({
+      n: seatWalked,
+      unit: "файлов проекта под суффикс отложенного",
+    }));
+    console.log("  не слито: " + unmerged.length);
+    for (const u of unmerged)
+      console.log(
+        "    " + u + " — перенести нужное в проектный файл и удалить это",
+      );
+    if (unmerged.length && seatingUp)
+      console.log(
+        "  Посадка не закончена — пока это не поломка, а список работы фазы 2.",
+      );
+  });
   // Обратная сторона соседней сверки: семя, кладущееся НЕ на посадке, обязано
   // лечь, когда его предмет появился.
   //
@@ -30514,42 +31332,50 @@ if (mode === "verify") {
   // он не равен своему семени побайтово.
   const lateSeeds = [];
   let lateSaid = null;
-  {
-    const mapAt = shelfAt("seat/map.json");
-    if (mapAt === null || !existsSync(mapAt))
-      lateSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
-    else {
-      const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
-      const deferred = copy.filter((e) => e.notAtSeating !== undefined);
-      const ownTest = ownTestExists;
-      if (!ownTest)
-        lateSaid =
-          "своих тестов у проекта нет: предмета у отложенных семян нет";
+  checkStep(() => {
+    {
+      const mapAt = shelfAt("seat/map.json");
+      if (mapAt === null || !existsSync(mapAt))
+        lateSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
       else {
-        for (const e of deferred)
-          if (!existsSync(path.join(REPO, e.to)))
-            lateSeeds.push(e.to + " — " + e.notAtSeating);
-        if (lateSeeds.length === 0)
-          lateSaid = "отложенных семян без предмета: 0";
+        const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+        const deferred = copy.filter((e) => e.notAtSeating !== undefined);
+        const ownTest = ownTestExists;
+        if (!ownTest)
+          lateSaid =
+            "своих тестов у проекта нет: предмета у отложенных семян нет";
+        else {
+          for (const e of deferred)
+            if (!existsSync(path.join(REPO, e.to)))
+              lateSeeds.push(e.to + " — " + e.notAtSeating);
+          if (lateSeeds.length === 0)
+            lateSaid = "отложенных семян без предмета: 0";
+        }
       }
     }
-  }
-  checkHead("Отложенное семя положено, когда предмет появился", {
-    n: seedsDeferred.length,
-    unit: "отложенных семян",
   });
-  if (lateSaid !== null) console.log("  " + lateSaid);
-  if (lateSeeds.length) console.log("  не положено: " + lateSeeds.length);
-  for (const one of lateSeeds)
-    console.log(
-      "    " + one + ". Предмет появился — положить семя из `seat/templates/`",
-    );
-  checkHead("Отложенное семя не положено посадкой", {
-    n: seedsDeferred.length,
-    unit: "отложенных семян",
+  checkStep(() => {
+    checkHead("Отложенное семя положено, когда предмет появился", () => ({
+      n: seedsDeferred.length,
+      unit: "отложенных семян",
+    }));
+    if (lateSaid !== null) console.log("  " + lateSaid);
+    if (lateSeeds.length) console.log("  не положено: " + lateSeeds.length);
+    for (const one of lateSeeds)
+      console.log(
+        "    " +
+          one +
+          ". Предмет появился — положить семя из `seat/templates/`",
+      );
   });
-  console.log("  положенных раньше срока: " + earlySeed.length);
-  for (const d of earlySeed) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Отложенное семя не положено посадкой", () => ({
+      n: seedsDeferred.length,
+      unit: "отложенных семян",
+    }));
+    console.log("  положенных раньше срока: " + earlySeed.length);
+    for (const d of earlySeed) console.log("    " + d);
+  });
   // Семя с условием не лежит без своего условия.
   //
   // Условие стоит в карте полем `onlyWith`, и кладёт по нему посадка. Семя,
@@ -30560,38 +31386,42 @@ if (mode === "verify") {
   // Тронутое семя не спрашивается: проект взял его в работу.
   const idleSeeds = [];
   let idleSeedLooked = 0;
-  {
-    const seeds = seedOfPath();
-    for (const e of seedsDeclared) {
-      if (e.onlyWith == null) continue;
-      idleSeedLooked += 1;
-      if (!SEED_CONDITIONS.has(e.onlyWith)) {
-        idleSeeds.push(
-          e.to +
-            " — условие «" +
-            e.onlyWith +
-            "» не из словаря: " +
-            [...SEED_CONDITIONS.keys()].join(", "),
-        );
-        continue;
+  checkStep(() => {
+    {
+      const seeds = seedOfPath();
+      for (const e of seedsDeclared) {
+        if (e.onlyWith == null) continue;
+        idleSeedLooked += 1;
+        if (!SEED_CONDITIONS.has(e.onlyWith)) {
+          idleSeeds.push(
+            e.to +
+              " — условие «" +
+              e.onlyWith +
+              "» не из словаря: " +
+              [...SEED_CONDITIONS.keys()].join(", "),
+          );
+          continue;
+        }
+        const at = norm(path.join(REPO_AT, e.to));
+        if (!existsSync(at) || seedConditionHolds(e)) continue;
+        if (untouchedSeed(at, REPO_AT, seeds))
+          idleSeeds.push(
+            e.to +
+              " — лежит семенем, а условия «" +
+              e.onlyWith +
+              "» у проекта нет: снять вместе с записями базы о нём",
+          );
       }
-      const at = norm(path.join(REPO_AT, e.to));
-      if (!existsSync(at) || seedConditionHolds(e)) continue;
-      if (untouchedSeed(at, REPO_AT, seeds))
-        idleSeeds.push(
-          e.to +
-            " — лежит семенем, а условия «" +
-            e.onlyWith +
-            "» у проекта нет: снять вместе с записями базы о нём",
-        );
     }
-  }
-  checkHead("Семя с условием не лежит без условия", {
-    n: idleSeedLooked,
-    unit: "семян с условием",
   });
-  console.log("  лишних: " + idleSeeds.length);
-  for (const one of idleSeeds) console.log("    " + one);
+  checkStep(() => {
+    checkHead("Семя с условием не лежит без условия", () => ({
+      n: idleSeedLooked,
+      unit: "семян с условием",
+    }));
+    console.log("  лишних: " + idleSeeds.length);
+    for (const one of idleSeeds) console.log("    " + one);
+  });
   // 44-бис. Находка посадки закрыта — и закрыта доказуемо.
   //
   // Посадка существует затем, чтобы находить поломки обвязки; чинят их на
@@ -30622,165 +31452,171 @@ if (mode === "verify") {
   let findingsClosed = 0;
   let findingsUnheld = 0;
   let findingsNote = null;
-  if (CONFIG.findings != null) {
-    const at = path.join(BASE, CONFIG.findings.file);
-    if (!existsSync(at))
-      findingDrift.push(
-        "реестр объявлен, а файла нет: " + CONFIG.findings.file,
-      );
-    else {
-      // Опорой считается имя сверки, имя звена цепочки или прогон рецептов.
-      // Словарь закрытый намеренно: открытый превратил бы графу в место, куда
-      // пишут что угодно, и сверка стала бы проверять наличие текста.
-      // Измерение обвязки — это сверка, звено цепочки ИЛИ РЕЖИМ инструмента.
-      // Режимы здесь забывались, хотя соседняя сверка — про шаги перехода —
-      // принимает их давно: два определения одного и того же, и одно неполное.
-      // Найдено строкой реестра, закрытой режимом `env`.
-      const guards = new Set([...CHECK_SECTIONS, ...toolModes()]);
-      guards.add("фальсификация");
-      guards.add("нечем");
-      // Критерий планки — тоже измерение обвязки, и опорой он законен.
-      //
-      // Соседняя сверка требует называть предложенное сводом открытой строкой
-      // реестра, называющей критерий ёлочками, — а эта тем же критерием в
-      // графе опоры отвечала «такой опоры не существует». Два словаря об одном
-      // предмете, и один неполный: тот же класс, что прежде был с режимами.
-      {
-        const live = liveBarCriteria();
-        for (const c of live?.all ?? []) guards.add(c.id);
-      }
-      {
-        const mapAt = shelfAt("seat/map.json");
-        // Звено опорой называют и его ПРОЕКТНЫМ именем: звено опознаётся по
-        // тому, что скрипт зовёт, а не по имени, и строка реестра, назвавшая
-        // `unit` вместо семенного `test`, отвергалась как несуществующая опора.
-        const pkgAt =
-          CONFIG.manifest == null ? null : path.join(BASE, CONFIG.manifest);
-        const scripts =
-          pkgAt === null ? {} : (readJson(pkgAt, {}).scripts ?? {});
-        if (mapAt !== null && existsSync(mapAt))
-          for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
-            .chainScripts ?? []) {
-            guards.add(e.name);
-            const own = linkOwnName(e.name, scripts);
-            if (own !== null) guards.add(own);
-          }
-      }
-
-      const rows = readFileSync(at, "utf8").split(NEWLINE);
-      const head = rows.findIndex((l) => l.startsWith(CONFIG.findings.heading));
-      if (head < 0)
+  checkStep(() => {
+    if (CONFIG.findings != null) {
+      const at = path.join(BASE, CONFIG.findings.file);
+      if (!existsSync(at))
         findingDrift.push(
-          "таблицы находок не нашли: " + CONFIG.findings.heading,
+          "реестр объявлен, а файла нет: " + CONFIG.findings.file,
         );
       else {
-        // История читается один раз и целиком: спрашивать git на каждой строке
-        // значило бы звать его сотню раз за прогон, а спрашивать диапазоном —
-        // падать там, где базового коммита в этой копии нет.
+        // Опорой считается имя сверки, имя звена цепочки или прогон рецептов.
+        // Словарь закрытый намеренно: открытый превратил бы графу в место, куда
+        // пишут что угодно, и сверка стала бы проверять наличие текста.
+        // Измерение обвязки — это сверка, звено цепочки ИЛИ РЕЖИМ инструмента.
+        // Режимы здесь забывались, хотя соседняя сверка — про шаги перехода —
+        // принимает их давно: два определения одного и того же, и одно неполное.
+        // Найдено строкой реестра, закрытой режимом `env`.
+        const guards = new Set([...CHECK_SECTIONS, ...toolModes()]);
+        guards.add("фальсификация");
+        guards.add("нечем");
+        // Критерий планки — тоже измерение обвязки, и опорой он законен.
         //
-        // Копия, у которой истории нет (песочница фальсификации заводит свой
-        // репозиторий одним коммитом, и так же выглядит мелкий клон), сверить
-        // коммиты не может. Это НАЗЫВАЕТСЯ строкой вывода, а не молчится:
-        // пропуск половины сверки без признака — ровно тот случай, когда
-        // проверка зелена оттого, что ей нечего проверять. Расхождением он не
-        // считается: истории нет не по вине реестра.
-        let log;
-        try {
-          log = execFileSync("git", ["log", "--format=%h %s"], {
-            cwd: REPO,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"],
-          }).split(NEWLINE);
-        } catch {
-          log = [];
+        // Соседняя сверка требует называть предложенное сводом открытой строкой
+        // реестра, называющей критерий ёлочками, — а эта тем же критерием в
+        // графе опоры отвечала «такой опоры не существует». Два словаря об одном
+        // предмете, и один неполный: тот же класс, что прежде был с режимами.
+        {
+          const live = liveBarCriteria();
+          for (const c of live?.all ?? []) guards.add(c.id);
         }
-        const base =
-          CONFIG.findings.since == null
-            ? -1
-            : log.findIndex((l) => l.startsWith(CONFIG.findings.since));
-        const range = base < 0 ? null : log.slice(0, base + 1);
-        if (range === null)
-          findingsNote =
-            CONFIG.findings.since == null
-              ? "коммит-основание не объявлен — реестр копит находки, починки с историей не сверяются"
-              : "базового коммита " +
-                "базового коммита " +
-                CONFIG.findings.since +
-                " в истории этой копии нет — коммиты и непойманные починки не сверены";
-        const named = new Set();
-        const { rows: findingRows, problem } = tableAfter(rows, head);
-        if (problem !== null) findingDrift.push(problem);
-        for (const row of findingRows) {
-          const cell = row.split("|").map((c) => c.trim());
-          const [, num, what, , fixedBy, heldBy, state] = cell;
-          if (num === undefined || num === "") continue;
-          const say = (t) => findingDrift.push("строка " + num + ": " + t);
-          if (!what) say("не сказано, что найдено");
-          if (state === "открыта") {
-            findingsOpen += 1;
-            continue;
-          }
-          if (state !== "закрыта") {
-            say("состояние не «открыта» и не «закрыта»: «" + state + "»");
-            continue;
-          }
-          findingsClosed += 1;
-          // Хешей в клетке может быть несколько: одна находка бывает
-          // починена двумя коммитами, и второй из них иначе некуда деть —
-          // отдельной находкой он не является, а обратный крючок объявит его
-          // починкой, о которой реестр молчит. Строгость та же: назвать хотя
-          // бы один обязательно, и каждый названный обязан быть в истории.
-          const hashes = [
-            ...(fixedBy ?? "").matchAll(/`([0-9a-f]{7,40})`/g),
-          ].map((m) => m[1]);
-          if (hashes.length === 0) say("закрыта, а коммит не назван");
-          for (const hash of hashes) {
-            named.add(hash);
-            if (range !== null && !range.some((l) => l.startsWith(hash)))
-              say("коммит " + hash + " в истории не найден");
-          }
-          const opora = [...(heldBy ?? "").matchAll(/«([^»]+)»/g)].map(
-            (m) => m[1],
+        {
+          const mapAt = shelfAt("seat/map.json");
+          // Звено опорой называют и его ПРОЕКТНЫМ именем: звено опознаётся по
+          // тому, что скрипт зовёт, а не по имени, и строка реестра, назвавшая
+          // `unit` вместо семенного `test`, отвергалась как несуществующая опора.
+          const pkgAt =
+            CONFIG.manifest == null ? null : path.join(BASE, CONFIG.manifest);
+          const scripts =
+            pkgAt === null ? {} : (readJson(pkgAt, {}).scripts ?? {});
+          if (mapAt !== null && existsSync(mapAt))
+            for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
+              .chainScripts ?? []) {
+              guards.add(e.name);
+              const own = linkOwnName(e.name, scripts);
+              if (own !== null) guards.add(own);
+            }
+        }
+
+        const rows = readFileSync(at, "utf8").split(NEWLINE);
+        const head = rows.findIndex((l) =>
+          l.startsWith(CONFIG.findings.heading),
+        );
+        if (head < 0)
+          findingDrift.push(
+            "таблицы находок не нашли: " + CONFIG.findings.heading,
           );
-          if (opora.length === 0) say("закрыта, а чем держится — не сказано");
-          for (const o of opora) {
-            if (!guards.has(o))
-              say("держится на «" + o + "» — такой опоры не существует");
-            if (o === "нечем") findingsUnheld += 1;
+        else {
+          // История читается один раз и целиком: спрашивать git на каждой строке
+          // значило бы звать его сотню раз за прогон, а спрашивать диапазоном —
+          // падать там, где базового коммита в этой копии нет.
+          //
+          // Копия, у которой истории нет (песочница фальсификации заводит свой
+          // репозиторий одним коммитом, и так же выглядит мелкий клон), сверить
+          // коммиты не может. Это НАЗЫВАЕТСЯ строкой вывода, а не молчится:
+          // пропуск половины сверки без признака — ровно тот случай, когда
+          // проверка зелена оттого, что ей нечего проверять. Расхождением он не
+          // считается: истории нет не по вине реестра.
+          let log;
+          try {
+            log = execFileSync("git", ["log", "--format=%h %s"], {
+              cwd: REPO,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).split(NEWLINE);
+          } catch {
+            log = [];
           }
-        }
-        // Обратная сторона: починка, о которой реестр молчит.
-        for (const line of range ?? []) {
-          const m = /^([0-9a-f]{7,40}) fix(\([^)]*\))?: /.exec(line);
-          if (m === null) continue;
-          if (!named.has(m[1]))
-            findingDrift.push(
-              "коммит " +
-                line.trim() +
-                " — починка, не названная ни одной строкой",
+          const base =
+            CONFIG.findings.since == null
+              ? -1
+              : log.findIndex((l) => l.startsWith(CONFIG.findings.since));
+          const range = base < 0 ? null : log.slice(0, base + 1);
+          if (range === null)
+            findingsNote =
+              CONFIG.findings.since == null
+                ? "коммит-основание не объявлен — реестр копит находки, починки с историей не сверяются"
+                : "базового коммита " +
+                  "базового коммита " +
+                  CONFIG.findings.since +
+                  " в истории этой копии нет — коммиты и непойманные починки не сверены";
+          const named = new Set();
+          const { rows: findingRows, problem } = tableAfter(rows, head);
+          if (problem !== null) findingDrift.push(problem);
+          for (const row of findingRows) {
+            const cell = row.split("|").map((c) => c.trim());
+            const [, num, what, , fixedBy, heldBy, state] = cell;
+            if (num === undefined || num === "") continue;
+            const say = (t) => findingDrift.push("строка " + num + ": " + t);
+            if (!what) say("не сказано, что найдено");
+            if (state === "открыта") {
+              findingsOpen += 1;
+              continue;
+            }
+            if (state !== "закрыта") {
+              say("состояние не «открыта» и не «закрыта»: «" + state + "»");
+              continue;
+            }
+            findingsClosed += 1;
+            // Хешей в клетке может быть несколько: одна находка бывает
+            // починена двумя коммитами, и второй из них иначе некуда деть —
+            // отдельной находкой он не является, а обратный крючок объявит его
+            // починкой, о которой реестр молчит. Строгость та же: назвать хотя
+            // бы один обязательно, и каждый названный обязан быть в истории.
+            const hashes = [
+              ...(fixedBy ?? "").matchAll(/`([0-9a-f]{7,40})`/g),
+            ].map((m) => m[1]);
+            if (hashes.length === 0) say("закрыта, а коммит не назван");
+            for (const hash of hashes) {
+              named.add(hash);
+              if (range !== null && !range.some((l) => l.startsWith(hash)))
+                say("коммит " + hash + " в истории не найден");
+            }
+            const opora = [...(heldBy ?? "").matchAll(/«([^»]+)»/g)].map(
+              (m) => m[1],
             );
+            if (opora.length === 0) say("закрыта, а чем держится — не сказано");
+            for (const o of opora) {
+              if (!guards.has(o))
+                say("держится на «" + o + "» — такой опоры не существует");
+              if (o === "нечем") findingsUnheld += 1;
+            }
+          }
+          // Обратная сторона: починка, о которой реестр молчит.
+          for (const line of range ?? []) {
+            const m = /^([0-9a-f]{7,40}) fix(\([^)]*\))?: /.exec(line);
+            if (m === null) continue;
+            if (!named.has(m[1]))
+              findingDrift.push(
+                "коммит " +
+                  line.trim() +
+                  " — починка, не названная ни одной строкой",
+              );
+          }
         }
       }
     }
-  }
-  checkHead("Находки закрыты", {
-    n: findingsClosed + findingsOpen,
-    unit: "строк реестра находок",
   });
-  console.log(
-    CONFIG.findings == null
-      ? "  реестр находок не ведётся: «всё найденное починено» держится памятью"
-      : "  закрыто: " +
-          findingsClosed +
-          ", открыто: " +
-          findingsOpen +
-          ", держится нечем: " +
-          findingsUnheld +
-          ", расхождений: " +
-          findingDrift.length,
-  );
-  if (findingsNote !== null) console.log("  " + findingsNote);
-  for (const d of findingDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("Находки закрыты", () => ({
+      n: findingsClosed + findingsOpen,
+      unit: "строк реестра находок",
+    }));
+    console.log(
+      CONFIG.findings == null
+        ? "  реестр находок не ведётся: «всё найденное починено» держится памятью"
+        : "  закрыто: " +
+            findingsClosed +
+            ", открыто: " +
+            findingsOpen +
+            ", держится нечем: " +
+            findingsUnheld +
+            ", расхождений: " +
+            findingDrift.length,
+    );
+    if (findingsNote !== null) console.log("  " + findingsNote);
+    for (const d of findingDrift) console.log("    " + d);
+  });
 
   // 45. План перехода живого проекта не потерялся.
   //
@@ -30800,35 +31636,37 @@ if (mode === "verify") {
   // шаги прогон не роняют — незакрытый переход это работа, а не поломка.
   const transitionDrift = [];
   let transitionSteps = 0;
-  if (CONFIG.transition != null) {
-    const at = path.join(BASE, CONFIG.transition.file);
-    if (!existsSync(at))
-      transitionDrift.push(
-        "план перехода объявлен, а файла нет: " + CONFIG.transition.file,
-      );
-    else {
-      const rows = readFileSync(at, "utf8").split(NEWLINE);
-      const head = rows.findIndex((l) =>
-        l.startsWith(CONFIG.transition.heading),
-      );
-      if (head < 0)
+  checkStep(() => {
+    if (CONFIG.transition != null) {
+      const at = path.join(BASE, CONFIG.transition.file);
+      if (!existsSync(at))
         transitionDrift.push(
-          "таблицы шагов не нашли: " + CONFIG.transition.heading,
+          "план перехода объявлен, а файла нет: " + CONFIG.transition.file,
         );
       else {
-        const { rows: stepRows, problem } = tableAfter(rows, head);
-        if (problem !== null) transitionDrift.push(problem);
-        transitionSteps = stepRows.length;
-      }
-      if (
-        CONFIG.transition.debtHeading != null &&
-        !rows.some((l) => l.startsWith(CONFIG.transition.debtHeading))
-      )
-        transitionDrift.push(
-          "таблицы долга перехода не нашли: " + CONFIG.transition.debtHeading,
+        const rows = readFileSync(at, "utf8").split(NEWLINE);
+        const head = rows.findIndex((l) =>
+          l.startsWith(CONFIG.transition.heading),
         );
+        if (head < 0)
+          transitionDrift.push(
+            "таблицы шагов не нашли: " + CONFIG.transition.heading,
+          );
+        else {
+          const { rows: stepRows, problem } = tableAfter(rows, head);
+          if (problem !== null) transitionDrift.push(problem);
+          transitionSteps = stepRows.length;
+        }
+        if (
+          CONFIG.transition.debtHeading != null &&
+          !rows.some((l) => l.startsWith(CONFIG.transition.debtHeading))
+        )
+          transitionDrift.push(
+            "таблицы долга перехода не нашли: " + CONFIG.transition.debtHeading,
+          );
+      }
     }
-  }
+  });
   // Долг описания — не кнопка «выключить сверку». Объявленное число
   // обязано стоять шагом плана перехода: иначе поле настройки делает ровно
   // то, ради ухода от чего обвязку и ставят — переводит невыполненное из
@@ -30839,26 +31677,33 @@ if (mode === "verify") {
   // краснеть на законной переформулировке. План есть — долг записан там,
   // где его читают; плана нет — долг держится только настройкой, которую
   // не перечитывает никто.
-  const debtDeclared = DEBT_KINDS.filter((k) => debtOf(k) > 0);
-  const debtTotal = debtDeclared.reduce((n, k) => n + debtOf(k), 0);
+  const debtDeclared = checkStep(() => DEBT_KINDS.filter((k) => debtOf(k) > 0));
+  const debtTotal = checkStep(() =>
+    debtDeclared.reduce((n, k) => n + debtOf(k), 0),
+  );
   // Долг БАЗЫ держат шаги знания: их нет — план пуст, и долг держится одной
   // настройкой. Долг КОДА держит пункт долга перехода, поэтому ему нужен сам
   // файл перехода, а не шаги: знание собрано, шагов ноль, долг законен.
-  const DEBT_BY_WORK_KINDS = new Set([
-    "comments",
-    "tongue",
-    "types",
-    "lint",
-    "markers",
-    // Строку таблицы переход пишет сразу; остаётся витрина без теста, а
-    // тест — код.
-    "guarantees",
-  ]);
-  const debtUnplanned =
-    (debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
-      (CONFIG.transition == null || transitionSteps === 0)) ||
-    (debtDeclared.some((one) => DEBT_BY_WORK_KINDS.has(one)) &&
-      CONFIG.transition == null);
+  const DEBT_BY_WORK_KINDS = checkStep(
+    () =>
+      new Set([
+        "comments",
+        "tongue",
+        "types",
+        "lint",
+        "markers",
+        // Строку таблицы переход пишет сразу; остаётся витрина без теста, а
+        // тест — код.
+        "guarantees",
+      ]),
+  );
+  const debtUnplanned = checkStep(
+    () =>
+      (debtDeclared.some((one) => !DEBT_BY_WORK_KINDS.has(one)) &&
+        (CONFIG.transition == null || transitionSteps === 0)) ||
+      (debtDeclared.some((one) => DEBT_BY_WORK_KINDS.has(one)) &&
+        CONFIG.transition == null),
+  );
   /** Какая сверка гаснет, когда долг этого вида закрыт. Пара «вид долга —
    * сверка» и есть то, чем шаг плана опознаётся: шаг обязан назвать её в графе
    * «чем проверяется», и форма этой графы уже сверяется дословно. */
@@ -30886,7 +31731,7 @@ if (mode === "verify") {
       ),
     ];
   }
-  const DEBT_GUARD = {
+  const DEBT_GUARD = checkStep(() => ({
     map: ["Покрытие карты"],
     tests: ["Покрытие тестов"],
     decisions: ["Пометки решений"],
@@ -30907,7 +31752,7 @@ if (mode === "verify") {
     // манифесте проекта.
     types: linkGuard("typecheck"),
     lint: linkGuard("lint"),
-  };
+  }));
   // Сверка ГОВОРИЛА «все стоят шагами плана», а проверяла только что план
   // вообще есть. Замерено ревизией результата: стенд объявил долг по языку,
   // шага про язык в плане не было ни одного — и строка прогона утверждала
@@ -30931,48 +31776,51 @@ if (mode === "verify") {
   // каждым прогоном и идёт в каждый отчёт, а чинит его работа.
   const DEBT_BY_WORK = DEBT_BY_WORK_KINDS;
   const debtStepless = [];
-  {
-    const at =
-      CONFIG.transition == null
-        ? null
-        : path.join(BASE, CONFIG.transition.file);
-    const plan = at !== null && existsSync(at) ? readFileSync(at, "utf8") : "";
-    for (const kind of debtDeclared) {
-      const guards = DEBT_GUARD[kind];
-      if (guards === undefined) continue;
-      const named = "«" + guards.join("» либо «") + "»";
-      if (DEBT_BY_WORK.has(kind)) {
-        // Долг кода держит ПУНКТ ДОЛГА ПЕРЕХОДА с планом приведения, и число
-        // в нём то же, что в поле храповика: список идёт в каждый отчёт, и
-        // разошедшееся число врало бы там, где его читают.
-        const row = transitionDebt().find((r) =>
-          guards.some((g) => r.names.includes(g)),
-        );
-        if (row === undefined)
-          debtStepless.push(
-            kind +
-              " — долг кода: закрывается правкой кода, и держит его пункт долга перехода с планом приведения, называющий " +
-              named,
+  checkStep(() => {
+    {
+      const at =
+        CONFIG.transition == null
+          ? null
+          : path.join(BASE, CONFIG.transition.file);
+      const plan =
+        at !== null && existsSync(at) ? readFileSync(at, "utf8") : "";
+      for (const kind of debtDeclared) {
+        const guards = DEBT_GUARD[kind];
+        if (guards === undefined) continue;
+        const named = "«" + guards.join("» либо «") + "»";
+        if (DEBT_BY_WORK.has(kind)) {
+          // Долг кода держит ПУНКТ ДОЛГА ПЕРЕХОДА с планом приведения, и число
+          // в нём то же, что в поле храповика: список идёт в каждый отчёт, и
+          // разошедшееся число врало бы там, где его читают.
+          const row = transitionDebt().find((r) =>
+            guards.some((g) => r.names.includes(g)),
           );
-        else if (row.count !== debtOf(kind))
+          if (row === undefined)
+            debtStepless.push(
+              kind +
+                " — долг кода: закрывается правкой кода, и держит его пункт долга перехода с планом приведения, называющий " +
+                named,
+            );
+          else if (row.count !== debtOf(kind))
+            debtStepless.push(
+              kind +
+                " — пункт " +
+                row.no +
+                " говорит `" +
+                (row.count ?? "без числа") +
+                "`, а поле долга — " +
+                debtOf(kind) +
+                ": число пункта и храповик обязаны совпадать",
+            );
+          continue;
+        }
+        if (!guards.some((g) => plan.includes("«" + g + "»")))
           debtStepless.push(
-            kind +
-              " — пункт " +
-              row.no +
-              " говорит `" +
-              (row.count ?? "без числа") +
-              "`, а поле долга — " +
-              debtOf(kind) +
-              ": число пункта и храповик обязаны совпадать",
+            kind + " — шага, закрывающего " + named + ", в плане перехода нет",
           );
-        continue;
       }
-      if (!guards.some((g) => plan.includes("«" + g + "»")))
-        debtStepless.push(
-          kind + " — шага, закрывающего " + named + ", в плане перехода нет",
-        );
     }
-  }
+  });
   // Баннер перехода печатает сверка базы — но её зовут не на каждой правке, а
   // переход измеряется днями. Между двумя прогонами о нём забывают, и файл
   // плана лежит непрочитанным ровно столько же.
@@ -31000,195 +31848,205 @@ if (mode === "verify") {
   // чтением», и эта форма проглатывала что угодно. Замерено на посадке в
   // стенд одного компонента: из семи шагов правилами обвязки держались два.
   const stepsAdrift = [];
-  if (CONFIG.transition != null) {
-    const at = path.join(BASE, CONFIG.transition.file);
-    if (existsSync(at)) {
-      const rows = readFileSync(at, "utf8").split(NEWLINE);
-      const head = rows.findIndex((l) =>
-        l.startsWith(CONFIG.transition.heading),
-      );
-      if (head >= 0) {
-        // Словарь измерений: имена сверок и имена звеньев цепочки. Звенья
-        // берутся из карты посадки — там они объявлены данными.
-        // Измерение обвязки — это сверка, звено цепочки ИЛИ РЕЖИМ инструмента.
-        // Режимы забылись при заведении, и шаг «перенацелить рецепты», который
-        // закрывается прогоном `falsify`, был объявлен мимо измерения — а он
-        // ровно то, чем переход и является.
-        const measures = new Set([...CHECK_SECTIONS, ...toolModes()]);
-        {
-          const mapAt = shelfAt("seat/map.json");
-          if (mapAt !== null && existsSync(mapAt))
-            for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
-              .chainScripts ?? [])
-              measures.add(e.name);
-        }
-        const { rows: stepRows } = tableAfter(rows, head);
-        for (const row of stepRows) {
-          const cells = row
-            .split("|")
-            .slice(1, -1)
-            .map((c) => c.trim());
-          if (cells.length < 4) continue;
-          const proof = cells[3];
-          // Названо ли измерение. Имя сверки пишется в кавычках-ёлочках и
-          // сверяется целиком; имя звена или режима — в обратных кавычках и
-          // внутри КОМАНДЫ, поэтому команда разбирается на слова и целиком
-          // сверяется каждое.
-          //
-          // Прежде здесь стояли `endsWith` и `includes(' ' + x)` при
-          // комментарии «ищутся целиком»: комментарий открещивался ровно от
-          // того, что код и делал, и `какой-то-test` проходил хвостом слова.
-          const words = (text) =>
-            text.split(/[^A-Za-z0-9:._-]+/).filter(Boolean);
-          const named =
-            [...proof.matchAll(/«([^»]+)»/g)].some((m) => measures.has(m[1])) ||
-            [...proof.matchAll(/`([^`]+)`/g)].some((m) =>
-              words(m[1]).some((w) => measures.has(w)),
+  checkStep(() => {
+    if (CONFIG.transition != null) {
+      const at = path.join(BASE, CONFIG.transition.file);
+      if (existsSync(at)) {
+        const rows = readFileSync(at, "utf8").split(NEWLINE);
+        const head = rows.findIndex((l) =>
+          l.startsWith(CONFIG.transition.heading),
+        );
+        if (head >= 0) {
+          // Словарь измерений: имена сверок и имена звеньев цепочки. Звенья
+          // берутся из карты посадки — там они объявлены данными.
+          // Измерение обвязки — это сверка, звено цепочки ИЛИ РЕЖИМ инструмента.
+          // Режимы забылись при заведении, и шаг «перенацелить рецепты», который
+          // закрывается прогоном `falsify`, был объявлен мимо измерения — а он
+          // ровно то, чем переход и является.
+          const measures = new Set([...CHECK_SECTIONS, ...toolModes()]);
+          {
+            const mapAt = shelfAt("seat/map.json");
+            if (mapAt !== null && existsSync(mapAt))
+              for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
+                .chainScripts ?? [])
+                measures.add(e.name);
+          }
+          const { rows: stepRows } = tableAfter(rows, head);
+          for (const row of stepRows) {
+            const cells = row
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim());
+            if (cells.length < 4) continue;
+            const proof = cells[3];
+            // Названо ли измерение. Имя сверки пишется в кавычках-ёлочках и
+            // сверяется целиком; имя звена или режима — в обратных кавычках и
+            // внутри КОМАНДЫ, поэтому команда разбирается на слова и целиком
+            // сверяется каждое.
+            //
+            // Прежде здесь стояли `endsWith` и `includes(' ' + x)` при
+            // комментарии «ищутся целиком»: комментарий открещивался ровно от
+            // того, что код и делал, и `какой-то-test` проходил хвостом слова.
+            const words = (text) =>
+              text.split(/[^A-Za-z0-9:._-]+/).filter(Boolean);
+            const named =
+              [...proof.matchAll(/«([^»]+)»/g)].some((m) =>
+                measures.has(m[1]),
+              ) ||
+              [...proof.matchAll(/`([^`]+)`/g)].some((m) =>
+                words(m[1]).some((w) => measures.has(w)),
+              );
+            // Сообщение называет и ФОРМУ. Прежде оно называло одну проблему,
+            // и заполняющий подбирал форму перебором: имя сверки пишется
+            // ёлочками, имя звена или режима — обратными кавычками, и ни семя
+            // плана, ни эта строка об этом не говорили.
+            if (!named)
+              stepsAdrift.push(
+                "шаг " +
+                  cells[0] +
+                  " не называет измерения обвязки: «" +
+                  proof +
+                  "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
+              );
+          }
+          // Пункт долга называет то, что его ДЕРЖИТ: сверку, звено или режим,
+          // которые не дают ему расти и покажут, что он закрыт. Пункт без
+          // держателя — обещание, которое ничем не проверить.
+          for (const row of transitionDebt()) {
+            const words = (text) =>
+              text.split(/[^A-Za-z0-9:._-]+/).filter(Boolean);
+            const held =
+              [...row.holds.matchAll(/«([^»]+)»/g)].some((m) =>
+                measures.has(m[1]),
+              ) ||
+              [...row.holds.matchAll(/`([^`]+)`/g)].some((m) =>
+                words(m[1]).some((w) => measures.has(w)),
+              );
+            if (!held)
+              stepsAdrift.push(
+                "пункт долга " +
+                  row.no +
+                  " не называет, что его держит: «" +
+                  row.holds +
+                  "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
+              );
+          }
+          // Пункт, чей держатель — сверка направления или режим фактов, держит
+          // ФАКТ: ребро, цикл, внутренность мимо входа, второго писателя. Факта
+          // в коде нет — пункт закрыт и не удалён: работа его починила, а
+          // запись осталась описывать то, чего нет. Замерено на мини-стенде:
+          // цикл, задетый рефактором, чинится правкой, и пункт обязан уйти ею же.
+          const live = levelFacts();
+          for (const row of transitionDebt()) {
+            const byFacts =
+              [...row.holds.matchAll(/«([^»]+)»/g)].some(
+                (m) => m[1] === "Правила направления",
+              ) || /`[^`]*\blevels\b[^`]*`/.test(row.holds);
+            if (!byFacts) continue;
+            const holdsLive = live.some(
+              (fact) =>
+                fact.where.every((f) => namesFileIn(row.line, f)) &&
+                fact.names.every((n) => quotedIn(row.line).includes(n)),
             );
-          // Сообщение называет и ФОРМУ. Прежде оно называло одну проблему,
-          // и заполняющий подбирал форму перебором: имя сверки пишется
-          // ёлочками, имя звена или режима — обратными кавычками, и ни семя
-          // плана, ни эта строка об этом не говорили.
-          if (!named)
-            stepsAdrift.push(
-              "шаг " +
-                cells[0] +
-                " не называет измерения обвязки: «" +
-                proof +
-                "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
-            );
-        }
-        // Пункт долга называет то, что его ДЕРЖИТ: сверку, звено или режим,
-        // которые не дают ему расти и покажут, что он закрыт. Пункт без
-        // держателя — обещание, которое ничем не проверить.
-        for (const row of transitionDebt()) {
-          const words = (text) =>
-            text.split(/[^A-Za-z0-9:._-]+/).filter(Boolean);
-          const held =
-            [...row.holds.matchAll(/«([^»]+)»/g)].some((m) =>
-              measures.has(m[1]),
-            ) ||
-            [...row.holds.matchAll(/`([^`]+)`/g)].some((m) =>
-              words(m[1]).some((w) => measures.has(w)),
-            );
-          if (!held)
-            stepsAdrift.push(
-              "пункт долга " +
-                row.no +
-                " не называет, что его держит: «" +
-                row.holds +
-                "». Сверка пишется ёлочками, звено или режим — обратными кавычками",
-            );
-        }
-        // Пункт, чей держатель — сверка направления или режим фактов, держит
-        // ФАКТ: ребро, цикл, внутренность мимо входа, второго писателя. Факта
-        // в коде нет — пункт закрыт и не удалён: работа его починила, а
-        // запись осталась описывать то, чего нет. Замерено на мини-стенде:
-        // цикл, задетый рефактором, чинится правкой, и пункт обязан уйти ею же.
-        const live = levelFacts();
-        for (const row of transitionDebt()) {
-          const byFacts =
-            [...row.holds.matchAll(/«([^»]+)»/g)].some(
-              (m) => m[1] === "Правила направления",
-            ) || /`[^`]*\blevels\b[^`]*`/.test(row.holds);
-          if (!byFacts) continue;
-          const holdsLive = live.some(
-            (fact) =>
-              fact.where.every((f) => namesFileIn(row.line, f)) &&
-              fact.names.every((n) => quotedIn(row.line).includes(n)),
-          );
-          if (!holdsLive)
-            stepsAdrift.push(
-              "пункт долга " +
-                row.no +
-                " держит факт, которого в коде нет: пункт закрыт — удалить его той же правкой, что починила",
-            );
+            if (!holdsLive)
+              stepsAdrift.push(
+                "пункт долга " +
+                  row.no +
+                  " держит факт, которого в коде нет: пункт закрыт — удалить его той же правкой, что починила",
+              );
+          }
         }
       }
     }
-  }
-  checkHead("Шаги перехода закрывают измерение", {
-    n: transitionSteps + transitionDebt().length,
-    unit: "шагов знания и пунктов долга перехода",
   });
-  console.log(
-    CONFIG.transition == null
-      ? "  перехода нет: проверять нечего"
-      : stepsAdrift.length
-        ? "  мимо измерения: " + stepsAdrift.length
-        : "  каждый шаг и каждый пункт долга называет сверку, звено или режим",
-  );
-  for (const a of stepsAdrift) console.log("    " + a);
+  checkStep(() => {
+    checkHead("Шаги перехода закрывают измерение", () => ({
+      n: transitionSteps + transitionDebt().length,
+      unit: "шагов знания и пунктов долга перехода",
+    }));
+    console.log(
+      CONFIG.transition == null
+        ? "  перехода нет: проверять нечего"
+        : stepsAdrift.length
+          ? "  мимо измерения: " + stepsAdrift.length
+          : "  каждый шаг и каждый пункт долга называет сверку, звено или режим",
+    );
+    for (const a of stepsAdrift) console.log("    " + a);
+  });
 
   const hookOff = [];
   // Адрес берётся у ПОЛКИ, а не из поля `settingsProject`. Поле
   // необязательное: проект вправе поставить `null`, и тогда сверка замолчала
   // бы вместе с ним — при том что хук живёт в настройках среды независимо от
   // того, сверяет их кто-нибудь с полкой или нет.
-  if (CONFIG.transition != null) {
-    const at = shelfAt("settings.json");
-    if (at === null || !existsSync(at))
-      hookOff.push("файла разрешений среды нет: напоминание включить нечем");
-    else {
-      let parsed = null;
-      try {
-        parsed = JSON.parse(readFileSync(at, "utf8"));
-      } catch {
-        hookOff.push(
-          "файл разрешений не разбирается: " + CONFIG.settingsProject,
-        );
-      }
-      if (parsed !== null) {
-        // Ищется ВЫЗОВ РЕЖИМА, а не имя события: событий у среды несколько, и
-        // проект вправе выбрать своё. Важно одно — что режим кто-то зовёт.
-        const calls = Object.values(parsed.hooks ?? {})
-          .flatMap((groups) => (Array.isArray(groups) ? groups : []))
-          .flatMap((g) => (g?.hooks ?? []).map(hookLine))
-          .some((l) => hookCalls(l, "transition"));
-        if (!calls)
+  checkStep(() => {
+    if (CONFIG.transition != null) {
+      const at = shelfAt("settings.json");
+      if (at === null || !existsSync(at))
+        hookOff.push("файла разрешений среды нет: напоминание включить нечем");
+      else {
+        let parsed = null;
+        try {
+          parsed = JSON.parse(readFileSync(at, "utf8"));
+        } catch {
           hookOff.push(
-            "переход объявлен, а хук среды режим `transition` не зовёт: напоминания не будет",
+            "файл разрешений не разбирается: " + CONFIG.settingsProject,
           );
-        // Зовёт — но видит ли модель? Обычный вывод доходит до неё только у
-        // начала сессии и отправки запроса; у прочих событий он уходит в
-        // журнал отладки, и напоминание печатается в никуда. Там режим
-        // зовётся с ключом `--hook` и отвечает формой, которую среда кладёт
-        // в контекст. Замерено по документации среды: хук на правку файла
-        // стоял с посадки и не дошёл до модели ни разу.
-        const shown = new Set([
-          "SessionStart",
-          "UserPromptSubmit",
-          "UserPromptExpansion",
-          "PostModelSwitch",
-        ]);
-        for (const [event, groups] of Object.entries(parsed.hooks ?? {})) {
-          if (shown.has(event) || !Array.isArray(groups)) continue;
-          for (const g of groups)
-            for (const h of g?.hooks ?? [])
-              if (
-                hookCalls(hookLine(h), "transition") &&
-                !hookLine(h).includes("--hook")
-              )
-                hookOff.push(
-                  event +
-                    ": режим зовётся без `--hook` — вывод этого события уходит в журнал отладки, и модель напоминания не видит",
-                );
+        }
+        if (parsed !== null) {
+          // Ищется ВЫЗОВ РЕЖИМА, а не имя события: событий у среды несколько, и
+          // проект вправе выбрать своё. Важно одно — что режим кто-то зовёт.
+          const calls = Object.values(parsed.hooks ?? {})
+            .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+            .flatMap((g) => (g?.hooks ?? []).map(hookLine))
+            .some((l) => hookCalls(l, "transition"));
+          if (!calls)
+            hookOff.push(
+              "переход объявлен, а хук среды режим `transition` не зовёт: напоминания не будет",
+            );
+          // Зовёт — но видит ли модель? Обычный вывод доходит до неё только у
+          // начала сессии и отправки запроса; у прочих событий он уходит в
+          // журнал отладки, и напоминание печатается в никуда. Там режим
+          // зовётся с ключом `--hook` и отвечает формой, которую среда кладёт
+          // в контекст. Замерено по документации среды: хук на правку файла
+          // стоял с посадки и не дошёл до модели ни разу.
+          const shown = new Set([
+            "SessionStart",
+            "UserPromptSubmit",
+            "UserPromptExpansion",
+            "PostModelSwitch",
+          ]);
+          for (const [event, groups] of Object.entries(parsed.hooks ?? {})) {
+            if (shown.has(event) || !Array.isArray(groups)) continue;
+            for (const g of groups)
+              for (const h of g?.hooks ?? [])
+                if (
+                  hookCalls(hookLine(h), "transition") &&
+                  !hookLine(h).includes("--hook")
+                )
+                  hookOff.push(
+                    event +
+                      ": режим зовётся без `--hook` — вывод этого события уходит в журнал отладки, и модель напоминания не видит",
+                  );
+          }
         }
       }
     }
-  }
-  checkHead("Напоминание о переходе включено", {
-    n: 1,
-    unit: "настройка хука среды",
   });
-  console.log(
-    CONFIG.transition == null
-      ? "  перехода нет: напоминать не о чем"
-      : hookOff.length
-        ? "  расхождений: " + hookOff.length
-        : "  хук среды зовёт режим `transition`: напоминание печатается при правке",
-  );
-  for (const h of hookOff) console.log("    " + h);
+  checkStep(() => {
+    checkHead("Напоминание о переходе включено", () => ({
+      n: 1,
+      unit: "настройка хука среды",
+    }));
+    console.log(
+      CONFIG.transition == null
+        ? "  перехода нет: напоминать не о чем"
+        : hookOff.length
+          ? "  расхождений: " + hookOff.length
+          : "  хук среды зовёт режим `transition`: напоминание печатается при правке",
+    );
+    for (const h of hookOff) console.log("    " + h);
+  });
 
   // Ворота конца хода и страж обхода стоят хуками среды, и держат их только
   // настройки: режим, который никто не зовёт, не останавливает ничего, и
@@ -31197,153 +32055,162 @@ if (mode === "verify") {
   // этой сверки. Сессию, стартовавшую выше проекта, она не видит: настройки
   // проекта тогда не читаются вовсе (`environment.md`).
   const gateHooksOff = [];
-  {
-    const at = shelfAt("settings.json");
-    let parsed = null;
-    if (at === null || !existsSync(at))
-      gateHooksOff.push("файла настроек среды нет: хуки ставить некуда");
-    else
-      try {
-        parsed = JSON.parse(readFileSync(at, "utf8"));
-      } catch {
-        gateHooksOff.push("файл настроек среды не разбирается: " + rel0(at));
-      }
-    if (parsed !== null) {
-      // Пустой образец и звёздочка у среды значат «любой инструмент».
-      const fits = (matcher, tool) => {
-        if (matcher == null || matcher === "" || matcher === "*") return true;
+  checkStep(() => {
+    {
+      const at = shelfAt("settings.json");
+      let parsed = null;
+      if (at === null || !existsSync(at))
+        gateHooksOff.push("файла настроек среды нет: хуки ставить некуда");
+      else
         try {
-          return new RegExp("^(?:" + matcher + ")$").test(tool);
+          parsed = JSON.parse(readFileSync(at, "utf8"));
         } catch {
-          return matcher === tool;
+          gateHooksOff.push("файл настроек среды не разбирается: " + rel0(at));
         }
-      };
-      const calls = (event, tool) =>
-        (Array.isArray(parsed.hooks?.[event]) ? parsed.hooks[event] : [])
-          .filter((g) => tool === undefined || fits(g?.matcher, tool))
-          .flatMap((g) => (g?.hooks ?? []).map(hookLine));
-      const need = [
-        [
-          "Stop",
-          undefined,
-          "stop --hook",
-          "конец хода: режим `stop --hook` не зовётся — ход кончается с правкой без свода",
-        ],
-        [
-          "PreToolUse",
-          "Bash",
-          "guard --hook",
-          "вызов Bash: режим `guard --hook` не зовётся — коммит мимо ворот проходит без вопроса",
-        ],
-        [
-          "PreToolUse",
-          "Read",
-          "guard --hook",
-          "вызов Read: режим `guard --hook` не зовётся — протокол свода читают целиком, и каждое следующее обращение платит за него снова; образец записи стража — `Bash|Read`",
-        ],
-        [
-          "SessionStart",
-          undefined,
-          "stop --session",
-          "начало сессии: режим `stop --session` не зовётся — пауза и след не печатаются",
-        ],
-        [
-          "PreCompact",
-          undefined,
-          "bar-read --stale",
-          "перед сжатием: режим `bar-read --stale` не зовётся — слова страниц переживут сжатие, и печать удостоверит чтение, которого в контексте нет",
-        ],
-      ];
-      for (const [event, tool, call, why] of need)
-        if (!calls(event, tool).some((c) => hookCalls(c, call)))
-          gateHooksOff.push(why);
-      // Отказ инструмента — код `1` — хода не держит и коммита не
-      // останавливает: держит его обёртка, отвечая кодом `2` или вопросом.
-      const wrapperAt = path.join(TOOL_DIR, "hook.mjs");
-      if (!existsSync(wrapperAt))
-        gateHooksOff.push(
-          "обёртки хуков нет: " +
-            norm(path.relative(REPO_AT, wrapperAt)) +
-            " — хук, который её зовёт, падает, и ход кончается без свода",
-        );
-      // Путь инструмента — от каталога проекта, а не от текущей папки: хук
-      // идёт в текущей папке сессии, и из подпапки путь `.claude/tools/…` не
-      // находится — хук падает, а ход кончается без свода. Подстановку
-      // `${CLAUDE_PROJECT_DIR}` среда делает сама, до запуска команды.
-      for (const l of Object.values(parsed.hooks ?? {})
-        .flatMap((groups) => (Array.isArray(groups) ? groups : []))
-        .flatMap((g) => (g?.hooks ?? []).map(hookLine))
-        .filter((x) => HOOK_TOOL.test(x))) {
-        if (/[\\/]graph\.mjs\b/.test(l))
+      if (parsed !== null) {
+        // Пустой образец и звёздочка у среды значат «любой инструмент».
+        const fits = (matcher, tool) => {
+          if (matcher == null || matcher === "" || matcher === "*") return true;
+          try {
+            return new RegExp("^(?:" + matcher + ")$").test(tool);
+          } catch {
+            return matcher === tool;
+          }
+        };
+        const calls = (event, tool) =>
+          (Array.isArray(parsed.hooks?.[event]) ? parsed.hooks[event] : [])
+            .filter((g) => tool === undefined || fits(g?.matcher, tool))
+            .flatMap((g) => (g?.hooks ?? []).map(hookLine));
+        const need = [
+          [
+            "Stop",
+            undefined,
+            "stop --hook",
+            "конец хода: режим `stop --hook` не зовётся — ход кончается с правкой без свода",
+          ],
+          [
+            "PreToolUse",
+            "Bash",
+            "guard --hook",
+            "вызов Bash: режим `guard --hook` не зовётся — коммит мимо ворот проходит без вопроса",
+          ],
+          [
+            "PreToolUse",
+            "Read",
+            "guard --hook",
+            "вызов Read: режим `guard --hook` не зовётся — протокол свода читают целиком, и каждое следующее обращение платит за него снова; образец записи стража — `Bash|Read`",
+          ],
+          [
+            "SessionStart",
+            undefined,
+            "stop --session",
+            "начало сессии: режим `stop --session` не зовётся — пауза и след не печатаются",
+          ],
+          [
+            "PreCompact",
+            undefined,
+            "bar-read --stale",
+            "перед сжатием: режим `bar-read --stale` не зовётся — слова страниц переживут сжатие, и печать удостоверит чтение, которого в контексте нет",
+          ],
+        ];
+        for (const [event, tool, call, why] of need)
+          if (!calls(event, tool).some((c) => hookCalls(c, call)))
+            gateHooksOff.push(why);
+        // Отказ инструмента — код `1` — хода не держит и коммита не
+        // останавливает: держит его обёртка, отвечая кодом `2` или вопросом.
+        const wrapperAt = path.join(TOOL_DIR, "hook.mjs");
+        if (!existsSync(wrapperAt))
           gateHooksOff.push(
-            "хук зовёт инструмент мимо обёртки — его отказ кончит ход без свода и пропустит коммит мимо стража: " +
-              l,
+            "обёртки хуков нет: " +
+              norm(path.relative(REPO_AT, wrapperAt)) +
+              " — хук, который её зовёт, падает, и ход кончается без свода",
           );
-        if (!/\$\{?CLAUDE_PROJECT_DIR\b/.test(l))
-          gateHooksOff.push(
-            "команда хука зовёт инструмент не от каталога проекта — из подпапки он не найдётся: " +
-              l,
-          );
-      }
-      // Хуки, выключенные одним полем, — тот же пропуск: файл их объявляет, а
-      // среда не зовёт. Местный файл среда применяет поверх общего.
-      if (parsed.disableAllHooks === true)
-        gateHooksOff.push(
-          "хуки выключены полем `disableAllHooks` в общем файле настроек",
-        );
-      const localAt = path.join(path.dirname(at), "settings.local.json");
-      if (existsSync(localAt))
-        try {
-          if (
-            JSON.parse(readFileSync(localAt, "utf8"))?.disableAllHooks === true
-          )
+        // Путь инструмента — от каталога проекта, а не от текущей папки: хук
+        // идёт в текущей папке сессии, и из подпапки путь `.claude/tools/…` не
+        // находится — хук падает, а ход кончается без свода. Подстановку
+        // `${CLAUDE_PROJECT_DIR}` среда делает сама, до запуска команды.
+        for (const l of Object.values(parsed.hooks ?? {})
+          .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+          .flatMap((g) => (g?.hooks ?? []).map(hookLine))
+          .filter((x) => HOOK_TOOL.test(x))) {
+          if (/[\\/]graph\.mjs\b/.test(l))
             gateHooksOff.push(
-              "хуки выключены полем `disableAllHooks` в местном файле настроек",
+              "хук зовёт инструмент мимо обёртки — его отказ кончит ход без свода и пропустит коммит мимо стража: " +
+                l,
             );
-        } catch {
-          gateHooksOff.push(
-            "местный файл настроек не разбирается: " + rel0(localAt),
-          );
+          if (!/\$\{?CLAUDE_PROJECT_DIR\b/.test(l))
+            gateHooksOff.push(
+              "команда хука зовёт инструмент не от каталога проекта — из подпапки он не найдётся: " +
+                l,
+            );
         }
+        // Хуки, выключенные одним полем, — тот же пропуск: файл их объявляет, а
+        // среда не зовёт. Местный файл среда применяет поверх общего.
+        if (parsed.disableAllHooks === true)
+          gateHooksOff.push(
+            "хуки выключены полем `disableAllHooks` в общем файле настроек",
+          );
+        const localAt = path.join(path.dirname(at), "settings.local.json");
+        if (existsSync(localAt))
+          try {
+            if (
+              JSON.parse(readFileSync(localAt, "utf8"))?.disableAllHooks ===
+              true
+            )
+              gateHooksOff.push(
+                "хуки выключены полем `disableAllHooks` в местном файле настроек",
+              );
+          } catch {
+            gateHooksOff.push(
+              "местный файл настроек не разбирается: " + rel0(localAt),
+            );
+          }
+      }
     }
-  }
-  checkHead("Ворота конца хода и страж обхода включены", {
-    n: 5,
-    unit: "хуков среды",
   });
-  console.log(
-    gateHooksOff.length
-      ? "  не стоит: " + gateHooksOff.length
-      : "  хуки стоят через обёртку: конец хода, вызов Bash, вызов Read, начало сессии, сжатие контекста",
-  );
-  for (const h of gateHooksOff) console.log("    " + h);
+  checkStep(() => {
+    checkHead("Ворота конца хода и страж обхода включены", () => ({
+      n: 5,
+      unit: "хуков среды",
+    }));
+    console.log(
+      gateHooksOff.length
+        ? "  не стоит: " + gateHooksOff.length
+        : "  хуки стоят через обёртку: конец хода, вызов Bash, вызов Read, начало сессии, сжатие контекста",
+    );
+    for (const h of gateHooksOff) console.log("    " + h);
+  });
 
   // Хуки ОБЪЯВЛЕНЫ — ещё не значит, что исполняются: настройки среда читает
   // из папки старта, и сессия, стартовавшая выше проекта, хуков его не зовёт.
   // Исполнение доказывает только след самого хука: обёртка пишет его на
   // каждом вызове Bash, и прогон, запущенный сессией, требует его свежим.
-  const hooksTrace = inSession() ? guardTraceFault(false) : null;
-  checkHead("Хуки проекта исполняются в этой сессии", {
-    n: hooksTrace === null ? 0 : 1,
-    unit: "следов стража",
-  });
-  console.log(
-    CONFIG.guardTraceAgeS == null
-      ? "  окно свежести не объявлено — исполнение хуков не сверяется"
-      : !inSession()
-        ? "  прогон не из сессии — спрашивать не с кого"
-        : hooksTrace === null
-          ? "  репозитория нет — следу стража негде лежать"
-          : hooksTrace === ""
-            ? "  след стража свежий: хуки проекта исполняются"
-            : "  не исполняются: 1",
+  const hooksTrace = checkStep(() =>
+    inSession() ? guardTraceFault(false) : null,
   );
-  if (hooksTrace !== null && hooksTrace !== "")
+  checkStep(() => {
+    checkHead("Хуки проекта исполняются в этой сессии", () => ({
+      n: hooksTrace === null ? 0 : 1,
+      unit: "следов стража",
+    }));
     console.log(
-      "    хуки проекта в этой сессии не исполняются (" +
-        hooksTrace +
-        "): команда `/cd` в папку проекта (`environment.md`)",
+      CONFIG.guardTraceAgeS == null
+        ? "  окно свежести не объявлено — исполнение хуков не сверяется"
+        : !inSession()
+          ? "  прогон не из сессии — спрашивать не с кого"
+          : hooksTrace === null
+            ? "  репозитория нет — следу стража негде лежать"
+            : hooksTrace === ""
+              ? "  след стража свежий: хуки проекта исполняются"
+              : "  не исполняются: 1",
     );
+    if (hooksTrace !== null && hooksTrace !== "")
+      console.log(
+        "    хуки проекта в этой сессии не исполняются (" +
+          hooksTrace +
+          "): команда `/cd` в папку проекта (`environment.md`)",
+      );
+  });
 
   // Долг — разрешение, выданное НА ВРЕМЯ, и оно обязано сжиматься следом за
   // работой. Переход описывает код, неописанного не остаётся — а поле долга
@@ -31351,99 +32218,105 @@ if (mode === "verify") {
   // Замерено на семи стендах разом: после перехода все семь несли разрешение
   // потерять шесть файлов карты, документ узла и две записи предметов.
   const debtFat = [];
-  for (const [kind, said] of Object.entries(CONFIG.debt ?? {})) {
-    if (said == null || said === 0) continue;
-    const real = DEBT_REAL.get(kind);
-    if (real === undefined) continue;
-    if (said > real)
-      debtFat.push(
-        kind +
-          ": объявлено " +
-          said +
-          ", а неописанного осталось " +
-          real +
-          ". Уменьшить поле до " +
-          real +
-          " и снять закрытый шаг из плана перехода",
-      );
-  }
-  checkHead("Объявленный долг не больше фактического", {
-    n: DEBT_REAL.size,
-    unit: "видов долга, посчитанных прогоном",
+  checkStep(() => {
+    for (const [kind, said] of Object.entries(CONFIG.debt ?? {})) {
+      if (said == null || said === 0) continue;
+      const real = DEBT_REAL.get(kind);
+      if (real === undefined) continue;
+      if (said > real)
+        debtFat.push(
+          kind +
+            ": объявлено " +
+            said +
+            ", а неописанного осталось " +
+            real +
+            ". Уменьшить поле до " +
+            real +
+            " и снять закрытый шаг из плана перехода",
+        );
+    }
   });
-  console.log("  разрешено больше, чем нужно: " + debtFat.length);
-  for (const one of debtFat) console.log("    " + one);
-
-  checkHead("Объявленный долг назван планом перехода", {
-    n: Object.keys(CONFIG.debt ?? {}).length,
-    unit: "видов долга",
+  checkStep(() => {
+    checkHead("Объявленный долг не больше фактического", () => ({
+      n: DEBT_REAL.size,
+      unit: "видов долга, посчитанных прогоном",
+    }));
+    console.log("  разрешено больше, чем нужно: " + debtFat.length);
+    for (const one of debtFat) console.log("    " + one);
   });
-  console.log(
-    debtDeclared.length === 0
-      ? "  долга не объявлено: записи обязаны быть полными"
-      : debtUnplanned
-        ? "  объявлено долга: " +
-          debtTotal +
-          " по видам " +
-          debtDeclared.join(", ") +
-          " — а плана перехода нет"
-        : debtStepless.length > 0
+  checkStep(() => {
+    checkHead("Объявленный долг назван планом перехода", () => ({
+      n: Object.keys(CONFIG.debt ?? {}).length,
+      unit: "видов долга",
+    }));
+    console.log(
+      debtDeclared.length === 0
+        ? "  долга не объявлено: записи обязаны быть полными"
+        : debtUnplanned
           ? "  объявлено долга: " +
             debtTotal +
             " по видам " +
             debtDeclared.join(", ") +
-            " — а шагов под них нет: " +
-            debtStepless.length
-          : "  объявлено долга: " +
-            debtTotal +
-            " по видам " +
-            debtDeclared.join(", ") +
-            (debtDeclared.every((k) => DEBT_BY_WORK.has(k))
-              ? " — все стоят пунктами долга перехода"
-              : debtDeclared.some((k) => DEBT_BY_WORK.has(k))
-                ? " — все названы: долг базы шагами знания, долг кода пунктами долга перехода"
-                : " — все стоят шагами знания"),
-  );
-  for (const one of debtStepless) console.log("    " + one);
-  if (debtUnplanned)
-    console.log(
-      "    долг держится только настройкой: заполнить `transition` и" +
-        " завести план, либо описать записи и обнулить долг",
+            " — а плана перехода нет"
+          : debtStepless.length > 0
+            ? "  объявлено долга: " +
+              debtTotal +
+              " по видам " +
+              debtDeclared.join(", ") +
+              " — а шагов под них нет: " +
+              debtStepless.length
+            : "  объявлено долга: " +
+              debtTotal +
+              " по видам " +
+              debtDeclared.join(", ") +
+              (debtDeclared.every((k) => DEBT_BY_WORK.has(k))
+                ? " — все стоят пунктами долга перехода"
+                : debtDeclared.some((k) => DEBT_BY_WORK.has(k))
+                  ? " — все названы: долг базы шагами знания, долг кода пунктами долга перехода"
+                  : " — все стоят шагами знания"),
     );
-
-  checkHead("План перехода не потерялся", {
-    n: transitionSteps + transitionDebt().length,
-    unit: "шагов знания и пунктов долга перехода",
+    for (const one of debtStepless) console.log("    " + one);
+    if (debtUnplanned)
+      console.log(
+        "    долг держится только настройкой: заполнить `transition` и" +
+          " завести план, либо описать записи и обнулить долг",
+      );
   });
-  console.log(
-    CONFIG.transition == null
-      ? "  " + noTransitionWhy()
-      : transitionDrift.length
-        ? "  расхождений: " + transitionDrift.length
-        : "  шагов знания открыто: " +
-          transitionSteps +
-          ", пунктов долга перехода: " +
-          transitionDebt().length +
-          " — закрытое из таблиц удаляют; обе опустели — файл удаляют целиком",
-  );
-  for (const d of transitionDrift) console.log("    " + d);
+  checkStep(() => {
+    checkHead("План перехода не потерялся", () => ({
+      n: transitionSteps + transitionDebt().length,
+      unit: "шагов знания и пунктов долга перехода",
+    }));
+    console.log(
+      CONFIG.transition == null
+        ? "  " + noTransitionWhy()
+        : transitionDrift.length
+          ? "  расхождений: " + transitionDrift.length
+          : "  шагов знания открыто: " +
+            transitionSteps +
+            ", пунктов долга перехода: " +
+            transitionDebt().length +
+            " — закрытое из таблиц удаляют; обе опустели — файл удаляют целиком",
+    );
+    for (const d of transitionDrift) console.log("    " + d);
 
-  // Переход печатается БАННЕРОМ, а не строкой счёта, и это требование
-  // разработчика: «про план мы не должны забывать, пока он не будет выполнен».
-  // Строка среди полусотни секций читается ровно до тех пор, пока её не
-  // перестают замечать; баннер занимает место и называет адрес файла, чтобы
-  // сессия, начавшаяся с чистого контекста, знала, куда смотреть.
-  // Открытые находки печатаются БАННЕРОМ по той же причине, что и переход:
-  // строка среди полусотни секций читается ровно до тех пор, пока её не
-  // перестают замечать.
-  if (findingsOpen > 0) {
-    console.log("");
-    banner("НАХОДКИ НЕ ЗАКРЫТЫ");
-    console.log("  Открытых находок: " + findingsOpen + ".");
-    console.log("  Реестр: " + CONFIG.findings.file + " — открыть и читать");
-    console.log("  оттуда, а не восстанавливать по памяти.");
-    console.log("  Закрыли — проставить коммит, опору и состояние.");
-  }
+    // Переход печатается БАННЕРОМ, а не строкой счёта, и это требование
+    // разработчика: «про план мы не должны забывать, пока он не будет выполнен».
+    // Строка среди полусотни секций читается ровно до тех пор, пока её не
+    // перестают замечать; баннер занимает место и называет адрес файла, чтобы
+    // сессия, начавшаяся с чистого контекста, знала, куда смотреть.
+    // Открытые находки печатаются БАННЕРОМ по той же причине, что и переход:
+    // строка среди полусотни секций читается ровно до тех пор, пока её не
+    // перестают замечать.
+    if (findingsOpen > 0) {
+      console.log("");
+      banner("НАХОДКИ НЕ ЗАКРЫТЫ");
+      console.log("  Открытых находок: " + findingsOpen + ".");
+      console.log("  Реестр: " + CONFIG.findings.file + " — открыть и читать");
+      console.log("  оттуда, а не восстанавливать по памяти.");
+      console.log("  Закрыли — проставить коммит, опору и состояние.");
+    }
+  });
 
   // 46. Форма отчёта посадки не несёт слов обвязки.
   //
@@ -31460,143 +32333,151 @@ if (mode === "verify") {
   // разошлась бы первой, и разошлась бы молча. Дописали слово в правило —
   // сверка им и спрашивает.
   const reportJargon = [];
-  {
-    const at = shelfAt("seat/seat.md");
-    if (at !== null && existsSync(at)) {
-      const lines = readFileSync(at, "utf8").split(NEWLINE);
-      const ruleAt = lines.findIndex((l) =>
-        l.startsWith("- **Слова обвязки в отчёт не идут"),
-      );
-      let banned = [];
-      if (ruleAt >= 0) {
-        let text = "";
-        for (let i = ruleAt; i < lines.length; i += 1) {
-          if (i > ruleAt && lines[i].startsWith("- **")) break;
-          text += lines[i] + " ";
-        }
-        // Дальше по правилу идут примеры «как писать вместо» — тоже в ёлочках.
-        // Границу ставит оборот, которым кончается сам перечень.
-        const cut = text.indexOf("— это её внутренние термины");
-        banned = [
-          ...(cut < 0 ? text : text.slice(0, cut)).matchAll(/«([^»]+)»/g),
-        ].map((m) => m[1]);
-      }
-      // Форма — блок в тройных кавычках, где стоит её первая строка.
-      let from = -1;
-      let to = -1;
-      for (const span of fenceSpans(lines))
-        if (
-          lines
-            .slice(span.from, span.to)
-            .some((l) => l.includes("ПОСАДКА НЕ ЗАВЕРШЕНА"))
-        ) {
-          from = span.from;
-          to = span.to;
-          break;
-        }
-      if (banned.length === 0)
-        reportJargon.push(
-          "перечень слов в правиле не найден: спрашивать нечем",
+  checkStep(() => {
+    {
+      const at = shelfAt("seat/seat.md");
+      if (at !== null && existsSync(at)) {
+        const lines = readFileSync(at, "utf8").split(NEWLINE);
+        const ruleAt = lines.findIndex((l) =>
+          l.startsWith("- **Слова обвязки в отчёт не идут"),
         );
-      else if (from < 0)
-        reportJargon.push("блок формы отчёта не найден: спрашивать не о чем");
-      else {
-        // Основа слова: русское слово склоняется, и целиком его искать
-        // бесполезно. Отсекается ОКОНЧАНИЕ, а не длина: «сверка» даёт «сверк»,
-        // «семя» — «сем», «фальсифицировать» — «фальсифицирова».
-        //
-        // Обрубание до четырёх букв стояло здесь и давало ложное срабатывание:
-        // «свер» находилось в слове «сверяет», то есть сверка краснела на
-        // обычном русском глаголе. Ложное срабатывание учит не читать вывод.
-        const stem = (w) => {
-          let h = w.split(" ")[0].toLowerCase();
-          h = h.replace(/ь$/, "").replace(/[аяоеыиуюэё]$/, "");
-          return h.length > 6 ? h.replace(/т$/, "") : h;
-        };
-        for (let i = from + 1; i < to; i += 1) {
-          const low = lines[i].toLowerCase();
-          for (const w of banned) {
-            const st = stem(w);
-            if (!new RegExp("(^|[^а-яёa-z])" + st).test(low)) continue;
-            reportJargon.push(
-              rel0(at) + ":" + (i + 1) + " — «" + w + "»: " + lines[i].trim(),
-            );
+        let banned = [];
+        if (ruleAt >= 0) {
+          let text = "";
+          for (let i = ruleAt; i < lines.length; i += 1) {
+            if (i > ruleAt && lines[i].startsWith("- **")) break;
+            text += lines[i] + " ";
+          }
+          // Дальше по правилу идут примеры «как писать вместо» — тоже в ёлочках.
+          // Границу ставит оборот, которым кончается сам перечень.
+          const cut = text.indexOf("— это её внутренние термины");
+          banned = [
+            ...(cut < 0 ? text : text.slice(0, cut)).matchAll(/«([^»]+)»/g),
+          ].map((m) => m[1]);
+        }
+        // Форма — блок в тройных кавычках, где стоит её первая строка.
+        let from = -1;
+        let to = -1;
+        for (const span of fenceSpans(lines))
+          if (
+            lines
+              .slice(span.from, span.to)
+              .some((l) => l.includes("ПОСАДКА НЕ ЗАВЕРШЕНА"))
+          ) {
+            from = span.from;
+            to = span.to;
+            break;
+          }
+        if (banned.length === 0)
+          reportJargon.push(
+            "перечень слов в правиле не найден: спрашивать нечем",
+          );
+        else if (from < 0)
+          reportJargon.push("блок формы отчёта не найден: спрашивать не о чем");
+        else {
+          // Основа слова: русское слово склоняется, и целиком его искать
+          // бесполезно. Отсекается ОКОНЧАНИЕ, а не длина: «сверка» даёт «сверк»,
+          // «семя» — «сем», «фальсифицировать» — «фальсифицирова».
+          //
+          // Обрубание до четырёх букв стояло здесь и давало ложное срабатывание:
+          // «свер» находилось в слове «сверяет», то есть сверка краснела на
+          // обычном русском глаголе. Ложное срабатывание учит не читать вывод.
+          const stem = (w) => {
+            let h = w.split(" ")[0].toLowerCase();
+            h = h.replace(/ь$/, "").replace(/[аяоеыиуюэё]$/, "");
+            return h.length > 6 ? h.replace(/т$/, "") : h;
+          };
+          for (let i = from + 1; i < to; i += 1) {
+            const low = lines[i].toLowerCase();
+            for (const w of banned) {
+              const st = stem(w);
+              if (!new RegExp("(^|[^а-яёa-z])" + st).test(low)) continue;
+              reportJargon.push(
+                rel0(at) + ":" + (i + 1) + " — «" + w + "»: " + lines[i].trim(),
+              );
+            }
           }
         }
       }
     }
-  }
-  checkHead("Форма отчёта посадки без слов обвязки", {
-    n: 1,
-    unit: "форма отчёта посадки",
   });
-  console.log("  слов обвязки в форме: " + reportJargon.length);
-  for (const r of reportJargon) console.log("    " + r);
-
-  // Форма судится своей секцией: секция списка — предупреждение, и строка в
-  // четыре пробела под её заголовком прогон не роняет. Прежде ошибка формы
-  // печаталась под сверкой про корпус, и читающий искал слепоту сверок там,
-  // где сломан вопрос.
-  checkHead("Вопросы записаны по форме", {
-    n: questionsSeen,
-    unit: "вопросов в списках",
+  checkStep(() => {
+    checkHead("Форма отчёта посадки без слов обвязки", () => ({
+      n: 1,
+      unit: "форма отчёта посадки",
+    }));
+    console.log("  слов обвязки в форме: " + reportJargon.length);
+    for (const r of reportJargon) console.log("    " + r);
   });
-  console.log(
-    CONFIG.questions == null
-      ? "  список вопросов не заявлен"
-      : `  нарушений формы: ${malformedQuestions.length}`,
-  );
-  for (const q of malformedQuestions) console.log("    " + q);
-
-  checkHead(
-    "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
-    {
+  checkStep(() => {
+    // Форма судится своей секцией: секция списка — предупреждение, и строка в
+    // четыре пробела под её заголовком прогон не роняет. Прежде ошибка формы
+    // печаталась под сверкой про корпус, и читающий искал слепоту сверок там,
+    // где сломан вопрос.
+    checkHead("Вопросы записаны по форме", () => ({
       n: questionsSeen,
       unit: "вопросов в списках",
-    },
-  );
-  console.log(
-    CONFIG.questions == null
-      ? "  список вопросов не заявлен"
-      : `  открытых: ${openQuestions.length}` +
-          (openQuestions.length
-            ? " — назвать каждый в отчёте, включая заданные не сегодня"
-            : ""),
-  );
-  for (const q of openQuestions) console.log("    " + q);
-
-  // Ни одна сверка не молчит о размере своего корпуса.
-  //
-  // Правило записано рукой обвязки и относилось к одной сверке: она печатает,
-  // СКОЛЬКО проверила, и никогда — сколько должна была; разница между этими
-  // двумя числами и есть слепое пятно. Вниманием оно не удержалось дважды:
-  // сверка про README и сверка про документы компонента сужали корпус зашитым
-  // путём раскладки, в проекте с иной раскладкой не смотрели никуда и печатали
-  // ноль. Отличить такой ноль от здоровья было нельзя.
-  //
-  // Стоит ПОСЛЕДНЕЙ: спрашивается с того, что уже напечатано. Новая сверка,
-  // заведённая без довода о корпусе, роняет прогон на первом же запуске.
-  // Порча файла, который обвязка пишет сама, прежде роняла прогон сырым
-  // стеком, и оставшаяся треть сверок не выполнялась. Теперь чтение
-  // защищено, а порча называется — и роняет прогон осмысленно.
-  // Реестр мутаций сверки не читают, и порча его не попадала сюда вовсе.
-  if (CONFIG.mutationLedger != null)
-    readJson(path.join(BASE, CONFIG.mutationLedger), null);
-  checkHead("Файл, написанный обвязкой, читается", {
-    n: SPOILED.length,
-    unit: "испорченных файлов",
-  });
-  console.log("  испорчено: " + SPOILED.length);
-  for (const one of SPOILED)
+    }));
     console.log(
-      "    " +
-        rel0(one) +
-        // Реестр мутаций удалять нельзя: его восстановит только полный прогон.
-        (CONFIG.mutationLedger != null &&
-        one.startsWith(path.join(BASE, CONFIG.mutationLedger))
-          ? ". Вернуть из истории git; удалённый восстановит только полный мутационный прогон"
-          : ". Переписать заново либо удалить: обвязка заведёт его сама"),
+      CONFIG.questions == null
+        ? "  список вопросов не заявлен"
+        : `  нарушений формы: ${malformedQuestions.length}`,
     );
+    for (const q of malformedQuestions) console.log("    " + q);
+  });
+  checkStep(() => {
+    checkHead(
+      "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
+      () => ({
+        n: questionsSeen,
+        unit: "вопросов в списках",
+      }),
+    );
+    console.log(
+      CONFIG.questions == null
+        ? "  список вопросов не заявлен"
+        : `  открытых: ${openQuestions.length}` +
+            (openQuestions.length
+              ? " — назвать каждый в отчёте, включая заданные не сегодня"
+              : ""),
+    );
+    for (const q of openQuestions) console.log("    " + q);
+
+    // Ни одна сверка не молчит о размере своего корпуса.
+    //
+    // Правило записано рукой обвязки и относилось к одной сверке: она печатает,
+    // СКОЛЬКО проверила, и никогда — сколько должна была; разница между этими
+    // двумя числами и есть слепое пятно. Вниманием оно не удержалось дважды:
+    // сверка про README и сверка про документы компонента сужали корпус зашитым
+    // путём раскладки, в проекте с иной раскладкой не смотрели никуда и печатали
+    // ноль. Отличить такой ноль от здоровья было нельзя.
+    //
+    // Стоит ПОСЛЕДНЕЙ: спрашивается с того, что уже напечатано. Новая сверка,
+    // заведённая без довода о корпусе, роняет прогон на первом же запуске.
+    // Порча файла, который обвязка пишет сама, прежде роняла прогон сырым
+    // стеком, и оставшаяся треть сверок не выполнялась. Теперь чтение
+    // защищено, а порча называется — и роняет прогон осмысленно.
+    // Реестр мутаций сверки не читают, и порча его не попадала сюда вовсе.
+    if (CONFIG.mutationLedger != null)
+      readJson(path.join(BASE, CONFIG.mutationLedger), null);
+  });
+  checkStep(() => {
+    checkHead("Файл, написанный обвязкой, читается", () => ({
+      n: SPOILED.length,
+      unit: "испорченных файлов",
+    }));
+    console.log("  испорчено: " + SPOILED.length);
+    for (const one of SPOILED)
+      console.log(
+        "    " +
+          rel0(one) +
+          // Реестр мутаций удалять нельзя: его восстановит только полный прогон.
+          (CONFIG.mutationLedger != null &&
+          one.startsWith(path.join(BASE, CONFIG.mutationLedger))
+            ? ". Вернуть из истории git; удалённый восстановит только полный мутационный прогон"
+            : ". Переписать заново либо удалить: обвязка заведёт его сама"),
+      );
+  });
 
   // Звено, пришедшее красным, обязано быть названо пунктом долга перехода
   // либо строкой реестра. Иначе замер сделан и забыт: базовая линия
@@ -31624,44 +32505,46 @@ if (mode === "verify") {
   };
   const redUnnamed = [];
   let redLinks = 0;
-  {
-    // Таблица базовой линии ищется по своей шапке во всей базе: поля под неё
-    // нет, а заводить его ради одной сверки значит просить проект объявить
-    // то, что и так лежит в семени под известным именем.
-    // Спрашивается ЛЮБАЯ строка — и открытая, и закрытая: запись базовой
-    // линии есть замер прошлого, и починка звена не должна ронять прогон.
-    const open = namedFindings();
-    const chainNames = new Set(chainLinkNames());
-    // Забор пропускается: строка в нём — ОБРАЗЕЦ формы, а не замер. Пока
-    // это не различалось, семя базовой линии показывало форму живой
-    // строкой, и свежепосаженный проект получал красное звено, которого
-    // никто не мерил, — знание, выведенное из чужого примера.
-    const lines = [];
-    for (const name of readdirSync(BASE)) {
-      if (!name.endsWith(".md")) continue;
-      lines.push(...proseOf(path.join(BASE, name)).split(NEWLINE));
-    }
+  checkStep(() => {
     {
-      for (const line of lines) {
-        // Корпус — строки, опознанные КАК строки звена, а не только красные:
-        // ноль красных при зелёной цепочке есть здоровье, а ноль опознанных
-        // при живых звеньях — слепота, и различать их надо здесь.
-        const row = /^\|\s*`([^`]+)`\s*\|\s*\S/.exec(line.trim());
-        if (row !== null && chainNames.has(row[1])) redLinks += 1;
-        const m = /^\|\s*`([^`]+)`\s*\|\s*красно/.exec(line.trim());
-        if (m === null) continue;
-        if (m[1] === "verify") continue;
-        if ((open.get(m[1]) ?? 0) > 0) continue;
-        redUnnamed.push(
-          "`" +
-            m[1] +
-            "` пришло красным, а ни пункт долга перехода, ни строка реестра его не называют. Имя звена пишется в ёлочках: «" +
-            m[1] +
-            "»",
-        );
+      // Таблица базовой линии ищется по своей шапке во всей базе: поля под неё
+      // нет, а заводить его ради одной сверки значит просить проект объявить
+      // то, что и так лежит в семени под известным именем.
+      // Спрашивается ЛЮБАЯ строка — и открытая, и закрытая: запись базовой
+      // линии есть замер прошлого, и починка звена не должна ронять прогон.
+      const open = namedFindings();
+      const chainNames = new Set(chainLinkNames());
+      // Забор пропускается: строка в нём — ОБРАЗЕЦ формы, а не замер. Пока
+      // это не различалось, семя базовой линии показывало форму живой
+      // строкой, и свежепосаженный проект получал красное звено, которого
+      // никто не мерил, — знание, выведенное из чужого примера.
+      const lines = [];
+      for (const name of readdirSync(BASE)) {
+        if (!name.endsWith(".md")) continue;
+        lines.push(...proseOf(path.join(BASE, name)).split(NEWLINE));
+      }
+      {
+        for (const line of lines) {
+          // Корпус — строки, опознанные КАК строки звена, а не только красные:
+          // ноль красных при зелёной цепочке есть здоровье, а ноль опознанных
+          // при живых звеньях — слепота, и различать их надо здесь.
+          const row = /^\|\s*`([^`]+)`\s*\|\s*\S/.exec(line.trim());
+          if (row !== null && chainNames.has(row[1])) redLinks += 1;
+          const m = /^\|\s*`([^`]+)`\s*\|\s*красно/.exec(line.trim());
+          if (m === null) continue;
+          if (m[1] === "verify") continue;
+          if ((open.get(m[1]) ?? 0) > 0) continue;
+          redUnnamed.push(
+            "`" +
+              m[1] +
+              "` пришло красным, а ни пункт долга перехода, ни строка реестра его не называют. Имя звена пишется в ёлочках: «" +
+              m[1] +
+              "»",
+          );
+        }
       }
     }
-  }
+  });
   // Корпус этой сверки — ПРОЗА, которую пишет человек, и форму её до сих пор
   // не называл никто: семя базовой линии даёт свободный абзац. Написанная
   // иначе строка не опознаётся, сверка осматривает ноль и остаётся зелёной —
@@ -31669,11 +32552,13 @@ if (mode === "verify") {
   // запрещает прямо. Замерено посадкой в пустой проект: базовая линия
   // называла красный формат словом, а не именем звена, и сверка не увидела
   // ни одного звена при трёх живых.
-  const chainAlive = (() => {
-    const at = path.join(BASE, "..", "package.json");
-    const scripts = Object.keys(readJson(at, {}).scripts ?? {});
-    return chainLinkNames().filter((one) => scripts.includes(one)).length;
-  })();
+  const chainAlive = checkStep(() =>
+    (() => {
+      const at = path.join(BASE, "..", "package.json");
+      const scripts = Object.keys(readJson(at, {}).scripts ?? {});
+      return chainLinkNames().filter((one) => scripts.includes(one)).length;
+    })(),
+  );
   // Базовая линия ещё не ЗАПИСАНА — в её разделе стоит подсказка заготовки.
   // Тогда говорить о слепоте рано: незаполненное место называет сверка
   // «Шаблон правил заполнен», и под флагом посадки законно. Слепота — это
@@ -31681,83 +32566,185 @@ if (mode === "verify") {
   // незаписанной, и самопроверка снимка, сажающая обвязку в пустую папку
   // без шага 7, не могла пройти ни разу: снимок не собирался вовсе.
   // Замерено сборкой снимка после посадок руками.
-  const baselineUnwritten = (() => {
-    for (const name of readdirSync(BASE)) {
-      if (!name.endsWith(".md")) continue;
-      let inBaseline = false;
-      for (const line of readFileSync(path.join(BASE, name), "utf8").split(
-        NEWLINE,
-      )) {
-        if (/^##\s/.test(line))
-          inBaseline = (CONFIG.baselineSections ?? []).some((one) =>
-            line.includes(one),
-          );
-        else if (inBaseline && /^<[^!]/.test(line.trim())) return true;
+  const baselineUnwritten = checkStep(() =>
+    (() => {
+      for (const name of readdirSync(BASE)) {
+        if (!name.endsWith(".md")) continue;
+        let inBaseline = false;
+        for (const line of readFileSync(path.join(BASE, name), "utf8").split(
+          NEWLINE,
+        )) {
+          if (/^##\s/.test(line))
+            inBaseline = (CONFIG.baselineSections ?? []).some((one) =>
+              line.includes(one),
+            );
+          else if (inBaseline && /^<[^!]/.test(line.trim())) return true;
+        }
       }
-    }
-    return false;
-  })();
-  const redBlind = redLinks === 0 && chainAlive > 0 && !baselineUnwritten;
-  checkHead("Красное звено названо находкой", {
-    n: redLinks,
-    unit: "звеньев в базовой линии",
+      return false;
+    })(),
+  );
+  const redBlind = checkStep(
+    () => redLinks === 0 && chainAlive > 0 && !baselineUnwritten,
+  );
+  checkStep(() => {
+    checkHead("Красное звено названо находкой", () => ({
+      n: redLinks,
+      unit: "звеньев в базовой линии",
+    }));
+    if (redBlind)
+      console.log(
+        "    звеньев цепочки у проекта " +
+          chainAlive +
+          ", а в базовой линии не опознано ни одного: строка звена пишется" +
+          " именем в обратных кавычках в первой графе, иначе сверка слепа",
+      );
+    console.log("  не названо: " + redUnnamed.length);
+    for (const one of redUnnamed)
+      console.log(
+        "    " +
+          one +
+          ". Записать пунктом долга перехода: переход код не чинит",
+      );
   });
-  if (redBlind)
-    console.log(
-      "    звеньев цепочки у проекта " +
-        chainAlive +
-        ", а в базовой линии не опознано ни одного: строка звена пишется" +
-        " именем в обратных кавычках в первой графе, иначе сверка слепа",
-    );
-  console.log("  не названо: " + redUnnamed.length);
-  for (const one of redUnnamed)
-    console.log(
-      "    " + one + ". Записать пунктом долга перехода: переход код не чинит",
-    );
 
   // «Не мерено» — обещание замерить, и держится оно ничем. Спрашивается не
   // замер, его нельзя сделать в день посадки, а ЗАПИСЬ: пункт долга
   // перехода либо открытая строка реестра — то, что печатается, пока замера нет.
   let unmeasured = 0;
   let unmeasuredNamed = true;
-  {
-    // Реестр находок из корпуса ИСКЛЮЧЁН: он описывает находки, а не ведёт
-    // замеры. Строка про то, что цена ярусов когда-то была не мерена,
-    // содержит эти же слова — и, будучи ЗАКРЫТОЙ, требовала открытой строки
-    // под саму себя. Замерено закрытием находки о цене ярусов: замер
-    // сделан, числа записаны, а прогон требовал держать напоминание о
-    // работе, которой больше нет.
-    const skipBase = CONFIG.findings == null ? null : CONFIG.findings.file;
-    for (const name of readdirSync(BASE)) {
-      if (!name.endsWith(".md")) continue;
-      if (name === skipBase) continue;
-      // Протокол свода — не запись базы: строка его модели «мутационный
-      // замер: не мерено» требовала пункта долга под себя, а форму протокола
-      // держит сам режим `bar`. Найдено ревьюером пробы.
-      if (name === CONFIG.barProtocol) continue;
-      for (const line of readFileSync(path.join(BASE, name), "utf8").split(
-        NEWLINE,
-      ))
-        if (line.includes("не мерено")) unmeasured += 1;
+  checkStep(() => {
+    {
+      // Реестр находок из корпуса ИСКЛЮЧЁН: он описывает находки, а не ведёт
+      // замеры. Строка про то, что цена ярусов когда-то была не мерена,
+      // содержит эти же слова — и, будучи ЗАКРЫТОЙ, требовала открытой строки
+      // под саму себя. Замерено закрытием находки о цене ярусов: замер
+      // сделан, числа записаны, а прогон требовал держать напоминание о
+      // работе, которой больше нет.
+      const skipBase = CONFIG.findings == null ? null : CONFIG.findings.file;
+      for (const name of readdirSync(BASE)) {
+        if (!name.endsWith(".md")) continue;
+        if (name === skipBase) continue;
+        // Протокол свода — не запись базы: строка его модели «мутационный
+        // замер: не мерено» требовала пункта долга под себя, а форму протокола
+        // держит сам режим `bar`. Найдено ревьюером пробы.
+        if (name === CONFIG.barProtocol) continue;
+        for (const line of readFileSync(path.join(BASE, name), "utf8").split(
+          NEWLINE,
+        ))
+          if (line.includes("не мерено")) unmeasured += 1;
+      }
+      if (unmeasured > 0)
+        unmeasuredNamed =
+          (openFindings().get("Незамеренное названо находкой") ?? 0) > 0;
     }
-    if (unmeasured > 0)
-      unmeasuredNamed =
-        (openFindings().get("Незамеренное названо находкой") ?? 0) > 0;
-  }
-  checkHead("Незамеренное названо находкой", {
-    n: unmeasured,
-    unit: "записей «не мерено» в базе",
   });
-  console.log("  не названо: " + (unmeasuredNamed ? 0 : 1));
-  // Запись держит ВСЕ записи «не мерено» разом, и новая ложится под неё же.
-  // Её читает фальсификация: рецепт дописывает запись, и при живой записи
-  // поломке здесь не за что зацепиться.
-  if (unmeasured > 0 && unmeasuredNamed)
-    console.log(IDLE_NOTES["Незамеренное названо находкой"]);
-  if (!unmeasuredNamed)
+  checkStep(() => {
+    checkHead("Незамеренное названо находкой", () => ({
+      n: unmeasured,
+      unit: "записей «не мерено» в базе",
+    }));
+    console.log("  не названо: " + (unmeasuredNamed ? 0 : 1));
+    // Запись держит ВСЕ записи «не мерено» разом, и новая ложится под неё же.
+    // Её читает фальсификация: рецепт дописывает запись, и при живой записи
+    // поломке здесь не за что зацепиться.
+    if (unmeasured > 0 && unmeasuredNamed)
+      console.log(IDLE_NOTES["Незамеренное названо находкой"]);
+    if (!unmeasuredNamed)
+      console.log(
+        "    замер отложен, а напомнить о нём нечему. Записать пунктом долга перехода",
+      );
+  });
+
+  // Хвост прогона идёт вне шагов: он подводит их итог. Упавший шаг уже
+  // отмечен в секции, которую печатал; здесь — что задето следом. Секцию,
+  // читающую данные упавшего шага, находит разбор текста инструмента по
+  // данным: соседняя по выводу секция тут ни при чём.
+  checkHead("Шаги сверок исполнились", {
+    n: stepsRun,
+    unit: "шагов сверки",
+  });
+  let touched = new Map();
+  let touchedBy = "разбор по данным";
+  if (STEP_CRASHES.length > 0) {
+    const crashed = STEP_CRASHES.map((c) => c.step).filter((k) => k > 0);
+    // Разбор упал — это дефект инструмента, и он называется, а не
+    // выдаётся за отсутствие компилятора.
+    let broke = null;
+    try {
+      touched = stepsTouchedBy(
+        compilerAt(REPO_AT),
+        readFileSync(fileURLToPath(import.meta.url), "utf8"),
+        crashed,
+      );
+    } catch (error) {
+      broke = String(error?.message ?? error).split("\n")[0];
+      touched = null;
+    }
+    if (touched === null) {
+      // Разобрать текст нечем: задетым считается всё, что ниже упавшего.
+      touchedBy =
+        broke === null
+          ? "без компилятора — всё ниже упавшего"
+          : "разбор по данным упал — всё ниже упавшего";
+      if (broke !== null)
+        console.log("    разбор шагов по данным упал исключением: " + broke);
+      touched = new Map();
+      const first = Math.min(...crashed);
+      for (let k = first + 1; k <= stepsRun; k += 1) touched.set(k, first);
+    }
+  }
+  const sectionsOfStep = new Map();
+  {
+    let section = null;
+    SAID.forEach((line, i) => {
+      const title = /^=== (.+) ===$/.exec(line);
+      if (title !== null) section = title[1];
+      const k = SAID_STEPS[i];
+      if (k > 0 && section !== null)
+        sectionsOfStep.set(
+          k,
+          (sectionsOfStep.get(k) ?? new Set()).add(section),
+        );
+    });
+  }
+  const crashAt = new Map(STEP_CRASHES.map((c) => [c.step, c]));
+  console.log(
+    "  упало исключением: " +
+      STEP_CRASHES.length +
+      (STEP_CRASHES.length ? "; задетое найдено: " + touchedBy : ""),
+  );
+  for (const crash of STEP_CRASHES) {
+    const from = touched.get(crash.step);
     console.log(
-      "    замер отложен, а напомнить о нём нечему. Записать пунктом долга перехода",
+      "    " +
+        crashLine(crash) +
+        (from === undefined ? "" : " — следствие падения шага " + from),
     );
+    for (const frame of crash.frames.slice(1))
+      console.log("      через " + frame);
+  }
+  const doubted = new Map();
+  for (const [k, from] of touched)
+    for (const section of sectionsOfStep.get(k) ?? [])
+      if (!doubted.has(section)) doubted.set(section, [k, from]);
+  for (const [section, [k, from]] of doubted)
+    console.log(
+      "    секция «" +
+        section +
+        "» под вопросом: её шаг " +
+        k +
+        " читает данные упавшего шага " +
+        from +
+        " (" +
+        crashAt.get(from).at +
+        ")",
+    );
+  // На чистом прогоне печатается каждая объявленная секция, какой бы ни была
+  // причина пропуска.
+  for (const title of CHECK_SECTIONS)
+    if (!PRINTED.has(title) && title !== "Каждая сверка называет свой корпус")
+      console.log("    не напечатана: «" + title + "»");
 
   const mute = [...PRINTED].filter((one) => !LOOKED.has(one));
   const notNumber = [...LOOKED].filter(

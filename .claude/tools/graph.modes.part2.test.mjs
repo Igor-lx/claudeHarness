@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { bareCodeOf } from "./graph.predicates.mjs";
+import { stepsOutline } from "./graph.steps.mjs";
 import {
   TOOL_DIR,
   seatEmpty,
@@ -4433,4 +4434,79 @@ describe("тест проекта вне области сбора раннер�
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+});
+
+/**
+ * Сверка базы — один сценарий, и исключение одного места прежде обрывало его:
+ * `tsc -p .`, прочитанный как файл, оставил неисполненными `113` сверок из
+ * `142`. Найдено посадкой руками в живой проект. Падение шага — находка, а
+ * прогон идёт до конца: заголовок секции не теряется, секции, читающие данные
+ * упавшего шага, названы по данным.
+ */
+describe("шаг сверки, упавший исключением", () => {
+  it("секции на месте, своя секция красная, задетые по данным названы", () => {
+    const box = seatEmpty("shag-upal-");
+    try {
+      const tool = path.join(box, ".claude", "tools", "graph.mjs");
+      const ts = createRequire(import.meta.url)("typescript");
+      const outline = stepsOutline(ts, fs.readFileSync(tool, "utf8"));
+      const run = (fault) =>
+        spawnSync(process.execPath, [tool, "verify", "--full"], {
+          cwd: box,
+          encoding: "utf8",
+          env: { ...process.env, GRAPH_VERIFY_FAULT: fault },
+        });
+      const heads = (out) =>
+        out.split("\n").filter((l) => l.startsWith("=== "));
+      const sectionOf = (out, title) => {
+        const from = out.indexOf("=== " + title + " ===");
+        const to = out.indexOf("\n=== ", from + 1);
+        return out.slice(from, to);
+      };
+      const clean = run("");
+      expect(clean.stdout).toContain(
+        "  осмотрено шагов сверки: " + outline.length,
+      );
+      expect(clean.stdout).toContain("  упало исключением: 0");
+      // Шаг вычисления, чьи данные читает позже чужая секция.
+      const calc = outline.findIndex(
+        (s, i) =>
+          i > 5 &&
+          s.head === null &&
+          outline
+            .slice(i + 1)
+            .some(
+              (t) =>
+                t.head !== null && [...s.writes].some((n) => t.reads.has(n)),
+            ),
+      );
+      // Шаг секции.
+      const own = outline.findIndex((s, i) => i > 5 && s.head !== null);
+      expect(calc).toBeGreaterThan(0);
+      expect(own).toBeGreaterThan(0);
+      for (const k of [calc + 1, own + 1]) {
+        const broken = run(String(k));
+        expect(broken.status).toBe(1);
+        expect(broken.stderr).not.toContain("посаженное падение");
+        expect(heads(broken.stdout)).toEqual(heads(clean.stdout));
+        expect(broken.stdout).toContain(
+          "    шаг " + k + " сверки упал исключением: ",
+        );
+      }
+      const ownHead = outline[own].head;
+      expect(sectionOf(run(String(own + 1)).stdout, ownHead)).toContain(
+        "    шаг " + (own + 1) + " сверки упал исключением: ",
+      );
+      expect(run(String(calc + 1)).stdout).toMatch(
+        new RegExp(
+          "^ {4}секция «[^»]+» под вопросом: её шаг \\d+ читает данные упавшего шага " +
+            (calc + 1) +
+            " ",
+          "m",
+        ),
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });

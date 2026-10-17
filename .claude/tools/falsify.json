@@ -1301,11 +1301,18 @@
       "append": "хвост подсказки, оставшийся от заполнения слота.>"
     },
     {
+      "section": "Шаги сверок исполнились",
+      "own": true,
+      "file": ".claude/tools/graph.mjs",
+      "find": "const plantedFault = (step) => {",
+      "replace": "const plantedFault = (step) => {\n  if (stepsRun === 3) throw new Error(\"рецепт: шаг падает\");"
+    },
+    {
       "section": "Каждая сверка называет свой корпус",
       "own": true,
       "file": ".claude/tools/graph.mjs",
-      "find": "checkHead(\"Разрешения среды\", {\n    n: settingsLooked,\n    unit: \"разрешений в общем файле\",\n  });",
-      "replace": "checkHead(\"Разрешения среды\");"
+      "find": "checkHead(\"Разрешения среды\",",
+      "replace": "checkHead(\"Разрешения среды\", undefined,"
     },
     {
       "section": "Файл, написанный обвязкой, читается",
