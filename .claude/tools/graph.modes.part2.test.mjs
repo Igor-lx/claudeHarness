@@ -4509,4 +4509,28 @@ describe("шаг сверки, упавший исключением", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  it("секция в условии печатается и без предмета — с причиной, не пропадает", () => {
+    const box = seatEmpty("bez-manifesta-");
+    try {
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfg,
+        fs
+          .readFileSync(cfg, "utf8")
+          .replace(/^ {2}manifest: [^\n]*/m, "  manifest: null,"),
+      );
+      const out = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"],
+        { cwd: box, encoding: "utf8" },
+      ).stdout;
+      expect(out).not.toContain("не напечатана");
+      expect(out).toMatch(
+        /=== Связка проверок зовёт живые звенья ===\n {2}осмотрено предметов: 0\n {2}предмета нет: манифест не объявлен/,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
 });

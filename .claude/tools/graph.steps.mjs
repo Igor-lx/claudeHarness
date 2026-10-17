@@ -219,10 +219,12 @@ export const stepsOutline = (ts, source) => {
   return block === null ? [] : stepsOf(ts, sf, block);
 };
 
-/** Заголовки секций, стоящие не первыми в своём шаге либо считающие корпус
- * до заголовка. Шаг, падающий раньше заголовка, уносит секцию из вывода;
- * счёт, вычисленный до вызова, падает раньше печати. Строка — номер строки и
- * имя секции. */
+/** Заголовки секций под угрозой пропасть из вывода. На уровне шага —
+ * заголовок не первым в шаге либо со счётом корпуса до заголовка: шаг,
+ * падающий раньше заголовка, уносит секцию, а счёт, вычисленный до вызова,
+ * падает раньше печати. Глубже — в условии, блоке, цикле — заголовок обязан
+ * стоять в области `checkRegion` и быть назван её перечнем: тогда пропуск и
+ * падение печатают секцию сами. Строка — номер строки, имя, причина. */
 export const headsAtRisk = (ts, source) => {
   const sf = ts.createSourceFile(
     "graph.mjs",
@@ -241,6 +243,9 @@ export const headsAtRisk = (ts, source) => {
     call.arguments[0].getText(sf) +
     " — " +
     why;
+  const isCall = (n, name) =>
+    ts.isCallExpression(n) && n.expression.getText(sf) === name;
+  const stepLevel = new Set();
   for (const st of block.statements) {
     if (!ts.isExpressionStatement(st)) continue;
     const call = stepCallIn(ts, st.expression);
@@ -248,16 +253,50 @@ export const headsAtRisk = (ts, source) => {
     body.forEach((one, i) => {
       if (
         !ts.isExpressionStatement(one) ||
-        !ts.isCallExpression(one.expression) ||
-        one.expression.expression.getText() !== "checkHead"
+        !isCall(one.expression, "checkHead")
       )
         return;
       const head = one.expression;
+      stepLevel.add(head);
       if (i > 0) out.push(say(head, "заголовок не первым в шаге"));
       const looked = head.arguments[1];
       if (looked !== undefined && !ts.isArrowFunction(looked))
         out.push(say(head, "счёт корпуса до заголовка"));
     });
   }
+  const walk = (n) => {
+    // Имя, которое вычисляется, падает раньше печати заголовка — на любом
+    // уровне.
+    if (
+      isCall(n, "checkHead") &&
+      stepLevel.has(n) &&
+      !ts.isStringLiteral(n.arguments[0])
+    )
+      out.push(say(n, "имя секции вычисляется — перечень с ним не сверить"));
+    if (isCall(n, "checkHead") && !stepLevel.has(n)) {
+      let region = n.parent;
+      while (region !== undefined && !isCall(region, "checkRegion"))
+        region = region.parent;
+      const title = n.arguments[0];
+      if (!ts.isStringLiteral(title))
+        out.push(say(n, "имя секции вычисляется — перечень с ним не сверить"));
+      else if (region === undefined)
+        out.push(say(n, "заголовок вглубь шага, вне области с перечнем"));
+      else {
+        const list = region.arguments[0];
+        const named =
+          ts.isArrayLiteralExpression(list) &&
+          list.elements.some(
+            (e) => ts.isStringLiteral(e) && e.text === title.text,
+          );
+        if (!named) out.push(say(n, "секция не названа перечнем области"));
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  // Хвост прогона идёт вне шагов намеренно: он подводит их итог.
+  const tail = tailIndex(block, sf);
+  for (const st of block.statements.slice(0, tail < 0 ? undefined : tail))
+    walk(st);
   return out;
 };

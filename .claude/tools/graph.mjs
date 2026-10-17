@@ -5705,6 +5705,34 @@ const checkHead = (title, looked) => {
   sayLooked(got.unit, got.n);
 };
 
+/** Область шага, чьи секции печатаются не на уровне шага — в условии, в
+ * блоке, в цикле. Область объявляет перечень своих секций, и ни одна из них
+ * не пропадает: не напечатанную область печатает сама — пропущенную по
+ * условию с причиной (тело вернуло строку), упавшую красной. Перечень и
+ * вложенные заголовки сверяет `headsAtRisk`. */
+const checkRegion = (titles, body) => {
+  let skipped = null;
+  let crashed = false;
+  try {
+    const got = body();
+    if (typeof got === "string") skipped = got;
+  } catch (error) {
+    stepFailed(error);
+    crashed = true;
+  }
+  for (const title of titles) {
+    if (PRINTED.has(title)) continue;
+    checkHead(title, { n: 0, unit: "предметов" });
+    console.log(
+      crashed
+        ? "    шаг упал раньше заголовка секции"
+        : skipped === null
+          ? "    область не напечатала секцию из своего перечня"
+          : "  предмета нет: " + skipped,
+    );
+  }
+};
+
 // Какому полю настройки принадлежит предмет сверки. Список нужен трижды:
 // сверке без рецепта — чтобы не числить её долгом там, где ломать нечего, —
 // и рецепту, не нашедшему своего места: если поле пусто, это не устаревший
@@ -20616,21 +20644,35 @@ if (mode === "verify") {
     );
     for (const e of emptyRules) console.log("    " + e);
     for (const m of missingTables) console.log("    " + m);
-
-    for (const kind of markerKinds) {
-      checkHead(kind.title, { n: kind.total, unit: "пометок в коде" });
-      console.log(
-        `  без записи в ${kind.base}: ${kind.unlisted.length}` +
-          debtTail(kind.debtKind) +
-          `, названо записью и снято из кода: ${kind.gone.length}` +
-          (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
-      );
-      debtNote(kind.debtKind, kind.unlisted.length);
-      for (const m of kind.missed ?? []) console.log("    " + m);
-      for (const u of debtList(kind.debtKind, kind.unlisted))
-        console.log("    " + u);
-      for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
-    }
+  });
+  // Строки секции пометок: у обоих родов пометок одни и те же.
+  const markerLines = (kind) => {
+    console.log(
+      `  без записи в ${kind.base}: ${kind.unlisted.length}` +
+        debtTail(kind.debtKind) +
+        `, названо записью и снято из кода: ${kind.gone.length}` +
+        (kind.missed?.length ? `, форма не та: ${kind.missed.length}` : ""),
+    );
+    debtNote(kind.debtKind, kind.unlisted.length);
+    for (const m of kind.missed ?? []) console.log("    " + m);
+    for (const u of debtList(kind.debtKind, kind.unlisted))
+      console.log("    " + u);
+    for (const g of kind.gone) console.log(`    ${kind.base} → ${g}`);
+  };
+  const markerKind = (title) => markerKinds.find((k) => k.title === title);
+  checkStep(() => {
+    checkHead("Пометки CONSTRAINT", () => ({
+      n: markerKind("Пометки CONSTRAINT").total,
+      unit: "пометок в коде",
+    }));
+    markerLines(markerKind("Пометки CONSTRAINT"));
+  });
+  checkStep(() => {
+    checkHead("Пометки решений", () => ({
+      n: markerKind("Пометки решений").total,
+      unit: "пометок в коде",
+    }));
+    markerLines(markerKind("Пометки решений"));
   });
   checkStep(() => {
     checkHead("Якоря", () => ({ n: anchors, unit: "якорей" }));
@@ -23214,732 +23256,767 @@ if (mode === "verify") {
     // Разбирается ровно та форма диапазона, которая объявлена в манифесте:
     // нижняя граница `>=` и верхняя `<`. Форма, которой разбор не знает, честно
     // называется неразобранной — иначе предупреждение врало бы уверенным тоном.
-    if (CONFIG.manifest != null) {
-      const at = path.join(BASE, CONFIG.manifest);
-      const want = existsSync(at)
-        ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
-        : null;
-      const low =
-        want === null
-          ? null
-          : (/(?:^|\s)>=\s*([\d.]+)/.exec(want)?.[1] ?? null);
-      const high =
-        want === null ? null : (/(?:^|\s)<\s*([\d.]+)/.exec(want)?.[1] ?? null);
-      const now = process.version;
-      // `.nvmrc` — вторая запись той же версии (`close.md`, «Воспроизводимость и
-      // скорость петли»): разойдясь с `engines`, она ставит разработчику среду,
-      // на которой числа базовой линии не снимались. Сравнивается по числу
-      // названных в ней частей: «22» подходит к «>=22.23.2», «22.20» — нет.
-      const nvmAt = path.join(path.dirname(at), ".nvmrc");
-      const nvmLine = existsSync(nvmAt)
-        ? (readFileSync(nvmAt, "utf8")
-            .split(NEWLINE)
-            .map((l) => l.trim())
-            .find((l) => l !== "" && !l.startsWith("#")) ?? null)
-        : null;
-      const nvmParts =
-        nvmLine === null
-          ? null
-          : (/^v?(\d+(?:\.\d+){0,2})$/
-              .exec(nvmLine)?.[1]
-              .split(".")
-              .map(Number) ?? null);
-      const nvmCmp = (bound) => versionCmp(nvmLine, bound, nvmParts.length);
-      const nvmDrift =
-        nvmParts === null
-          ? null
-          : low !== null && nvmCmp(low) < 0
-            ? `.nvmrc называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
-            : high !== null && nvmCmp(high) >= 0
-              ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
-              : null;
-      const say =
-        want === null
-          ? "    диапазон версии не объявлен — переносимость держится на памяти"
-          : low === null && high === null
-            ? `    диапазон «${want}» записан формой, которой разбор не знает`
-            : low !== null && versionCmp(now, low) < 0
-              ? `    версия НИЖЕ объявленной: ${now} при «${want}»`
-              : high !== null && versionCmp(now, high) >= 0
-                ? `    версия ВЫШЕ объявленной: ${now} при «${want}»`
+    checkRegion(
+      [
+        "Диапазон среды объявлен",
+        "Версия среды (предупреждение, прогон не роняет)",
+      ],
+      () => {
+        if (CONFIG.manifest == null)
+          return "манифест не объявлен: поле `manifest` настройки пусто";
+        const at = path.join(BASE, CONFIG.manifest);
+        const want = existsSync(at)
+          ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
+          : null;
+        const low =
+          want === null
+            ? null
+            : (/(?:^|\s)>=\s*([\d.]+)/.exec(want)?.[1] ?? null);
+        const high =
+          want === null
+            ? null
+            : (/(?:^|\s)<\s*([\d.]+)/.exec(want)?.[1] ?? null);
+        const now = process.version;
+        // `.nvmrc` — вторая запись той же версии (`close.md`, «Воспроизводимость и
+        // скорость петли»): разойдясь с `engines`, она ставит разработчику среду,
+        // на которой числа базовой линии не снимались. Сравнивается по числу
+        // названных в ней частей: «22» подходит к «>=22.23.2», «22.20» — нет.
+        const nvmAt = path.join(path.dirname(at), ".nvmrc");
+        const nvmLine = existsSync(nvmAt)
+          ? (readFileSync(nvmAt, "utf8")
+              .split(NEWLINE)
+              .map((l) => l.trim())
+              .find((l) => l !== "" && !l.startsWith("#")) ?? null)
+          : null;
+        const nvmParts =
+          nvmLine === null
+            ? null
+            : (/^v?(\d+(?:\.\d+){0,2})$/
+                .exec(nvmLine)?.[1]
+                .split(".")
+                .map(Number) ?? null);
+        const nvmCmp = (bound) => versionCmp(nvmLine, bound, nvmParts.length);
+        const nvmDrift =
+          nvmParts === null
+            ? null
+            : low !== null && nvmCmp(low) < 0
+              ? `.nvmrc называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
+              : high !== null && nvmCmp(high) >= 0
+                ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
                 : null;
-      // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
-      // роняет прогон. Дрейф версии остаётся предупреждением.
-      envUndeclared = want === null;
-      checkHead("Диапазон среды объявлен", {
-        n: envUndeclared ? 0 : 1,
-        unit: "объявленных диапазонов",
-      });
-      console.log("  не объявлено: " + (envUndeclared ? 1 : 0));
-      if (envUndeclared)
-        console.log(
-          "    переносимость держится на памяти. Объявить `engines` в манифесте",
-        );
-      console.log("  расхождений с .nvmrc: " + (nvmDrift === null ? 0 : 1));
-      if (nvmDrift !== null) console.log("    " + nvmDrift);
-      {
-        checkHead("Версия среды (предупреждение, прогон не роняет)", {
+        const say =
+          want === null
+            ? "    диапазон версии не объявлен — переносимость держится на памяти"
+            : low === null && high === null
+              ? `    диапазон «${want}» записан формой, которой разбор не знает`
+              : low !== null && versionCmp(now, low) < 0
+                ? `    версия НИЖЕ объявленной: ${now} при «${want}»`
+                : high !== null && versionCmp(now, high) >= 0
+                  ? `    версия ВЫШЕ объявленной: ${now} при «${want}»`
+                  : null;
+        // Отсутствие объявления — не предупреждение: опоры нет вовсе, и это
+        // роняет прогон. Дрейф версии остаётся предупреждением.
+        envUndeclared = want === null;
+        checkHead("Диапазон среды объявлен", {
           n: envUndeclared ? 0 : 1,
-          unit: "объявленный диапазон среды",
+          unit: "объявленных диапазонов",
         });
-        if (say !== null && !envUndeclared) {
-          console.log(say);
+        console.log("  не объявлено: " + (envUndeclared ? 1 : 0));
+        if (envUndeclared)
           console.log(
-            "  Числа базовой линии снимались на объявленной версии; решение, что",
+            "    переносимость держится на памяти. Объявить `engines` в манифесте",
           );
-          console.log("  с этим делать, за вами — прогон остановлен не будет.");
-        } else {
-          console.log(
-            envUndeclared
-              ? "  диапазон не объявлен — сверять не с чем"
-              : "  версия в объявленном диапазоне",
-          );
+        console.log("  расхождений с .nvmrc: " + (nvmDrift === null ? 0 : 1));
+        if (nvmDrift !== null) console.log("    " + nvmDrift);
+        {
+          checkHead("Версия среды (предупреждение, прогон не роняет)", {
+            n: envUndeclared ? 0 : 1,
+            unit: "объявленный диапазон среды",
+          });
+          if (say !== null && !envUndeclared) {
+            console.log(say);
+            console.log(
+              "  Числа базовой линии снимались на объявленной версии; решение, что",
+            );
+            console.log(
+              "  с этим делать, за вами — прогон остановлен не будет.",
+            );
+          } else {
+            console.log(
+              envUndeclared
+                ? "  диапазон не объявлен — сверять не с чем"
+                : "  версия в объявленном диапазоне",
+            );
+          }
         }
-      }
-    }
+      },
+    );
 
     // Инструменты обязательной цепочки: есть ли они вообще.
     // Версия среды отвечает «та ли», а этот вопрос — «есть ли», и он первее:
     // проверять версию линтера, которого нет, бессмысленно. Как и версия,
     // предупреждает и не роняет — набор инструментов у проекта может быть
     // другим. Спрашивается только объявленное в `CONFIG.toolchain`.
-    if (CONFIG.toolchain != null && CONFIG.manifest != null) {
-      const at = path.join(BASE, CONFIG.manifest);
-      const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
-      const scripts = pkg?.scripts ?? {};
-      const declared = new Set([
-        ...Object.keys(pkg?.dependencies ?? {}),
-        ...Object.keys(pkg?.devDependencies ?? {}),
-      ]);
-      const gaps = [];
-      const elsewhere = [];
-      for (const link of CONFIG.toolchain) {
-        // Звено без предмета пробелом не является: его не дописывают намеренно.
-        if (!linkHasSubject(link.script)) continue;
-        if (linkTakenElsewhere(link.script, scripts)) {
-          elsewhere.push(link.script);
-          continue;
-        }
-        // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
-        const own = linkOwnName(link.script, scripts) ?? link.script;
-        const noScript = link.script != null && scripts[own] == null;
-        const missing = (link.packages ?? []).filter((p) => !declared.has(p));
-        if (!noScript && missing.length === 0) continue;
-        const what = [
-          noScript ? `команды \`${link.script}\` нет` : null,
-          missing.length ? `не объявлены: ${missing.join(", ")}` : null,
-        ]
-          .filter((x) => x !== null)
-          .join("; ");
-        // Четыре пробела: этим отступом прогон узнаёт находку. С двумя она не
-        // роняла его даже после того, как секция перестала быть предупреждением.
-        gaps.push(
-          `    ${link.script ?? "звено"} — ${what}` +
-            NEWLINE +
-            `      зачем: ${link.why ?? "не сказано в настройке"}` +
-            NEWLINE +
-            (link.template == null
-              ? "      настраивается руками: шаблона на полке нет намеренно, конфиг" +
-                NEWLINE +
-                "      этого звена зависит от вида проекта"
-              : `      шаблон настройки на полке: ${link.template}`),
-        );
-      }
-      // Обратная сторона: звено, появившееся в самой цепочке, но не объявленное.
-      // Прямая ловит «объявлено, а инструмента нет»; без этой половины список
-      // молча отстаёт от цепочки, и на следующей посадке про новое звено просто
-      // не спросят. Найдено пробой — сверка была односторонней с рождения.
-      const chain = scripts.check ?? null;
-      if (chain !== null) {
-        // Связка читается именем менеджера, объявленного ПРОЕКТОМ. Прежде имя
-        // стояло здесь литералом, и на проекте с другим менеджером связка
-        // читалась как пустая: обратная сторона сверки не видела в ней ни
-        // одного звена и молчать могла только зелено.
-        const inChain = scriptCallsIn(chain);
-        // Известными считаются и семенные имена звеньев, и те, под которыми
-        // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
-        // связку, докладывается как необъявленное звено.
-        const known = new Set();
-        for (const l of CONFIG.toolchain) {
-          if (l.script == null) continue;
-          known.add(l.script);
-          const mine = linkOwnName(l.script, scripts);
-          if (mine !== null) known.add(mine);
-        }
-        for (const link of inChain)
-          if (!known.has(link))
-            gaps.push(
-              `    ${link} — цепочка проверок его зовёт, а в объявлении звеньев его нет` +
-                NEWLINE +
-                "      значит про его инструмент на посадке не спросят",
-            );
-      }
-
-      // Смотрится ВСЕГДА, краснеет только при снятом флаге посадки.
-      //
-      // Прежде секция была объявлена предупреждением и прогон не роняла никогда
-      // — при том, что докладывает ровно то, чего у обвязки быть не должно:
-      // звено цепочки объявлено, а инструмента под него нет. Её собственный
-      // вывод говорит это прямым текстом: «поставленный без настройки проходит,
-      // не проверив ничего».
-      //
-      // Оправдание было, но узкое: пока посадка идёт, пакеты ещё не поставлены,
-      // и падать на этом значило бы падать на собственном незаконченном шаге.
-      // Флаг посадки это и различает — тем же приёмом, каким соседняя сверка
-      // различает несведённое семя.
-      //
-      // Найдено обходом «требование стояло, а инструмента не было»: рецепт
-      // фальсификации на эту секцию не доходил ни до одной сверки, потому что
-      // дойти было некуда.
-      // Печатается ВСЕГДА, а не только при находках. Секция, которой в чистом
-      // прогоне нет вовсе, не попадает ни в мета-сверку о корпусе, ни в разбор
-      // фальсификации: подсаженную поломку тот приписать некуда, и рецепт на неё
-      // докладывал «не дошла ни до одной сверки» с рождения.
-      {
-        // Связка проверок — ОДНА СТРОКА манифеста, приехавшая семенем целиком,
-        // и данными она не является. Проект, снявший звено без предмета,
-        // обязан вычеркнуть его и отсюда — а не вычеркнув, получает цепочку,
-        // которая не доходит до первой команды: `npm run check` падает на
-        // «Missing script», и падает НАВСЕГДА. Сверки при этом зелёные: они
-        // спрашивают звенья по отдельности, а связку не читал никто.
-        //
-        // Замерено посадкой в проект на обычном JavaScript: звено типов снято
-        // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
-        const chainCalls =
-          typeof scripts.check === "string"
-            ? scriptCallsIn(scripts.check, scripts)
-            : [];
-        const chainBroken = [];
-        for (const one of chainCalls)
-          if (scripts[one] == null)
-            chainBroken.push(
-              one +
-                " — связка проверок зовёт команду, которой в манифесте нет: цепочка не доходит до первой",
-            );
-        {
-          // Обратная сторона: живое звено, выпавшее из связки, перестаёт
-          // спрашиваться вовсе — и молча. Состав связки объявлен СЕМЕНЕМ
-          // манифеста, а не этим списком: он растёт вместе с цепочкой.
-          const seedAt = shelfAt("seat/templates/package.json");
-          const seedBody =
-            seedAt === null || !existsSync(seedAt)
-              ? null
-              : readJson(seedAt, {}).scripts?.check;
-          for (const piece of String(seedBody ?? "").split("&&")) {
-            const one = piece.trim();
-            const run = /^npm run ([^ ]+)/.exec(one);
-            const name =
-              run !== null
-                ? run[1]
-                : /^npm test( |$)/.test(one)
-                  ? "test"
-                  : null;
-            if (name === null) continue;
-            if (!linkHasSubject(name)) continue;
-            const own = linkOwnName(name, scripts) ?? name;
-            if (scripts[own] == null) continue;
-            if (chainCalls.includes(own)) continue;
-            chainBroken.push(
-              own +
-                " — звено живо и команда есть, а связка проверок его не зовёт: спрашивать его нечему",
-            );
+    checkRegion(
+      [
+        "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
+        "Конвейер зовёт проверки",
+        "Связка проверок зовёт живые звенья",
+        "Настройка сборки знает про тесты",
+        "Привезённый код виден компилятору",
+        "Строгость компилятора там, где проверяются типы",
+        "Конфиг снятого звена служит живому",
+      ],
+      () => {
+        if (CONFIG.toolchain == null)
+          return "цепочка не объявлена: поле `toolchain` настройки пусто";
+        if (CONFIG.manifest == null)
+          return "манифест не объявлен: поле `manifest` настройки пусто";
+        const at = path.join(BASE, CONFIG.manifest);
+        const pkg = existsSync(at)
+          ? JSON.parse(readFileSync(at, "utf8"))
+          : null;
+        const scripts = pkg?.scripts ?? {};
+        const declared = new Set([
+          ...Object.keys(pkg?.dependencies ?? {}),
+          ...Object.keys(pkg?.devDependencies ?? {}),
+        ]);
+        const gaps = [];
+        const elsewhere = [];
+        for (const link of CONFIG.toolchain) {
+          // Звено без предмета пробелом не является: его не дописывают намеренно.
+          if (!linkHasSubject(link.script)) continue;
+          if (linkTakenElsewhere(link.script, scripts)) {
+            elsewhere.push(link.script);
+            continue;
           }
-        }
-
-        // Конфиг СНЯТОГО звена остаётся, когда его инструмент служит живому.
-        // Оговорка та же, что у пакетов, и следует из неё: пакет, названный
-        // двумя звеньями, живёт, пока живо хотя бы одно, — а инструмент без
-        // своей настройки не работает. Компилятор назван и у звена линта:
-        // правила с типами держатся на нём и читают `tsconfig.json`.
-        //
-        // Замерено посадкой в проект на обычном JavaScript: звено типов снято
-        // по инструкции вместе с конфигом, и живое звено линта стало падать
-        // разбором на файлах САМОЙ ОБВЯЗКИ — «не найден в проекте компилятора».
-        // Цепочка красная, чинить нечем: конфиг класть запрещала инструкция.
-        const sharedConfigs = [];
-        {
-          const live = CONFIG.toolchain.filter((one) =>
-            linkHasSubject(one.script),
+          // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
+          const own = linkOwnName(link.script, scripts) ?? link.script;
+          const noScript = link.script != null && scripts[own] == null;
+          const missing = (link.packages ?? []).filter((p) => !declared.has(p));
+          if (!noScript && missing.length === 0) continue;
+          const what = [
+            noScript ? `команды \`${link.script}\` нет` : null,
+            missing.length ? `не объявлены: ${missing.join(", ")}` : null,
+          ]
+            .filter((x) => x !== null)
+            .join("; ");
+          // Четыре пробела: этим отступом прогон узнаёт находку. С двумя она не
+          // роняла его даже после того, как секция перестала быть предупреждением.
+          gaps.push(
+            `    ${link.script ?? "звено"} — ${what}` +
+              NEWLINE +
+              `      зачем: ${link.why ?? "не сказано в настройке"}` +
+              NEWLINE +
+              (link.template == null
+                ? "      настраивается руками: шаблона на полке нет намеренно, конфиг" +
+                  NEWLINE +
+                  "      этого звена зависит от вида проекта"
+                : `      шаблон настройки на полке: ${link.template}`),
           );
-          const livePacks = new Set(live.flatMap((one) => one.packages ?? []));
-          // Спрашивается СЕМЯ, а не настройка проекта. Звено, у которого
-          // предмета нет, проект вправе вычеркнуть из своего списка звеньев
-          // целиком, — и охранять его конфиг стало бы нечем: сверка смотрела
-          // бы в список, из которого звено уже вычеркнуто.
-          // Семя знает все звенья и их инструменты, и знание это не
-          // зависит от того, что проект у себя оставил.
-          //
-          // Замерено повторной посадкой в проект на обычном JavaScript:
-          // звено типов снято по инструкции, конфиг компилятора унесён
-          // вместе с ним, и живое звено линта снова падало разбором на
-          // файлах самой обвязки — при зелёном прогоне.
-          const seedLinks = (() => {
-            const at = shelfAt("seat/templates/graph.config.mjs");
-            if (at === null || !existsSync(at)) return [];
-            const body = readFileSync(at, "utf8");
-            const from = body.indexOf("toolchain: [");
-            if (from < 0) return [];
-            const out = [];
-            for (const piece of body.slice(from).split("    {")) {
-              const pick = (key) => {
-                const k = piece.indexOf(key + ": ");
-                if (k < 0) return null;
-                const q1 = piece.indexOf(String.fromCharCode(34), k);
-                if (q1 < 0) return null;
-                const q2 = piece.indexOf(String.fromCharCode(34), q1 + 1);
-                return q2 < 0 ? null : piece.slice(q1 + 1, q2);
-              };
-              const name = pick("script");
-              if (name === null) continue;
-              const conf = pick("config");
-              const packs = (() => {
-                const k = piece.indexOf("packages: [");
-                if (k < 0) return [];
-                const end = piece.indexOf("]", k);
-                const parts = piece
-                  .slice(k, end)
-                  .split(String.fromCharCode(34));
-                const out = [];
-                for (let i = 1; i < parts.length; i += 2) out.push(parts[i]);
-                return out;
-              })();
-              out.push({ script: name, config: conf, packages: packs });
-            }
-            return out;
-          })();
-          for (const link of seedLinks) {
-            if (linkHasSubject(link.script)) continue;
-            if (link.config == null) continue;
-            const shared = (link.packages ?? []).filter((one) =>
-              livePacks.has(one),
-            );
-            if (shared.length === 0) continue;
-            if (existsSync(path.join(BASE, "..", link.config))) continue;
-            sharedConfigs.push(
-              link.config +
-                " — конфиг снятого звена " +
-                link.script +
-                ", а его инструмент служит живому: " +
-                shared.join(", "),
-            );
+        }
+        // Обратная сторона: звено, появившееся в самой цепочке, но не объявленное.
+        // Прямая ловит «объявлено, а инструмента нет»; без этой половины список
+        // молча отстаёт от цепочки, и на следующей посадке про новое звено просто
+        // не спросят. Найдено пробой — сверка была односторонней с рождения.
+        const chain = scripts.check ?? null;
+        if (chain !== null) {
+          // Связка читается именем менеджера, объявленного ПРОЕКТОМ. Прежде имя
+          // стояло здесь литералом, и на проекте с другим менеджером связка
+          // читалась как пустая: обратная сторона сверки не видела в ней ни
+          // одного звена и молчать могла только зелено.
+          const inChain = scriptCallsIn(chain);
+          // Известными считаются и семенные имена звеньев, и те, под которыми
+          // звено живёт в этом проекте: иначе проектное имя, законно попавшее в
+          // связку, докладывается как необъявленное звено.
+          const known = new Set();
+          for (const l of CONFIG.toolchain) {
+            if (l.script == null) continue;
+            known.add(l.script);
+            const mine = linkOwnName(l.script, scripts);
+            if (mine !== null) known.add(mine);
           }
+          for (const link of inChain)
+            if (!known.has(link))
+              gaps.push(
+                `    ${link} — цепочка проверок его зовёт, а в объявлении звеньев его нет` +
+                  NEWLINE +
+                  "      значит про его инструмент на посадке не спросят",
+              );
         }
 
-        // Обвязка везёт СВОИ файлы кода — общий помощник, подготовку прогона —
-        // и кладёт их в `src/`. Проект, чей компилятор смотрит в другие папки,
-        // их не видит: звено типов их не проверяет, а звено линта с типами
-        // падает РАЗБОРОМ — «файл не найден по настройке компилятора», — и
-        // падает на файлах самой обвязки, а не на коде проекта.
+        // Смотрится ВСЕГДА, краснеет только при снятом флаге посадки.
         //
-        // Замерено посадкой стенда с двумя деревьями: `include` объявлял
-        // `client` и `server`, привезённые семена легли в `src`, и линт дал
-        // три ошибки разбора подряд.
-        const unseen = [];
-        let seedCode = 0;
+        // Прежде секция была объявлена предупреждением и прогон не роняла никогда
+        // — при том, что докладывает ровно то, чего у обвязки быть не должно:
+        // звено цепочки объявлено, а инструмента под него нет. Её собственный
+        // вывод говорит это прямым текстом: «поставленный без настройки проходит,
+        // не проверив ничего».
+        //
+        // Оправдание было, но узкое: пока посадка идёт, пакеты ещё не поставлены,
+        // и падать на этом значило бы падать на собственном незаконченном шаге.
+        // Флаг посадки это и различает — тем же приёмом, каким соседняя сверка
+        // различает несведённое семя.
+        //
+        // Найдено обходом «требование стояло, а инструмента не было»: рецепт
+        // фальсификации на эту секцию не доходил ни до одной сверки, потому что
+        // дойти было некуда.
+        // Печатается ВСЕГДА, а не только при находках. Секция, которой в чистом
+        // прогоне нет вовсе, не попадает ни в мета-сверку о корпусе, ни в разбор
+        // фальсификации: подсаженную поломку тот приписать некуда, и рецепт на неё
+        // докладывал «не дошла ни до одной сверки» с рождения.
         {
-          const at = path.join(BASE, "..", "tsconfig.json");
-          const inc = existsSync(at)
-            ? (readJson(at, {}).include ?? null)
-            : null;
-          const mapAt = shelfAt("seat/map.json");
-          const seeds =
-            mapAt === null || !existsSync(mapAt)
-              ? []
-              : (readJson(mapAt, {}).copy ?? []);
-          const covers = (one, file) => {
-            const bare = one.replace(/[/]+$/, "");
-            if (file === bare || file.startsWith(bare + "/")) return true;
-            if (!bare.includes("*")) return false;
-            const head = bare.slice(0, bare.indexOf("*"));
-            return file.startsWith(head);
-          };
-          if (inc !== null)
-            for (const e of seeds) {
-              // Компилятор и линт с типами разбирают TypeScript; остальной код
-              // линт читает без типов, и область компилятора ему не нужна.
-              if (!TS_FILE.test(e.to)) continue;
-              // Конфиг в корне репозитория компилятору не принадлежит: его
-              // читает свой инструмент, и в область типов он не входит.
-              if (!e.to.includes("/")) continue;
-              if (!existsSync(path.join(REPO, e.to))) continue;
-              seedCode += 1;
-              if (inc.some((one) => covers(one, e.to))) continue;
-              unseen.push(
-                e.to +
-                  " — файл кода приехал обвязкой, а `include` компилятора его не накрывает: звено линта с типами падает на нём разбором",
+          // Связка проверок — ОДНА СТРОКА манифеста, приехавшая семенем целиком,
+          // и данными она не является. Проект, снявший звено без предмета,
+          // обязан вычеркнуть его и отсюда — а не вычеркнув, получает цепочку,
+          // которая не доходит до первой команды: `npm run check` падает на
+          // «Missing script», и падает НАВСЕГДА. Сверки при этом зелёные: они
+          // спрашивают звенья по отдельности, а связку не читал никто.
+          //
+          // Замерено посадкой в проект на обычном JavaScript: звено типов снято
+          // по инструкции, связка осталась семенной, прогон зелен, цепочка мертва.
+          const chainCalls =
+            typeof scripts.check === "string"
+              ? scriptCallsIn(scripts.check, scripts)
+              : [];
+          const chainBroken = [];
+          for (const one of chainCalls)
+            if (scripts[one] == null)
+              chainBroken.push(
+                one +
+                  " — связка проверок зовёт команду, которой в манифесте нет: цепочка не доходит до первой",
+              );
+          {
+            // Обратная сторона: живое звено, выпавшее из связки, перестаёт
+            // спрашиваться вовсе — и молча. Состав связки объявлен СЕМЕНЕМ
+            // манифеста, а не этим списком: он растёт вместе с цепочкой.
+            const seedAt = shelfAt("seat/templates/package.json");
+            const seedBody =
+              seedAt === null || !existsSync(seedAt)
+                ? null
+                : readJson(seedAt, {}).scripts?.check;
+            for (const piece of String(seedBody ?? "").split("&&")) {
+              const one = piece.trim();
+              const run = /^npm run ([^ ]+)/.exec(one);
+              const name =
+                run !== null
+                  ? run[1]
+                  : /^npm test( |$)/.test(one)
+                    ? "test"
+                    : null;
+              if (name === null) continue;
+              if (!linkHasSubject(name)) continue;
+              const own = linkOwnName(name, scripts) ?? name;
+              if (scripts[own] == null) continue;
+              if (chainCalls.includes(own)) continue;
+              chainBroken.push(
+                own +
+                  " — звено живо и команда есть, а связка проверок его не зовёт: спрашивать его нечему",
               );
             }
-        }
+          }
 
-        // Секция тестов в настройке сборщика требует, чтобы `defineConfig`
-        // был взят из `vitest/config`, а не из `vite`: у сборщика в типе
-        // такого поля нет вовсе. Привозит секцию обвязка, а импорт остаётся
-        // проектным — и звено типов краснеет на СВОЕЙ ЖЕ настройке, сообщением
-        // «'test' does not exist in type UserConfigExport», которое про тесты
-        // не говорит ничего.
-        //
-        // Замерено посадкой стенда с раскладкой умолчания: слияние дописало
-        // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
-        const viteDrift = [];
-        let viteLooked = 0;
-        const viteSeen = new Set();
-        // Спрашивается только там, где есть ЗВЕНО ТИПОВ: ломается от этого
-        // именно компилятор. В проекте на обычном JavaScript импорт берут
-        // откуда угодно — раннер читает секцию тестов в любом случае, и
-        // требовать тут `vitest/config` значило бы краснеть на законном.
-        if (linkHasSubject("typecheck")) {
+          // Конфиг СНЯТОГО звена остаётся, когда его инструмент служит живому.
+          // Оговорка та же, что у пакетов, и следует из неё: пакет, названный
+          // двумя звеньями, живёт, пока живо хотя бы одно, — а инструмент без
+          // своей настройки не работает. Компилятор назван и у звена линта:
+          // правила с типами держатся на нём и читают `tsconfig.json`.
+          //
+          // Замерено посадкой в проект на обычном JavaScript: звено типов снято
+          // по инструкции вместе с конфигом, и живое звено линта стало падать
+          // разбором на файлах САМОЙ ОБВЯЗКИ — «не найден в проекте компилятора».
+          // Цепочка красная, чинить нечем: конфиг класть запрещала инструкция.
+          const sharedConfigs = [];
+          {
+            const live = CONFIG.toolchain.filter((one) =>
+              linkHasSubject(one.script),
+            );
+            const livePacks = new Set(
+              live.flatMap((one) => one.packages ?? []),
+            );
+            // Спрашивается СЕМЯ, а не настройка проекта. Звено, у которого
+            // предмета нет, проект вправе вычеркнуть из своего списка звеньев
+            // целиком, — и охранять его конфиг стало бы нечем: сверка смотрела
+            // бы в список, из которого звено уже вычеркнуто.
+            // Семя знает все звенья и их инструменты, и знание это не
+            // зависит от того, что проект у себя оставил.
+            //
+            // Замерено повторной посадкой в проект на обычном JavaScript:
+            // звено типов снято по инструкции, конфиг компилятора унесён
+            // вместе с ним, и живое звено линта снова падало разбором на
+            // файлах самой обвязки — при зелёном прогоне.
+            const seedLinks = (() => {
+              const at = shelfAt("seat/templates/graph.config.mjs");
+              if (at === null || !existsSync(at)) return [];
+              const body = readFileSync(at, "utf8");
+              const from = body.indexOf("toolchain: [");
+              if (from < 0) return [];
+              const out = [];
+              for (const piece of body.slice(from).split("    {")) {
+                const pick = (key) => {
+                  const k = piece.indexOf(key + ": ");
+                  if (k < 0) return null;
+                  const q1 = piece.indexOf(String.fromCharCode(34), k);
+                  if (q1 < 0) return null;
+                  const q2 = piece.indexOf(String.fromCharCode(34), q1 + 1);
+                  return q2 < 0 ? null : piece.slice(q1 + 1, q2);
+                };
+                const name = pick("script");
+                if (name === null) continue;
+                const conf = pick("config");
+                const packs = (() => {
+                  const k = piece.indexOf("packages: [");
+                  if (k < 0) return [];
+                  const end = piece.indexOf("]", k);
+                  const parts = piece
+                    .slice(k, end)
+                    .split(String.fromCharCode(34));
+                  const out = [];
+                  for (let i = 1; i < parts.length; i += 2) out.push(parts[i]);
+                  return out;
+                })();
+                out.push({ script: name, config: conf, packages: packs });
+              }
+              return out;
+            })();
+            for (const link of seedLinks) {
+              if (linkHasSubject(link.script)) continue;
+              if (link.config == null) continue;
+              const shared = (link.packages ?? []).filter((one) =>
+                livePacks.has(one),
+              );
+              if (shared.length === 0) continue;
+              if (existsSync(path.join(BASE, "..", link.config))) continue;
+              sharedConfigs.push(
+                link.config +
+                  " — конфиг снятого звена " +
+                  link.script +
+                  ", а его инструмент служит живому: " +
+                  shared.join(", "),
+              );
+            }
+          }
+
+          // Обвязка везёт СВОИ файлы кода — общий помощник, подготовку прогона —
+          // и кладёт их в `src/`. Проект, чей компилятор смотрит в другие папки,
+          // их не видит: звено типов их не проверяет, а звено линта с типами
+          // падает РАЗБОРОМ — «файл не найден по настройке компилятора», — и
+          // падает на файлах самой обвязки, а не на коде проекта.
+          //
+          // Замерено посадкой стенда с двумя деревьями: `include` объявлял
+          // `client` и `server`, привезённые семена легли в `src`, и линт дал
+          // три ошибки разбора подряд.
+          const unseen = [];
+          let seedCode = 0;
+          {
+            const at = path.join(BASE, "..", "tsconfig.json");
+            const inc = existsSync(at)
+              ? (readJson(at, {}).include ?? null)
+              : null;
+            const mapAt = shelfAt("seat/map.json");
+            const seeds =
+              mapAt === null || !existsSync(mapAt)
+                ? []
+                : (readJson(mapAt, {}).copy ?? []);
+            const covers = (one, file) => {
+              const bare = one.replace(/[/]+$/, "");
+              if (file === bare || file.startsWith(bare + "/")) return true;
+              if (!bare.includes("*")) return false;
+              const head = bare.slice(0, bare.indexOf("*"));
+              return file.startsWith(head);
+            };
+            if (inc !== null)
+              for (const e of seeds) {
+                // Компилятор и линт с типами разбирают TypeScript; остальной код
+                // линт читает без типов, и область компилятора ему не нужна.
+                if (!TS_FILE.test(e.to)) continue;
+                // Конфиг в корне репозитория компилятору не принадлежит: его
+                // читает свой инструмент, и в область типов он не входит.
+                if (!e.to.includes("/")) continue;
+                if (!existsSync(path.join(REPO, e.to))) continue;
+                seedCode += 1;
+                if (inc.some((one) => covers(one, e.to))) continue;
+                unseen.push(
+                  e.to +
+                    " — файл кода приехал обвязкой, а `include` компилятора его не накрывает: звено линта с типами падает на нём разбором",
+                );
+              }
+          }
+
+          // Секция тестов в настройке сборщика требует, чтобы `defineConfig`
+          // был взят из `vitest/config`, а не из `vite`: у сборщика в типе
+          // такого поля нет вовсе. Привозит секцию обвязка, а импорт остаётся
+          // проектным — и звено типов краснеет на СВОЕЙ ЖЕ настройке, сообщением
+          // «'test' does not exist in type UserConfigExport», которое про тесты
+          // не говорит ничего.
+          //
+          // Замерено посадкой стенда с раскладкой умолчания: слияние дописало
+          // секцию в проектный конфиг, импорт остался прежним, компилятор встал.
+          const viteDrift = [];
+          let viteLooked = 0;
+          const viteSeen = new Set();
+          // Спрашивается только там, где есть ЗВЕНО ТИПОВ: ломается от этого
+          // именно компилятор. В проекте на обычном JavaScript импорт берут
+          // откуда угодно — раннер читает секцию тестов в любом случае, и
+          // требовать тут `vitest/config` значило бы краснеть на законном.
+          if (linkHasSubject("typecheck")) {
+            for (const name of runnerConfigNames()) {
+              const at = path.join(BASE, "..", name);
+              if (!existsSync(at)) continue;
+              viteSeen.add(name);
+              const body = readFileSync(at, "utf8");
+              if (testSectionOf(body) === null) continue;
+              if (body.includes("vitest/config")) continue;
+              // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
+              // типы — замерено компилятором на такой настройке. Для старших
+              // версий это не мерено, и они спрашиваются по-прежнему.
+              const runner = readJson(
+                path.join(BASE, "..", "node_modules", "vitest", "package.json"),
+                {},
+              );
+              const major = Number(String(runner.version ?? "0").split(".")[0]);
+              if (
+                major === 2 &&
+                /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(body)
+              )
+                continue;
+              viteDrift.push(
+                name +
+                  " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
+              );
+            }
+          }
+          // Подготовка прогона легла — раннер обязан её звать. Правило слияния
+          // «дописать в конфиг раннера область сбора, и только её» оставляло
+          // семя подготовки лежать мёртвым: реестр тестов называл его уборкой
+          // между тестами, а раннер проекта с `globals: false` его не читал, и
+          // вторая же отрисовка в одном файле нашла бы две копии узла. Замерено
+          // посадкой руками в проект со своей секцией тестов.
+          {
+            const setupAt = shelfAt("seat/map.json");
+            const setupSeed =
+              setupAt !== null && existsSync(setupAt)
+                ? (readJson(setupAt, {}).copy ?? []).find((e) =>
+                    e.from.endsWith("tests/setup.ts"),
+                  )
+                : undefined;
+            if (
+              setupSeed !== undefined &&
+              existsSync(path.join(REPO, setupSeed.to))
+            ) {
+              const runnerConf = runnerConfigNames()
+                .map((n) => path.join(BASE, "..", n))
+                .filter((at) => existsSync(at))
+                .map((at) => readFileSync(at, "utf8"))
+                .find((body) => testSectionOf(body) !== null);
+              viteLooked += 1;
+              if (
+                runnerConf !== undefined &&
+                !runnerConf.includes(setupSeed.to.replace(/^src\//, ""))
+              )
+                viteDrift.push(
+                  setupSeed.to +
+                    " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
+                );
+              // Секции тестов нет НИ В ОДНОЙ настройке, а звено тестов обвязки
+              // живое: раннер идёт умолчанием и подготовку не зовёт. Так выходило,
+              // когда настройку сборщика под другим именем того же формата
+              // откладывали в `.seat` до фазы 2 — тесты фазы 1 шли без области
+              // сбора и без подготовки, и зелёными. Найдено посадкой руками в
+              // проект с `vite.config.js`. У проекта со своим раннером звено
+              // тестов не живое, и вопроса нет.
+              const testLink = (
+                readJson(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
+              ).find((e) => e.name === "test");
+              const testLives =
+                testLink?.recognise != null &&
+                linkCalled(
+                  new RegExp(testLink.recognise),
+                  readJson(
+                    path.join(BASE, CONFIG.manifest ?? "../package.json"),
+                    {},
+                  ).scripts ?? {},
+                );
+              if (runnerConf === undefined && testLives)
+                viteDrift.push(
+                  setupSeed.to +
+                    " — подготовка прогона лежит, звено тестов живое, а секции тестов нет ни в одной настройке сборщика: раннер идёт умолчанием и подготовку не зовёт",
+                );
+            }
+          }
+          // Область сбора не называет папку обвязки: её тесты идут своей
+          // командой, вне прогона проекта. Семя прежде называло её в `include`,
+          // а обновление обвязки настройку проекта не трогает — в посаженных
+          // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
+          // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
           for (const name of runnerConfigNames()) {
             const at = path.join(BASE, "..", name);
             if (!existsSync(at)) continue;
             viteSeen.add(name);
             const body = readFileSync(at, "utf8");
-            if (testSectionOf(body) === null) continue;
-            if (body.includes("vitest/config")) continue;
-            // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
-            // типы — замерено компилятором на такой настройке. Для старших
-            // версий это не мерено, и они спрашиваются по-прежнему.
-            const runner = readJson(
-              path.join(BASE, "..", "node_modules", "vitest", "package.json"),
-              {},
+            const section = testSectionOf(body);
+            if (section === null) continue;
+            const lists = [...section.matchAll(/include:\s*\[([^\]]*)\]/g)].map(
+              (m) => m[1],
             );
-            const major = Number(String(runner.version ?? "0").split(".")[0]);
-            if (
-              major === 2 &&
-              /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(body)
-            )
-              continue;
-            viteDrift.push(
-              name +
-                " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
-            );
-          }
-        }
-        // Подготовка прогона легла — раннер обязан её звать. Правило слияния
-        // «дописать в конфиг раннера область сбора, и только её» оставляло
-        // семя подготовки лежать мёртвым: реестр тестов называл его уборкой
-        // между тестами, а раннер проекта с `globals: false` его не читал, и
-        // вторая же отрисовка в одном файле нашла бы две копии узла. Замерено
-        // посадкой руками в проект со своей секцией тестов.
-        {
-          const setupAt = shelfAt("seat/map.json");
-          const setupSeed =
-            setupAt !== null && existsSync(setupAt)
-              ? (readJson(setupAt, {}).copy ?? []).find((e) =>
-                  e.from.endsWith("tests/setup.ts"),
-                )
-              : undefined;
-          if (
-            setupSeed !== undefined &&
-            existsSync(path.join(REPO, setupSeed.to))
-          ) {
-            const runnerConf = runnerConfigNames()
-              .map((n) => path.join(BASE, "..", n))
-              .filter((at) => existsSync(at))
-              .map((at) => readFileSync(at, "utf8"))
-              .find((body) => testSectionOf(body) !== null);
-            viteLooked += 1;
-            if (
-              runnerConf !== undefined &&
-              !runnerConf.includes(setupSeed.to.replace(/^src\//, ""))
-            )
+            if (lists.some((l) => l.includes(".claude")))
               viteDrift.push(
-                setupSeed.to +
-                  " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
+                name +
+                  " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
               );
-            // Секции тестов нет НИ В ОДНОЙ настройке, а звено тестов обвязки
-            // живое: раннер идёт умолчанием и подготовку не зовёт. Так выходило,
-            // когда настройку сборщика под другим именем того же формата
-            // откладывали в `.seat` до фазы 2 — тесты фазы 1 шли без области
-            // сбора и без подготовки, и зелёными. Найдено посадкой руками в
-            // проект с `vite.config.js`. У проекта со своим раннером звено
-            // тестов не живое, и вопроса нет.
-            const testLink = (
-              readJson(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
-            ).find((e) => e.name === "test");
-            const testLives =
-              testLink?.recognise != null &&
-              linkCalled(
-                new RegExp(testLink.recognise),
-                readJson(
-                  path.join(BASE, CONFIG.manifest ?? "../package.json"),
-                  {},
-                ).scripts ?? {},
-              );
-            if (runnerConf === undefined && testLives)
+          }
+          // Область сбора называет тесты проекта. Семя пишет её от корня `src`, и в
+          // проекте с другим корнем, у которого своего конфига раннера не было,
+          // оно ложилось целиком: раннер не находил ни одного теста, а сверка
+          // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
+          // корнем `lib`. Область — первый список строк в секции тестов до
+          // покрытия: у покрытия своя.
+          for (const name of runnerConfigNames()) {
+            const at = path.join(BASE, "..", name);
+            if (!existsSync(at)) continue;
+            const body = readFileSync(at, "utf8");
+            const section = testSectionOf(body);
+            if (section === null) continue;
+            const cut = section.search(/\bcoverage\s*:/);
+            const globs = [
+              ...(cut < 0 ? section : section.slice(0, cut)).matchAll(
+                /include:\s*\[([^\]]*)\]/g,
+              ),
+            ]
+              .map((m) =>
+                [...m[1].matchAll(/["']([^"']+)["']/g)].map((g) => g[1]),
+              )
+              .find((list) => list.length > 0);
+            if (globs === undefined) continue;
+            const collected = globsToTest(globs);
+            // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
+            // лежит в папке тестов, но тестом не является.
+            const lost = files
+              .filter((f) => TEST_SUFFIX.test(f))
+              .map((f) => norm(path.relative(path.join(BASE, ".."), f)))
+              .filter((k) => !collected(k));
+            for (const k of lost.slice(0, 5))
               viteDrift.push(
-                setupSeed.to +
-                  " — подготовка прогона лежит, звено тестов живое, а секции тестов нет ни в одной настройке сборщика: раннер идёт умолчанием и подготовку не зовёт",
+                name +
+                  " — тест проекта " +
+                  k +
+                  " вне области сбора `include`: раннер его не соберёт",
+              );
+            if (lost.length > 5)
+              viteDrift.push(
+                name +
+                  " — и ещё тестов вне области сбора: " +
+                  (lost.length - 5),
               );
           }
-        }
-        // Область сбора не называет папку обвязки: её тесты идут своей
-        // командой, вне прогона проекта. Семя прежде называло её в `include`,
-        // а обновление обвязки настройку проекта не трогает — в посаженных
-        // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
-        // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
-        for (const name of runnerConfigNames()) {
-          const at = path.join(BASE, "..", name);
-          if (!existsSync(at)) continue;
-          viteSeen.add(name);
-          const body = readFileSync(at, "utf8");
-          const section = testSectionOf(body);
-          if (section === null) continue;
-          const lists = [...section.matchAll(/include:\s*\[([^\]]*)\]/g)].map(
-            (m) => m[1],
-          );
-          if (lists.some((l) => l.includes(".claude")))
-            viteDrift.push(
-              name +
-                " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
-            );
-        }
-        // Область сбора называет тесты проекта. Семя пишет её от корня `src`, и в
-        // проекте с другим корнем, у которого своего конфига раннера не было,
-        // оно ложилось целиком: раннер не находил ни одного теста, а сверка
-        // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
-        // корнем `lib`. Область — первый список строк в секции тестов до
-        // покрытия: у покрытия своя.
-        for (const name of runnerConfigNames()) {
-          const at = path.join(BASE, "..", name);
-          if (!existsSync(at)) continue;
-          const body = readFileSync(at, "utf8");
-          const section = testSectionOf(body);
-          if (section === null) continue;
-          const cut = section.search(/\bcoverage\s*:/);
-          const globs = [
-            ...(cut < 0 ? section : section.slice(0, cut)).matchAll(
-              /include:\s*\[([^\]]*)\]/g,
-            ),
-          ]
-            .map((m) =>
-              [...m[1].matchAll(/["']([^"']+)["']/g)].map((g) => g[1]),
-            )
-            .find((list) => list.length > 0);
-          if (globs === undefined) continue;
-          const collected = globsToTest(globs);
-          // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
-          // лежит в папке тестов, но тестом не является.
-          const lost = files
-            .filter((f) => TEST_SUFFIX.test(f))
-            .map((f) => norm(path.relative(path.join(BASE, ".."), f)))
-            .filter((k) => !collected(k));
-          for (const k of lost.slice(0, 5))
-            viteDrift.push(
-              name +
-                " — тест проекта " +
-                k +
-                " вне области сбора `include`: раннер его не соберёт",
-            );
-          if (lost.length > 5)
-            viteDrift.push(
-              name + " — и ещё тестов вне области сбора: " + (lost.length - 5),
-            );
-        }
-        checkHead("Настройка сборки знает про тесты", {
-          n: viteSeen.size + viteLooked,
-          unit: "настроек сборки",
-        });
-        console.log("  расхождений: " + viteDrift.length);
-        for (const one of viteDrift) console.log("    " + one);
-        checkHead("Привезённый код виден компилятору", {
-          n: seedCode,
-          unit: "файлов кода, привезённых обвязкой",
-        });
-        // Привезённого кода может не быть вовсе: каркас едет в пустой проект,
-        // помощник и подготовка прогона — по условию. Строку читает и
-        // фальсификация: рецепту здесь ломать нечего.
-        if (seedCode === 0)
-          console.log(IDLE_NOTES["Привезённый код виден компилятору"]);
-        console.log("  вне области компилятора: " + unseen.length);
-        for (const one of unseen) console.log("    " + one);
+          checkHead("Настройка сборки знает про тесты", {
+            n: viteSeen.size + viteLooked,
+            unit: "настроек сборки",
+          });
+          console.log("  расхождений: " + viteDrift.length);
+          for (const one of viteDrift) console.log("    " + one);
+          checkHead("Привезённый код виден компилятору", {
+            n: seedCode,
+            unit: "файлов кода, привезённых обвязкой",
+          });
+          // Привезённого кода может не быть вовсе: каркас едет в пустой проект,
+          // помощник и подготовка прогона — по условию. Строку читает и
+          // фальсификация: рецепту здесь ломать нечего.
+          if (seedCode === 0)
+            console.log(IDLE_NOTES["Привезённый код виден компилятору"]);
+          console.log("  вне области компилятора: " + unseen.length);
+          for (const one of unseen) console.log("    " + one);
 
-        // Строгость компилятора — там, где звено типов проверяет код.
-        //
-        // Часть планки стоит на строгости, и посадка дописывает её всегда.
-        // Проверки у этого не было никакой: монорепозиторий раздаёт проверку
-        // типов пакетам, строгость дописали в конфиг корня, а пакеты остались
-        // при своей, и звено типов проверяло их мягче объявленного — зелёным.
-        // Замерено посадкой руками в монорепозиторий.
-        //
-        // Конфиги берутся по тому, что звено ЗОВЁТ: `-p` и `--project` —
-        // названный файл, иначе конфиг корня; конфиг-решение со ссылками — его
-        // ссылки; делегирование пакетам — те же вызовы в каждом пакете. Опции
-        // читаются вместе с тем, что конфиг продолжает. Набор флагов — из семени
-        // конфига: всё включённое в нём, что строже умолчания.
-        const strictGap = [];
-        let strictLooked = 0;
-        if (linkHasSubject("typecheck")) {
-          const seedTs = shelfAt("seat/templates/tsconfig.json");
-          const seedOpts =
-            seedTs !== null && existsSync(seedTs)
-              ? (parseJsonc(readFileSync(seedTs, "utf8"))?.compilerOptions ??
-                {})
-              : {};
-          const want = Object.entries(seedOpts)
-            .filter(
-              ([k, v]) =>
-                v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
-            )
-            .map(([k]) => k);
-          for (const [one, opts] of typeCheckOptions()) {
-            if (opts == null) continue;
-            strictLooked += 1;
-            const lax = want.filter((k) => opts[k] !== true);
-            if (lax.length)
-              strictGap.push(
-                path.relative(REPO, one).split(path.sep).join("/") +
-                  " — звено типов проверяет по нему, а строгости семени нет: " +
-                  lax.join(", "),
-              );
-          }
-        }
-        checkHead("Строгость компилятора там, где проверяются типы", {
-          n: strictLooked,
-          unit: "конфигов компилятора, по которым идёт проверка типов",
-        });
-        console.log("  без строгости семени: " + strictGap.length);
-        for (const one of strictGap) console.log("    " + one);
-        checkHead("Конфиг снятого звена служит живому", {
-          n: CONFIG.toolchain.length,
-          unit: "звеньев цепочки",
-        });
-        console.log(
-          "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
-        );
-        for (const one of sharedConfigs) console.log("    " + one);
-
-        // Конвейер — ТА ЖЕ СВЯЗКА, что скрипт проверок, только написанная
-        // однажды и живущая отдельно. Описание сборки на сервере, которое
-        // собирает проект и не зовёт ни одного звена цепочки, даёт ворота,
-        // не проверяющие ничего: зелёная галочка стоит, типы и тесты не
-        // прогонялись. Планка требует обратного прямо — раздел U, «порядок
-        // ворот от дешёвых к дорогим», — а крючка у требования не было.
-        //
-        // Замерено посадкой стенда с описанием на сервере: единственный шаг
-        // конвейера — сборка, и прогон об этом молчал.
-        const ciFiles = [];
-        {
-          const roots = [".github/workflows", ".circleci"];
-          const loose = [
-            ".gitlab-ci.yml",
-            ".drone.yml",
-            "azure-pipelines.yml",
-            "Jenkinsfile",
-            "bitbucket-pipelines.yml",
-            ".woodpecker.yml",
-          ];
-          const at = (one) => path.join(BASE, "..", one);
-          for (const one of loose) if (existsSync(at(one))) ciFiles.push(one);
-          for (const dir of roots) {
-            if (!existsSync(at(dir))) continue;
-            for (const name of readdirSync(at(dir))) {
-              const full = path.join(at(dir), name);
-              if (statSync(full).isDirectory()) continue;
-              ciFiles.push(dir + "/" + name);
+          // Строгость компилятора — там, где звено типов проверяет код.
+          //
+          // Часть планки стоит на строгости, и посадка дописывает её всегда.
+          // Проверки у этого не было никакой: монорепозиторий раздаёт проверку
+          // типов пакетам, строгость дописали в конфиг корня, а пакеты остались
+          // при своей, и звено типов проверяло их мягче объявленного — зелёным.
+          // Замерено посадкой руками в монорепозиторий.
+          //
+          // Конфиги берутся по тому, что звено ЗОВЁТ: `-p` и `--project` —
+          // названный файл, иначе конфиг корня; конфиг-решение со ссылками — его
+          // ссылки; делегирование пакетам — те же вызовы в каждом пакете. Опции
+          // читаются вместе с тем, что конфиг продолжает. Набор флагов — из семени
+          // конфига: всё включённое в нём, что строже умолчания.
+          const strictGap = [];
+          let strictLooked = 0;
+          if (linkHasSubject("typecheck")) {
+            const seedTs = shelfAt("seat/templates/tsconfig.json");
+            const seedOpts =
+              seedTs !== null && existsSync(seedTs)
+                ? (parseJsonc(readFileSync(seedTs, "utf8"))?.compilerOptions ??
+                  {})
+                : {};
+            const want = Object.entries(seedOpts)
+              .filter(
+                ([k, v]) =>
+                  v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
+              )
+              .map(([k]) => k);
+            for (const [one, opts] of typeCheckOptions()) {
+              if (opts == null) continue;
+              strictLooked += 1;
+              const lax = want.filter((k) => opts[k] !== true);
+              if (lax.length)
+                strictGap.push(
+                  path.relative(REPO, one).split(path.sep).join("/") +
+                    " — звено типов проверяет по нему, а строгости семени нет: " +
+                    lax.join(", "),
+                );
             }
           }
-        }
-        const ciMute = [];
-        const ciAside = [];
-        // Описание, которое не зовёт менеджер пакетов проекта, проекта не
-        // собирает и воротами не является: публикация документации запросом,
-        // запирание старых обсуждений чужим действием. Замерено на библиотеке:
-        // из пяти описаний два проекта не касались, и прогон требовал от них
-        // проверок. Ищется вызов командой, а не слово: `cache: npm` в
-        // настройке шага вызовом не является.
-        const PM_CALL =
-          /(?:^|[;&|]|run:)\s*(?:-\s+)?(?:npm|pnpm|yarn|bun)(?:[ \t]+\S|[ \t]*$)/m;
-        for (const one of ciFiles) {
-          const body = readFileSync(path.join(BASE, "..", one), "utf8");
-          if (!PM_CALL.test(body)) {
-            ciAside.push(one);
-            continue;
-          }
-          const names = CONFIG.toolchain
-            .map((link) => link.script)
-            .filter((name) => name != null)
-            .filter((name) => linkHasSubject(name))
-            .filter(
-              (name) => scripts[linkOwnName(name, scripts) ?? name] != null,
-            );
-          // Звено зовут ЕГО ИМЕНЕМ В ПРОЕКТЕ, а не семенным: конвейер проекта
-          // пишет `npm run types`, если звено типов у него `types`. Прежде
-          // искалось семенное имя, и конвейер, зовущий звено типов проекта,
-          // объявлялся не зовущим ни одного — замерено посадкой руками. Звено
-          // тестов менеджер зовёт и сокращённо, `npm test`.
-          const called = new Set(
-            body
-              .split(NEWLINE)
-              .flatMap((line) =>
-                scriptCallsIn(line.replace(/^\s*(-\s*)?(run:\s*)?/, "")),
-              ),
-          );
-          const calls = names.filter((name) => {
-            const own = linkOwnName(name, scripts) ?? name;
-            return body.includes("run " + own) || called.has(own);
+          checkHead("Строгость компилятора там, где проверяются типы", {
+            n: strictLooked,
+            unit: "конфигов компилятора, по которым идёт проверка типов",
           });
-          if (body.includes("run check") || calls.length > 0) continue;
-          // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
-          // посадки не входит: она ставит инструмент, а не чинит код. Пункт
-          // долга перехода снимает красное и оставляет находку на виду — пункт,
-          // назвавший ЭТОТ файл. Прежде пункт держал сверку по имени, и один
-          // пункт про одно описание держал любое число новых: замерено
-          // фальсификацией на стенде — посаженное второе описание без проверок
-          // прошло зелёным.
-          if (
-            openFindingRows().some(
-              (row) =>
-                row.includes("«Конвейер зовёт проверки»") && row.includes(one),
-            )
-          )
-            continue;
-          ciMute.push(
-            one +
-              " — описание сборки на сервере не зовёт ни связку проверок, ни одно звено цепочки: ворота стоят и не проверяют ничего. Записать пунктом долга перехода либо позвать цепочку",
-          );
-        }
-        checkHead("Конвейер зовёт проверки", {
-          n: ciFiles.length,
-          unit: "описаний сборки на сервере",
-        });
-        console.log("  не зовут цепочку: " + ciMute.length);
-        if (ciAside.length)
-          console.log(
-            "  проекта не собирают, вопрос не задаётся: " + ciAside.join(", "),
-          );
-        for (const one of ciMute) console.log("    " + one);
-        checkHead("Связка проверок зовёт живые звенья", {
-          n: chainCalls.length,
-          unit: "вызовов в связке проверок",
-        });
-        console.log("  расхождений: " + chainBroken.length);
-        for (const one of chainBroken) console.log("    " + one);
-        checkHead(
-          "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
-          {
+          console.log("  без строгости семени: " + strictGap.length);
+          for (const one of strictGap) console.log("    " + one);
+          checkHead("Конфиг снятого звена служит живому", {
             n: CONFIG.toolchain.length,
             unit: "звеньев цепочки",
-          },
-        );
-        console.log("  звеньев цепочки без инструмента: " + gaps.length + "");
-        for (const g of gaps) console.log(g);
-        if (elsewhere.length)
+          });
           console.log(
-            "  у проекта своё устройство, не пробел: " +
-              elsewhere.join(", ") +
-              " — имя звена занято своей работой либо нет ведущего звена; расхождение с умолчанием держит план перехода",
+            "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
           );
-        if (gaps.length) {
-          console.log(
-            "  Поставить и настроить — шаг 6 фазы 1 посадки, «Поставить пакеты».",
+          for (const one of sharedConfigs) console.log("    " + one);
+
+          // Конвейер — ТА ЖЕ СВЯЗКА, что скрипт проверок, только написанная
+          // однажды и живущая отдельно. Описание сборки на сервере, которое
+          // собирает проект и не зовёт ни одного звена цепочки, даёт ворота,
+          // не проверяющие ничего: зелёная галочка стоит, типы и тесты не
+          // прогонялись. Планка требует обратного прямо — раздел U, «порядок
+          // ворот от дешёвых к дорогим», — а крючка у требования не было.
+          //
+          // Замерено посадкой стенда с описанием на сервере: единственный шаг
+          // конвейера — сборка, и прогон об этом молчал.
+          const ciFiles = [];
+          {
+            const roots = [".github/workflows", ".circleci"];
+            const loose = [
+              ".gitlab-ci.yml",
+              ".drone.yml",
+              "azure-pipelines.yml",
+              "Jenkinsfile",
+              "bitbucket-pipelines.yml",
+              ".woodpecker.yml",
+            ];
+            const at = (one) => path.join(BASE, "..", one);
+            for (const one of loose) if (existsSync(at(one))) ciFiles.push(one);
+            for (const dir of roots) {
+              if (!existsSync(at(dir))) continue;
+              for (const name of readdirSync(at(dir))) {
+                const full = path.join(at(dir), name);
+                if (statSync(full).isDirectory()) continue;
+                ciFiles.push(dir + "/" + name);
+              }
+            }
+          }
+          const ciMute = [];
+          const ciAside = [];
+          // Описание, которое не зовёт менеджер пакетов проекта, проекта не
+          // собирает и воротами не является: публикация документации запросом,
+          // запирание старых обсуждений чужим действием. Замерено на библиотеке:
+          // из пяти описаний два проекта не касались, и прогон требовал от них
+          // проверок. Ищется вызов командой, а не слово: `cache: npm` в
+          // настройке шага вызовом не является.
+          const PM_CALL =
+            /(?:^|[;&|]|run:)\s*(?:-\s+)?(?:npm|pnpm|yarn|bun)(?:[ \t]+\S|[ \t]*$)/m;
+          for (const one of ciFiles) {
+            const body = readFileSync(path.join(BASE, "..", one), "utf8");
+            if (!PM_CALL.test(body)) {
+              ciAside.push(one);
+              continue;
+            }
+            const names = CONFIG.toolchain
+              .map((link) => link.script)
+              .filter((name) => name != null)
+              .filter((name) => linkHasSubject(name))
+              .filter(
+                (name) => scripts[linkOwnName(name, scripts) ?? name] != null,
+              );
+            // Звено зовут ЕГО ИМЕНЕМ В ПРОЕКТЕ, а не семенным: конвейер проекта
+            // пишет `npm run types`, если звено типов у него `types`. Прежде
+            // искалось семенное имя, и конвейер, зовущий звено типов проекта,
+            // объявлялся не зовущим ни одного — замерено посадкой руками. Звено
+            // тестов менеджер зовёт и сокращённо, `npm test`.
+            const called = new Set(
+              body
+                .split(NEWLINE)
+                .flatMap((line) =>
+                  scriptCallsIn(line.replace(/^\s*(-\s*)?(run:\s*)?/, "")),
+                ),
+            );
+            const calls = names.filter((name) => {
+              const own = linkOwnName(name, scripts) ?? name;
+              return body.includes("run " + own) || called.has(own);
+            });
+            if (body.includes("run check") || calls.length > 0) continue;
+            // Конвейер — устройство ПРОЕКТА, а состояние проекта в рубеж
+            // посадки не входит: она ставит инструмент, а не чинит код. Пункт
+            // долга перехода снимает красное и оставляет находку на виду — пункт,
+            // назвавший ЭТОТ файл. Прежде пункт держал сверку по имени, и один
+            // пункт про одно описание держал любое число новых: замерено
+            // фальсификацией на стенде — посаженное второе описание без проверок
+            // прошло зелёным.
+            if (
+              openFindingRows().some(
+                (row) =>
+                  row.includes("«Конвейер зовёт проверки»") &&
+                  row.includes(one),
+              )
+            )
+              continue;
+            ciMute.push(
+              one +
+                " — описание сборки на сервере не зовёт ни связку проверок, ни одно звено цепочки: ворота стоят и не проверяют ничего. Записать пунктом долга перехода либо позвать цепочку",
+            );
+          }
+          checkHead("Конвейер зовёт проверки", {
+            n: ciFiles.length,
+            unit: "описаний сборки на сервере",
+          });
+          console.log("  не зовут цепочку: " + ciMute.length);
+          if (ciAside.length)
+            console.log(
+              "  проекта не собирают, вопрос не задаётся: " +
+                ciAside.join(", "),
+            );
+          for (const one of ciMute) console.log("    " + one);
+          checkHead("Связка проверок зовёт живые звенья", {
+            n: chainCalls.length,
+            unit: "вызовов в связке проверок",
+          });
+          console.log("  расхождений: " + chainBroken.length);
+          for (const one of chainBroken) console.log("    " + one);
+          checkHead(
+            "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
+            {
+              n: CONFIG.toolchain.length,
+              unit: "звеньев цепочки",
+            },
           );
-          console.log(
-            "  Инструмент ставится вместе со своей настройкой, одной правкой:",
-          );
-          console.log("  поставленный без неё проходит, не проверив ничего.");
+          console.log("  звеньев цепочки без инструмента: " + gaps.length + "");
+          for (const g of gaps) console.log(g);
+          if (elsewhere.length)
+            console.log(
+              "  у проекта своё устройство, не пробел: " +
+                elsewhere.join(", ") +
+                " — имя звена занято своей работой либо нет ведущего звена; расхождение с умолчанием держит план перехода",
+            );
+          if (gaps.length) {
+            console.log(
+              "  Поставить и настроить — шаг 6 фазы 1 посадки, «Поставить пакеты».",
+            );
+            console.log(
+              "  Инструмент ставится вместе со своей настройкой, одной правкой:",
+            );
+            console.log("  поставленный без неё проходит, не проверив ничего.");
+          }
         }
-      }
-    }
+      },
+    );
   });
 
   // Обещания без опоры: раздел объявлен — значит собираемо всё, что в нём.
@@ -25999,64 +26076,73 @@ if (mode === "verify") {
   // готовым набором скриптов и с обобщённым шаблоном правил, и первый же прогон
   // краснел бы на состоянии, которое ещё никто не успел описать.
   checkStep(() => {
-    if (CONFIG.manifest != null) {
-      const at = path.join(BASE, CONFIG.manifest);
-      const pkg = existsSync(at) ? JSON.parse(readFileSync(at, "utf8")) : null;
-      const scripts = Object.keys(pkg?.scripts ?? {});
-      if (scripts.length) {
-        // Семена в счёт не идут. Файл в `seat/templates/` — ЗАГОТОВКА, а не проза
-        // этого проекта: он называет `npm run dev`, потому что так у приложения,
-        // и в библиотеке такого скрипта нет и не будет. Пока семена читались
-        // наравне с прозой, предупреждение висело вечно и указывало на файл,
-        // который никто не писал под этот проект. Найдено посадкой в чужую
-        // библиотеку.
-        const spans = new Set();
-        for (const [, src] of docSources) {
-          // Вся папка ПОСАДКИ, а не только семена: сама инструкция лежит рядом с
-          // ними и называет команды так же — как образец, а не как утверждение об
-          // этом проекте. Пока исключались только семена, инструкция называла
-          // звено, которого у проекта нет намеренно, и предупреждение висело на
-          // законном устройстве. Найдено посадкой в проект без TypeScript.
-          if (norm(src).includes("/seat/")) continue;
-          for (const hit of readFileSync(src, "utf8").matchAll(/`([^`\n]+)`/g))
-            spans.add(hit[1].trim());
-        }
-        // Команда с доводами называет скрипт так же, как голая: обратная
-        // сторона — «Названное доктриной исполнимо» — читает её именно так, и
-        // дословное равенство здесь давало две мерки одной пары. Замерено на
-        // стенде: `npm run mutate -- --mutate <файлы>` числился неназванным.
-        const runs = new Set(
-          [...spans]
-            .map((s) =>
-              new RegExp(
-                "^" + PACKAGE_MANAGER + " run ([^\\s`]+)(?:\\s|$)",
-              ).exec(s),
-            )
-            .filter((m) => m !== null)
-            .map((m) => m[1]),
-        );
-        const named = (s) =>
-          spans.has(s) || spans.has(`${PACKAGE_MANAGER} ${s}`) || runs.has(s);
-        const silent = scripts.filter((s) => !named(s));
-        {
-          checkHead(
-            "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
-            { n: scripts.length, unit: "скриптов манифеста" },
+    checkRegion(
+      ["Скрипты манифеста описаны (предупреждение, прогон не роняет)"],
+      () => {
+        if (CONFIG.manifest == null)
+          return "манифест не объявлен: поле `manifest` настройки пусто";
+        const at = path.join(BASE, CONFIG.manifest);
+        const pkg = existsSync(at)
+          ? JSON.parse(readFileSync(at, "utf8"))
+          : null;
+        const scripts = Object.keys(pkg?.scripts ?? {});
+        if (scripts.length) {
+          // Семена в счёт не идут. Файл в `seat/templates/` — ЗАГОТОВКА, а не проза
+          // этого проекта: он называет `npm run dev`, потому что так у приложения,
+          // и в библиотеке такого скрипта нет и не будет. Пока семена читались
+          // наравне с прозой, предупреждение висело вечно и указывало на файл,
+          // который никто не писал под этот проект. Найдено посадкой в чужую
+          // библиотеку.
+          const spans = new Set();
+          for (const [, src] of docSources) {
+            // Вся папка ПОСАДКИ, а не только семена: сама инструкция лежит рядом с
+            // ними и называет команды так же — как образец, а не как утверждение об
+            // этом проекте. Пока исключались только семена, инструкция называла
+            // звено, которого у проекта нет намеренно, и предупреждение висело на
+            // законном устройстве. Найдено посадкой в проект без TypeScript.
+            if (norm(src).includes("/seat/")) continue;
+            for (const hit of readFileSync(src, "utf8").matchAll(
+              /`([^`\n]+)`/g,
+            ))
+              spans.add(hit[1].trim());
+          }
+          // Команда с доводами называет скрипт так же, как голая: обратная
+          // сторона — «Названное доктриной исполнимо» — читает её именно так, и
+          // дословное равенство здесь давало две мерки одной пары. Замерено на
+          // стенде: `npm run mutate -- --mutate <файлы>` числился неназванным.
+          const runs = new Set(
+            [...spans]
+              .map((s) =>
+                new RegExp(
+                  "^" + PACKAGE_MANAGER + " run ([^\\s`]+)(?:\\s|$)",
+                ).exec(s),
+              )
+              .filter((m) => m !== null)
+              .map((m) => m[1]),
           );
-          console.log(`  не названы нигде: ${silent.length}`);
-          for (const s of silent)
-            console.log(
-              `    ${s} — есть в манифесте, но ни таблица проверок, ни список` +
-                NEWLINE +
-                "      исключённых его не называет: решение о нём не принято",
+          const named = (s) =>
+            spans.has(s) || spans.has(`${PACKAGE_MANAGER} ${s}`) || runs.has(s);
+          const silent = scripts.filter((s) => !named(s));
+          {
+            checkHead(
+              "Скрипты манифеста описаны (предупреждение, прогон не роняет)",
+              { n: scripts.length, unit: "скриптов манифеста" },
             );
-          // Половина «названо в прозе, а скрипта нет» отсюда УБРАНА: это
-          // ошибка, а не предупреждение, и в секции, которая прогон не роняет,
-          // она не краснела никогда. Её спрашивает сверка «Названное доктриной
-          // исполнимо» — там же, где команду без пакета и режим без режима.
+            console.log(`  не названы нигде: ${silent.length}`);
+            for (const s of silent)
+              console.log(
+                `    ${s} — есть в манифесте, но ни таблица проверок, ни список` +
+                  NEWLINE +
+                  "      исключённых его не называет: решение о нём не принято",
+              );
+            // Половина «названо в прозе, а скрипта нет» отсюда УБРАНА: это
+            // ошибка, а не предупреждение, и в секции, которая прогон не роняет,
+            // она не краснела никогда. Её спрашивает сверка «Названное доктриной
+            // исполнимо» — там же, где команду без пакета и режим без режима.
+          }
         }
-      }
-    }
+      },
+    );
 
     // 9d, обратная сторона: номер решения, названный где угодно, разрешается в
     // файл. Корпус тот же, что у адресов, плюс код: на решение ссылаются как раз
@@ -27777,14 +27863,14 @@ if (mode === "verify") {
     }));
     console.log(`  разошлось: ${wrong.length}`);
     for (const w of wrong) console.log("    " + w);
-    {
+    checkRegion(["Не разобрано (проверкой не покрыто)"], () => {
       checkHead("Не разобрано (проверкой не покрыто)", {
         n: unresolved.length,
         unit: "нерасшифрованных адресов",
       });
       console.log("  не разобрано: " + unresolved.length);
       for (const u of unresolved) console.log("    " + u);
-    }
+    });
   });
   checkStep(() => {
     // Печатается заголовками, а не числом: число рядом с сорока другими числами

@@ -92,6 +92,30 @@ describe("шаги сверки по тексту инструмента", () =>
     ]);
   });
 
+  it("вложенный заголовок — только в области, названный её перечнем", () => {
+    const nested = SAMPLE.replace(
+      `  // ${VERIFY_TAIL}`,
+      `  checkStep(() => {
+    if (other.length) checkHead("S3", { n: 1 });
+    checkRegion(["S4"], () => {
+      checkHead("S4", { n: 1 });
+      checkHead("S5", { n: 1 });
+      checkHead(other.title, { n: 1 });
+    });
+  });
+  // ${VERIFY_TAIL}`,
+    );
+    expect(headsAtRisk(ts, nested)).toEqual([
+      expect.stringMatching(
+        /"S3" — заголовок вглубь шага, вне области с перечнем$/,
+      ),
+      expect.stringMatching(/"S5" — секция не названа перечнем области$/),
+      expect.stringMatching(
+        /other\.title — имя секции вычисляется — перечень с ним не сверить$/,
+      ),
+    ]);
+  });
+
   it("у сверки базы самого инструмента заголовки не под угрозой", () => {
     expect(headsAtRisk(ts, fs.readFileSync(TOOL, "utf8"))).toEqual([]);
   });
