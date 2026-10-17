@@ -125,11 +125,13 @@ import { stepsTouchedBy } from "./graph.steps.mjs";
 // Конфиги проекта читаются его же загрузчиками, текст — запасной путь.
 import {
   BY_LOADER,
+  COMPILER_CONFIG,
   RUNNER_DEFAULT_INCLUDE,
   globMatcher,
+  lintOffWritten,
   parseJsonc,
   runnerConfigLoad,
-  runnerRank,
+  runnerEffective,
   tsconfigAt,
   tsconfigRead,
 } from "./graph.configs.mjs";
@@ -1211,7 +1213,7 @@ const recipeVars = (fresh) => {
     "{узлы}": "src/components",
     "{исходники}": "src",
     "{файл кода}": "app/main.tsx",
-    "{конфиг типов}": "tsconfig.json",
+    "{конфиг типов}": COMPILER_CONFIG,
     "{решения}": "docs/adr",
     "{настройки}": "src/shared/config",
     "{документы настроек}": "docs/config",
@@ -1240,8 +1242,8 @@ const recipeVars = (fresh) => {
     "{исходники}": fromRepo(SRC_ROOTS[0]),
     "{файл кода}": single[0] ?? seat["{файл кода}"],
     "{конфиг типов}": (() => {
-      const first = typeCheckOptions()[0];
-      return first === undefined ? seat["{конфиг типов}"] : fromRepo(first[0]);
+      const first = typeCheckConfigs()[0];
+      return first === undefined ? seat["{конфиг типов}"] : fromRepo(first.at);
     })(),
     "{решения}": fieldDir("adr", "dir", "{решения}"),
     "{настройки}": fieldDir("configDocs", "dir", "{настройки}"),
@@ -1389,40 +1391,63 @@ const parseModule = (src, file) => {
 const exportsStar = (src, file) =>
   parseModule(src, file).froms.some((s) => s.keyword === "export" && s.star);
 const shelfAt = (tail) => (SHELF === null ? null : path.join(SHELF, tail));
-/** Имена конфига, который читает раннер тестов, в порядке его чтения: свой
- * конфиг раннера затеняет конфиг сборщика. Источник — запись семени в карте
- * посадки: прежде инструмент держал три своих списка, и наборы разошлись. */
-const runnerConfigNames = () => {
+/** Имена, под которыми проект держит предмет семени, в порядке чтения его
+ * инструментом: затеняющие, семенное, другие имена того же предмета. Семя
+ * выбирает `pick` среди записей карты посадки; нет такой — `[]`. Имена
+ * конфигов берутся только отсюда: списки в коде расходились с картой, и
+ * сверка выключений линта не знала `eslint.config.ts`, а сверка конфига
+ * мутаций — `stryker.config.mjs`. */
+const seedNamesOf = (pick) => {
   const at = shelfAt("seat/map.json");
   const entry =
     at !== null && existsSync(at)
-      ? (readJson(at, {}).copy ?? []).find(
-          (e) => e.neededBy === "test" && Array.isArray(e.shadowedBy),
-        )
+      ? (readJson(at, {}).copy ?? []).find(pick)
       : undefined;
   return entry === undefined
     ? []
-    : [...entry.shadowedBy, entry.to, ...(entry.alsoKnownAs ?? [])];
+    : [...(entry.shadowedBy ?? []), entry.to, ...(entry.alsoKnownAs ?? [])];
 };
-/** Конфиг звена, который лежит в проекте под любым своим именем: затеняющим,
- * семенным, другим именем того же предмета — из карты посадки; `null` — не
- * лежит ни под одним. Имена собирали три сверки порознь, и одна не собирала
- * вовсе: у проекта с `eslint.config.js` сверка опоры звена молчала на любой
- * поломке — замерено прогоном рецептов на стенде-библиотеке. */
+/** Первый лежащий в проекте файл из `names` либо `null`. */
+const firstLying = (names) =>
+  names.map((n) => path.join(REPO_AT, n)).find((one) => existsSync(one)) ??
+  null;
+/** Семя конфига звена: лежит в корне репозитория, код звена — в папках. */
+const linkConfigSeed = (neededBy) => (e) =>
+  e.neededBy === neededBy && !e.to.includes("/");
+/** Конфиг звена `neededBy` под любым его именем либо `null`. */
+const linkSeedConfigAt = (neededBy) =>
+  firstLying(seedNamesOf(linkConfigSeed(neededBy)));
+/** Имена конфига, который читает раннер тестов, в порядке его чтения: свой
+ * конфиг раннера затеняет конфиг сборщика. */
+const runnerConfigNames = () => seedNamesOf(linkConfigSeed("test"));
+/** Конфиги раннера `{ name, … }`, вычисленные сборщиком проекта: загрузка
+ * асинхронна, и её ждут раз на прогон до первого чтения. Читающий раньше
+ * падает с именем причины, а не получает пустой список. */
+let runnerConfigsMemo = null;
+const runnerConfigsLoad = async () => {
+  if (runnerConfigsMemo === null) {
+    const out = [];
+    for (const name of runnerConfigNames()) {
+      const got = await runnerConfigLoad(path.join(REPO_AT, name), REPO_AT);
+      if (got !== null) out.push({ name, ...got });
+    }
+    runnerConfigsMemo = out;
+  }
+  return runnerConfigsMemo;
+};
+const runnerConfigsNow = () => {
+  if (runnerConfigsMemo === null)
+    throw new Error("конфиги раннера читают до `runnerConfigsLoad`");
+  return runnerConfigsMemo;
+};
+/** Конфиг звена, который лежит в проекте под любым своим именем, либо
+ * `null`. Имена собирали три сверки порознь, и одна не собирала вовсе: у
+ * проекта с `eslint.config.js` сверка опоры звена молчала на любой поломке —
+ * замерено прогоном рецептов на стенде-библиотеке. */
 const linkConfigAt = (link) => {
   if (link?.config == null) return null;
-  const names = [link.config];
-  const at = shelfAt("seat/map.json");
-  if (at !== null && existsSync(at))
-    for (const e of readJson(at, {}).copy ?? [])
-      if (e.to === link.config) {
-        names.unshift(...(e.shadowedBy ?? []));
-        names.push(...(e.alsoKnownAs ?? []));
-      }
-  const found = names
-    .map((n) => path.join(REPO_AT, n))
-    .find((one) => existsSync(one));
-  return found ?? null;
+  const names = seedNamesOf((e) => e.to === link.config);
+  return firstLying(names.length ? names : [link.config]);
 };
 /** Это ИСПЫТАТЕЛЬНАЯ ПОСАДКА — папка, которую посадил режим `seat`: в её
  * `.claude` лежит одна полка. Узнаётся по метке посадки в папке git. Нужен
@@ -3378,13 +3403,7 @@ const SEED_CONDITIONS = new Map([
   ],
   [
     "runnerWithoutGlobals",
-    () =>
-      !runnerConfigNames().some((n) => {
-        const at = path.join(REPO_AT, n);
-        return (
-          existsSync(at) && /\bglobals:\s*true\b/.test(readFileSync(at, "utf8"))
-        );
-      }),
+    () => runnerEffective(runnerConfigsNow())?.test?.globals !== true,
   ],
 ]);
 /** Выполнено ли у проекта условие семени. Семя без условия кладётся всегда;
@@ -3622,8 +3641,8 @@ const rel = (f) =>
  * продолжает: раскладка со ссылками держит общие опции в отдельном файле.
  */
 /** Конфиги компилятора, по которым звено типов РЕАЛЬНО проверяет код, — с
- * опциями, прочитанными вместе с тем, что конфиг продолжает. Пары
- * `[адрес, опции]`.
+ * опциями, прочитанными вместе с тем, что конфиг продолжает: ответы
+ * `tsconfigRead`.
  *
  * Берутся по тому, что звено зовёт: `-p` и `--project` — названный файл,
  * иначе конфиг корня вызова; конфиг-решение со ссылками — его ссылки;
@@ -3631,7 +3650,7 @@ const rel = (f) =>
  * сверка строгости и рецепт её фальсификации: рецепт, ломавший конфиг
  * корня, в монорепозитории не доходил ни до одной сверки — проверку типов
  * там ведут конфиги пакетов. Замерено фальсификацией стенда-монорепозитория. */
-const typeCheckOptions = () => {
+const typeCheckConfigs = () => {
   const mapAt = shelfAt("seat/map.json");
   const link = (
     mapAt !== null && existsSync(mapAt)
@@ -3674,43 +3693,95 @@ const typeCheckOptions = () => {
   const configs = new Set();
   for (const [dir, body] of calls) {
     const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
-    configs.add(
-      tsconfigAt(path.resolve(dir, p === null ? "tsconfig.json" : p[1])),
-    );
+    configs.add(tsconfigAt(path.resolve(dir, p?.[1] ?? ".")));
   }
-  const out = [];
-  for (const at of configs) {
-    const got = tsconfigRead(at, REPO_AT);
-    if (got === null) continue;
-    if (got.raw.compilerOptions == null && got.references.length)
-      for (const to of got.references) {
-        const opts = tsconfigRead(to, REPO_AT)?.options;
-        if (opts != null) out.push([to, opts]);
-      }
-    else out.push([at, got.options]);
-  }
-  return out;
+  return [...configs].flatMap((at) => compilerParts(tsconfigRead(at, REPO_AT)));
 };
-const ALIASES = (() => {
-  const named = (CONFIG.toolchain ?? []).find((l) => l.script === "typecheck");
-  const start = named?.config ?? "tsconfig.json";
-  // Компилятор проекта сливает `paths` по цепочке `extends` и называет папку,
-  // от которой они считаются: `baseUrl` либо папку конфига, где они заданы.
-  const got = tsconfigRead(path.join(BASE, "..", start), REPO_AT);
-  const paths = got?.options.paths;
+/** Конфиги, по которым компилятор проверяет код, из прочитанного: у
+ * конфига-решения со ссылками — его ссылки, у прочих — он сам. */
+const compilerParts = (got) =>
+  got === null
+    ? []
+    : got.raw.compilerOptions == null && got.references.length
+      ? got.references
+          .map((to) => tsconfigRead(to, REPO_AT))
+          .filter((one) => one !== null)
+      : [got];
+/** Конфиги компилятора проекта — один ответ для коротких адресов, строгости
+ * и видимости привезённого кода: прежде каждый решал сам, и конфиг-решение
+ * со ссылками оставлял короткие адреса пакетов неизвестными. По звену типов,
+ * а без него — конфиг, названный звеном в настройке, либо тот, что
+ * компилятор читает без `-p`. */
+let compilerConfigsMemo = null;
+const compilerConfigs = () => {
+  if (compilerConfigsMemo === null) {
+    const checked = typeCheckConfigs();
+    const named = (CONFIG.toolchain ?? []).find(
+      (l) => l.script === "typecheck",
+    );
+    compilerConfigsMemo = checked.length
+      ? checked
+      : compilerParts(
+          tsconfigRead(
+            path.join(REPO_AT, named?.config ?? COMPILER_CONFIG),
+            REPO_AT,
+          ),
+        );
+  }
+  return compilerConfigsMemo;
+};
+/** Видит ли конфиг компилятора файл по абсолютному адресу: его ответ, а без
+ * компилятора — `include` и `files` конфига, по умолчанию всё под его
+ * папкой. */
+const SEEN_BY = new WeakMap();
+const compilerSees = (got, abs) => {
+  if (got.fileNames != null) {
+    if (!SEEN_BY.has(got)) SEEN_BY.set(got, new Set(got.fileNames.map(norm)));
+    return SEEN_BY.get(got).has(norm(abs));
+  }
+  const dir = path.dirname(got.at);
+  const globs = [
+    ...(got.raw.include ?? (got.raw.files == null ? ["**/*"] : [])),
+    ...(got.raw.files ?? []),
+  ].map((one) => path.relative(REPO_AT, path.resolve(dir, one)));
+  const file = path.relative(REPO_AT, abs);
+  return globs.some((one) => {
+    const bare = one.split(path.sep).join("/").replace(/[/]+$/, "");
+    const at = file.split(path.sep).join("/");
+    if (at === bare || at.startsWith(bare + "/")) return true;
+    return (
+      bare.includes("*") && at.startsWith(bare.slice(0, bare.indexOf("*")))
+    );
+  });
+};
+/** Короткие адреса проекта: из каждого конфига компилятора, с областью его
+ * файлов. Компилятор сливает `paths` по цепочке `extends` и называет папку,
+ * от которой они считаются: `baseUrl` либо папку конфига, где они заданы. */
+const ALIASES = compilerConfigs().flatMap((got) => {
+  const paths = got.options.paths;
   if (paths == null) return [];
   const base =
     got.options.baseUrl ?? got.options.pathsBasePath ?? path.dirname(got.at);
-  const out = [];
-  for (const [pattern, targets] of Object.entries(paths))
-    for (const target of targets)
-      out.push({
-        head: pattern.replace(/\*$/, ""),
-        star: pattern.endsWith("*"),
-        to: norm(path.resolve(base, target.replace(/\*$/, ""))),
-      });
-  return out;
-})();
+  return Object.entries(paths).flatMap(([pattern, targets]) =>
+    targets.map((target) => ({
+      head: pattern.replace(/\*$/, ""),
+      star: pattern.endsWith("*"),
+      to: norm(path.resolve(base, target.replace(/\*$/, ""))),
+      sees: (abs) => compilerSees(got, abs),
+    })),
+  );
+});
+/** Короткий адрес, которым разрешается `spec` из файла `fromFile`: самый
+ * длинный подходящий из конфигов, видящих файл; файл не видит ни один
+ * конфиг — из всех. Объявить можно и `~/`, и `~/shared/`, и тогда второй
+ * точнее первого. */
+const aliasOf = (fromFile, spec) => {
+  const fit = ALIASES.filter((a) => spec.startsWith(a.head));
+  const seen = compilerConfigs().some((got) => compilerSees(got, fromFile));
+  return (seen ? fit.filter((a) => a.sees(fromFile)) : fit).sort(
+    (x, y) => y.head.length - x.head.length,
+  )[0];
+};
 const resolve = (fromFile, spec) =>
   resolveAmong(fromFile, spec, (c) => files.includes(c));
 /** Адрес импорта среди файлов, которые признаёт `known`: граф спрашивает
@@ -3720,11 +3791,7 @@ const resolveAmong = (fromFile, spec, known) => {
   if (spec.startsWith(".")) {
     base = norm(path.resolve(path.dirname(fromFile), spec));
   } else {
-    // Самый длинный подходящий короткий адрес: объявить можно и `~/`, и
-    // `~/shared/`, и тогда второй точнее первого.
-    const hit = ALIASES.filter((a) => spec.startsWith(a.head)).sort(
-      (x, y) => y.head.length - x.head.length,
-    )[0];
+    const hit = aliasOf(fromFile, spec);
     if (hit === undefined) return null;
     base = norm(path.join(hit.to, spec.slice(hit.head.length)));
   }
@@ -3766,9 +3833,7 @@ const computedTargets = (fromFile, one) => {
   if (one.prefix.startsWith("./") || one.prefix.startsWith("../"))
     head = norm(path.resolve(path.dirname(fromFile), one.prefix)) + tail;
   else {
-    const hit = ALIASES.filter((a) => one.prefix.startsWith(a.head)).sort(
-      (x, y) => y.head.length - x.head.length,
-    )[0];
+    const hit = aliasOf(fromFile, one.prefix);
     if (hit === undefined) return null;
     head = norm(path.join(hit.to, one.prefix.slice(hit.head.length))) + tail;
   }
@@ -5712,6 +5777,9 @@ if (mode === "falsify") {
     process.exit(1);
   }
   const recipes = JSON.parse(readFileSync(recipesAt, "utf8")).recipes ?? [];
+  // Условие семени читает конфиг раннера: рецепт на семени с условием
+  // спрашивает его ниже.
+  await runnerConfigsLoad();
   // Рецепты ПРОЕКТА — там, где предмет сверки проектный: свой конфиг
   // линтера, свои таблицы. Лежат в базе, той же формы, и обязаны находить
   // своё место всегда: проект их писал под себя. Прежде перенацелить рецепт
@@ -20852,36 +20920,9 @@ if (mode === "verify") {
       const at = path.join(BASE, CONFIG.lintConfigOff.file);
       if (!existsSync(at)) offDrift.push(`конфига линта нет: ${rel0(at)}`);
       else {
-        // Конфиг разбирается ТЕКСТОМ, а не импортом: импорт потянул бы за собой
-        // все плагины линта — секунды к прогону и падение там, где их ещё не
-        // ставили. Блок узнаётся по балансу скобок, область — по строке `files`
-        // внутри него; блок без `files` действует на весь репозиторий, и пустая
-        // область здесь именно это и означает.
-        const found = [];
-        let depth = 0;
-        let block = null;
-        for (const line of readFileSync(at, "utf8").split(NEWLINE)) {
-          const opens = (line.match(/\{/g) ?? []).length;
-          const closes = (line.match(/\}/g) ?? []).length;
-          if (depth === 0 && opens > 0) block = { files: [], off: [] };
-          if (block !== null) {
-            const f = /files:\s*\[([^\]]*)\]/.exec(line);
-            if (f !== null)
-              block.files.push(
-                ...[...f[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]),
-              );
-            for (const m of line.matchAll(/"([^"]+)"\s*:\s*"off"/g))
-              block.off.push(m[1]);
-          }
-          depth += opens - closes;
-          if (depth <= 0 && block !== null) {
-            for (const rule of block.off)
-              for (const scope of block.files.length ? block.files : ["**"])
-                found.push(`${scope} → ${rule}`);
-            block = null;
-            depth = 0;
-          }
-        }
+        const found = lintOffWritten(readFileSync(at, "utf8")).map(
+          ({ scope, rule }) => `${scope} → ${rule}`,
+        );
         const declared = new Set(
           CONFIG.lintConfigOff.allowed.map(
             ([scope, rule]) => `${scope} → ${rule}`,
@@ -22660,12 +22701,8 @@ if (mode === "verify") {
     }
     if (CONFIG.lintConfigOff == null) {
       disarmedLooked += 1;
-      const at = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"]
-        .map((n) => path.join(BASE, "..", n))
-        .find(
-          (f) => existsSync(f) && /:\s*"off"/.test(readFileSync(f, "utf8")),
-        );
-      if (at !== undefined)
+      const at = linkSeedConfigAt("lint");
+      if (at !== null && lintOffWritten(readFileSync(at, "utf8")).length)
         disarmed.push(
           "правила линта уже выключаются в конфиге, а CONFIG.lintConfigOff пуст",
         );
@@ -22768,10 +22805,7 @@ if (mode === "verify") {
     }
     if (CONFIG.mutationConfig == null) {
       disarmedLooked += 1;
-      const at = ["stryker.config.json", "stryker.conf.json"]
-        .map((n) => path.join(BASE, "..", n))
-        .find((f) => existsSync(f));
-      if (at !== undefined)
+      if (linkSeedConfigAt("mutate") !== null)
         disarmed.push(
           "конфиг мутационного прогона уже есть, а CONFIG.mutationConfig пуст",
         );
@@ -23053,18 +23087,7 @@ if (mode === "verify") {
   let indexDocs = 0;
   // Конфиг раннера вычисляет сборщик проекта тем же порядком, что и раннер;
   // ждать его — отдельный шаг, и область ниже читает готовое.
-  const runnerConfigs =
-    (await checkStepAsync(async () => {
-      const out = [];
-      for (const name of runnerConfigNames()) {
-        const got = await runnerConfigLoad(
-          path.join(BASE, "..", name),
-          REPO_AT,
-        );
-        if (got !== null) out.push({ name, ...got });
-      }
-      return out;
-    })) ?? [];
+  const runnerConfigs = (await checkStepAsync(runnerConfigsLoad)) ?? [];
   checkStep(() => {
     if (CONFIG.docsIndex != null) {
       const dir = norm(path.join(BASE, CONFIG.docsIndex.dir));
@@ -23496,31 +23519,16 @@ if (mode === "verify") {
           const unseen = [];
           let seedCode = 0;
           {
-            // Какие файлы видит компилятор, отвечает он сам; разбор текста —
-            // запасной путь по `include`. Строгий разбор JSON красил законный
-            // конфиг с комментариями, а свой разбор образцов расходился с
-            // компилятором.
-            const compiler = tsconfigRead(
-              path.join(BASE, "..", "tsconfig.json"),
-              REPO_AT,
-            );
-            const seen =
-              compiler?.fileNames == null ? null : new Set(compiler.fileNames);
-            const inc =
-              compiler === null ? null : (compiler.raw.include ?? null);
+            // Какие файлы видит компилятор, отвечает он сам, по каждому конфигу,
+            // которым он проверяет код; разбор текста — запасной путь по
+            // `include`. Конфиг корня в раскладке со ссылками не видит ничего.
+            const compilers = compilerConfigs();
             const mapAt = shelfAt("seat/map.json");
             const seeds =
               mapAt === null || !existsSync(mapAt)
                 ? []
                 : (readJson(mapAt, {}).copy ?? []);
-            const covers = (one, file) => {
-              const bare = one.replace(/[/]+$/, "");
-              if (file === bare || file.startsWith(bare + "/")) return true;
-              if (!bare.includes("*")) return false;
-              const head = bare.slice(0, bare.indexOf("*"));
-              return file.startsWith(head);
-            };
-            if (seen !== null || inc !== null)
+            if (compilers.length)
               for (const e of seeds) {
                 // Компилятор и линт с типами разбирают TypeScript; остальной код
                 // линт читает без типов, и область компилятора ему не нужна.
@@ -23531,9 +23539,9 @@ if (mode === "verify") {
                 if (!existsSync(path.join(REPO, e.to))) continue;
                 seedCode += 1;
                 if (
-                  seen === null
-                    ? inc.some((one) => covers(one, e.to))
-                    : seen.has(path.join(REPO, e.to))
+                  compilers.some((got) =>
+                    compilerSees(got, path.join(REPO, e.to)),
+                  )
                 )
                   continue;
                 unseen.push(
@@ -23598,13 +23606,11 @@ if (mode === "verify") {
             }
           }
           // Действующий конфиг — тот, что читает раннер: первый в порядке, в
-          // котором его ищет сам раннер (`runnerRank`). Затенённый раннер
-          // не читает, и судить по нему область сбора значило бы краснеть на
-          // законном — найдено корпусом чужих проектов. Импорт `defineConfig`
-          // выше судится во всех: их компилирует звено типов.
-          const runnerNow = [...runnerConfigs].sort(
-            (a, b) => runnerRank(a.name) - runnerRank(b.name),
-          )[0];
+          // котором его ищет сам раннер (`runnerEffective`). Затенённый
+          // раннер не читает, и судить по нему область сбора значило бы
+          // краснеть на законном — найдено корпусом чужих проектов. Импорт
+          // `defineConfig` выше судится во всех: их компилирует звено типов.
+          const runnerNow = runnerEffective(runnerConfigs);
           // Корень раннера — от папки конфига; область и подготовка считаются
           // от него.
           const runnerRoot = (cfg) =>
@@ -23770,13 +23776,12 @@ if (mode === "verify") {
                   v === true && /^(?:strict|exactOptional|no(?!Emit$))/.test(k),
               )
               .map(([k]) => k);
-            for (const [one, opts] of typeCheckOptions()) {
-              if (opts == null) continue;
+            for (const got of typeCheckConfigs()) {
               strictLooked += 1;
-              const lax = want.filter((k) => opts[k] !== true);
+              const lax = want.filter((k) => got.options[k] !== true);
               if (lax.length)
                 strictGap.push(
-                  path.relative(REPO, one).split(path.sep).join("/") +
+                  path.relative(REPO, got.at).split(path.sep).join("/") +
                     " — звено типов проверяет по нему, а строгости семени нет: " +
                     lax.join(", "),
                 );

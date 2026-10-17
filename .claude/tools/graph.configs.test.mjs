@@ -8,10 +8,13 @@ import {
   BY_TEXT,
   RUNNER_DEFAULT_INCLUDE,
   globMatcher,
+  lintOffWritten,
   runnerConfigLoad,
+  runnerEffective,
   runnerRank,
   tsconfigRead,
 } from "./graph.configs.mjs";
+import { compilerAt } from "./graph.parse.mjs";
 
 // Папка внутри пакетов посадки видит её компилятор, сборщик и
 // сопоставитель, а git её не видит: тесты в корне посадки, идущие
@@ -166,6 +169,82 @@ describe("образцы путей — сопоставителем ранне�
   });
 });
 
+describe("один читатель на конфиг проекта", () => {
+  // Имя конфига в коде, который читает диск проекта, — второй читатель
+  // предмета: списки имён расходились с картой посадки, а разбор текста — с
+  // загрузчиком проекта. Имена берут из карты, читают модулем конфигов.
+  const CONFIG_NAME =
+    /^\.?(?:tsconfig|jsconfig|vite|vitest|eslint|stryker|prettier|jest|babel)(?:\.[\w-]+)*\.(?:json5?|[cm]?[jt]s|ya?ml|toml)$|^\.(?:eslintrc|prettierrc)$/;
+  // Разбором, а не сканером: сканер без разбора читает косую регулярного
+  // выражения делением, кавычку внутри него — началом строки и сбивается.
+  const literalsOf = (ts, text) => {
+    const out = [];
+    const walk = (node) => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+        out.push(node.text);
+      ts.forEachChild(node, walk);
+    };
+    walk(ts.createSourceFile("one.mjs", text, ts.ScriptTarget.Latest, false));
+    return out;
+  };
+  const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
+  const readersOfDisk = () =>
+    fs
+      .readdirSync(TOOL_DIR)
+      .filter(
+        (n) =>
+          n.endsWith(".mjs") &&
+          !n.endsWith(".test.mjs") &&
+          n !== "graph.configs.mjs",
+      )
+      .map((n) => [n, fs.readFileSync(path.join(TOOL_DIR, n), "utf8")])
+      .filter(([, text]) => /from "node:fs"/.test(text));
+
+  it("в коде, читающем диск, имён конфигов нет — кроме модуля конфигов", () => {
+    const ts = compilerAt(SEAT);
+    const found = readersOfDisk().flatMap(([n, text]) =>
+      literalsOf(ts, text)
+        .filter((one) => CONFIG_NAME.test(one))
+        .map((one) => n + ": " + one),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("страж узнаёт имя конфига в строке и не путает с комментарием", () => {
+    const ts = compilerAt(SEAT);
+    const got = literalsOf(
+      ts,
+      '// "eslint.config.js"\nconst a = ["eslint.config.js", `stryker.conf.mjs`, ".eslintrc", "src/a.ts"];',
+    ).filter((one) => CONFIG_NAME.test(one));
+    expect(got).toEqual(["eslint.config.js", "stryker.conf.mjs", ".eslintrc"]);
+  });
+});
+
+describe("выключения линта, написанные автором", () => {
+  it("кавычки любые, ключ без кавычек, массив; ноль в опциях — не выключение", () => {
+    const text = [
+      "export default [",
+      "  {",
+      '    files: ["src/**", \'tests/**\'],',
+      "    rules: {",
+      "      'a/one': 'off',",
+      '      curly: ["off"],',
+      '      "max-lines": ["error", { max: 0 }],',
+      "    },",
+      "  },",
+      '  { rules: { "b-two": "off" } },',
+      "];",
+    ].join("\n");
+    expect(lintOffWritten(text)).toEqual([
+      { scope: "src/**", rule: "a/one" },
+      { scope: "tests/**", rule: "a/one" },
+      { scope: "src/**", rule: "curly" },
+      { scope: "tests/**", rule: "curly" },
+      { scope: "**", rule: "b-two" },
+    ]);
+  });
+});
+
 describe("действующий конфиг раннера", () => {
   it("старшинство — порядок, в котором конфиг ищет сам раннер", () => {
     const names = [
@@ -182,5 +261,10 @@ describe("действующий конфиг раннера", () => {
       "vite.config.ts",
       "vite.config.js",
     ]);
+    expect(
+      runnerEffective([{ name: "vite.config.ts" }, { name: "vitest.config.mts" }])
+        .name,
+    ).toBe("vitest.config.mts");
+    expect(runnerEffective([])).toBeUndefined();
   });
 });

@@ -76,11 +76,14 @@ export const parseJsonc = (raw) => {
   }
 };
 
+/** Имя конфига, который компилятор читает в папке вызова без `-p`. */
+export const COMPILER_CONFIG = "tsconfig.json";
+
 /** Конфиг компилятора по адресу из вызова или ссылки: `-p` и ссылка называют
  * и файл, и папку. */
 export const tsconfigAt = (named) =>
   existsSync(named) && statSync(named).isDirectory()
-    ? path.join(named, "tsconfig.json")
+    ? path.join(named, COMPILER_CONFIG)
     : named;
 
 /** Конфиг компилятора с тем, что он продолжает: `{ at, via, options, raw,
@@ -210,6 +213,46 @@ export const runnerConfigLoad = async (at, repoRoot) => {
       broke: String(error?.message ?? error).split("\n")[0],
     };
   }
+};
+
+/** Действующий конфиг раннера среди загруженных `{ name, … }` либо
+ * `undefined`. */
+export const runnerEffective = (configs) =>
+  [...configs].sort((a, b) => runnerRank(a.name) - runnerRank(b.name))[0];
+
+/** Выключения правил, которые автор написал в конфиге линта сам: пары
+ * `{ scope, rule }`, у блока без `files` область `**`. Текстом, а не
+ * загрузчиком линта: загруженный конфиг несёт выключения пресетов, которых
+ * автор не писал, и стоит `2` секунды на импорт плагинов. Блок — по балансу
+ * скобок; правило — ключ в любых кавычках либо без них, значение `"off"`
+ * либо массив с ним первым. Ноль не читается: `{ max: 0 }` в опциях правила
+ * неотличим от выключения. */
+export const lintOffWritten = (text) => {
+  const found = [];
+  let depth = 0;
+  let block = null;
+  for (const line of text.split("\n")) {
+    const opens = (line.match(/\{/g) ?? []).length;
+    const closes = (line.match(/\}/g) ?? []).length;
+    if (depth === 0 && opens > 0) block = { files: [], off: [] };
+    if (block !== null) {
+      const f = /files:\s*\[([^\]]*)\]/.exec(line);
+      if (f !== null) block.files.push(...stringsOf(f[1]));
+      for (const m of line.matchAll(
+        /(["']?)([\w@/-]+)\1\s*:\s*\[?\s*(["'])off\3/g,
+      ))
+        block.off.push(m[2]);
+    }
+    depth += opens - closes;
+    if (depth <= 0 && block !== null) {
+      for (const rule of block.off)
+        for (const scope of block.files.length ? block.files : ["**"])
+          found.push({ scope, rule });
+      block = null;
+      depth = 0;
+    }
+  }
+  return found;
 };
 
 /** Старшинство имён конфига раннера — порядок, в котором его ищет `vitest`:
