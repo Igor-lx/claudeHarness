@@ -2480,7 +2480,11 @@ const barKeysOf = (body) => {
  * прогон пробы `2026-10-16` — вырезано `12 845` знаков, и требования к «чисто»
  * сессия восстанавливала по отказам. Файл пересобирается каждым вызовом
  * `bar`, поэтому ключи в нём — ещё не заполненных строк. */
-const barKeysFileOf = (at) => {
+/** Сколько знаков дыр `bar` печатает в вывод; остальное — в файле ключей.
+ * Предел среды на вывод — около `10 000` знаков (журналы девятого и десятого
+ * прогонов пробы), и место нужно ещё окну модели и пути к файлу. */
+const BAR_HOLES_SHOWN_CHARS = 6000;
+const barKeysFileOf = (at, holes = []) => {
   const keys = barKeysOf(readFileSync(at, "utf8"));
   const model = keys.find((line) =>
     line.startsWith("модель предмета — строки"),
@@ -2501,6 +2505,9 @@ const barKeysFileOf = (at) => {
       "",
       ...keys.filter((line) => line !== model).map((line) => "- " + line),
       "",
+      ...(holes.length === 0
+        ? []
+        : ["## Дыры — все", "", ...holes.map((h) => "- " + h), ""]),
     ].join(LF),
   );
   return [
@@ -17443,8 +17450,25 @@ if (mode === "bar") {
         "  строка, которой в этом своде нет: " + r.extra.join(", "),
       );
     console.log("  дыр: " + r.holes.length);
-    for (const h of barHolesGrouped(r.holes)) console.log("    " + h);
-    for (const line of barKeysFileOf(at)) console.log("  " + line);
+    // Вывод длиннее предела среды режется посередине, и дыры из середины
+    // сессия не видела (десятый прогон пробы — вырезано `14 558` знаков):
+    // в выводе — дыры в пределах бюджета, полностью — в файле ключей.
+    const grouped = barHolesGrouped(r.holes);
+    let spent = 0;
+    let shown = 0;
+    for (const h of grouped) {
+      if (spent + h.length > BAR_HOLES_SHOWN_CHARS && shown > 0) break;
+      console.log("    " + h);
+      spent += h.length;
+      shown += 1;
+    }
+    if (shown < grouped.length)
+      console.log(
+        "    … ещё строк дыр: " +
+          (grouped.length - shown) +
+          " — полностью в файле ключей",
+      );
+    for (const line of barKeysFileOf(at, grouped)) console.log("  " + line);
     const partsLine = r.holes.some((h) => /част/.test(h))
       ? barPartsLineOf(barHeader(at)?.body ?? "")
       : null;

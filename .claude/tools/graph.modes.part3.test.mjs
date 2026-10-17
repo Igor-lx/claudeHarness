@@ -2692,6 +2692,42 @@ describe("экономия свода по журналу пробы 2026-10-13"
     }
   }, 300000);
 
+  it("дыры сверх бюджета вывода лежат в файле ключей, вывод говорит, сколько их там", () => {
+    const box = seatEmpty("holesfile-");
+    try {
+      const tool = toolIn(box);
+      for (const n of "ABCDEFGHIJKL".split(""))
+        fs.writeFileSync(
+          path.join(box, "src", "app", "zz" + n + ".ts"),
+          "export const zz" +
+            n +
+            " = (w: number, strict: boolean): boolean => (strict ? w > 1 : w > 0);\n",
+        );
+      tool("bar", "app");
+      const out = tool("bar", "app");
+      const keysAt = /ключи к заполнению — файлом, открыть Read: (.+)$/m.exec(
+        out,
+      )?.[1];
+      expect(keysAt, out).toBeDefined();
+      const all = fs.readFileSync(keysAt, "utf8");
+      expect(all).toContain("## Дыры — все");
+      const shown = out
+        .split("\n")
+        .filter((l) => /^ {4}\S/.test(l) && !l.includes("ещё строк дыр"))
+        .map((l) => l.trim());
+      for (const h of shown) expect(all).toContain(h);
+      const rest = /ещё строк дыр: ([0-9]+) — полностью в файле ключей/.exec(
+        out,
+      );
+      expect(rest, out).not.toBeNull();
+      expect(Number(rest[1])).toBeGreaterThan(0);
+      const listed = all.split("## Дыры — все")[1].split("\n- ").length - 1;
+      expect(listed).toBeGreaterThan(shown.length);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("ключи называют все требования приёма: пачечная строка, назвавшая всё из скобок, принята с первого круга", () => {
     const box = seatEmpty("corebatchkeys-");
     try {
