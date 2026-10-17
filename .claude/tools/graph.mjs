@@ -151,6 +151,7 @@ import {
   partsPruned,
   partsSectionOf,
   partsTableOf,
+  partsReplaced,
   PARTS_TITLE,
   recordsOf,
 } from "./graph.parts.mjs";
@@ -15746,6 +15747,20 @@ const barProcess = ({
       writeFileSync(at, pruned);
       was = barHeader(at);
     }
+    // Связь, появившаяся после раскладки, сливает части на каждом вызове, а
+    // не только при пересборке протокола: прежде отказ «слить части» приходил
+    // на вызове, где сессия дописала запись базы (десятый прогон пробы).
+    const table = partsTableOf(was.body);
+    if (partsOf != null && table !== null && table.length > 1) {
+      const rows = barPartsRowsOf(partsOf, was);
+      if (rows === null || rows.length < table.length) {
+        const merged = partsReplaced(was.body, rows);
+        if (merged !== null) {
+          writeFileSync(at, merged);
+          was = barHeader(at);
+        }
+      }
+    }
   }
   const acceptOf = (one) =>
     barAcceptOf({
@@ -16560,7 +16575,10 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     const judge = (lines, rec, i, side, map) => {
       const [s, e] = rec[i];
       const named = partsNamedIn(lines.slice(s, e + 1).join(""));
-      const one = named.length === 0 && count === 1 ? [1] : named;
+      // Запись, не называющая файлов ни одной части, идёт с первой, как
+      // протокол и следы прогонов: выбор части для неё ничего не решает, а
+      // отказ на шапке файла вопросов сессия снимала бессмысленным выбором.
+      const one = named.length === 0 ? [1] : named;
       if (one.length === 1) {
         map.set(i, one[0]);
         return;

@@ -70,6 +70,21 @@ export const partsPruned = (body) => {
   return lines.filter((_, i) => !drop.has(i)).join("\n");
 };
 
+/** Протокол с таблицей частей, заменённой на `rows`; `rows === null` —
+ * раздел снимается: часть одна. Раздела нет — `null`. */
+export const partsReplaced = (body, rows) => {
+  const lines = body.split("\n");
+  const at = lines.indexOf("## " + PARTS_TITLE);
+  if (at < 0) return null;
+  let end = at + 1;
+  while (end < lines.length && !lines[end].startsWith("## ")) end += 1;
+  return [
+    ...lines.slice(0, at),
+    ...(rows === null ? [] : partsSectionOf(rows)),
+    ...lines.slice(end),
+  ].join("\n");
+};
+
 /** Раздел протокола с таблицей частей; строка — файлы и слова «что». */
 export const partsSectionOf = (rows) => [
   "## " + PARTS_TITLE,

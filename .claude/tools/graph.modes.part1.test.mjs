@@ -3249,15 +3249,26 @@ describe("части правки", () => {
       // Связь, появившаяся после раскладки, — запись базы о файлах двух
       // частей либо импорт между ними — сливает части машиной: отказа «слить
       // части» нет, строка таблицы одна, слова обеих частей в ней.
+      // Запись в список вопросов протокол не пересобирает: слияние — тем же
+      // вызовом, до приёма. Запись ни об одной части идёт с первой без отказа.
+      const questionsAt = path.join(box, ".context", "13-questions.md");
       fs.appendFileSync(
         path.join(box, ".context", "10-idioms.md"),
+        "\nСтрока без файлов.\n",
+      );
+      // Первый вызов после правки базы пересобирает протокол; дыры — второй.
+      bar();
+      expect(partHoles(bar())).toEqual([]);
+      git("checkout", "-q", "--", ".context/10-idioms.md");
+      fs.appendFileSync(
+        questionsAt,
         "\nОба: `src/shared/zza/zza.ts` и `src/shared/zzb/zzb.ts`.\n",
       );
       const merged = bar();
       expect(merged).not.toContain("слить части");
       expect(rows()).toBe(1);
       expect(fs.readFileSync(protoAt, "utf8")).toContain("add zza; add zzb");
-      git("checkout", "-q", "--", ".context/10-idioms.md");
+      git("checkout", "-q", "--", ".context/13-questions.md");
       put(
         "src/shared/zzb/zzb.ts",
         'import { zza } from "../zza/zza";\n\nexport const zzb = zza;\n',
