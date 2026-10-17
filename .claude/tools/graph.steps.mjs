@@ -26,9 +26,11 @@ const verifyBlockOf = (ts, sf) => {
 /** Вызов шага в выражении: `checkStep(…)`, `await checkStepAsync(…)`,
  * `checkStep(…) ?? []`. */
 const stepCallIn = (ts, node) => {
-  let n = node;
-  if (n !== undefined && ts.isBinaryExpression(n)) n = n.left;
-  if (n !== undefined && ts.isAwaitExpression(n)) n = n.expression;
+  const bare = (x) =>
+    x !== undefined && ts.isParenthesizedExpression(x) ? bare(x.expression) : x;
+  let n = bare(node);
+  if (n !== undefined && ts.isBinaryExpression(n)) n = bare(n.left);
+  if (n !== undefined && ts.isAwaitExpression(n)) n = bare(n.expression);
   return n !== undefined &&
     ts.isCallExpression(n) &&
     STEP_CALLS.has(n.expression.getText())

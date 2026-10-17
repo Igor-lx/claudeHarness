@@ -122,6 +122,16 @@ import {
 // имена, поверхность и привязки читают её, а не каждый свой образец.
 import { compilerAt, parserFor, regexParser } from "./graph.parse.mjs";
 import { stepsTouchedBy } from "./graph.steps.mjs";
+// Конфиги проекта читаются его же загрузчиками, текст — запасной путь.
+import {
+  BY_LOADER,
+  RUNNER_DEFAULT_INCLUDE,
+  globMatcher,
+  parseJsonc,
+  runnerConfigLoad,
+  tsconfigAt,
+  tsconfigRead,
+} from "./graph.configs.mjs";
 // Испытательная посадка и пакеты песочниц: посадке нужен один порядок и до
 // настройки проекта, и внутри режимов, которые её разбирают.
 import {
@@ -1393,14 +1403,6 @@ const runnerConfigNames = () => {
     ? []
     : [...entry.shadowedBy, entry.to, ...(entry.alsoKnownAs ?? [])];
 };
-/** Секция тестов настройки раннера — от её начала до конца файла, либо `null`.
- * Опознаётся по форме, а не по написанию: `test:{` без пробела форматтер
- * проекта не обязан править, и точное `test: {` такую секцию не видело —
- * четыре сверки отвечали о ней как о несуществующей. */
-const testSectionOf = (body) => {
-  const m = /(?:^|[\s,{])["']?test["']?\s*:\s*\{/.exec(body);
-  return m === null ? null : body.slice(m.index);
-};
 /** Конфиг звена, который лежит в проекте под любым своим именем: затеняющим,
  * семенным, другим именем того же предмета — из карты посадки; `null` — не
  * лежит ни под одним. Имена собирали три сверки порознь, и одна не собирала
@@ -1817,48 +1819,6 @@ const contentStamp = (f) =>
     .digest("hex")
     .slice(0, 12);
 
-const globsToTest = (globs) => {
-  const toRe = (glob) => {
-    let out = "";
-    for (let i = 0; i < glob.length; i += 1) {
-      const ch = glob[i];
-      if (ch === "*") {
-        if (glob[i + 1] === "*") {
-          if (glob[i + 2] === "/") {
-            out += "(?:[^/]*/)*";
-            i += 2;
-          } else {
-            out += ".*";
-            i += 1;
-          }
-        } else out += "[^/]*";
-      } else if (ch === "{" && glob.indexOf("}", i) > i) {
-        // Перечень `{ts,tsx}` — частая форма области раннера.
-        const end = glob.indexOf("}", i);
-        out +=
-          "(?:" +
-          glob
-            .slice(i + 1, end)
-            .split(",")
-            .map((part) => toRe(part).source.slice(1, -1))
-            .join("|") +
-          ")";
-        i = end;
-      } else if (".+^${}()|[]\\?".includes(ch)) out += "\\" + ch;
-      else out += ch;
-    }
-    return new RegExp("^" + out + "$");
-  };
-  // `./src/**` и `src/**` — один образец у раннера и мутаций, а путь файла
-  // приходит без точки: с ней образец не совпадал ни с чем.
-  const bare = (g) => g.replace(/^(?:\.\/)+/, "");
-  const yes = globs.filter((g) => !g.startsWith("!")).map((g) => toRe(bare(g)));
-  const no = globs
-    .filter((g) => g.startsWith("!"))
-    .map((g) => toRe(bare(g.slice(1))));
-  return (f) => yes.some((r) => r.test(f)) && !no.some((r) => r.test(f));
-};
-
 /** Файлы проекта, попавшие в область мутационного прогона.
  *
  * Область берётся из конфига самого Stryker, а не из настройки обвязки:
@@ -1871,7 +1831,7 @@ const mutationArea = () => {
   if (!existsSync(at)) return [];
   const globs = readJson(at, {}).mutate ?? [];
   if (!globs.length) return [];
-  const inside = globsToTest(globs);
+  const inside = globMatcher(globs, REPO_AT);
   // Путь считается от КОРНЯ РЕПОЗИТОРИЯ: образцы в конфиге Stryker написаны
   // от него же. Форма та же, какой пользуется режим долга.
   const key = (f) => norm(path.relative(REPO_AT, f));
@@ -3643,61 +3603,6 @@ const rel = (f) =>
     ? f.slice(ROOT.length + 1)
     : norm(path.relative(path.join(BASE, ".."), f));
 
-/** Конфиг с комментариями: `tsconfig.json` их допускает, `JSON.parse` — нет.
- * `null` — разобрать не удалось. Один разбор на всех, кто читает конфиг
- * компилятора: короткие адреса и строгость. */
-const parseJsonc = (raw) => {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    // Конфиг компилятора допускает комментарии, а разбор JSON — нет. Снимать
-    // их образцом по всему тексту нельзя: маска вида `src` со звёздами
-    // содержит последовательность, неотличимую от пустого блочного
-    // комментария, и образец съедает её ИЗНУТРИ СТРОКИ. Поймано сразу:
-    // короткий адрес превращался в огрызок, таблица выходила пустой, и
-    // разрешение коротких адресов не работало бы молча.
-    //
-    // Поэтому сканер, знающий про строки, и зовётся он только тогда, когда
-    // простой разбор уже не удался.
-    let out = "";
-    let inString = false;
-    for (let i = 0; i < raw.length; i += 1) {
-      const c = raw[i];
-      if (inString) {
-        out += c;
-        if (c === "\\") {
-          out += raw[i + 1] ?? "";
-          i += 1;
-          continue;
-        }
-        if (c === '"') inString = false;
-        continue;
-      }
-      if (c === '"') {
-        inString = true;
-        out += c;
-        continue;
-      }
-      if (c === "/" && raw[i + 1] === "/") {
-        while (i < raw.length && raw[i] !== "\n") i += 1;
-        out += "\n";
-        continue;
-      }
-      if (c === "/" && raw[i + 1] === "*") {
-        const end = raw.indexOf("*/", i + 2);
-        i = end < 0 ? raw.length : end + 1;
-        continue;
-      }
-      out += c;
-    }
-    try {
-      return JSON.parse(out);
-    } catch {
-      return null;
-    }
-  }
-};
-
 // --- разрешение спецификатора импорта в файл ---------------------------------
 /** Короткие адреса импорта — те, что объявлены конфигом компилятора.
  *
@@ -3763,28 +3668,8 @@ const typeCheckOptions = () => {
       }
     }
   }
-  // `-p` и ссылка называют конфиг и файлом, и папкой: `tsc -p .` — самая
-  // частая форма, и папка, прочитанная как файл, роняла сверку базы стеком на
-  // трети пути. Найдено посадкой руками в живой проект.
-  const tsconfigAt = (named) =>
-    existsSync(named) && statSync(named).isDirectory()
-      ? path.join(named, "tsconfig.json")
-      : named;
-  const optionsOf = (named, seen = new Set()) => {
-    const at = tsconfigAt(named);
-    if (seen.has(at) || !existsSync(at)) return null;
-    seen.add(at);
-    const parsed = parseJsonc(readFileSync(at, "utf8"));
-    if (parsed === null) return null;
-    let out = {};
-    for (const ext of [parsed.extends ?? []].flat()) {
-      if (!String(ext).startsWith(".")) continue;
-      let to = path.resolve(path.dirname(at), ext);
-      if (!existsSync(to) && existsSync(to + ".json")) to += ".json";
-      out = { ...out, ...(optionsOf(to, seen)?.options ?? {}) };
-    }
-    return { options: { ...out, ...(parsed.compilerOptions ?? {}) }, parsed };
-  };
+  // Опции читает компилятор проекта — с `extends` из пакета и цепочкой, как
+  // при проверке типов; адрес из `-p` бывает и папкой: `tsc -p .`.
   const configs = new Set();
   for (const [dir, body] of calls) {
     const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
@@ -3794,13 +3679,11 @@ const typeCheckOptions = () => {
   }
   const out = [];
   for (const at of configs) {
-    const got = optionsOf(at);
+    const got = tsconfigRead(at, REPO_AT);
     if (got === null) continue;
-    const refs = got.parsed.references ?? [];
-    if (got.parsed.compilerOptions == null && refs.length)
-      for (const r of refs) {
-        const to = tsconfigAt(path.resolve(path.dirname(at), r.path));
-        const opts = optionsOf(to)?.options;
+    if (got.raw.compilerOptions == null && got.references.length)
+      for (const to of got.references) {
+        const opts = tsconfigRead(to, REPO_AT)?.options;
         if (opts != null) out.push([to, opts]);
       }
     else out.push([at, got.options]);
@@ -3810,33 +3693,21 @@ const typeCheckOptions = () => {
 const ALIASES = (() => {
   const named = (CONFIG.toolchain ?? []).find((l) => l.script === "typecheck");
   const start = named?.config ?? "tsconfig.json";
+  // Компилятор проекта сливает `paths` по цепочке `extends` и называет папку,
+  // от которой они считаются: `baseUrl` либо папку конфига, где они заданы.
+  const got = tsconfigRead(path.join(BASE, "..", start), REPO_AT);
+  const paths = got?.options.paths;
+  if (paths == null) return [];
+  const base =
+    got.options.baseUrl ?? got.options.pathsBasePath ?? path.dirname(got.at);
   const out = [];
-  const seen = new Set();
-  const read = (at) => {
-    if (seen.has(at) || !existsSync(at)) return;
-    seen.add(at);
-    const parsed = parseJsonc(readFileSync(at, "utf8"));
-    if (parsed === null) return;
-    const here = path.dirname(at);
-    const paths = parsed.compilerOptions?.paths;
-    if (paths !== undefined)
-      for (const [pattern, targets] of Object.entries(paths))
-        for (const target of targets)
-          out.push({
-            head: pattern.replace(/\*$/, ""),
-            star: pattern.endsWith("*"),
-            to: norm(
-              path.resolve(
-                here,
-                parsed.compilerOptions?.baseUrl ?? ".",
-                target.replace(/\*$/, ""),
-              ),
-            ),
-          });
-    if (typeof parsed.extends === "string")
-      read(path.resolve(here, parsed.extends));
-  };
-  read(path.join(BASE, "..", start));
+  for (const [pattern, targets] of Object.entries(paths))
+    for (const target of targets)
+      out.push({
+        head: pattern.replace(/\*$/, ""),
+        star: pattern.endsWith("*"),
+        to: norm(path.resolve(base, target.replace(/\*$/, ""))),
+      });
   return out;
 })();
 const resolve = (fromFile, spec) =>
@@ -8492,7 +8363,8 @@ if (mode === "mutated") {
     mutateGlobs !== null &&
     (mutateGlobs.length === 0 ||
       mutateGlobs.every((g) => /^<.*>$/.test(String(g).trim())));
-  const inScope = mutateGlobs === null ? null : globsToTest(mutateGlobs);
+  const inScope =
+    mutateGlobs === null ? null : globMatcher(mutateGlobs, repoRoot);
   const key = (f) => norm(path.relative(repoRoot, f));
 
   // Отчёт последнего прогона. HTML-репортер Stryker держит внутри ТОТ ЖЕ
@@ -8559,7 +8431,7 @@ if (mode === "mutated") {
       // режим раз за разом предлагал прогон, который ничего не меняет.
       // Замерено на стенде: файл двух числовых шагов.
       const askedOf = Array.isArray(parsed.config?.mutate)
-        ? globsToTest(parsed.config.mutate)
+        ? globMatcher(parsed.config.mutate, repoRoot)
         : null;
       for (const [key, d] of Object.entries(parsed.files ?? {})) {
         const file = norm(path.join(repoRoot, key));
@@ -10568,7 +10440,7 @@ const mutationRowOf = (f) => {
     if (globs.length > 0 && !globs.every((g) => /^<.*>$/.test(String(g).trim()))) {
       const at = path.join(BASE, CONFIG.mutationLedger);
       MUTATION_CACHE = {
-        scope: globsToTest(globs),
+        scope: globMatcher(globs, REPO_AT),
         ledger: existsSync(at) ? readJson(at, {}) : {},
       };
     }
@@ -23178,6 +23050,20 @@ if (mode === "verify") {
   // сайта документации: маршрут /plugins/zoom ведёт в документ zoom.md папки plugins.
   const indexDrift = [];
   let indexDocs = 0;
+  // Конфиг раннера вычисляет сборщик проекта тем же порядком, что и раннер;
+  // ждать его — отдельный шаг, и область ниже читает готовое.
+  const runnerConfigs =
+    (await checkStepAsync(async () => {
+      const out = [];
+      for (const name of runnerConfigNames()) {
+        const got = await runnerConfigLoad(
+          path.join(BASE, "..", name),
+          REPO_AT,
+        );
+        if (got !== null) out.push({ name, ...got });
+      }
+      return out;
+    })) ?? [];
   checkStep(() => {
     if (CONFIG.docsIndex != null) {
       const dir = norm(path.join(BASE, CONFIG.docsIndex.dir));
@@ -23659,14 +23545,23 @@ if (mode === "verify") {
           // именно компилятор. В проекте на обычном JavaScript импорт берут
           // откуда угодно — раннер читает секцию тестов в любом случае, и
           // требовать тут `vitest/config` значило бы краснеть на законном.
+          // Конфиг раннера вычислил сборщик проекта, шагом выше: написание
+          // ему безразлично. Не смог — его отказ находка: раннер проекта на
+          // этом конфиге не поднимется тоже.
+          for (const cfg of runnerConfigs) {
+            viteSeen.add(cfg.name);
+            if (cfg.broke !== undefined)
+              viteDrift.push(
+                cfg.name +
+                  " — сборщик проекта конфиг не загрузил: " +
+                  cfg.broke +
+                  "; прочитан разбором текста",
+              );
+          }
           if (linkHasSubject("typecheck")) {
-            for (const name of runnerConfigNames()) {
-              const at = path.join(BASE, "..", name);
-              if (!existsSync(at)) continue;
-              viteSeen.add(name);
-              const body = readFileSync(at, "utf8");
-              if (testSectionOf(body) === null) continue;
-              if (body.includes("vitest/config")) continue;
+            for (const cfg of runnerConfigs) {
+              if (cfg.test == null) continue;
+              if (cfg.text.includes("vitest/config")) continue;
               // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
               // типы — замерено компилятором на такой настройке. Для старших
               // версий это не мерено, и они спрашиваются по-прежнему.
@@ -23677,15 +23572,21 @@ if (mode === "verify") {
               const major = Number(String(runner.version ?? "0").split(".")[0]);
               if (
                 major === 2 &&
-                /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(body)
+                /\/\/\/\s*<reference\s+types=["']vitest["']\s*\/>/.test(
+                  cfg.text,
+                )
               )
                 continue;
               viteDrift.push(
-                name +
+                cfg.name +
                   " — секция тестов есть, а `defineConfig` взят не из `vitest/config`: у типа сборщика поля `test` нет",
               );
             }
           }
+          // Корень раннера — от папки конфига; область и подготовка считаются
+          // от него.
+          const runnerRoot = (cfg) =>
+            path.resolve(path.dirname(cfg.at), cfg.test.root ?? ".");
           // Подготовка прогона легла — раннер обязан её звать. Правило слияния
           // «дописать в конфиг раннера область сбора, и только её» оставляло
           // семя подготовки лежать мёртвым: реестр тестов называл его уборкой
@@ -23704,16 +23605,15 @@ if (mode === "verify") {
               setupSeed !== undefined &&
               existsSync(path.join(REPO, setupSeed.to))
             ) {
-              const runnerConf = runnerConfigNames()
-                .map((n) => path.join(BASE, "..", n))
-                .filter((at) => existsSync(at))
-                .map((at) => readFileSync(at, "utf8"))
-                .find((body) => testSectionOf(body) !== null);
+              const runnerConf = runnerConfigs.find((c) => c.test != null);
               viteLooked += 1;
-              if (
+              const setupNamed =
                 runnerConf !== undefined &&
-                !runnerConf.includes(setupSeed.to.replace(/^src\//, ""))
-              )
+                [runnerConf.test.setupFiles ?? []]
+                  .flat()
+                  .map((f) => path.resolve(runnerRoot(runnerConf), f))
+                  .includes(path.join(REPO, setupSeed.to));
+              if (runnerConf !== undefined && !setupNamed)
                 viteDrift.push(
                   setupSeed.to +
                     " — подготовка прогона лежит, а секция тестов её не называет в `setupFiles`: уборка между тестами не работает",
@@ -23749,19 +23649,13 @@ if (mode === "verify") {
           // а обновление обвязки настройку проекта не трогает — в посаженных
           // проектах она так и стояла, и прогон проекта шёл в сорок раз дольше.
           // Замерено на мини-стенде: `116 с` из `125 с` приходились на обвязку.
-          for (const name of runnerConfigNames()) {
-            const at = path.join(BASE, "..", name);
-            if (!existsSync(at)) continue;
-            viteSeen.add(name);
-            const body = readFileSync(at, "utf8");
-            const section = testSectionOf(body);
-            if (section === null) continue;
-            const lists = [...section.matchAll(/include:\s*\[([^\]]*)\]/g)].map(
-              (m) => m[1],
-            );
-            if (lists.some((l) => l.includes(".claude")))
+          for (const cfg of runnerConfigs) {
+            if (cfg.test == null) continue;
+            if (
+              [cfg.test.include ?? []].flat().some((g) => g.includes(".claude"))
+            )
               viteDrift.push(
-                name +
+                cfg.name +
                   " — область сбора тестов называет папку обвязки: её тесты идут своей командой, вне прогона проекта — снять из `include`",
               );
           }
@@ -23769,42 +23663,40 @@ if (mode === "verify") {
           // проекте с другим корнем, у которого своего конфига раннера не было,
           // оно ложилось целиком: раннер не находил ни одного теста, а сверка
           // отвечала «расхождений: 0». Найдено посадкой руками в живой проект с
-          // корнем `lib`. Область — первый список строк в секции тестов до
-          // покрытия: у покрытия своя.
-          for (const name of runnerConfigNames()) {
-            const at = path.join(BASE, "..", name);
-            if (!existsSync(at)) continue;
-            const body = readFileSync(at, "utf8");
-            const section = testSectionOf(body);
-            if (section === null) continue;
-            const cut = section.search(/\bcoverage\s*:/);
-            const globs = [
-              ...(cut < 0 ? section : section.slice(0, cut)).matchAll(
-                /include:\s*\[([^\]]*)\]/g,
-              ),
-            ]
-              .map((m) =>
-                [...m[1].matchAll(/["']([^"']+)["']/g)].map((g) => g[1]),
-              )
-              .find((list) => list.length > 0);
-            if (globs === undefined) continue;
-            const collected = globsToTest(globs);
+          // корнем `lib`. Область не названа — она та, что у раннера по
+          // умолчанию; у раннера с проектами своя на каждый, и здесь не судится.
+          for (const cfg of runnerConfigs) {
+            if (cfg.test == null || cfg.test.projects != null) continue;
+            const root = runnerRoot(cfg);
+            const dir =
+              cfg.test.dir == null ? root : path.resolve(root, cfg.test.dir);
+            const collected = globMatcher(
+              [
+                ...[cfg.test.include ?? RUNNER_DEFAULT_INCLUDE].flat(),
+                ...[cfg.test.exclude ?? []].flat().map((g) => "!" + g),
+              ],
+              REPO_AT,
+            );
             // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
             // лежит в папке тестов, но тестом не является.
             const lost = files
               .filter((f) => TEST_SUFFIX.test(f))
-              .map((f) => norm(path.relative(path.join(BASE, ".."), f)))
-              .filter((k) => !collected(k));
+              .filter(
+                (f) =>
+                  !f.startsWith(dir + path.sep) ||
+                  !collected(norm(path.relative(root, f))),
+              )
+              .map((f) => norm(path.relative(path.join(BASE, ".."), f)));
             for (const k of lost.slice(0, 5))
               viteDrift.push(
-                name +
+                cfg.name +
                   " — тест проекта " +
                   k +
                   " вне области сбора `include`: раннер его не соберёт",
               );
             if (lost.length > 5)
               viteDrift.push(
-                name +
+                cfg.name +
                   " — и ещё тестов вне области сбора: " +
                   (lost.length - 5),
               );
@@ -27096,7 +26988,7 @@ if (mode === "verify") {
   const testsOutsideRules = checkStep(() =>
     (CONFIG.testsOutside ?? []).map((one) => {
       if (one.includes("*")) {
-        const test = globsToTest([one]);
+        const test = globMatcher([one], REPO_AT);
         return {
           one,
           hit: (f) => test(path.relative(REPO, f).split(path.sep).join("/")),
