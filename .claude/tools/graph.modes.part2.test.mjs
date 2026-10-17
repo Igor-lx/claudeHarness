@@ -3219,8 +3219,8 @@ describe("находки мини-стенда: факты, долг, отлож
       edit(
         box,
         ".context/02-todo.md",
-        "Отложенного нет: проект только что посажен, и согласовывать было нечего.",
-        "## 1. Проба\n\nГде: `src/app/App.tsx`. Почему отложено: это пункт 10 долга перехода. Чем закроется: пункт 7.",
+        "Пункты пишут ниже этой черты; пустой файл законен.",
+        "Пункты пишут ниже этой черты; пустой файл законен.\n\n## 1. Проба\n\nГде: `src/app/App.tsx`. Почему отложено: это пункт 10 долга перехода. Чем закроется: пункт 7.",
       );
       expect(verifyIn(box).get("Отложенное без закрытых пунктов")).toEqual([
         expect.stringMatching(/^02-todo\.md:\d+ — пункта 7 там нет$/),
@@ -4246,6 +4246,76 @@ describe("признаки по всей планке в модели свода
       expect(has(setup, "настройка", "политика источников", "zzpolicy.html")).toBe(true);
       expect(has(setup, "настройка", "бюджет", ".context/01-facts.md")).toBe(true);
       expect(has(setup, "настройка", "бюджет", ".context/00-map.md")).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Запись карты о бочке — строка таблицы, путь первой графой: так карта пишется
+ * сейчас. Сверка читала один заголовок `### …бочка`, и у карты таблицей её
+ * корпус был нулём: переименованный экспорт входа области оставался в карте.
+ * Найдено пробой рефактора. Бочку узнаёт код, а не слово в записи.
+ */
+describe("состав бочки в строке карты", () => {
+  it("строка таблицы о бочке: живое имя проходит, имя, которого бочка не отдаёт, названо", () => {
+    const box = seatEmpty("bochka-stroka-");
+    try {
+      const dir = path.join(box, "src", "shared", "zzArea");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "zzPart.ts"),
+        "export const zzLive = (n: number): number => n + 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(dir, "index.ts"),
+        'export { zzLive } from "./zzPart";\n',
+      );
+      const mapAt = path.join(box, ".context", "00-map.md");
+      fs.appendFileSync(
+        mapAt,
+        "\n| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n" +
+          "| `src/shared/zzArea/index.ts` | вход области: `zzLive`, `zzGhost` | нет | нет |\n",
+      );
+      const said = verifyIn(box).get("Состав бочки в записи карты") ?? [];
+      expect(said).toEqual([
+        expect.stringMatching(
+          /^00-map\.md:\d+ — shared\/zzArea\/index\.ts не отдаёт zzGhost$/,
+        ),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Карта называет удалённый файл дважды — сводкой и своей строкой. Находка
+ * печаталась без номера строки, и две одинаковые строки не говорили, где
+ * второе упоминание. Найдено пробой удаления узла.
+ */
+describe("призрак в базе назван с номером строки", () => {
+  it("два упоминания удалённого файла — две строки находки с разными номерами", () => {
+    const box = seatEmpty("prizrak-stroka-");
+    try {
+      const mapAt = path.join(box, ".context", "00-map.md");
+      fs.appendFileSync(
+        mapAt,
+        "\nСводка: `src/app/zzGone.ts` держит пробу.\n\n" +
+          "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n" +
+          "| `src/app/zzGone.ts` | проба | нет | нет |\n",
+      );
+      const found = verifyIn(box);
+      for (const section of ["Покрытие карты", "Пути в обратных кавычках"]) {
+        const lines = (found.get(section) ?? []).filter((l) =>
+          l.includes("zzGone"),
+        );
+        expect(lines, section).toHaveLength(2);
+        for (const l of lines)
+          expect(l, section).toMatch(/^00-map\.md:\d+: src\/app\/zzGone\.ts/);
+        expect(new Set(lines).size, section).toBe(2);
+      }
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

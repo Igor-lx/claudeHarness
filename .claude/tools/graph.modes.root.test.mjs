@@ -441,10 +441,15 @@ describe("страж обхода ворот", () => {
 
   it("останавливает чтение страницы свода оболочкой, называя Read, и пропускает остальное", () => {
     const home = path.join(TOOL_DIR, "..", "..");
-    const stopped = ask(home, "cat .context/bar-pages/bar-protocol-1.md");
-    expect(stopped.status).toBe(2);
-    expect(stopped.stderr).toContain("инструментом Read, а не `cat`");
-    expect(stopped.stderr).toContain("bar-read");
+    // Страница и файл ключей лежат в одной папке, и отказ называет, откуда
+    // берут путь к каждому: страницы — `bar-read`, файл ключей — `bar`.
+    for (const page of ["bar-protocol-1.md", "bar-protocol-ключи.md"]) {
+      const stopped = ask(home, "cat .context/bar-pages/" + page);
+      expect(stopped.status, page).toBe(2);
+      expect(stopped.stderr).toContain("инструментом Read, а не `cat`");
+      expect(stopped.stderr).toContain("bar-read");
+      expect(stopped.stderr).toContain("путь к файлу ключей печатает `bar`");
+    }
     for (const fine of [
       "ls .context/bar-pages",
       "git status --short -- .context/bar-pages",
@@ -535,7 +540,7 @@ describe("страж обхода ворот", () => {
         const stopped = askRead(box, at("bar-protocol.md"), window);
         expect(stopped.status, JSON.stringify(window)).toBe(2);
         expect(stopped.stderr).toContain("offset 6 и limit 5");
-        expect(stopped.stderr).toContain("graph.mjs bar");
+        expect(stopped.stderr).toContain("путь к файлу ключей");
       }
       for (const window of [
         { offset: 6, limit: 5 },
@@ -655,6 +660,29 @@ describe("конфиг в корне — под правилом о коммен
       // мёртвым назван только якорь в никуда.
       expect(planted.get("Якоря на документацию в коде") ?? []).toEqual([
         "zz.config.mjs → .claude/seat/zz-no-such-note.md",
+      ]);
+      // Конфиг с комментарием под решёткой судится так же; образец пути
+      // `/*.log` блоком комментария не открывается.
+      fs.rmSync(path.join(box, "zz.config.mjs"));
+      fs.writeFileSync(
+        path.join(box, ".dockerignore"),
+        [
+          "# This ignore file sits in the repository root, and its comment run is",
+          "# longer than the ceiling on purpose: the check must read it too.",
+          "/*.log",
+          "# See .claude/seat/zz-no-such-note.md",
+          "dist",
+          "",
+        ].join("\n"),
+      );
+      const hashed = verifyIn(box);
+      expect(hashed.get("Комментарий не перерос в прозу") ?? []).toEqual([
+        expect.stringMatching(
+          /^\.dockerignore:1 — ряд, слов \d+ при потолке 15\./,
+        ),
+      ]);
+      expect(hashed.get("Якоря на документацию в коде") ?? []).toEqual([
+        ".dockerignore → .claude/seat/zz-no-such-note.md",
       ]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });

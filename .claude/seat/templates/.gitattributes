@@ -1,8 +1,6 @@
-# Line endings are repository policy, not a per-machine setting: LF in the
-# repository and in the working tree, whatever core.autocrlf happens to be.
+# Line endings are repository policy: `.claude/seat/.gitattributes-why.md`.
 * text=auto eol=lf
 
-# Binary assets must never be touched.
 *.png binary
 *.jpg binary
 *.jpeg binary

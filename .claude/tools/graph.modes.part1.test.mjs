@@ -193,6 +193,27 @@ describe("ворота конца хода", () => {
       );
       fs.writeFileSync(policyAt, policy);
       expect(hook().status).toBe(0);
+      // Инструмент — каждый его модуль: вход, словарь и вынесенный разбор
+      // кода, который строит модель. Тесты инструмента основанием не служат.
+      for (const name of [
+        "graph.mjs",
+        "graph.predicates.mjs",
+        "graph.parse.mjs",
+      ]) {
+        const toolAt = path.join(box, ".claude", "tools", name);
+        const tool = fs.readFileSync(toolAt, "utf8");
+        fs.writeFileSync(toolAt, tool + "\n");
+        const retooled = hook();
+        expect(retooled.status, name).toBe(2);
+        expect(retooled.stderr).toContain(
+          "основание свода сменилось после печати — инструмент",
+        );
+        fs.writeFileSync(toolAt, tool);
+        expect(hook().status, name).toBe(0);
+      }
+      const testAt = path.join(box, ".claude", "tools", "graph.parse.test.mjs");
+      fs.appendFileSync(testAt, "\n");
+      expect(hook().status).toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -1480,6 +1501,34 @@ describe("конфиг в корне — под границей языка", ()
       expect(verifyIn(box).get(SECTION) ?? []).toEqual([
         "zz.config.mjs:1 — комментарий на русском, а код проекта пишут по-английски",
       ]);
+      // Конфиг с комментарием под решёткой — тоже конфиг корня; русское имя
+      // папки в образце пути комментарием не является.
+      fs.rmSync(path.join(box, "zz.config.mjs"));
+      fs.writeFileSync(
+        path.join(box, ".dockerignore"),
+        "# комментарий списка игнорирования\n.проба-сверок\n",
+      );
+      expect(verifyIn(box).get(SECTION) ?? []).toEqual([
+        ".dockerignore:1 — комментарий на русском, а код проекта пишут по-английски",
+      ]);
+      // Семя прежней редакции после обновления обвязки: находка по нему
+      // называет, что файл лёг семенем и полка несёт другую его редакцию.
+      fs.rmSync(path.join(box, ".dockerignore"));
+      fs.writeFileSync(
+        path.join(box, ".gitignore"),
+        "# отчёты прогонов\nreports\n",
+      );
+      const printed = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+        { cwd: box, encoding: "utf8" },
+      ).stdout;
+      expect(printed).toContain(
+        ".gitignore:1 — комментарий на русском, а код проекта пишут по-английски",
+      );
+      expect(printed).toContain(
+        "легли семенем, а полка несёт другую их редакцию: .gitignore ← seat/templates/.gitignore",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

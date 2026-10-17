@@ -1788,6 +1788,7 @@ export const BAR_FORMS = {
     "тест гарантии есть и назван, но проверяет не обещанное — сверка находит тест по имени, а что он проверяет, решает чтение",
     "обещание, которого нет в таблице гарантий, — модель знает записанные гарантии, а полноту списка относительно замысла проверяет разработчик по отчёту",
     "гарантия «никогда», чей тест перебирает два-три входа либо гоняет свойство на узком генераторе, — признак видит перебор и не спрашивает, достаточен ли он",
+    "гарантия «никогда», чей тест обходит не входы, а результат одного входа (`.map` либо `.every` по выводу), — признак видит обход и не отличает входы от выхода",
   ],
   J13: [
     "ожидаемое, вычисленное заранее в переменную теста либо собранное шаблонной строкой из имён кода, — признак видит имя проекта только в самом доводе утверждения",
@@ -2672,7 +2673,9 @@ export const firstCellOf = (line) => {
 export const barCoreCriterion = (id) => BAR_CORE.has(id);
 /** Перебирает ли тело теста входы: цикл, обход коллекции, таблица случаев,
  * свойство на случайных входах. Гарантию рода «никогда» тест без перебора
- * держит одним примером, и «ни при каком входе» им не доказано. */
+ * держит одним примером, и «ни при каком входе» им не доказано. Обход
+ * результата одного входа признак тоже считает перебором — это форма, которой
+ * он не видит, и она записана в `BAR_FORMS`. */
 const INPUTS_ENUMERATED =
   /\b(?:for|while)\s*\(|\.(?:forEach|map|every|some)\s*\(|\.each\b|\bfc\s*\.\s*(?:assert|property)\b/;
 export const testEnumeratesInputs = (block) => INPUTS_ENUMERATED.test(block);
@@ -2791,7 +2794,19 @@ export const barRowFault = (row) => {
  * Строки с тегом (`@param`, `@returns`) в счёт не идут: это структурный
  * контракт, а не проза, и длина его растёт с числом параметров.
  */
-export const commentRunsOf = (text) => {
+/** Конфиг корня, чей комментарий открывает решётка: правила git и
+ * форматтера (`.gitignore`, `.gitattributes`, `.prettierignore`), настройки
+ * менеджера и редактора (`.npmrc`, `.editorconfig`), YAML и TOML. Их тоже
+ * исполняет машина, и правило о комментариях действует на них, как на конфиг
+ * кода; корпус сверок комментариев и языка брал одни файлы кода, и семя
+ * `.gitignore` несло русский ряд в `30` слов без единого признака. */
+export const isHashCommentConfig = (name) =>
+  /\.(ya?ml|toml)$/.test(name) ||
+  (/^\.[\w.-]+$/.test(name) && !/\.(json|[cm]?[jt]sx?)$/.test(name));
+
+/** `hash` — комментарий открывает решётка, а не косые: файл из
+ * `isHashCommentConfig`. Ряд решёток — род `line`, как ряд двух косых. */
+export const commentRunsOf = (text, hash = false) => {
   const runs = [];
   let kind = null;
   let at = 0;
@@ -2811,10 +2826,12 @@ export const commentRunsOf = (text) => {
     if (inBlock) {
       now = "block";
       if (line.includes("*/")) inBlock = false;
-    } else if (line.startsWith("/*")) {
+    } else if (!hash && line.startsWith("/*")) {
+      // Под решёткой `/*` — образец пути (`/*.log`), а не блок.
       now = "block";
       if (!line.includes("*/")) inBlock = true;
-    } else if (line.startsWith("//")) now = "line";
+    } else if (hash ? line.startsWith("#") : line.startsWith("//"))
+      now = "line";
     if (now === null) {
       close();
       continue;
@@ -2824,7 +2841,7 @@ export const commentRunsOf = (text) => {
     kind = now;
     rows += 1;
     const bare = line
-      .replace(/^(\/\*+|\*+\/|\*|\/\/)/, "")
+      .replace(hash ? /^#+/ : /^(\/\*+|\*+\/|\*|\/\/)/, "")
       .replace(/\*\/$/, "")
       .trim();
     if (bare.startsWith("@")) continue;
@@ -4275,6 +4292,18 @@ export const PREDICATE_CASES = [
   ["stateFormOf", "const { data } = useSWR(key, load);", "кэш серверных данных"],
   ["stateFormOf", "const pages = useSWRInfinite(keyOf, load);", "кэш серверных данных"],
   // --- commentRunsOf: ряды комментариев, длина в СЛОВАХ ---
+  // --- isHashCommentConfig: конфиг корня с комментарием под решёткой ---
+  ["isHashCommentConfig", ".gitignore", true],
+  ["isHashCommentConfig", ".prettierignore", true],
+  ["isHashCommentConfig", ".gitattributes", true],
+  ["isHashCommentConfig", ".npmrc", true],
+  ["isHashCommentConfig", "pnpm-workspace.yaml", true],
+  ["isHashCommentConfig", "netlify.toml", true],
+  ["isHashCommentConfig", ".prettierrc.json", false],
+  ["isHashCommentConfig", ".eslintrc.cjs", false],
+  ["isHashCommentConfig", "README.md", false],
+  ["isHashCommentConfig", "package.json", false],
+  ["isHashCommentConfig", "vite.config.ts", false],
   ["commentRunsOf", "const a = 1;", ""],
   ["commentRunsOf", "// три коротких слова", "line:1:3:1"],
   // ряд слитный: две строки подряд — один ряд, слова складываются
@@ -4364,6 +4393,13 @@ export const PREDICATE_CASES = [
   ],
   ["testEnumeratesInputs", "it.each([[0], [-1]])", true],
   ["testEnumeratesInputs", "fc.assert(nonNegative);", true],
+  // Обход результата одного входа признак считает перебором: форма, которой
+  // он не видит, записана в `BAR_FORMS` у `J11`.
+  [
+    "testEnumeratesInputs",
+    "expect(result.items.map((item) => item.quantity)).toEqual([99]);",
+    true,
+  ],
   ["testEnumeratesInputs", "fc.property(fc.integer(), (n) => f(n) >= 0)", true],
   // --- barNoSubject: беспредметен ли критерий на этой правке ---
   // --- barRestsOn: «чисто» только на записях базы либо на строках сессии ---
@@ -5704,6 +5740,38 @@ export const PREDICATE_CASES = [
     "cat <<'EOF'" + NEWLINE + ".context/bar-pages/x.md" + NEWLINE + "EOF",
     "",
   ],
+  // --- closedMark: пункт отложенного либо вопрос, помеченный закрытым ---
+  ["closedMark", "Проба ЗАКРЫТО раньше срока", true],
+  ["closedMark", "Проба СДЕЛАНО раньше срока", true],
+  ["closedMark", "Проба: ГОТОВО", true],
+  ["closedMark", "Проба: ВЫПОЛНЕНО", true],
+  ["closedMark", "Проба: ОТВЕЧЕНО", true],
+  ["closedMark", "Probe DONE", true],
+  ["closedMark", "Probe CLOSED", true],
+  ["closedMark", "Probe ANSWERED", true],
+  ["closedMark", "✔ Кэш сессий", true],
+  ["closedMark", "3. Кэш сессий — сделано", true],
+  ["closedMark", "3. Кэш сессий (готово)", true],
+  ["closedMark", "Закрыто: кнопка «убрать одну»", true],
+  ["closedMark", "3. Сделано — кэш сессий", true],
+  ["closedMark", "3. [x] Кэш сессий", true],
+  ["closedMark", "✅ Кэш сессий", true],
+  ["closedMark", "~~3. Кэш сессий~~", true],
+  ["closedMark", "3. Закрыть вопрос о кэше", false],
+  ["closedMark", "3. Сделать кнопку «убрать одну»", false],
+  ["closedMark", "3. Готовность формы к отправке", false],
+  ["closedMark", "3. Кэш закрытых сессий", false],
+  ["closedMark", "Кнопка — отвечено", true],
+  ["closedMark", "Отвечено: кнопка нужна", true],
+  ["closedMark", "Ответить ли кнопкой", false],
+  // --- isToolModule: файл инструмента, кроме тестов и их оснастки ---
+  ["isToolModule", "graph.mjs", true],
+  ["isToolModule", "graph.parse.mjs", true],
+  ["isToolModule", "hook.mjs", true],
+  ["isToolModule", "graph.parse.test.mjs", false],
+  ["isToolModule", "graph.modes.shared.mjs", false],
+  ["isToolModule", "graph.md", false],
+  ["isToolModule", "probe-shop.json", false],
   // --- protocolReadByShell: чтение протокола свода командой оболочки ---
   ["protocolReadByShell", "cat .context/bar-protocol.md", "cat"],
   ["protocolReadByShell", "sed -n 1,50p .context/bar-protocol.md", "sed"],
@@ -6465,6 +6533,31 @@ export const pageReadByShell = (command) =>
       .split("/")
       .some((part) => part === BAR_PAGES_DIR),
   );
+
+/** Заголовок записи, помеченной закрытой, — пункта отложенного либо вопроса
+ * разработчику: пометка заглавными, в конце, в начале обычным регистром,
+ * отметка галочкой, зачёркнутое. Закрытое удаляют, а не помечают; пометка в
+ * начале заголовка («Закрыто: …») проходила мимо обеих сверок, знавших
+ * заглавную и конечную формы, и словарь у каждой был свой. Найдено пробой
+ * залежавшегося. Повелительное «Закрыть …» пометкой не является. */
+const CLOSED_WORD = "(закрыт|сделан|готов|выполнен|отвечен)";
+const CLOSED_FORMS = [
+  /(ЗАКРЫТО|СДЕЛАНО|ГОТОВО|ВЫПОЛНЕНО|ОТВЕЧЕНО|DONE|CLOSED|ANSWERED)/,
+  new RegExp("[—\\-(]\\s*" + CLOSED_WORD + "\\S*\\s*\\)?\\s*$", "i"),
+  new RegExp("^(\\d+\\.\\s*)?" + CLOSED_WORD + "[оа]?\\s*[:—–-]", "i"),
+  /^(\d+\.\s*)?(\[[xхXХ]\]|✅|✔)/,
+  /^~~.*~~$/,
+];
+export const closedMark = (title) => CLOSED_FORMS.some((re) => re.test(title));
+
+/** Файл инструмента в его папке: модуль `.mjs`, кроме тестов и их общей
+ * оснастки. Инструмент разнесён по модулям — разбор кода, приём частей, серия,
+ * — и перечень, названный руками, отстаёт от первого же нового модуля: правка
+ * вынесенного разбора меняла модель свода, а печать стояла. */
+export const isToolModule = (name) =>
+  name.endsWith(".mjs") &&
+  !name.includes(".test.") &&
+  !name.startsWith("graph.modes.");
 
 /** Чтение протокола свода командой оболочки — имя команды, иначе пустая
  * строка. `name` — имя файла протокола из настройки проекта.

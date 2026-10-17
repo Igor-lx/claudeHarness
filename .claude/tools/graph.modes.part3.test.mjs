@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BAR_CUTS, BAR_SIGNALS } from "./graph.predicates.mjs";
+import { BAR_CUTS, BAR_SIGNALS, isToolModule } from "./graph.predicates.mjs";
 import {
   TOOL_DIR,
   TOOL,
@@ -1447,7 +1447,12 @@ describe("синоним термина словаря во всей прозе 
 describe("скиллы цитируют то, что печатают режимы", () => {
   it("ярлыки ответов в скилле handoff и заглавные цитаты всех скиллов есть в инструменте", () => {
     const skills = path.join(TOOL_DIR, "..", "skills");
-    const tool = ["graph.mjs", "hook.mjs"].map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8")).join("\n");
+    // Печатают все модули инструмента, а не только его вход.
+    const tool = fs
+      .readdirSync(TOOL_DIR)
+      .filter(isToolModule)
+      .map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8"))
+      .join("\n");
     const missing = [];
     const handoff = fs.readFileSync(path.join(skills, "handoff", "SKILL.md"), "utf8");
     const labels = [...handoff.matchAll(/^- \*\*«([^»]+)»\*\*/gm)].map((m) => m[1]);
@@ -3110,6 +3115,28 @@ describe("матрица читателей прозы", () => {
     "четыре кавычки с тремя внутри": (s) => "````md\n```\n" + s + "\n```\n````",
     "тильды внутри кавычек": (s) => "```\n~~~\n" + s + "\n~~~\n```",
     "строка с языком внутри ограды": (s) => "```\n```md\n" + s + "\n```",
+    // Блок с отступом — тоже код по CommonMark: четыре пробела сверх
+    // содержимого своего пункта, после пустой строки.
+    "блок с отступом": (s) =>
+      "Пример:\n\n" +
+      s
+        .split("\n")
+        .map((l) => "    " + l)
+        .join("\n"),
+    "блок с отступом в пункте списка": (s) =>
+      "- пункт\n\n" +
+      s
+        .split("\n")
+        .map((l) => "      " + l)
+        .join("\n"),
+    // Три кавычки в блоке с отступом — строка кода, а не ограда: открытая,
+    // она длилась бы до конца файла и прятала часового.
+    "три кавычки в блоке с отступом": (s) =>
+      "Пример:\n\n    ```\n" +
+      s
+        .split("\n")
+        .map((l) => "    " + l)
+        .join("\n"),
   };
 
   it("образец в ограде кода не краснит ни одной сверки ни в одном виде прозы и ни в одной форме ограды, а вне ограды краснит", () => {
@@ -3120,7 +3147,10 @@ describe("матрица читателей прозы", () => {
       // ограды: его красное обязано стоять. Форма, которая по ошибке длится до
       // конца файла, прячет часового, и пропажа видна; утечка — лишняя строка.
       // Шестьдесят шесть прогонов сверки стоили `158` с, одиннадцать — шестую часть.
-      const sentinel = "Часовой: сверка «Часового нет»";
+      // Часовой стоит абзацем-продолжением вложенного пункта: это проза, и
+      // отступ пункта не делает его блоком кода.
+      const sentinel =
+        "1. пункт\n\n   - вложенный\n\n     Часовой: сверка «Часового нет»";
       const fenced = Object.values(FENCES)
         .map((fence) => fence(SAMPLE))
         .join("\n\n");
@@ -3350,23 +3380,40 @@ describe("испорченный реестр мутаций", () => {
     const box = seatEmpty("spoiled-ledger-");
     try {
       const at = path.join(box, ".context", "mutation-ledger.json");
-      // Обрубленная запись: так выглядит прерванный прогон.
-      const torn =
-        '{\n  "src/app/App.tsx": { "killed": 4, "alive": 1, "hash": "ab';
-      fs.writeFileSync(at, torn);
-      expect(verifyIn(box).get("Файл, написанный обвязкой, читается")).toEqual([
-        expect.stringMatching(
-          /^mutation-ledger\.json — не разбирается как JSON: .*Вернуть из истории git/,
-        ),
-      ]);
-      const run = spawnSync(
-        process.execPath,
-        [path.join(box, ".claude", "tools", "graph.mjs"), "mutated"],
-        { cwd: box, encoding: "utf8" },
-      );
-      expect(run.status).toBe(1);
-      expect(run.stdout).toContain("Реестр мутационных замеров не читается");
-      expect(fs.readFileSync(at, "utf8")).toBe(torn);
+      // Обрубленная запись — так выглядит прерванный прогон; JSON не той
+      // формы — читатель ждёт объект, и `null` ронял режим стеком, а число
+      // переписывалось пустым объектом.
+      for (const [torn, said] of [
+        [
+          '{\n  "src/app/App.tsx": { "killed": 4, "alive": 1, "hash": "ab',
+          "не разбирается как JSON",
+        ],
+        ["null", "JSON верхнего уровня не объект: null"],
+        ["5", "JSON верхнего уровня не объект: 5"],
+        ["[]", "JSON верхнего уровня не объект: массив"],
+        ['"x"', "JSON верхнего уровня не объект: x"],
+      ]) {
+        fs.writeFileSync(at, torn);
+        expect(
+          verifyIn(box).get("Файл, написанный обвязкой, читается"),
+          torn,
+        ).toEqual([
+          expect.stringMatching(
+            new RegExp(
+              "^mutation-ledger\\.json — " + said + ".*Вернуть из истории git",
+            ),
+          ),
+        ]);
+        const run = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "mutated"],
+          { cwd: box, encoding: "utf8" },
+        );
+        expect(run.status, torn).toBe(1);
+        expect(run.stdout).toContain("Реестр мутационных замеров не читается");
+        expect(run.stderr).not.toContain("TypeError");
+        expect(fs.readFileSync(at, "utf8")).toBe(torn);
+      }
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3497,6 +3544,23 @@ describe("форматтер проекта в форме CommonJS", () => {
           /^\.claude\/seat\/templates\/zzRough\.ts\.seed — в проекте/,
         ),
       ]);
+      // Корпус — семена с суффиксом, которые сверка и проверяет, а не все
+      // семена карты: без суффиксных она печатает «осмотрено ноль».
+      const suffixed = fs
+        .readdirSync(path.join(box, ".claude", "seat", "templates"), {
+          recursive: true,
+        })
+        .filter((n) => String(n).endsWith(".seed")).length;
+      const full = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"],
+        { cwd: box, encoding: "utf8" },
+      ).stdout;
+      expect(full).toContain(
+        "=== Семена приезжают отформатированными ===\n  осмотрено семян с суффиксом `.seed`: " +
+          suffixed +
+          "\n",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3510,13 +3574,7 @@ describe("временную папку системы берут через о�
     const own = new Set(["graph.seat.mjs", "hook.mjs"]);
     const strays = fs
       .readdirSync(TOOL_DIR)
-      .filter(
-        (n) =>
-          n.endsWith(".mjs") &&
-          !n.includes(".test.") &&
-          !n.startsWith("graph.modes.") &&
-          !own.has(n),
-      )
+      .filter((n) => isToolModule(n) && !own.has(n))
       .flatMap((n) =>
         fs
           .readFileSync(path.join(TOOL_DIR, n), "utf8")

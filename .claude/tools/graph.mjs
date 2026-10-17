@@ -99,7 +99,10 @@ import {
   CODE_OR_STYLE,
   CODE_STYLE_ALT,
   isStylePath,
+  isHashCommentConfig,
   isTestPath,
+  isToolModule,
+  closedMark,
   TEST_SUFFIX,
   commentRunsOf,
   firstCellOf,
@@ -361,8 +364,9 @@ const SPOILED = [];
 let envUndeclared = false;
 const readJson = (at, fallback) => {
   if (!existsSync(at)) return fallback;
+  let parsed;
   try {
-    return JSON.parse(readFileSync(at, "utf8"));
+    parsed = JSON.parse(readFileSync(at, "utf8"));
   } catch (e) {
     SPOILED.push(
       at +
@@ -371,6 +375,17 @@ const readJson = (at, fallback) => {
     );
     return fallback;
   }
+  // Каждый читатель ждёт объект: `null` верхнего уровня ронял его стеком, а
+  // число в реестре мутаций переписывалось пустым объектом.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    SPOILED.push(
+      at +
+        " — JSON верхнего уровня не объект: " +
+        (Array.isArray(parsed) ? "массив" : String(parsed)),
+    );
+    return fallback;
+  }
+  return parsed;
 };
 
 const sayLooked = (unit, n) => {
@@ -463,11 +478,11 @@ if (mode === "guard") {
       );
     else if (page !== "")
       process.stderr.write(
-        "Обвязка: страница свода читается инструментом Read, а не `" +
+        "Обвязка: файл из папки страниц свода — страница чтения или ключи к заполнению — читается инструментом Read, а не `" +
           page +
           "`.\n" +
-          "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанная оболочкой страница её не приносит, и свод судил бы по заголовкам.\n" +
-          "Список страниц печатает `node .claude/tools/graph.mjs bar-read`; открыть файл из списка — Read.\n",
+          "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанный оболочкой файл её не приносит, и свод судил бы по заголовкам.\n" +
+          "Страницы перечисляет `node .claude/tools/graph.mjs bar-read`, путь к файлу ключей печатает `bar`; открыть — Read.\n",
       );
     else process.stderr.write(protocol);
     process.exit(2);
@@ -1972,16 +1987,18 @@ const barHeader = (at) =>
  * предмета. Предмет держат отпечатки файлов; основание держит печать от
  * молчаливого сдвига: хранилище возвращает протокол той же области через
  * любое число коммитов, и сосед, политика либо инструмент за это время
- * сменились, а модель этого не показала. Инструментом считаются `graph.mjs` и
- * `graph.predicates.mjs`: в них словари и правила приёма. */
+ * сменились, а модель этого не показала. Инструментом считается каждый его
+ * модуль: разбор кода строит модель, словари и правила приёма судят ответы. */
 const barGroundDigests = () => {
   const text = (f) => (existsSync(f) ? readFileSync(f, "utf8") : "");
   const { scoped, core } = barPolicyOf();
   return {
     policy: barDigest(text(core) + LF + text(scoped)),
     tool: barDigest(
-      ["graph.mjs", "graph.predicates.mjs"]
-        .map((n) => text(path.join(TOOL_DIR, n)))
+      readdirSync(TOOL_DIR)
+        .filter(isToolModule)
+        .sort()
+        .map((n) => n + LF + text(path.join(TOOL_DIR, n)))
         .join(LF),
     ),
   };
@@ -2474,25 +2491,35 @@ const barKeysOf = (body) => {
   if (parts !== null) out.push(parts);
   return out;
 };
+/** Сколько знаков дыр `bar` печатает в вывод; остальное — в файле ключей.
+ * Предел среды на вывод — около `10 000` знаков (журналы девятого и десятого
+ * прогонов пробы), и место нужно ещё окну модели и пути к файлу. */
+const BAR_HOLES_SHOWN_CHARS = 6000;
+/** Папка страниц чтения и файла ключей рядом с протоколом. Шапки правил о
+ * планке и о коде называют её: файл, открытый инструментом чтения, приносит
+ * политику в контекст. Папка выводима, и в git её нет: она сама себя
+ * игнорирует. */
+const barPagesDirOf = (at) => {
+  const dir = path.join(path.dirname(at), BAR_PAGES_DIR);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, ".gitignore"), "*" + LF);
+  return dir;
+};
 /** Форма файла ответов и ключи к заполнению — файлом рядом со страницами
  * чтения; в выводе остаются окно модели и путь. Вывод длиннее предела, который
  * среда отдаёт сессии, режется посередине, а ключи стояли в середине: девятый
  * прогон пробы `2026-10-16` — вырезано `12 845` знаков, и требования к «чисто»
  * сессия восстанавливала по отказам. Файл пересобирается каждым вызовом
  * `bar`, поэтому ключи в нём — ещё не заполненных строк. */
-/** Сколько знаков дыр `bar` печатает в вывод; остальное — в файле ключей.
- * Предел среды на вывод — около `10 000` знаков (журналы девятого и десятого
- * прогонов пробы), и место нужно ещё окну модели и пути к файлу. */
-const BAR_HOLES_SHOWN_CHARS = 6000;
 const barKeysFileOf = (at, holes = []) => {
   const keys = barKeysOf(readFileSync(at, "utf8"));
   const model = keys.find((line) =>
     line.startsWith("модель предмета — строки"),
   );
-  const dir = path.join(path.dirname(at), BAR_PAGES_DIR);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, ".gitignore"), "*" + LF);
-  const file = path.join(dir, path.basename(at, ".md") + "-ключи.md");
+  const file = path.join(
+    barPagesDirOf(at),
+    path.basename(at, ".md") + "-ключи.md",
+  );
   writeFileSync(
     file,
     [
@@ -2543,6 +2570,30 @@ const seedOfPath = () => {
   if (mapAt === null || !existsSync(mapAt)) return out;
   for (const e of readJson(mapAt, {}).copy ?? []) out.set(e.to, e.from);
   return out;
+};
+
+/** Строка о семенах среди находок: файл лёг семенем, а полка несёт другую его
+ * редакцию. После обновления обвязки семя прежней редакции судится как свой
+ * код проекта, и находки по файлу, которого проект не писал, читались как его
+ * работа. Найдено пробой обновления. Пусто — таких нет. */
+const seedDriftNote = (findings) => {
+  const seeds = seedOfPath();
+  const repoRoot = path.join(BASE, "..");
+  const hit = new Set();
+  for (const one of findings) {
+    const file = one.split(":")[0];
+    const from = seeds.get(file);
+    const at = from === undefined ? null : shelfAt(from);
+    const own = path.join(repoRoot, file);
+    if (at === null || !existsSync(at) || !existsSync(own)) continue;
+    if (!sameAsSeed(readFileSync(own, "utf8"), readFileSync(at, "utf8")))
+      hit.add(file + " ← " + from);
+  }
+  return hit.size === 0
+    ? ""
+    : "  легли семенем, а полка несёт другую их редакцию: " +
+        [...hit].join(", ") +
+        ". Не правили сами — заменить редакцией полки; правили — это свой код";
 };
 
 /** Лежит ли файл ТЕМ ЖЕ, каким его положило семя.
@@ -3004,37 +3055,82 @@ const unfenced = (text) => {
  * знаков переключала ограду, и образец ограды внутри ограды — четыре кавычки
  * с тремя внутри, тильды внутри кавычек, строка с языком — выпускал свою
  * середину в каждую сверку; правило жило в шести местах по-своему.
- */
-const fenceSpans = (lines) => {
+ *
+ * Блоки с отступом идут тем же проходом. Отступ считается от содержимого
+ * своего пункта списка: пункт задаёт его маркером. Строка на четыре пробела
+ * глубже, после пустой строки либо такой же строки, — блок с отступом; абзац
+ * она не прерывает, и продолжение пункта с отступом — проза. Ограду
+ * открывает строка мельче на четыре пробела, а закрывает так же мелкая
+ * строка. Без отступа пункта правило прятало бы абзацы вложенных пунктов, а
+ * без блока с отступом образец в нём краснил сверку и его строка из трёх
+ * кавычек открывала ограду. Найдено пробой регресса. */
+const codeBlocksOf = (lines) => {
   const spans = [];
+  const indented = lines.map(() => false);
+  const lists = [];
   let open = null;
+  let blankBefore = true;
+  let codeBefore = false;
   lines.forEach((line, i) => {
-    const m = /^\s*(`{3,}|~{3,})(.*)/.exec(line);
-    if (m === null) return;
-    const [, mark, rest] = m;
-    if (open === null) {
-      // Строка сведений об ограде из кавычек кавычек не несёт: иначе это
-      // код в строке, а не ограда.
-      if (mark[0] === "`" && rest.includes("`")) return;
-      open = { from: i, char: mark[0], size: mark.length };
-    } else if (
-      mark[0] === open.char &&
-      mark.length >= open.size &&
-      rest.trim() === ""
-    ) {
-      spans.push({ from: open.from, to: i, closed: true });
-      open = null;
+    const indent = line.replace(/\t/g, "    ").search(/\S/);
+    const fence = /^\s*(`{3,}|~{3,})(.*)/.exec(line);
+    if (open !== null) {
+      if (
+        fence !== null &&
+        indent - open.base < 4 &&
+        fence[1][0] === open.char &&
+        fence[1].length >= open.size &&
+        fence[2].trim() === ""
+      ) {
+        spans.push({ from: open.from, to: i, closed: true });
+        open = null;
+      }
+      return;
     }
+    if (indent < 0) {
+      blankBefore = true;
+      return;
+    }
+    if (blankBefore)
+      while (lists.length > 0 && indent < lists.at(-1)) lists.pop();
+    const base = lists.at(-1) ?? 0;
+    if (indent - base >= 4 && (blankBefore || codeBefore)) {
+      indented[i] = true;
+      codeBefore = true;
+      blankBefore = false;
+      return;
+    }
+    codeBefore = false;
+    blankBefore = false;
+    // Строка сведений об ограде из кавычек кавычек не несёт: иначе это код в
+    // строке, а не ограда.
+    if (
+      fence !== null &&
+      indent - base < 4 &&
+      !(fence[1][0] === "`" && fence[2].includes("`"))
+    ) {
+      open = { from: i, char: fence[1][0], size: fence[1].length, base };
+      return;
+    }
+    const item = /^(\s*)([-*+]|\d{1,9}[.)])( {1,4})\S/.exec(line);
+    if (item === null) return;
+    while (lists.length > 0 && lists.at(-1) > item[1].length) lists.pop();
+    lists.push(item[1].length + item[2].length + item[3].length);
   });
   if (open !== null)
     spans.push({ from: open.from, to: lines.length - 1, closed: false });
-  return spans;
+  return { spans, indented };
 };
 
-/** Для каждой строки — лежит ли она в ограде, строки самой ограды включая. */
+/** Ограды кода в строках прозы: где открыта, где закрыта, закрыта ли. */
+const fenceSpans = (lines) => codeBlocksOf(lines).spans;
+
+/** Для каждой строки — лежит ли она в коде: в ограде, строки самой ограды
+ * включая, либо в блоке с отступом. */
 const fencedLines = (lines) => {
-  const fenced = lines.map(() => false);
-  for (const { from, to } of fenceSpans(lines))
+  const { spans, indented } = codeBlocksOf(lines);
+  const fenced = [...indented];
+  for (const { from, to } of spans)
     for (let i = from; i <= to; i += 1) fenced[i] = true;
   return fenced;
 };
@@ -3229,9 +3325,13 @@ for (const one of CONFIG.testDirs ?? []) collect(norm(path.join(BASE, one)));
 //
 // Поэтому список отдельный, и берут его только сверки комментариев, якорей и
 // языка. Остальные сверки кода конфиг по-прежнему не судят: опись не меняется.
+// Конфиг с комментарием под решёткой — `.gitignore`, YAML — в нём наравне.
 const ROOT_CONFIGS = walkable(REPO_AT)
   ? readdirSync(REPO_AT)
-      .filter((e) => CODE_FILE.test(e) && !OUT_OF_TREE.has(e))
+      .filter(
+        (e) =>
+          (CODE_FILE.test(e) || isHashCommentConfig(e)) && !OUT_OF_TREE.has(e),
+      )
       .map((e) => norm(path.join(REPO_AT, e)))
       .filter((full) => statSync(full).isFile() && !gitIgnored(full))
       .sort()
@@ -3485,10 +3585,10 @@ if (CONFIG.adr != null) {
   }
 }
 
-const docRefsIn = (body) => {
+const docRefsIn = (body, hash = false) => {
   const out = [];
   for (const line of body.split(String.fromCharCode(10))) {
-    if (!/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
+    if (!(hash ? /^\s*#/ : /^\s*(\/\/|\*|\/\*)/).test(line)) continue;
     // Адрес в сети — не документ репозитория. Ссылка на README чужого
     // хранилища кончается на `.md`, и её хвост читался мёртвым якорем:
     // замерено, `//github.com/…/README.md` из комментария модуля. Конфиги
@@ -17890,16 +17990,11 @@ if (mode === "bar-read") {
     console.log(wordRule);
     process.exit(0);
   }
-  // Страницы — файлами рядом с протоколом. Шапки правил о планке и о коде
-  // называют эту папку: страница, открытая инструментом чтения, приносит
-  // политику в контекст, и тела критериев приходят к первой же странице.
-  // Длинный вывод среда прятала в файл сама, и его дочитывали ещё одним
-  // вызовом; код при этом читали второй раз — файлами предмета. Папка
-  // выводима, и в git её нет: она сама себя игнорирует.
-  const dir = path.join(path.dirname(at), BAR_PAGES_DIR);
+  // Страницы — файлами рядом с протоколом: тела критериев приходят к первой
+  // же странице. Длинный вывод среда прятала в файл сама, и его дочитывали ещё
+  // одним вызовом; код при этом читали второй раз — файлами предмета.
+  const dir = barPagesDirOf(at);
   const stem = path.basename(at, ".md");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, ".gitignore"), "*" + NEWLINE);
   const mine = new RegExp("^" + escapeRe(stem) + "-([0-9]+)\\.md$");
   for (const name of readdirSync(dir)) {
     const m = mine.exec(name);
@@ -19608,7 +19703,7 @@ if (mode === "verify") {
               (f) => rel(f) === one || rel(f).endsWith("/" + one),
             );
             if (name === TESTS && isTestPath(one) && !existsSomewhere)
-              goneTests.push(`${name}: ${one}`);
+              goneTests.push(`${name}:${lineAt + 1}: ${one}`);
             // Шаблоны со звёздочкой и перечисления расширений (`.ts/.tsx`)
             // адресами не являются: они описывают форму, а не файл. Замер на
             // здоровом дереве дал ровно три таких и ноль настоящих.
@@ -19620,7 +19715,7 @@ if (mode === "verify") {
               one.split("/").every((s) => !s.startsWith(".")) &&
               !existsSomewhere
             )
-              goneMapped.push(`${name}: ${one}`);
+              goneMapped.push(`${name}:${lineAt + 1}: ${one}`);
             continue;
           }
           if (name === MAP && ownRow) mapMentions.add(hit);
@@ -20160,6 +20255,23 @@ if (mode === "verify") {
       barrel = null;
     };
     for (const [i, line] of mapLines.entries()) {
+      // Нынешняя форма карты — строка таблицы на файл, путь первой графой;
+      // бочку узнаёт код, а не слово в записи. Прежде читался один заголовок
+      // `### …бочка`, и у карты таблицей корпус сверки был нулём: переименованный
+      // экспорт входа области оставался в карте. Найдено пробой рефактора.
+      if (barrel === null && line.startsWith("|") && !/^[-:\s|]+$/.test(line)) {
+        close();
+        const first = firstCellOf(line);
+        const own = files.filter((f) => namesFileIn(first, f));
+        if (own.length !== 1 || !isBarrel(own[0])) continue;
+        if (exportsStar(readFileSync(own[0], "utf8"), own[0])) continue;
+        barrel = { file: own[0], named: [] };
+        const rest = line.slice(line.indexOf(first) + first.length);
+        for (const m of rest.matchAll(/`([^`]+)`/g))
+          if (CAMEL.test(m[1])) barrel.named.push([m[1], i + 1]);
+        close();
+        continue;
+      }
       const head = /^###\s+`([^`]+)`\s+—\s+.*бочк/i.exec(line);
       if (head !== null || /^###\s/.test(line)) close();
       if (head === null) {
@@ -20854,7 +20966,7 @@ if (mode === "verify") {
   const shelfDocs = new Set(shelfProse().map(([, full]) => norm(full)));
   for (const f of new Set([...files, ...ROOT_CONFIGS])) {
     const body = readFileSync(f, "utf8");
-    const specs = docRefsIn(body);
+    const specs = docRefsIn(body, isHashCommentConfig(path.basename(f)));
     for (const spec of specs) {
       anchorCount++;
       // Якорь пишут относительно файла (`./README.md`), относительно корня
@@ -20956,7 +21068,8 @@ if (mode === "verify") {
   const deadCode = [];
   for (const f of ownCode) {
     const body = readFileSync(f, "utf8");
-    const runs = commentRunsOf(body);
+    const hash = isHashCommentConfig(path.basename(f));
+    const runs = commentRunsOf(body, hash);
     if (runs === "") continue;
     let commentLines = 0;
     for (const run of runs.split(";")) {
@@ -20987,7 +21100,7 @@ if (mode === "verify") {
         let hits = 0;
         for (let i = from; i < from + Number(rows); i += 1) {
           const bare = lines[i]
-            .replace("//", " ")
+            .replace(hash ? "#" : "//", " ")
             .replace("/*", " ")
             .replace("*/", " ")
             .trim();
@@ -21073,6 +21186,8 @@ if (mode === "verify") {
     console.log(
       "    " + c + ". Оставить суть; остальное — в документ слоя или решение",
     );
+  if (overComments > 0 && seedDriftNote(wordyComments) !== "")
+    console.log(seedDriftNote(wordyComments));
 
   checkHead("Доля комментариев в файле", {
     n: shareLooked,
@@ -21082,6 +21197,8 @@ if (mode === "verify") {
   if (chattyFiles.length > 0) debtNote("comments", commentFound);
   for (const c of overComments > 0 ? chattyFiles : [])
     console.log("    " + c + ". Объяснения переносят в документ слоя");
+  if (overComments > 0 && seedDriftNote(chattyFiles) !== "")
+    console.log(seedDriftNote(chattyFiles));
   checkHead("Якоря на документацию в коде", {
     n: anchorCount,
     unit: "якорей на документацию",
@@ -21121,14 +21238,10 @@ if (mode === "verify") {
       todoLooked = todoText
         .split(NEWLINE)
         .filter((l) => /^#{2,}\s+\d+\./.test(l)).length;
-      const shouting = /(ЗАКРЫТО|СДЕЛАНО|ГОТОВО|ВЫПОЛНЕНО|DONE|CLOSED)/;
-      const trailing = /[—\-(]\s*(закрыт|сделан|готов|выполнен)\S*\s*\)?\s*$/i;
-      const struck = /^~~.*~~$/;
       for (const line of todoText.split(NEWLINE)) {
         if (!/^#{2,}\s/.test(line)) continue;
         const title = line.replace(/^#{2,}\s+/, "").trim();
-        if (shouting.test(title) || trailing.test(title) || struck.test(title))
-          closedTodos.push(`${CONFIG.todo}: ${title}`);
+        if (closedMark(title)) closedTodos.push(`${CONFIG.todo}: ${title}`);
       }
     }
   }
@@ -21184,11 +21297,9 @@ if (mode === "verify") {
           );
       });
       // Та же сеть, что у отложенного: закрытое удаляют, а не отмечают.
-      const shouting = /(ЗАКРЫТО|ОТВЕЧЕНО|CLOSED|ANSWERED)/;
-      const trailing = /[—\-(]\s*(закрыт|отвечен)\S*\s*\)?\s*$/i;
       questionsSeen += heads.length;
       for (const [k, h] of heads.entries()) {
-        if (shouting.test(h.title) || trailing.test(h.title)) {
+        if (closedMark(h.title)) {
           malformedQuestions.push(`помечен закрытым, а не удалён: ${h.title}`);
           continue;
         }
@@ -24208,6 +24319,7 @@ if (mode === "verify") {
   {
     const CYR = /[\u0400-\u04FF]/;
     for (const f of tongueCorpus) {
+      const hash = isHashCommentConfig(path.basename(f));
       const rows = readFileSync(f, "utf8").split(NEWLINE);
       for (let i = 0; i < rows.length; i++) {
         const line = rows[i].trim();
@@ -24216,10 +24328,11 @@ if (mode === "verify") {
         // первый — предмет раздела об интернационализации, а не языковой
         // границы. Замерено задачей от разработчика: он попросил кнопку с
         // русской подписью, и сверка объявила нарушением выполненную просьбу.
-        const isComment =
-          line.startsWith("//") ||
-          line.startsWith("/*") ||
-          line.startsWith("*");
+        const isComment = hash
+          ? line.startsWith("#")
+          : line.startsWith("//") ||
+            line.startsWith("/*") ||
+            line.startsWith("*");
         if (!isComment || !CYR.test(line)) continue;
         wrongTongue.push(rel(f) + ":" + (i + 1));
       }
@@ -24246,6 +24359,7 @@ if (mode === "verify") {
     );
   if (tongueSaid.length > 20)
     console.log("    …и ещё " + (tongueSaid.length - 20));
+  if (seedDriftNote(tongueSaid) !== "") console.log(seedDriftNote(tongueSaid));
   // 13l-бис. Документы компонента лежат в его `docs/`.
   //
   // Вся проза компонента лежит в `docs/`, и дверь — `docs/README.md`. В корне
@@ -25570,7 +25684,12 @@ if (mode === "verify") {
   let pathTokens = 0;
   for (const [name, at, fromShelf] of docSources) {
     const dir = norm(path.dirname(at));
-    for (const hit of proseOf(at).matchAll(/`([^`\n]+)`/g)) {
+    const prose = proseOf(at);
+    for (const hit of prose.matchAll(/`([^`\n]+)`/g)) {
+      // Адрес — с номером строки: файл называет одно имя и дважды, и две
+      // одинаковые строки находки не говорили, где второе.
+      const where =
+        name + ":" + prose.slice(0, hit.index).split(NEWLINE).length;
       let tok = hit[1].trim();
       if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
       tok = tok.replace(/[:#].*$/, "");
@@ -25588,7 +25707,7 @@ if (mode === "verify") {
           if (knownDangling.has(`${name}|${tok}`))
             knownUsed.add(`${name}|${tok}`);
           else if (isPlan(name)) plannedPaths.push(`${name}: ${tok}`);
-          else danglingPaths.push(`${name}: ${tok}`);
+          else danglingPaths.push(`${where}: ${tok}`);
         } else if (seen === 1) pathTokens++;
         continue;
       }
@@ -25629,7 +25748,7 @@ if (mode === "verify") {
         plannedPaths.push(`${name}: ${tok}`);
         continue;
       }
-      danglingPaths.push(`${name}: ${tok}`);
+      danglingPaths.push(`${where}: ${tok}`);
     }
   }
   for (const one of knownDangling)
@@ -29939,6 +30058,7 @@ if (mode === "verify") {
   // Разбор называется явно: по расширению его не вывести, на то и суффикс.
   const roughSeeds = [];
   let seedFmtSaid = null;
+  let seedFmtLooked = 0;
   {
     const seedDir = shelfAt("seat/templates");
     if (seedDir === null || !existsSync(seedDir))
@@ -29953,6 +30073,7 @@ if (mode === "verify") {
         }
       };
       look(seedDir);
+      seedFmtLooked = found.length;
       if (found.length === 0) seedFmtSaid = "семян с суффиксом нет";
       else {
         // Форматтер проекта зовётся в процессе, а не через `npx`: запуск
@@ -30259,9 +30380,10 @@ if (mode === "verify") {
         one +
         " — в проекте настройка будет указывать в пустоту, и звено сломается посадкой",
     );
+  // Корпус — семена с суффиксом: остальные формат проекта видит сам.
   checkHead("Семена приезжают отформатированными", {
-    n: seedsDeclared.length,
-    unit: "семян в карте посадки",
+    n: seedFmtLooked,
+    unit: "семян с суффиксом `.seed`",
   });
   if (seedFmtSaid !== null) console.log("  " + seedFmtSaid);
   if (roughSeeds.length) console.log("  расходится: " + roughSeeds.length);
