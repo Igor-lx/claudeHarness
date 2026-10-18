@@ -33,6 +33,7 @@ const withPackages = fs.mkdtempSync(
 const without = fs.mkdtempSync(path.join(os.tmpdir(), "zz-configs-"));
 // Пакет лежит только в своём `node_modules`, выше его нет: так видно, что
 // пакет ищут от корня проекта, а не от папки над ним.
+const TOOL_DIR_OF_TEST = path.dirname(fileURLToPath(import.meta.url));
 const own = fs.mkdtempSync(path.join(os.tmpdir(), "zz-configs-own-"));
 afterAll(() => {
   for (const root of [withPackages, without, own])
@@ -261,6 +262,55 @@ describe("один читатель на конфиг проекта", () => {
       '// "eslint.config.js"\nconst a = ["eslint.config.js", `stryker.conf.mjs`, ".eslintrc", "src/a.ts"];',
     ).filter((one) => CONFIG_NAME.test(one));
     expect(got).toEqual(["eslint.config.js", "stryker.conf.mjs", ".eslintrc"]);
+  });
+});
+
+describe("служебные папки инструмента — в каждом семени исключений", () => {
+  // Список служебных папок один — `OUT_OF_TREE` инструмента; семена
+  // исключений держат каждое свою копию, и `.prettierignore` разошёлся с
+  // ним: форматтер проекта проверял песочницу фальсификации.
+  it("`.gitignore`, `.prettierignore` и конфиг линта называют каждую", () => {
+    const ts = compilerAt(SEAT);
+    const source = fs.readFileSync(
+      path.join(TOOL_DIR_OF_TEST, "graph.mjs"),
+      "utf8",
+    );
+    const sf = ts.createSourceFile(
+      "graph.mjs",
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    let names = null;
+    const walk = (n) => {
+      if (
+        ts.isVariableDeclaration(n) &&
+        n.name.getText(sf) === "OUT_OF_TREE" &&
+        n.initializer !== undefined &&
+        ts.isNewExpression(n.initializer)
+      )
+        names = n.initializer.arguments[0].elements.map((e) => e.text);
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    expect(names).toContain(".проба-сверок");
+    // `.git` исключает сам git, а прочие инструменты его не обходят.
+    const wanted = names.filter((one) => one !== ".git");
+    const seed = (name) =>
+      fs.readFileSync(
+        path.join(TOOL_DIR_OF_TEST, "..", "seat", "templates", name),
+        "utf8",
+      );
+    const lines = (text) => text.split("\n").map((one) => one.trim());
+    const missing = [];
+    for (const name of [".gitignore", ".prettierignore"])
+      for (const one of wanted)
+        if (!lines(seed(name)).includes(one)) missing.push(name + ": " + one);
+    const lint = seed("eslint.config.mjs");
+    for (const one of wanted)
+      if (!lint.includes('"**/' + one + '/**"'))
+        missing.push("eslint.config.mjs: " + one);
+    expect(missing).toEqual([]);
   });
 });
 

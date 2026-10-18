@@ -448,6 +448,35 @@ describe("ворота и приведение формата", () => {
       const clean = gate();
       expect(clean.out).toContain("одно приведение формата");
       expect(clean.code).toBe(0);
+      // Ревизия по истории узнаёт тот же коммит тем же признаком: коммит
+      // одного формата после основания серии строки серии не несёт. Прежде
+      // ревизия спрашивала формат только у коммита вне серии и называла
+      // этот «коммитом с кодом без строки серии».
+      const since = git("rev-parse", "HEAD").trim();
+      git("commit", "-qm", "формат", "--no-verify");
+      const formatted = git("rev-parse", "HEAD").trim().slice(0, 7);
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      let text = fs.readFileSync(cfg, "utf8");
+      for (const field of ["barSince", "seriesSince"])
+        text = text.replace(
+          new RegExp("^ {2}" + field + ": .*,$", "m"),
+          "  " + field + ": " + JSON.stringify(since) + ",",
+        );
+      fs.writeFileSync(cfg, text);
+      // Код сверки здесь не спрашивают: файл проекта без записи в карте
+      // красит её законно, а речь об одной секции.
+      let verify;
+      try {
+        verify = execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      } catch (e) {
+        verify = String(e.stdout ?? "");
+      }
+      expect(verify).toContain("=== Коммит с кодом накрыт сводом ===");
+      expect(verify).not.toContain(formatted + " —");
       fs.writeFileSync(file, neat + "export const zzMeant = 1;\n");
       git("add", "-A");
       const meant = gate();

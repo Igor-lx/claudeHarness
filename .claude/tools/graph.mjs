@@ -946,6 +946,8 @@ for (const [field, v] of Object.entries(CONFIG)) {
 // вовсе, и их «одна ошибка» — не долг, а слепое звено: замерено посадкой, где
 // устаревшая опция настройки дала одну ошибку вместо пятидесяти шести, и
 // посаженная в код ошибка типа прошла незамеченной.
+const LINT_SETUP_FAULT =
+  /Oops! Something went wrong|Failed to load (plugin|config)|Cannot find module|Parsing error/;
 const DEBT_WRAPPERS = {
   types: {
     title: "Ошибки типов против долга",
@@ -969,13 +971,14 @@ const DEBT_WRAPPERS = {
       return (plain.match(/^\s+\d+:\d+\s+error\s/gm) ?? []).length;
     },
     // Код возврата `2` у ESLint — ошибка настройки или падение: разбора
-    // кода не было.
+    // кода не было. Ошибка разбора файла — тоже: правила его не проверяли,
+    // хотя линтер выходит кодом `1` и считает её находкой. Замерено
+    // посадкой, где `99` ошибок разбора от `project` рядом с
+    // `projectService` прошли долгом.
     setup: (plain, status) =>
       status === 2
         ? "код возврата 2"
-        : (/Oops! Something went wrong|Failed to load (plugin|config)|Cannot find module/.exec(
-            plain,
-          ) ?? [])[0] ?? null,
+        : ((LINT_SETUP_FAULT.exec(plain) ?? [])[0] ?? null),
   },
 };
 if (mode === "types" || mode === "lint") {
@@ -21184,10 +21187,11 @@ if (mode === "verify") {
   // якорем в модуле: иначе переименованный документ оставил бы его вести в
   // никуда без признака.
   //
-  // Цель — документация проекта либо проза полки. Семя конфига ссылается на
-  // заметку о себе, а заметки лежат на полке, рядом с инструкцией посадки;
-  // пока проза полки в цели не входила, такой якорь печатался бы ведущим в
-  // никуда при живом файле на диске.
+  // Цель — документация проекта, проза полки либо запись базы. Семя конфига
+  // ссылается на заметку о себе, а заметки лежат на полке, рядом с
+  // инструкцией посадки; код ссылается на решение адресом его записи. Пока
+  // цели не знали полки и базы, такие якоря печатались ведущими в никуда при
+  // живом файле на диске.
   const deadAnchors = [];
   let anchorCount = 0;
   const shelfDocs = checkStep(
@@ -21213,7 +21217,11 @@ if (mode === "verify") {
         const stop = norm(path.join(BASE, ".."));
         while (dir.length >= stop.length) {
           const at = norm(path.join(dir, spec));
-          if (docFiles.includes(at) || shelfDocs.has(at)) {
+          if (
+            docFiles.includes(at) ||
+            shelfDocs.has(at) ||
+            (at.startsWith(norm(BASE) + "/") && existsSync(at))
+          ) {
             found = true;
             break;
           }
@@ -28611,6 +28619,15 @@ if (mode === "verify") {
             }
             const want = await subjectOf(touched, hash);
             if (!want.length) continue;
+            // Коммит одного приведения формата ворота пропускают без свода и
+            // без строки серии; ревизия спрашивает тот же признак, лениво —
+            // только у коммита серии без строки, который иначе красный.
+            if (
+              inSeries.has(hash) &&
+              lineOf(hash) === null &&
+              !(await meantOf(want, hash + "^")).length
+            )
+              continue;
             barPastLooked += 1;
             let said = null;
             try {
@@ -32520,6 +32537,15 @@ if (mode === "verify") {
       // линии есть замер прошлого, и починка звена не должна ронять прогон.
       const open = namedFindings();
       const chainNames = new Set(chainLinkNames());
+      // Формат долгом не бывает: приводит его фаза 2 целиком, приведение
+      // механическое (`seat/seat.md`, шаг 7). Красный формат базовой линии
+      // — замер до приведения; не приведённый — красное звено самой цепочки.
+      const formatNames = (() => {
+        const scripts =
+          readJson(path.join(BASE, "..", "package.json"), {}).scripts ?? {};
+        const own = linkOwnName("format:check", scripts);
+        return new Set(own === null ? ["format:check"] : ["format:check", own]);
+      })();
       // Забор пропускается: строка в нём — ОБРАЗЕЦ формы, а не замер. Пока
       // это не различалось, семя базовой линии показывало форму живой
       // строкой, и свежепосаженный проект получал красное звено, которого
@@ -32539,6 +32565,7 @@ if (mode === "verify") {
           const m = /^\|\s*`([^`]+)`\s*\|\s*красно/.exec(line.trim());
           if (m === null) continue;
           if (m[1] === "verify") continue;
+          if (formatNames.has(m[1])) continue;
           if ((open.get(m[1]) ?? 0) > 0) continue;
           redUnnamed.push(
             "`" +

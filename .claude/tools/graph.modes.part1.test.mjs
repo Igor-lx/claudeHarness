@@ -1599,6 +1599,15 @@ describe("звенья под проектными именами опознаю
       expect(
         (red.get("Красное звено названо находкой") ?? []).join(" "),
       ).toContain("`types` пришло красным");
+      // Красный формат — замер до приведения фазой 2, а не долг: пункта долга
+      // он не требует и под своим именем проекта.
+      fs.writeFileSync(
+        factsAt,
+        facts.replace("| `fmt` | зелено |", "| `fmt` | красно, файлов `7` |"),
+      );
+      expect(verifyIn(box).get("Красное звено названо находкой") ?? []).toEqual(
+        [],
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -1751,6 +1760,19 @@ describe("ошибка настройки звена долгом не гаси�
       const broken = run("lint", ["Oops! Something went wrong! :("], 2);
       expect(broken.status).toBe(1);
       expect(broken.out).toContain("ошибка настройки");
+      // Ошибка разбора — файл правилами не проверен, хотя код возврата 1 и
+      // итог в пределах долга: прежде такие строки шли долгом.
+      const parse = run(
+        "lint",
+        [
+          "/p/src/a.ts",
+          '  0:0  error  Parsing error: Enabling "project" does nothing when "projectService" is enabled',
+          "✖ 2 problems (2 errors, 0 warnings)",
+        ],
+        1,
+      );
+      expect(parse.status).toBe(1);
+      expect(parse.out).toContain("ошибка настройки (Parsing error");
       // Долг линта держит пункт долга перехода, называющий звено линта.
       const said = () =>
         (verifyIn(box).get("Объявленный долг назван планом перехода") ?? []).join(" ");
@@ -4066,4 +4088,29 @@ describe("серия", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+});
+
+// Ссылку на решение код несёт адресом записи базы — так велит правило о
+// комментариях. Сверка якорей знала целями одну документацию и прозу полки, и
+// живая запись базы читалась «ведущей в никуда». Найдено посадкой по
+// инструкции: якорь конфига корня на `.context/09-decisions.md`.
+describe("якорь из кода ведёт и в запись базы", () => {
+  it("живая запись базы — цель, несуществующая — нет", () => {
+    const box = seatEmpty("yakor-baza-");
+    try {
+      const at = path.join(box, ".prettierignore");
+      fs.writeFileSync(
+        at,
+        fs.readFileSync(at, "utf8") +
+          "# Decision: .context/09-decisions.md\n# Gone: .context/zz-nothere.md\n",
+      );
+      const said = (
+        verifyIn(box).get("Якоря на документацию в коде") ?? []
+      ).join(" ");
+      expect(said).not.toContain("09-decisions.md");
+      expect(said).toContain(".prettierignore → .context/zz-nothere.md");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });

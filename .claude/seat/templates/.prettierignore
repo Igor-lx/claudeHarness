@@ -7,4 +7,5 @@ package-lock.json
 *.md
 .stryker-tmp
 reports
+.проба-сверок
 .claude
