@@ -134,6 +134,19 @@ describe("корпус чужих проектов", () => {
             "эталона нет: просмотреть находки и записать (UPDATE_CORPUS=1)",
           ).not.toBeNull();
           expect(found).toEqual(project.expect);
+          // Связи, которых сверка не печатает: куда ведёт импорт. Досье
+          // файла обязано назвать одни адреса и не называть другие.
+          for (const one of project.briefs ?? []) {
+            const brief = spawnSync(
+              process.execPath,
+              [path.join(box, ".claude", "tools", "graph.mjs"), "brief", one.file],
+              { cwd: box, encoding: "utf8" },
+            );
+            expect(brief.status, one.file).toBe(0);
+            for (const line of one.has) expect(brief.stdout).toContain(line);
+            for (const line of one.hasNot ?? [])
+              expect(brief.stdout).not.toContain(line);
+          }
         } finally {
           fs.rmSync(box, { recursive: true, force: true });
         }
