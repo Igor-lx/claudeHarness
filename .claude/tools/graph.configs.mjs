@@ -161,18 +161,31 @@ export const testSectionOf = (body) => {
 const stringsOf = (list) =>
   [...list.matchAll(/["']([^"']+)["']/g)].map((g) => g[1]);
 
+/** Текст без блока `key: { … }`: блок снимают по балансу скобок, и то,
+ * что идёт после него, остаётся. */
+const withoutBlock = (text, key) => {
+  const m = new RegExp("\\b" + key + "\\s*:\\s*\\{").exec(text);
+  if (m === null) return text;
+  let depth = 0;
+  for (let i = m.index + m[0].length - 1; i < text.length; i += 1) {
+    if (text[i] === "{") depth += 1;
+    else if (text[i] === "}") depth -= 1;
+    if (depth === 0) return text.slice(0, m.index) + text.slice(i + 1);
+  }
+  return text.slice(0, m.index);
+};
+
 /** Запасной путь: секция тестов разбором текста. Область сбора — первый
- * список строк до покрытия: у покрытия своя. */
+ * непустой список строк вне блока покрытия: у покрытия своя. */
 const runnerConfigText = (at) => {
   const text = readFileSync(at, "utf8");
   const section = testSectionOf(text);
   if (section === null) return { at, via: BY_TEXT, text, test: null };
-  const cut = section.search(/\bcoverage\s*:/);
-  const head = cut < 0 ? section : section.slice(0, cut);
+  const head = withoutBlock(section, "coverage");
   const include = [...head.matchAll(/\binclude:\s*\[([^\]]*)\]/g)]
     .map((m) => stringsOf(m[1]))
     .find((list) => list.length > 0);
-  const setup = /\bsetupFiles:\s*(\[[^\]]*\]|["'][^"']+["'])/.exec(section);
+  const setup = /\bsetupFiles:\s*(\[[^\]]*\]|["'][^"']+["'])/.exec(head);
   return {
     at,
     via: BY_TEXT,
@@ -180,7 +193,7 @@ const runnerConfigText = (at) => {
     test: {
       ...(include === undefined ? {} : { include }),
       ...(setup === null ? {} : { setupFiles: stringsOf(setup[1]) }),
-      ...(/\bglobals:\s*true\b/.test(section) ? { globals: true } : {}),
+      ...(/\bglobals:\s*true\b/.test(head) ? { globals: true } : {}),
     },
   };
 };

@@ -9,9 +9,11 @@ import {
   RUNNER_DEFAULT_INCLUDE,
   globMatcher,
   lintOffWritten,
+  parseJsonc,
   runnerConfigLoad,
   runnerEffective,
   runnerRank,
+  testSectionOf,
   tsconfigRead,
 } from "./graph.configs.mjs";
 import { compilerAt } from "./graph.parse.mjs";
@@ -29,9 +31,12 @@ const withPackages = fs.mkdtempSync(
   path.join(SEAT, "node_modules", ".zz-configs-"),
 );
 const without = fs.mkdtempSync(path.join(os.tmpdir(), "zz-configs-"));
+// Пакет лежит только в своём `node_modules`, выше его нет: так видно, что
+// пакет ищут от корня проекта, а не от папки над ним.
+const own = fs.mkdtempSync(path.join(os.tmpdir(), "zz-configs-own-"));
 afterAll(() => {
-  fs.rmSync(withPackages, { recursive: true, force: true });
-  fs.rmSync(without, { recursive: true, force: true });
+  for (const root of [withPackages, without, own])
+    fs.rmSync(root, { recursive: true, force: true });
 });
 const put = (root, rel, text) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
@@ -51,6 +56,7 @@ describe("конфиг компилятора — компилятором пр�
         "node_modules/@zz/strict/tsconfig.json",
         '{"compilerOptions":{"strict":true}}',
       );
+      put(root, "src/a.ts", "export const a = 1;\n");
       put(
         root,
         "tsconfig.json",
@@ -64,6 +70,9 @@ describe("конфиг компилятора — компилятором пр�
     expect(loaded.via).toBe(BY_LOADER);
     expect(loaded.options.strict).toBe(true);
     expect(loaded.options.noEmit).toBe(true);
+    expect(loaded.raw.compilerOptions).toEqual({ noEmit: true });
+    expect(loaded.references).toEqual([]);
+    expect(loaded.fileNames).toContain(path.join(withPackages, "src", "a.ts"));
     const text = tsconfigRead(path.join(without, "tsconfig.json"), without);
     expect(text.via).toBe(BY_TEXT);
     expect(text.options.strict).toBeUndefined();
@@ -109,6 +118,20 @@ export default defineConfig(() =>
     expect(got.via).toBe(BY_LOADER);
     expect(got.test.include).toEqual(["./lib/**/*.spec.ts"]);
     expect(got.test.setupFiles).toEqual(["./lib/setup.ts"]);
+    expect(typeof got.text).toBe("string");
+  });
+
+  it("функции конфига переданы команда и режим раннера", async () => {
+    put(
+      withPackages,
+      "mode/vite.config.mjs",
+      "export default ({ command, mode }) => ({ test: { include: [command + '-' + mode] } });\n",
+    );
+    const got = await runnerConfigLoad(
+      path.join(withPackages, "mode", "vite.config.mjs"),
+      withPackages,
+    );
+    expect(got.test.include).toEqual(["serve-test"]);
   });
 
   it("сборщика нет — разбор текста, и секция без пробела узнаётся", async () => {
@@ -122,6 +145,7 @@ export default defineConfig(() =>
       without,
     );
     expect(got.via).toBe(BY_TEXT);
+    expect(got.broke).toBeUndefined();
     expect(got.test).toEqual({
       include: ["src/**/*.test.ts"],
       setupFiles: ["./src/setup.ts"],
@@ -158,6 +182,26 @@ describe("образцы путей — сопоставителем ранне�
     const dot = globMatcher(["./src/**/*.ts", "!src/skip/**"], withPackages);
     expect(dot("src/x/y.ts")).toBe(true);
     expect(dot("src/skip/y.ts")).toBe(false);
+    expect(dot("lib/y.ts")).toBe(false);
+    expect(globMatcher(["././src/**"], withPackages)("src/a.ts")).toBe(true);
+  });
+
+  it("пакет проекта ищется от его корня", () => {
+    put(
+      own,
+      "node_modules/picomatch/package.json",
+      '{"name":"picomatch","main":"index.js"}',
+    );
+    put(
+      own,
+      "node_modules/picomatch/index.js",
+      "module.exports = (list) => (f) => list.includes(f);\n",
+    );
+    const m = globMatcher(["a.ts"], own);
+    expect(m.via).toBe(BY_LOADER);
+    expect(m("a.ts")).toBe(true);
+    expect(BY_LOADER).toBeTruthy();
+    expect(BY_TEXT).toBeTruthy();
   });
 
   it("без сопоставителя — запасной разбор звёзд и перечня", () => {
@@ -235,6 +279,20 @@ describe("выключения линта, написанные автором",
       '  { rules: { "b-two": "off" } },',
       "];",
     ].join("\n");
+    expect(
+      lintOffWritten(
+        [
+          "{",
+          '  files:["x/**"],',
+          '  rules: { "tight":"off", \'spaced\' : \'off\', wide: [ "off" ] },',
+          "}",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { scope: "x/**", rule: "tight" },
+      { scope: "x/**", rule: "spaced" },
+      { scope: "x/**", rule: "wide" },
+    ]);
     expect(lintOffWritten(text)).toEqual([
       { scope: "src/**", rule: "a/one" },
       { scope: "tests/**", rule: "a/one" },
@@ -245,22 +303,149 @@ describe("выключения линта, написанные автором",
   });
 });
 
+describe("запасной разбор текста — написания, ради которых он есть", () => {
+  it("JSON с комментариями: строки с `//` и `/*`, экранированная кавычка", () => {
+    const cases = [
+      ['{"a": 1}', { a: 1 }],
+      ['{\n  // c\n  "a": 1\n}', { a: 1 }],
+      ['{ /* c */ "a": 1 }', { a: 1 }],
+      [
+        '{ "u": "http://x/*y*/", "a": 1 } // tail',
+        { u: "http://x/*y*/", a: 1 },
+      ],
+      [
+        '{ "q": "say \\"hi\\" // not", "a": 1 } /* x */',
+        { q: 'say "hi" // not', a: 1 },
+      ],
+      ['{ "a": 1 } /* never closed', { a: 1 }],
+      ['{ "q": "x \\" // y", "a": 1 } /* c */', { q: 'x " // y', a: 1 }],
+      ['{ /*/ inner */ "a": 1 }', { a: 1 }],
+      ["{ broken", null],
+    ];
+    for (const [raw, want] of cases) expect(parseJsonc(raw), raw).toEqual(want);
+  });
+
+  it("конфиг компилятора: `extends` цепочкой, без `.json`, массивом и по кругу", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "zz-configs-tc-"));
+    try {
+      put(
+        root,
+        "base.json",
+        '{"compilerOptions":{"strict":true,"noEmit":true}}',
+      );
+      put(
+        root,
+        "mid.json",
+        '{"extends":"./base","compilerOptions":{"noEmit":false}}',
+      );
+      put(root, "loop.json", '{"extends":"./tsconfig.json"}');
+      put(root, "extra.json", '{"compilerOptions":{"noUnusedLocals":true}}');
+      put(root, "pkg/x.json", '{"compilerOptions":{"noImplicitAny":true}}');
+      put(
+        root,
+        "tsconfig.json",
+        '{"extends":["./mid","pkg/x","./loop.json","./extra.json"],"compilerOptions":{"baseUrl":"./src","paths":{"~/*":["./*"]}},"references":[{"path":"./sub"}]}',
+      );
+      fs.mkdirSync(path.join(root, "sub"));
+      put(root, "bad/tsconfig.json", "{ not json");
+      const got = tsconfigRead(path.join(root, "tsconfig.json"), root);
+      expect(got.via).toBe(BY_TEXT);
+      expect(got.options.strict).toBe(true);
+      expect(got.options.noEmit).toBe(false);
+      expect(got.options.noUnusedLocals).toBe(true);
+      expect(got.options.noImplicitAny).toBeUndefined();
+      expect(got.options.baseUrl).toBe(path.join(root, "src"));
+      expect(got.options.pathsBasePath).toBe(root);
+      expect(got.references).toEqual([path.join(root, "sub", "tsconfig.json")]);
+      expect(tsconfigRead(path.join(root, "bad"), root)).toBeNull();
+      const plain = tsconfigRead(path.join(root, "base.json"), root);
+      expect(plain.options).toEqual({ strict: true, noEmit: true });
+      expect(plain.options.pathsBasePath).toBeUndefined();
+      expect(plain.references).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("конфиг раннера: область покрытия не принимается за область сбора", async () => {
+    const at = (name, text) => {
+      put(without, name, text);
+      return runnerConfigLoad(path.join(without, name), without);
+    };
+    const got = await at(
+      "cov.config.ts",
+      'export default { test: {\n  coverage: { include: ["src/**"] },\n  setupFiles: ["./a.ts", "./b.ts"],\n  globals:true,\n} };\n',
+    );
+    expect(got.test).toStrictEqual({
+      setupFiles: ["./a.ts", "./b.ts"],
+      globals: true,
+    });
+    const after = await at(
+      "after.config.ts",
+      'export default { test: {\n  coverage: { include: ["x/**"], reporter: { a: 1 } },\n  include: ["lib/**"],\n  setupFiles:["./s.ts"],\n} };\n',
+    );
+    expect(after.test).toStrictEqual({
+      include: ["lib/**"],
+      setupFiles: ["./s.ts"],
+    });
+    const both = await at(
+      "both.config.ts",
+      'export default { test: {\n  include: [],\n  include:  ["lib/**"],\n  coverage : { include: ["x/**"] },\n} };\n',
+    );
+    expect(both.test).toEqual({ include: ["lib/**"] });
+    const none = await at("none.config.ts", "export default { build: {} };\n");
+    expect(none.test).toBeNull();
+    expect(typeof none.text).toBe("string");
+  });
+
+  it("образцы путей: `**` без косой, одиночная звезда, перечень, спецсимволы", () => {
+    const m = (globs, file) => globMatcher(globs, without)(file);
+    expect(m(["src/**"], "src/a/b.ts")).toBe(true);
+    expect(m(["src/*.ts"], "src/a.ts")).toBe(true);
+    expect(m(["src/*.ts"], "src/a/b.ts")).toBe(false);
+    expect(m(["src/**/x.ts"], "src/x.ts")).toBe(true);
+    expect(m(["src/**/x.ts"], "src/a/b/x.ts")).toBe(true);
+    expect(m(["src/**x.ts"], "src/a/bx.ts")).toBe(true);
+    expect(m(["a.{js,ts}"], "a.ts")).toBe(true);
+    expect(m(["a.{js,ts}"], "a.css")).toBe(false);
+    expect(m(["a.{js,ts}"], "a.js")).toBe(true);
+    expect(m(["**/*.ts"], "a/b.ts")).toBe(true);
+    expect(m(["**/*.ts"], "b.ts")).toBe(true);
+    expect(m(["././src/**"], "src/a.ts")).toBe(true);
+    expect(m(["a+b.ts"], "a+b.ts")).toBe(true);
+    expect(m(["a+b.ts"], "aab.ts")).toBe(false);
+    expect(m(["a.ts"], "aXts")).toBe(false);
+    expect(m(["{x"], "{x")).toBe(true);
+    expect(m(["lib/**", "src/**"], "src/a.ts")).toBe(true);
+    expect(m(["src/a.ts"], "src/a.ts.bak")).toBe(false);
+  });
+});
+
+describe("секция тестов в тексте конфига", () => {
+  it("узнаётся в начале, в кавычках и с пробелом перед двоеточием", () => {
+    for (const body of [
+      "test: { a: 1 }",
+      'x = { "test": { a: 1 } }',
+      "x = { 'test' : { a: 1 } }",
+      "x = {test:{ a: 1 } }",
+    ])
+      expect(testSectionOf(body)).toMatch(/^\W?["']?test["']?\s*:/);
+    expect(testSectionOf("x = { contest: { a: 1 } }")).toBeNull();
+    expect(testSectionOf("x = { other: 1 }")).toBeNull();
+  });
+});
+
 describe("действующий конфиг раннера", () => {
   it("старшинство — порядок, в котором конфиг ищет сам раннер", () => {
-    const names = [
-      "vite.config.js",
-      "vite.config.ts",
-      "vitest.config.mjs",
-      "vitest.config.cts",
-      "vitest.config.mts",
-    ];
-    expect([...names].sort((a, b) => runnerRank(a) - runnerRank(b))).toEqual([
-      "vitest.config.mts",
-      "vitest.config.cts",
-      "vitest.config.mjs",
-      "vite.config.ts",
-      "vite.config.js",
-    ]);
+    const order = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+    const names = ["vitest.config", "vite.config"].flatMap((n) =>
+      order.map((ext) => n + ext),
+    );
+    expect(
+      [...names].reverse().sort((a, b) => runnerRank(a) - runnerRank(b)),
+    ).toEqual(names);
+    for (const other of ["foo.config.ts", "vitest.config.json", "vitest.ts"])
+      expect(runnerRank(other)).toBe(Number.MAX_SAFE_INTEGER);
     expect(
       runnerEffective([{ name: "vite.config.ts" }, { name: "vitest.config.mts" }])
         .name,

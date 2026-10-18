@@ -123,6 +123,7 @@ const stepsOf = (ts, sf, block) => {
   }
   const namesIn = (node) => {
     const seen = new Set();
+    if (node === undefined) return seen;
     const walk = (n) => {
       if (ts.isIdentifier(n) && top.has(n.text)) {
         const p = n.parent;
@@ -242,7 +243,7 @@ export const headsAtRisk = (ts, source) => {
     sf.getLineAndCharacterOfPosition(call.getStart()).line +
     1 +
     ": " +
-    call.arguments[0].getText(sf) +
+    (call.arguments[0]?.getText(sf) ?? "(без имени)") +
     " — " +
     why;
   const isCall = (n, name) =>
@@ -269,18 +270,16 @@ export const headsAtRisk = (ts, source) => {
   const walk = (n) => {
     // Имя, которое вычисляется, падает раньше печати заголовка — на любом
     // уровне.
-    if (
-      isCall(n, "checkHead") &&
-      stepLevel.has(n) &&
-      !ts.isStringLiteral(n.arguments[0])
-    )
+    const named = (call) =>
+      call.arguments[0] !== undefined && ts.isStringLiteral(call.arguments[0]);
+    if (isCall(n, "checkHead") && stepLevel.has(n) && !named(n))
       out.push(say(n, "имя секции вычисляется — перечень с ним не сверить"));
     if (isCall(n, "checkHead") && !stepLevel.has(n)) {
       let region = n.parent;
       while (region !== undefined && !isCall(region, "checkRegion"))
         region = region.parent;
       const title = n.arguments[0];
-      if (!ts.isStringLiteral(title))
+      if (!named(n))
         out.push(say(n, "имя секции вычисляется — перечень с ним не сверить"));
       else if (region === undefined)
         out.push(say(n, "заголовок вглубь шага, вне области с перечнем"));
