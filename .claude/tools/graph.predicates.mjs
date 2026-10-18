@@ -6587,7 +6587,7 @@ export const protocolReadByShell = (command, name = BAR_PROTOCOL_FILE) =>
  * незаполненных правилах, которые заполняет фаза 2, — при тексте посадки,
  * обещающем обратное. Третья сверка смягчалась отступом в два пробела, и
  * её рецепт при поднятом флаге будил не её, а соседку. Найдено посадкой
- * руками в пустой проект. */
+ * по инструкции в пустой проект. */
 export const printedIsRed = (lines, warning, soft) => {
   let quiet = false;
   for (const line of lines) {
