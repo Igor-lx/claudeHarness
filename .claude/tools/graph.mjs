@@ -3938,6 +3938,15 @@ const cssClasses = (text) => {
     for (const m of rule[1].matchAll(/[.&]([A-Za-z][\w-]*)/g)) out.add(m[1]);
   return out;
 };
+/** Имена `id`, объявленные листом: только в селекторе, где цвет вида
+ * `#fff` не стоит. */
+const cssIds = (text) => {
+  const out = new Set();
+  const bare = text.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const rule of bare.matchAll(/([^{};]*)\{/g))
+    for (const m of rule[1].matchAll(/#([A-Za-z][\w-]*)/g)) out.add(m[1]);
+  return out;
+};
 /** Имя, НАЗВАННОЕ кодом: строкой в кавычках либо обращением к полю. Модуль
  * стилей часто передают целиком, как данные, и обращения к нему в коде нет
  * вовсе — тогда имя живёт строкой в контракте. */
@@ -24129,14 +24138,20 @@ if (mode === "verify") {
               if (!inComment(line, hit.index)) liveDomNames.add(hit[0]);
         // Класс живёт в двух формах: в листе стилей он с точкой, в контракте —
         // строкой в кавычках. Обе засчитываются как одно имя.
-        for (const f of styleFiles)
-          for (const one of cssClasses(readFileSync(f, "utf8")))
-            liveDomNames.add("." + one);
+        for (const f of styleFiles) {
+          const sheet = readFileSync(f, "utf8");
+          for (const one of cssClasses(sheet)) liveDomNames.add("." + one);
+          for (const one of cssIds(sheet)) liveDomNames.add("#" + one);
+        }
+        // `id` в разметке пишется строкой, как имя класса в контракте.
         for (const f of files.filter((one) => !isTest(one)))
           for (const line of readFileSync(f, "utf8").split(NEWLINE))
             for (const hit of line.matchAll(CODE_NAME))
-              if (!inComment(line, hit.index))
-                liveDomNames.add("." + (hit[1] ?? hit[2] ?? hit[3]));
+              if (!inComment(line, hit.index)) {
+                const one = hit[1] ?? hit[2] ?? hit[3];
+                liveDomNames.add("." + one);
+                if (hit[3] === undefined) liveDomNames.add("#" + one);
+              }
         // Имена в коде: строка в кавычках либо идентификатор — в исполняемом
         // тексте. И обратный словарь «строка → константы, которые её несут»:
         // конец связи пишет константу, а не строку.
@@ -24172,9 +24187,18 @@ if (mode === "verify") {
             // Первая графа — имена связи. Форма отличает род: переменная,
             // атрибут и класс — связь через разметку и стили; всё прочее —
             // имя в самом коде.
-            const named = [...row.split("|")[1].matchAll(/`([^`]+)`/g)]
-              .map((hit) => hit[1])
-              .filter((one) => /^(--|data-|\.)?[A-Za-z][\w.:/-]*$/.test(one));
+            // Имя, не узнанное ни одной формой, — находка, а не пропуск:
+            // прежде такое имя выпадало из сверки, и строка с `#id` числилась
+            // сверенной, ничего не сверив.
+            const allNamed = [...row.split("|")[1].matchAll(/`([^`]+)`/g)].map(
+              (hit) => hit[1],
+            );
+            const named = allNamed.filter((one) =>
+              /^(--|data-|\.|#)?[A-Za-z][\w.:/-]*$/.test(one),
+            );
+            for (const one of allNamed)
+              if (!named.includes(one))
+                domDrift.push(`форма имени не узнана: ${one}`);
             // Сборщик имени, названный той же строкой: конец связи, который
             // собирает имя вызовом, а не пишет его строкой.
             const builders = [...row.matchAll(/`([a-z][A-Za-z0-9]*)`/g)].map(
@@ -24188,7 +24212,7 @@ if (mode === "verify") {
               .map((one) => path.join(BASE, "..", one))
               .filter((one) => existsSync(one));
             for (const name of named) {
-              const inCode = !/^(--|data-|\.)/.test(name);
+              const inCode = !/^(--|data-|\.|#)/.test(name);
               const bare = bareNamesOf(name);
               if (
                 !(inCode ? liveCodeNames : liveDomNames).has(name) &&
@@ -24206,7 +24230,7 @@ if (mode === "verify") {
                 // неё, строкой в кавычках. Ищутся обе формы: иначе строка
                 // таблицы краснела бы на законной записи контракта.
                 const forms = [
-                  ...(name.startsWith(".") ? [name, name.slice(1)] : [name]),
+                  ...(/^[.#]/.test(name) ? [name, name.slice(1)] : [name]),
                   ...bare,
                   ...builders,
                   ...(inCode ? (carriers.get(name) ?? []) : []),

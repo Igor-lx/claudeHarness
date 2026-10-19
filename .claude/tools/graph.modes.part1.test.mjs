@@ -2036,6 +2036,38 @@ describe("связи мимо графа: публичная поверхнос�
       expect(run("tested", "src/app/zzPub.ts")).not.toContain(
         "Чужих связей через разметку и стили",
       );
+
+      // `id` сверяется так же, как класс: живое имя проходит, мёртвое и
+      // половина переименования — находки, а имя неузнанной формы не
+      // выпадает из сверки.
+      fs.writeFileSync(
+        path.join(app, "zz.css"),
+        ".zzBox {\n  width: var(--zz__w);\n}\n#zzRoot {\n  color: #fff;\n}\n",
+      );
+      fs.writeFileSync(
+        path.join(app, "zzPub.ts"),
+        'import { ZZ_TOPIC, zzVar } from "../shared/zzLib/topics.js";\nexport const zzPub = () => [ZZ_TOPIC, zzVar("w"), "zzRoot"];\n',
+      );
+      const idRow = (name) =>
+        withRows(
+          "| `zz-topic` | `src/app/zzPub.ts` | `src/app/zzSub.ts` |\n" +
+            `| \`${name}\` | \`src/app/zzPub.ts\` | \`src/app/zz.css\` |\n`,
+        );
+      fs.writeFileSync(graphAt, graphSeed);
+      fs.writeFileSync(graphAt, idRow("#zzRoot"));
+      expect(links()).toEqual([]);
+      fs.writeFileSync(graphAt, graphSeed);
+      fs.writeFileSync(graphAt, idRow("#zzGone"));
+      expect(links().join("\n")).toContain(
+        "названо в таблице, нет в коде: #zzGone",
+      );
+      // Цвет `#fff` — не имя: в селекторе его нет.
+      fs.writeFileSync(graphAt, graphSeed);
+      fs.writeFileSync(graphAt, idRow("#fff"));
+      expect(links().join("\n")).toContain("нет в коде: #fff");
+      fs.writeFileSync(graphAt, graphSeed);
+      fs.writeFileSync(graphAt, idRow("#зз"));
+      expect(links().join("\n")).toContain("форма имени не узнана: #зз");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
