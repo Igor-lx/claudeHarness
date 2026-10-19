@@ -29966,6 +29966,22 @@ if (mode === "verify") {
               named = true;
               break;
             }
+          // Номер гарантии — тоже адрес: строка таблицы называет узлы, и
+          // витрина, написанная словами продукта, ссылается на код через
+          // него. Иначе проект шаблона, чьи файлы зовутся общими именами,
+          // проходил сверку только путём кода в тексте для пользователя.
+          if (!named) {
+            const ownSet = new Set(own.map(norm));
+            const ids = new Set(said.match(/\bREQ-[0-9]+\b/g) ?? []);
+            named = guarantees().rows.some(
+              (g) =>
+                ids.has(g.id) &&
+                g.nodes.some((n) => {
+                  const f = guaranteeAbs(n);
+                  return f !== null && ownSet.has(norm(f));
+                }),
+            );
+          }
           if (!named)
             codeMute.push(
               to + " — свой код есть, а в файле не назван ни один его адрес",

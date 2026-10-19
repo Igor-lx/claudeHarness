@@ -4572,3 +4572,36 @@ describe("сверка каркаса в живом проекте", () => {
     }
   }, 180000);
 });
+
+describe("витрина называет код номером гарантии", () => {
+  it("номер REQ-n, чья строка называет файл проекта, засчитан адресом; чужой номер — нет", () => {
+    const box = seatEmpty("vitrina-req-");
+    try {
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzCounter.tsx"),
+        "export const zzCounter = (n: number): number => n + 1;\n",
+      );
+      const flowsAt = path.join(box, ".context", "05-flows.md");
+      fs.writeFileSync(
+        flowsAt,
+        fs
+          .readFileSync(flowsAt, "utf8")
+          .replace(
+            "| Гарантия | Род | Что наблюдают | Источник | Узлы | Тест |\n| --- | --- | --- | --- | --- | --- |\n",
+            "| Гарантия | Род | Что наблюдают | Источник | Узлы | Тест |\n| --- | --- | --- | --- | --- | --- |\n| REQ-1 | должно | счёт растёт на единицу | разработчик, 2026-10-19 | `src/app/zzCounter.tsx` | `src/app/tests/App.test.tsx` «renders» |\n",
+          ),
+      );
+      const showcase = path.join(box, "docs", "FEATURES.md");
+      const mute = () =>
+        (verifyIn(box).get("Файл базы о живом коде назвал его адрес") ?? []).filter(
+          (line) => line.startsWith("docs/FEATURES.md"),
+        );
+      fs.writeFileSync(showcase, "# Features\n\n- A press adds one. (REQ-1)\n");
+      expect(mute()).toEqual([]);
+      fs.writeFileSync(showcase, "# Features\n\n- A press adds one. (REQ-9)\n");
+      expect(mute().length).toBe(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
