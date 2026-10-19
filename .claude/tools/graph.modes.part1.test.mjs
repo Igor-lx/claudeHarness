@@ -3579,6 +3579,11 @@ describe("короткий вывод сверки", () => {
         /зелёных не показано: [1-9][0-9]* — полный вывод: `graph\.mjs verify --full`/,
       );
       expect(brief.stdout.length).toBeLessThan(full.stdout.length / 2);
+      // Флаг посадки стоит: баннер обязан дойти до короткого вывода, и
+      // первым, а не телом зелёной секции, которую этот вывод прячет.
+      const banner = brief.stdout.indexOf("ПОСАДКА НЕ ЗАВЕРШЕНА");
+      expect(banner, brief.stdout).toBeGreaterThanOrEqual(0);
+      expect(banner).toBeLessThan(brief.stdout.indexOf("=== "));
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
