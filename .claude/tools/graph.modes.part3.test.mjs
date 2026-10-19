@@ -1916,6 +1916,15 @@ describe("страницы чтения — файлами", () => {
           .filter((l) => l.includes("bar-pages") || l.includes("local-notes")),
         verify,
       ).toEqual([]);
+      // Номера через пробел — каждый: второй прежде отбрасывался молча.
+      for (const n of ["1", "2"])
+        fs.rmSync(path.join(dir, "bar-protocol-" + n + ".md"));
+      const both = tool("bar-read", "1", "2");
+      expect(both).toMatch(/^  bar-protocol-2\.md — /m);
+      for (const n of ["1", "2"])
+        expect(fs.existsSync(path.join(dir, "bar-protocol-" + n + ".md"))).toBe(
+          true,
+        );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

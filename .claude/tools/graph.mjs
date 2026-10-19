@@ -18080,7 +18080,10 @@ if (mode === "bar-read") {
     console.log("  пересоберёт его и назовёт страницы.");
     process.exit(1);
   }
-  const pick = args.find((a) => !a.endsWith(".md") && a !== "--print");
+  // Номера — из каждого довода: `bar-read 9 14` прежде печатал одну девятую,
+  // а четырнадцатую отбрасывал молча — найдено посадкой по инструкции.
+  const picks = args.filter((a) => !a.endsWith(".md") && a !== "--print");
+  const pick = picks.length === 0 ? undefined : picks.join(",");
   const wanted = new Set();
   if (pick === undefined) for (const r of parsed.reads) wanted.add(r.n);
   else
