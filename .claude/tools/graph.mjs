@@ -29749,6 +29749,11 @@ if (mode === "verify") {
             const forms = short.includes("/") ? [e.to, short] : [e.to];
             for (const f of readdirSync(BASE)) {
               if (!f.endsWith(".md")) continue;
+              // План перехода и отложенное называют адрес умолчания целью
+              // приведения — `src/app/…` у проекта шаблона, — а не тем, что
+              // лежит, и читались записью о каркасе. Замерено переходом
+              // заготовки `create vite`.
+              if (f === CONFIG.transition?.file || f === CONFIG.todo) continue;
               const lines = readFileSync(path.join(BASE, f), "utf8").split(
                 NEWLINE,
               );

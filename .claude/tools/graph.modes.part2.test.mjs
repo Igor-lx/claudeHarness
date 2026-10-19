@@ -4534,3 +4534,41 @@ describe("шаг сверки, упавший исключением", () => {
     }
   }, 120000);
 });
+
+describe("сверка каркаса в живом проекте", () => {
+  it("план перехода, назвавший адрес каркаса целью, находкой не становится", () => {
+    const box = seatEmpty("karkas-plan-");
+    try {
+      fs.writeFileSync(path.join(box, "src", "zzOwn.tsx"), "export const zzOwn = 1;\n");
+      // Каркас не положен: адрес теста каркаса в карте посадки другой.
+      const mapAt = path.join(box, ".claude", "seat", "map.json");
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(
+            '"to": "src/app/tests/App.test.tsx"',
+            '"to": "src/app/tests/zzLater.test.tsx"',
+          ),
+      );
+      const frame = () =>
+        verifyIn(box).get("Каркас обвязки не лежит в живом проекте") ?? [];
+      const before = frame().length;
+      withTransitionDebt(box, [
+        "| 1 | Тест не в `tests/` | `1` | «Тесты лежат в `tests/`» | перенести в `src/app/tests/zzLater.test.tsx` | `1` файл |",
+      ]);
+      expect(frame().length).toBe(before);
+      expect(frame().join("\n")).not.toContain("15-transition.md");
+      // Та же запись в реестре решений — запись о каркасе, которого нет.
+      fs.appendFileSync(
+        path.join(box, ".context", "09-decisions.md"),
+        "\nЯкорь: `src/app/tests/zzLater.test.tsx`.\n",
+      );
+      expect(frame().join("\n")).toContain(
+        "09-decisions.md:",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
