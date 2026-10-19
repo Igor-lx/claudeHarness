@@ -8,4 +8,5 @@ package-lock.json
 .stryker-tmp
 reports
 .проба-сверок
+bar-pages
 .claude

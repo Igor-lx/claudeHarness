@@ -1343,8 +1343,12 @@ const insideRoots = (f) =>
 // корпуса, код вне деревьев. Замерено: сверка базы, пущенная рядом с идущей
 // фальсификацией, покраснела на десятках строк про песочницу. Прежде папка
 // исключалась одной лишь копией, а обходы держали каждый свой список.
+// Страницы чтения свода (`bar-read`) — вывод инструмента в папке базы: они
+// цитируют доктрину с её относительными ссылками, и сверки прозы базы
+// краснели на собственном выводе режима — найдено посадкой по инструкции.
 const OUT_OF_TREE = new Set([
   ".проба-сверок",
+  BAR_PAGES_DIR,
   "node_modules",
   ".git",
   ".stryker-tmp",
@@ -25946,6 +25950,9 @@ if (mode === "verify") {
         const out = [];
         for (const e of readdirSync(dir)) {
           const full = norm(path.join(dir, e));
+          // Корпус — то, что видит git: страницы чтения свода игнорируют себя
+          // сами, а обход базы этого не спрашивал и читал их прозой базы.
+          if (OUT_OF_TREE.has(e) || gitIgnored(full)) continue;
           if (statSync(full).isDirectory()) out.push(...walkBase(full));
           else if (e.endsWith(".md"))
             out.push([norm(path.relative(BASE, full)), full]);
@@ -26209,18 +26216,11 @@ if (mode === "verify") {
   let linkFiles = 0;
   checkStep(() => {
     {
-      const skipDirs = new Set([
-        "node_modules",
-        ".stryker-tmp",
-        "dist",
-        "coverage",
-        ".git",
-      ]);
       const mdFiles = [];
       (function walkMd(dir) {
         for (const e of readdirSync(dir)) {
-          if (skipDirs.has(e) || OUT_OF_TREE.has(e)) continue;
           const full = path.join(dir, e);
+          if (OUT_OF_TREE.has(e) || gitIgnored(norm(full))) continue;
           if (statSync(full).isDirectory()) walkMd(full);
           else if (e.endsWith(".md")) mdFiles.push(norm(full));
         }
@@ -26395,8 +26395,8 @@ if (mode === "verify") {
       const outsideUsed = new Set();
       (function walkProse(dir) {
         for (const e of readdirSync(dir)) {
-          if (OUT_OF_TREE.has(e)) continue;
           const full = norm(path.join(dir, e));
+          if (OUT_OF_TREE.has(e) || gitIgnored(full)) continue;
           if (statSync(full).isDirectory()) {
             walkProse(full);
             continue;

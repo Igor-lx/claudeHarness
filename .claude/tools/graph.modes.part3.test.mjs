@@ -1901,6 +1901,21 @@ describe("страницы чтения — файлами", () => {
       tool("bar-read", "1");
       expect(fs.existsSync(stale)).toBe(false);
       expect(fs.existsSync(path.join(dir, "bar-protocol-1.md"))).toBe(true);
+      // Страницы — вывод режима, а не проза базы: они цитируют доктрину с её
+      // относительными ссылками, и сверки прозы краснели на них. Корпус —
+      // то, что видит git: местная проза, которую он игнорирует, тоже вне.
+      const local = path.join(box, ".context", "local-notes");
+      fs.mkdirSync(local);
+      fs.writeFileSync(path.join(local, "n.md"), "[x](../nowhere.md)\n");
+      fs.appendFileSync(path.join(box, ".gitignore"), "local-notes\n");
+      const verify = tool("verify", "--full");
+      expect(verify).toContain("=== Ссылки markdown ===");
+      expect(
+        verify
+          .split("\n")
+          .filter((l) => l.includes("bar-pages") || l.includes("local-notes")),
+        verify,
+      ).toEqual([]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

@@ -17,6 +17,7 @@ import {
   tsconfigRead,
 } from "./graph.configs.mjs";
 import { compilerAt } from "./graph.parse.mjs";
+import { BAR_PAGES_DIR } from "./graph.predicates.mjs";
 
 // Папка внутри пакетов посадки видит её компилятор, сборщик и
 // сопоставитель, а git её не видит: тесты в корне посадки, идущие
@@ -282,6 +283,8 @@ describe("служебные папки инструмента — в каждо
       true,
     );
     let names = null;
+    // Папка, которую называет константа словаря, стоит в списке её именем.
+    const named = { BAR_PAGES_DIR };
     const walk = (n) => {
       if (
         ts.isVariableDeclaration(n) &&
@@ -289,11 +292,14 @@ describe("служебные папки инструмента — в каждо
         n.initializer !== undefined &&
         ts.isNewExpression(n.initializer)
       )
-        names = n.initializer.arguments[0].elements.map((e) => e.text);
+        names = n.initializer.arguments[0].elements.map((e) =>
+          ts.isIdentifier(e) ? named[e.text] : e.text,
+        );
       ts.forEachChild(n, walk);
     };
     walk(sf);
     expect(names).toContain(".проба-сверок");
+    expect(names).toContain(BAR_PAGES_DIR);
     // `.git` исключает сам git, а прочие инструменты его не обходят.
     const wanted = names.filter((one) => one !== ".git");
     const seed = (name) =>

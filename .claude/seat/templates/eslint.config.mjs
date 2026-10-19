@@ -56,6 +56,7 @@ export default tseslint.config(
       "**/public/**",
       "**/.stryker-tmp/**",
       "**/.проба-сверок/**",
+      "**/bar-pages/**",
       "**/reports/**",
     ],
   },
