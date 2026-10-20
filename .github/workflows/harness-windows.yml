@@ -38,6 +38,14 @@ jobs:
           node .claude/tools/graph.mjs seat "$RUNNER_TEMP/wseat"
           echo "seat exit $?"
 
+      - name: Knowledge-base check of the stand
+        # Prints the red checks themselves: the seat line only says the code.
+        working-directory: ${{ runner.temp }}/wseat
+        run: |
+          set +e
+          node .claude/tools/graph.mjs verify
+          echo "verify exit $?"
+
       - name: Harness self-tests
         working-directory: ${{ runner.temp }}/wseat
-        run: npx vitest run --config .claude/tools/vitest.config.mjs
+        run: npx vitest run --config .claude/tools/vitest.config.mjs --reporter=dot
