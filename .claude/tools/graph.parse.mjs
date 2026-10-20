@@ -19,31 +19,37 @@ const NAME = /^[A-Za-z_$][\w$]*$/;
 /** Строка импорта и переотдачи: `import … from "x"`, `export … from "x"`.
  * Клаузе запрещено содержать кавычку и точку с запятой: с `[\s\S]*?` разбор
  * перешагивал через импорт-побочный-эффект и склеивал его со следующей
- * строкой. */
+ * строкой. Пробела за словом язык не требует: `import{a}from"b"`. */
 const FROM =
-  /(?:^|\n)\s*(import|export)\s+([^;"']*?)\s*from\s*["']([^"']+)["']/g;
+  /(?:^|\n)\s*(import|export)(?![\w$])\s*([^;"']*?)\s*from\s*["']([^"']+)["']/g;
 /** Импорт-побочный-эффект: ребро графа без имён. */
 const BARE = /(?:^|\n)\s*import\s*["']([^"']+)["']/g;
 /** Имя, объявленное экспортом в самом файле. Одна форма на оба разбора —
  * экспортов и объявлений: прежний список слов не знал `async`, `let`, `var`,
  * `declare` и `function*`, и асинхронная функция не числилась экспортом
- * вовсе — ни мёртвым, ни взятым. */
+ * вовсе — ни мёртвым, ни взятым. Пространство имён и звёздочку генератора
+ * через пробел — `function *g` — не знал ни один из двух разборов. */
 const OWN =
-  /export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|abstract\s+class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+  /export\s+(?:declare\s+)?(?:async\s+)?(?:(?:const|let|var|class|abstract\s+class|interface|type|enum|namespace|module)\s+|function\s*\*?\s*)([A-Za-z_$][\w$]*)/g;
+/** Экспорт разбором объекта либо массива: `export const { a } = o`. Имена —
+ * привязки образца, их достаёт `bindingNamesOf`. */
+const OWN_PATTERN = /export\s+(?:declare\s+)?(?:const|let|var)\s*(?=[{[])/g;
 /** `export { … }` и `export type { … }` — с источником и без. */
 const BRACED = /export\s*(?:type\s*)?\{([^}]*)\}/g;
 /** `export { … }` без источника: отдаёт наружу своё либо взятое импортом. */
 const LOCAL = /export\s*(?:type\s*)?\{([^}]*)\}(?!\s*from)/g;
-/** Константа, отданная наружу с начала строки: таблица настроек. */
-const CONSTANT = /^export const ([A-Z][A-Z0-9_]*)/gm;
+/** Константа со значением, отданная наружу с начала строки: таблица
+ * настроек. Имя — до его конца: без границы `LIMITx` давало константу
+ * `LIMIT`; отступ и пробелы — любые. */
+const CONSTANT = /^[ \t]*export\s+const\s+([A-Z][A-Z0-9_]*)(?![\w$])/gm;
 /** Импорт во время работы: `import("x")` и `require("x")` с адресом
- * строкой. */
+ * строкой — и со вторым доводом, `import("./x.json", { with: … })`. */
 const DYNAMIC =
-  /(?<![\w$.])(import|require)\s*\(\s*(["'`])([^"'`$\n]+)\2\s*\)/g;
+  /(?<![\w$.])(import|require)\s*\(\s*(["'`])([^"'`$\n]+)\2\s*(?:,[^()]*)?\)/g;
 /** Импорт во время работы с адресом-шаблоном: постоянное начало до первой
  * подстановки и хвост после последней. */
 const TEMPLATED =
-  /(?<![\w$.])(import|require)\s*\(\s*`([^`$]*)\$\{([^`]*)`\s*\)/g;
+  /(?<![\w$.])(import|require)\s*\(\s*`([^`$]*)\$\{([^`]*)`\s*(?:,[^()]*)?\)/g;
 /** Импорт во время работы с адресом-значением: переменной, вызовом,
  * сложением строк. */
 const VALUED = /(?<![\w$.])(import|require)\s*\(\s*(?=[A-Za-z_$(])/g;
@@ -72,9 +78,11 @@ const dynamicOf = (src) => {
         /^\s*\.\s*[A-Za-z_$][\w$]*(?!\s*[(\w$])/.test(after))
     )
       continue;
+    // Конец — за кавычкой адреса, а не за последней кавычкой вызова: во
+    // втором доводе свои строки.
     out.push({
       spec: m[3],
-      end: m.index + m[0].lastIndexOf(m[2]) + 1,
+      end: m.index + m[0].indexOf(m[2]) + m[3].length + 2,
       call,
     });
   }
@@ -108,26 +116,63 @@ const specifiersOf = (clause) => {
     const part = raw.trim();
     if (part === "") continue;
     const typeOnly = /^type\s+/.test(part);
-    const [there, here] = part
-      .replace(/^type\s+/, "")
-      .split(/\s+as\s+/)
-      .map((x) => x.trim());
+    const [there, here] = part.replace(/^type\s+/, "").split(/\s+as\s+/);
     out.push({ there, here: here ?? there, typeOnly });
   }
   return out;
 };
 
-/** Клауза вне скобок и вне `* as` — местное имя взятого по умолчанию;
- * не имя — пустая строка. */
+/** Клауза до первой запятой — местное имя взятого по умолчанию: оно стоит
+ * первым; скобки и `* as` именем не бывают. Не имя — пустая строка. */
 const defaultLocalOf = (clause) => {
-  const name = clause
-    .replace(/\{[\s\S]*\}/, "")
-    .replace(/\*\s+as\s+[\w$]+/, "")
-    .replace(/^type\s+/, "")
-    .split(",")[0]
-    .trim();
+  const name = clause.replace(/^type\s+/, "").split(",")[0].trim();
   return NAME.test(name) ? name : "";
 };
+
+/** Части текста по разделителю вне скобок. */
+const topSplit = (text, sep) => {
+  const out = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if ("{[(".includes(text[i])) depth += 1;
+    else if ("}])".includes(text[i])) depth -= 1;
+    else if (text[i] === sep && depth === 0) {
+      out.push(text.slice(from, i));
+      from = i + 1;
+    }
+  }
+  return [...out, text.slice(from)];
+};
+
+/** Образец разбора с начала `src[at]` — до парной скобки. */
+const patternAt = (src, at) => {
+  let depth = 0;
+  for (let i = at; i < src.length; i += 1) {
+    if ("{[(".includes(src[i])) depth += 1;
+    else if ("}])".includes(src[i]) && --depth === 0)
+      return src.slice(at, i + 1);
+  }
+  // Образец не закрыт — файл посреди правки: хвост берётся целиком, а место
+  // закрывающей скобки, которую срежет разбор, занимает пробел.
+  return src.slice(at) + " ";
+};
+
+/** Привязки образца разбора: `{ a, b: c, ...d }` — `a`, `c`, `d`;
+ * `[x, , y = 1]` — `x`, `y`. Значение по умолчанию отбрасывается. */
+const bindingNamesOf = (pattern) =>
+  topSplit(pattern.slice(1, -1), ",").flatMap((raw) => {
+    // Значение по умолчанию — справа от «=», привязка у объекта — справа от
+    // «:»; у элемента массива двоеточия вне скобок нет.
+    const part = topSplit(
+      topSplit(raw.trim().replace(/^\.\.\./, ""), "=")[0],
+      ":",
+    )
+      .at(-1)
+      .trim();
+    if (part.startsWith("{") || part.startsWith("[")) return bindingNamesOf(part);
+    return NAME.test(part) ? [part] : [];
+  });
 
 /** Разбор текста модуля регулярными выражениями.
  *
@@ -152,7 +197,7 @@ export const parseModuleRegex = (src) => {
       spec: m[3],
       typeOnly: /^type\b/.test(clause),
       star: clause.includes("*"),
-      namespace: /\*\s+as\s+([\w$]+)/.exec(clause)?.[1] ?? null,
+      namespace: /\*\s*as\s+([\w$]+)/.exec(clause)?.[1] ?? null,
       specifiers: specifiersOf(clause),
       defaultLocal: defaultLocalOf(clause),
       end: m.index + m[0].length,
@@ -163,6 +208,9 @@ export const parseModuleRegex = (src) => {
     end: m.index + m[0].length,
   }));
   const own = new Set([...src.matchAll(OWN)].map((m) => m[1]));
+  for (const m of src.matchAll(OWN_PATTERN))
+    for (const name of bindingNamesOf(patternAt(src, m.index + m[0].length)))
+      own.add(name);
   const hasDefault = /export\s+default\s/.test(src);
   const defaultBinding =
     /export\s+default\s+([A-Za-z_$][\w$]*)\s*;/.exec(src)?.[1] ?? null;
@@ -171,7 +219,7 @@ export const parseModuleRegex = (src) => {
     for (const raw of m[1].split(",")) {
       const part = raw.trim().replace(/^type\s+/, "");
       if (part === "") continue;
-      const [here, out] = part.split(/\s+as\s+/).map((x) => x.trim());
+      const [here, out] = part.split(/\s+as\s+/);
       local.push({ here, out: out ?? here });
     }
   // `export type { … }` — тоже экспорт: разбор, требовавший скобку сразу за
@@ -181,10 +229,7 @@ export const parseModuleRegex = (src) => {
   for (const m of src.matchAll(BRACED))
     for (const raw of m[1].split(",")) {
       const part = raw.trim().replace(/^type\s+/, "");
-      if (part === "") continue;
-      const name = (
-        part.split(/\s+as\s+/)[1] ?? part.split(/\s+as\s+/)[0]
-      ).trim();
+      const name = part.split(/\s+as\s+/).at(-1);
       if (NAME.test(name)) surface.add(name);
     }
   const constants = [...src.matchAll(CONSTANT)].map((m) => m[1]);
@@ -222,6 +267,12 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
     (ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : []).some(
       (m) => m.kind === kind,
     );
+  const bindingNamesOfNode = (name) =>
+    ts.isIdentifier(name)
+      ? [name.text]
+      : name.elements.flatMap((e) =>
+          ts.isOmittedExpression(e) ? [] : bindingNamesOfNode(e.name),
+        );
   const specifiersOfNode = (elements) =>
     elements.map((e) => ({
       there: (e.propertyName ?? e.name).text,
@@ -297,11 +348,15 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
     }
     if (ts.isVariableStatement(st)) {
       const constant =
-        (st.declarationList.flags & ts.NodeFlags.Const) !== 0;
+        (st.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+        !modifies(st, ts.SyntaxKind.DeclareKeyword);
       for (const d of st.declarationList.declarations) {
-        if (!ts.isIdentifier(d.name)) continue;
-        own.add(d.name.text);
-        if (constant && /^[A-Z][A-Z0-9_]*$/.test(d.name.text))
+        for (const name of bindingNamesOfNode(d.name)) own.add(name);
+        if (
+          constant &&
+          ts.isIdentifier(d.name) &&
+          /^[A-Z][A-Z0-9_]*$/.test(d.name.text)
+        )
           constants.push(d.name.text);
       }
       continue;
@@ -311,8 +366,10 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
         ts.isClassDeclaration(st) ||
         ts.isInterfaceDeclaration(st) ||
         ts.isTypeAliasDeclaration(st) ||
-        ts.isEnumDeclaration(st)) &&
-      st.name !== undefined
+        ts.isEnumDeclaration(st) ||
+        ts.isModuleDeclaration(st)) &&
+      st.name !== undefined &&
+      ts.isIdentifier(st.name)
     )
       own.add(st.name.text);
   }
@@ -324,7 +381,8 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
   const dynamic = [];
   const computed = [];
   const visit = (node) => {
-    if (ts.isCallExpression(node) && node.arguments.length === 1) {
+    // Второй довод — настройки импорта, `{ with: … }`: адрес — первый.
+    if (ts.isCallExpression(node) && node.arguments.length > 0) {
       const arg = node.arguments[0];
       const call =
         node.expression.kind === ts.SyntaxKind.ImportKeyword
