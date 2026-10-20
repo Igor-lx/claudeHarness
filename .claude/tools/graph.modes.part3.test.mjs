@@ -1537,6 +1537,31 @@ describe("ссылка на раздел разрешается в назван�
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  // Ссылка из нормы на раздел обоснования разрешалась по одному имени файла —
+  // в одноимённую норму рядом.
+  it("адрес с папкой называет файл им самим, а не одноимённый рядом", () => {
+    const box = seatEmpty("razdel-papka-");
+    try {
+      const said = () => (verifyIn(box).get("Ссылки на разделы") ?? []).join("\n");
+      const loopAt = path.join(box, ".claude", "rules", "loop.md");
+      const loop = fs.readFileSync(loopAt, "utf8");
+      const why = fs.readFileSync(path.join(box, ".claude", "rationale", "loop.md"), "utf8");
+      const onlyNorm = loop
+        .split("\n")
+        .find((l) => /^## /.test(l) && !why.includes(l))
+        ?.slice(3);
+      expect(onlyNorm, "раздел, которого нет в обосновании").toBeDefined();
+      fs.writeFileSync(loopAt, loop + "\nСм. `loop.md`, раздел «" + onlyNorm + "».\n");
+      expect(said()).toBe("");
+      fs.writeFileSync(loopAt, loop + "\nСм. `../rationale/loop.md`, раздел «Петля».\n");
+      expect(said()).toBe("");
+      fs.writeFileSync(loopAt, loop + "\nСм. `../rationale/loop.md`, раздел «" + onlyNorm + "».\n");
+      expect(said()).toContain("«" + onlyNorm + "» — в loop.md такого раздела нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 describe("модуль .mjs под корнем исходников — в графе", () => {
