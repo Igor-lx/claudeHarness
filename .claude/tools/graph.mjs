@@ -22247,7 +22247,16 @@ if (mode === "verify") {
         ...(CONFIG.seeded ?? []),
       ]) {
         const at = path.join(BASE, one);
-        if (!existsSync(at)) continue;
+        // Засеянный файл, которого нет, слит в проектный под другим именем, а
+        // строка осталась на семенном: места ищутся в пустоте и находятся
+        // ноль. Замерено посадкой в заготовку `create vite`.
+        if (!existsSync(at)) {
+          if ((CONFIG.seeded ?? []).includes(one))
+            unfilledTemplate.push(
+              `${one}: засеянного файла нет — строку поля seeded перенацелить на проектное имя файла либо снять`,
+            );
+          continue;
+        }
         const body = readFileSync(at, "utf8");
         const left = body.match(/<(?:[А-ЯЁ][А-ЯЁ ]*|\.\.\.)>/g);
         if (left !== null)

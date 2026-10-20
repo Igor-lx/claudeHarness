@@ -3038,6 +3038,24 @@ describe("номер записи в заголовке не счёт", () => {
   }, 180000);
 });
 
+describe("засеянный файл, которого нет, назван", () => {
+  it("свежая посадка молчит, конфиг линта под другим именем назван строкой seeded", () => {
+    const box = seatEmpty("seeded-gone-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Шаблон правил заполнен") ?? []).join("\n");
+      expect(said()).not.toContain("засеянного файла нет");
+      fs.renameSync(
+        path.join(box, "eslint.config.mjs"),
+        path.join(box, "eslint.config.js"),
+      );
+      expect(said()).toContain("../eslint.config.mjs: засеянного файла нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("сводка открытого собирает записи, а не образцы в ограде", () => {
   it("«не закреплено» и «Держится: ничем» в ограде кода в сводку не попадают, те же строки вне ограды — попадают", () => {
     const box = seatEmpty("open-fence-");
