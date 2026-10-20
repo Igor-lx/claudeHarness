@@ -38,14 +38,30 @@ jobs:
           node .claude/tools/graph.mjs seat "$RUNNER_TEMP/wseat"
           echo "seat exit $?"
 
+      - name: Harness self-tests
+        working-directory: ${{ runner.temp }}/wseat
+        run: >-
+          npx vitest run --config .claude/tools/vitest.config.mjs
+          --reporter=dot --reporter=json
+          --outputFile.json="$RUNNER_TEMP/tests.json"
+
+      # The last steps print the failures and red checks at the log's end.
+      - name: Failed tests, one line each
+        if: always()
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            for (const f of r.testResults)
+              for (const t of f.assertionResults)
+                if (t.status === "failed")
+                  console.log(f.name.split(/[\\/]/).pop() + " > " + t.fullName + " :: " +
+                    String(t.failureMessages[0] ?? "").split("\n")[0].slice(0, 240));
+          ' "$RUNNER_TEMP/tests.json"
+
       - name: Knowledge-base check of the stand
-        # Prints the red checks themselves: the seat line only says the code.
+        if: always()
         working-directory: ${{ runner.temp }}/wseat
         run: |
           set +e
           node .claude/tools/graph.mjs verify
           echo "verify exit $?"
-
-      - name: Harness self-tests
-        working-directory: ${{ runner.temp }}/wseat
-        run: npx vitest run --config .claude/tools/vitest.config.mjs --reporter=dot
