@@ -138,7 +138,9 @@ import {
 // Испытательная посадка и пакеты песочниц: посадке нужен один порядок и до
 // настройки проекта, и внутри режимов, которые её разбирают.
 import {
+  envLowOf,
   layShelf,
+  lintBlockersOf,
   runSeat,
   sandboxManifests,
   sandboxPackages,
@@ -584,32 +586,33 @@ if (mode === "env") {
   // до неё.
   const declared = verifiedOf(readFileSync(seed, "utf8"));
   sayLooked("объявленных версий", Object.keys(declared).length);
-  const low = [];
-  const seen = [];
-  for (const name of ["node", "npm"]) {
-    const need = declared[name] ?? null;
-    if (need === null) continue;
-    const have = toolVersion(name);
-    if (have === null) {
-      low.push({ name, have: "не отвечает", need, how: "поставить" });
-      continue;
-    }
-    seen.push(name + " " + have + " (нужно " + need + ")");
-    if (versionCmp(have, need) < 0)
-      low.push({
-        name,
-        have,
-        need,
-        // Команда подъёма печатается ГОТОВОЙ: «поднимите менеджер» заставляет
-        // получателя гадать, а гадание кончается установкой не той версии.
-        how:
-          name === "npm"
-            ? "npm i -g npm@" + need.split(".")[0]
-            : "поставить отдельно: менеджером версий среды либо установщиком",
-      });
-  }
+  const { seen, low } = envLowOf(declared);
   console.log("=== Среда посадки ===");
   for (const one of seen) console.log("  " + one);
+  // Живой проект на стеке новее связки: линт обвязки на нём не встанет, и
+  // какие критерии теряют машинную проверку, печатает режим, а не память
+  // сессии (находка Н-3 плана `2026-10-20`). Папку проекта называют доводом.
+  const projectAt = process.argv[3] ?? null;
+  const manifestAt =
+    projectAt === null ? null : path.join(path.resolve(projectAt), "package.json");
+  if (manifestAt !== null && existsSync(manifestAt)) {
+    const blockers = lintBlockersOf(
+      JSON.parse(readFileSync(manifestAt, "utf8")),
+      declared,
+    );
+    if (blockers.length > 0) {
+      console.log("=== Линт обвязки на этом проекте не встанет (предупреждение) ===");
+      for (const one of blockers) console.log("  " + one + ".");
+      console.log(
+        "  Машинной проверки линтом лишаются критерии: " +
+          Object.keys(BAR_LINT).join(", ") +
+          ". Их судят чтением; линтер проекта остаётся его линтером.",
+      );
+      console.log(
+        "  Это строка блока «ЗНАТЬ СРАЗУ» отчёта фазы 1; посадку не останавливает.",
+      );
+    }
+  }
   if (low.length === 0) {
     console.log("  годится: сажать можно");
     process.exit(0);
