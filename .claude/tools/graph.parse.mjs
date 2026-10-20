@@ -202,32 +202,14 @@ export const parseModuleRegex = (src) => {
   };
 };
 
-/** Вид исходника по расширению: `.ts`, разобранный как TSX, читает
- * обобщение стрелочной функции разметкой, и разбор теряет строки за ним. */
-const scriptKindOf = (ts, file) =>
-  /\.tsx$/.test(file)
-    ? ts.ScriptKind.TSX
-    : /\.[cm]?ts$/.test(file)
-      ? ts.ScriptKind.TS
-      : /\.jsx$/.test(file)
-        ? ts.ScriptKind.JSX
-        : /\.[cm]?js$/.test(file)
-          ? ts.ScriptKind.JS
-          : ts.ScriptKind.TSX;
-
 /** Тот же разбор компилятором TypeScript: запись той же формы.
  *
  * Видит только строки верхнего уровня, а импорт и экспорт внутри строки,
  * шаблона и комментария — нет. `ts` — модуль компилятора, его даёт
- * `compilerAt`; `file` — имя файла, по расширению которого выбран вид. */
+ * `compilerAt`; `file` — имя файла: вид исходника компилятор выводит из его
+ * расширения сам, и `.ts` не читает обобщение стрелочной функции разметкой. */
 export const parseModuleTs = (src, ts, file = "module.tsx") => {
-  const source = ts.createSourceFile(
-    file,
-    src,
-    ts.ScriptTarget.Latest,
-    false,
-    scriptKindOf(ts, file),
-  );
+  const source = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, false);
   const froms = [];
   const bare = [];
   const own = new Set();
