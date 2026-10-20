@@ -903,6 +903,57 @@ describe("поверхность бочки в модели свода", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  // Удалённый узел уносит потребителя: имя, которое держит один тест,
+  // мёртвое в коде, а файла с ним в предмете нет (находка Н-9).
+  it("удаление: имя, которое брал удалённый, без потребителя — строка поверхности с пометкой", () => {
+    const box = seatEmpty("sirota-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=s", "-c", "user.email=s@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const area = path.join(box, "src", "shared", "zzLib");
+      fs.mkdirSync(path.join(area, "tests"), { recursive: true });
+      fs.writeFileSync(
+        path.join(area, "zzLib.ts"),
+        "export const zzOnly = (n: number): number => n + 1;\nexport const zzKept = (n: number): number => n - 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(area, "zzUser.ts"),
+        'import { zzKept, zzOnly } from "./zzLib";\n\nexport const zzUser = (n: number): number => zzOnly(zzKept(n));\n',
+      );
+      fs.writeFileSync(
+        path.join(area, "zzOther.ts"),
+        'import { zzKept } from "./zzLib";\n\nexport const zzOther = (n: number): number => zzKept(n);\n',
+      );
+      fs.writeFileSync(
+        path.join(area, "tests", "zzLib.test.ts"),
+        'import { expect, it } from "vitest";\nimport { zzOnly } from "../zzLib";\n\nit("adds one", () => {\n  expect(zzOnly(1)).toBe(2);\n});\n',
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "база", "--no-verify");
+      git("rm", "-q", "src/shared/zzLib/zzUser.ts");
+      spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar"], {
+        cwd: box,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const rows = fs
+        .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
+        .split("\n")
+        .filter((l) => /\| поверхность \| `shared\/zzLib\/zzLib\.ts` \|/.test(l));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toContain(
+        "после удаления shared/zzLib/zzUser.ts снаружи не берут: zzOnly |",
+      );
+      expect(rows[0]).toMatch(/\| снято \| лишнее \|/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 /**

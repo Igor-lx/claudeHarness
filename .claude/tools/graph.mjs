@@ -12674,6 +12674,42 @@ const barModelOf = (
   const seenKeys = new Set();
 
   const subjectRel = new Set(subject.map(rel));
+  // Удалённый узел предмета: имя, которое он брал, могло остаться без
+  // потребителя, а файл с этим именем в предмет не входит — `H4` и `B7` о
+  // нём не спрашивали (находка Н-9 плана `2026-10-20`). Строка встаёт на
+  // каждый такой файл; тесты потребителем не считаются: имя, которое держит
+  // один тест, мёртвое в коде.
+  if (change && want("поверхность")) {
+    const orphans = new Map();
+    for (const x of subject.filter((f) => !existsSync(f) && !isTest(f))) {
+      const h = headCode(x);
+      if (typeof h !== "string") continue;
+      for (const one of parseModule(h, x).froms) {
+        const t = resolve(x, one.spec);
+        if (!t || !files.includes(t) || isTest(t) || inFocus.has(t)) continue;
+        const { outside } = takenNamesOf(t);
+        const left = one.specifiers
+          .map((s) => s.there)
+          .filter((n) => !outside.has(n));
+        if (left.length === 0) continue;
+        const was = orphans.get(t) ?? { names: new Set(), from: new Set() };
+        for (const n of left) was.names.add(n);
+        was.from.add(rel(x));
+        orphans.set(t, was);
+      }
+    }
+    for (const [t, { names, from }] of orphans)
+      add(
+        "поверхность",
+        rel(t),
+        "после удаления " +
+          listCell([...from].sort()) +
+          " снаружи не берут: " +
+          listCell([...names].sort()),
+        "лишнее",
+        "снято",
+      );
+  }
   for (const f of focus) {
     // Лист стилей: его признаки — о каскаде, движении и комментариях.
     if (styleFiles.includes(f)) {
