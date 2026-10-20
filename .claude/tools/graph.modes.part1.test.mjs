@@ -3838,6 +3838,24 @@ describe("ответы свода файлом", () => {
         odd < 0 ? "" : filled.split("\n")[odd] + "\n" + wrote[odd],
       ).toBe(-1);
       expect(tool("bar").out).toContain("печать поставлена");
+      // Свой файл режим не трогает. Файл по умолчанию — в папке страниц: его
+      // путь называют ключи, без него отказ называет путь, вписанный он снят.
+      expect(fs.existsSync(answersAt)).toBe(true);
+      const keys = fs.readFileSync(
+        path.join(box, ".context", "bar-pages", "bar-protocol-ключи.md"),
+        "utf8",
+      );
+      const ownAt = /Write сюда: (\S+)/.exec(keys)?.[1];
+      expect(ownAt, keys).toMatch(/bar-pages[\\/]bar-protocol-ответы\.txt$/);
+      fs.writeFileSync(protoAt, blank);
+      const none = tool("bar-fill");
+      expect(none.code).toBe(1);
+      expect(none.out).toContain(ownAt);
+      fs.writeFileSync(ownAt, answers);
+      const own = tool("bar-fill");
+      expect(own.code, own.out).toBe(0);
+      expect(fs.existsSync(ownAt)).toBe(false);
+      expect(fs.readFileSync(protoAt, "utf8")).toBe(wrote.join("\n"));
       // Отказ — целиком: ключа нет, ключ дважды, клеток больше граф.
       const first = answers.split("\n")[0];
       const key = answers

@@ -2531,6 +2531,12 @@ const barPagesDirOf = (at) => {
  * прогон пробы `2026-10-16` — вырезано `12 845` знаков, и требования к «чисто»
  * сессия восстанавливала по отказам. Файл пересобирается каждым вызовом
  * `bar`, поэтому ключи в нём — ещё не заполненных строк. */
+/** Файл ответов свода по умолчанию — в папке страниц, которую git не видит.
+ * Его места не называл никто: сессия клала файл в базу, а снять не могла —
+ * `rm` стоит в «спросить»; сессия малой правки `2026-10-20` оставила `3` файла
+ * и получила `4` отказа. */
+const barAnswersFileOf = (at) =>
+  path.join(barPagesDirOf(at), path.basename(at, ".md") + "-ответы.txt");
 const barKeysFileOf = (at, holes = []) => {
   const keys = barKeysOf(readFileSync(at, "utf8"));
   const model = keys.find((line) =>
@@ -2546,6 +2552,9 @@ const barKeysFileOf = (at, holes = []) => {
       "# Форма файла ответов и ключи к заполнению",
       "",
       ...barFillLegend(),
+      "",
+      "Файл ответов писать инструментом Write сюда: " + barAnswersFileOf(at),
+      "— `graph.mjs bar-fill` без довода берёт его отсюда и, вписав, снимает.",
       "",
       "Ключи — протокол целиком ради них читать не нужно; ключ исхода —",
       "`критерий@предмет`, итога — `уровень@предмет`, свидетеля — `СвN`:",
@@ -18257,13 +18266,18 @@ if (mode === "bar-read") {
 // прежде, `bar`: те же клетки проходят тот же приём.
 if (mode === "bar-fill") {
   const args = process.argv.slice(3);
-  const answersAt = args[0] === undefined ? null : path.resolve(args[0]);
   const protocolAt =
     args[1] !== undefined
       ? path.resolve(args[1])
       : CONFIG.barProtocol == null
         ? null
         : path.join(BASE, CONFIG.barProtocol);
+  const ownAnswers = args[0] === undefined;
+  const answersAt = !ownAnswers
+    ? path.resolve(args[0])
+    : protocolAt === null || !existsSync(protocolAt)
+      ? null
+      : barAnswersFileOf(protocolAt);
   const said =
     answersAt !== null && existsSync(answersAt)
       ? readFileSync(answersAt, "utf8").split(/\r?\n/)
@@ -18277,12 +18291,16 @@ if (mode === "bar-fill") {
     for (const one of why) console.log("  " + one);
     process.exit(1);
   };
-  if (said === null)
-    refuse(
-      "Файла ответов нет: `graph.mjs bar-fill <файл ответов> [протокол]`.",
-    );
   if (protocolAt === null || !existsSync(protocolAt))
     refuse("Протокола нет: сперва `graph.mjs bar`.");
+  if (said === null)
+    refuse(
+      ownAnswers
+        ? "Файла ответов нет: его пишут инструментом Write сюда — " +
+            answersAt +
+            ", либо называют свой: `graph.mjs bar-fill <файл ответов> [протокол]`."
+        : "Файла ответов нет: " + answersAt + ".",
+    );
   const body = readFileSync(protocolAt, "utf8");
   const lines = body.split(LF);
   // Строка таблицы, которую заполняет сессия: ключ и номера граф, которые
@@ -18501,6 +18519,9 @@ if (mode === "bar-fill") {
           ]);
         })();
   writeFileSync(protocolAt, written);
+  // Вписанный файл снят: следующий свод пишет новый без чтения прежнего, а
+  // повторный вызов не вписывает старые ответы поверх новых.
+  if (ownAnswers) rmSync(answersAt);
   console.log("=== Ответы вписаны ===");
   console.log("  вписано строк: " + asked.length + " — " + rel(protocolAt));
   if (batched > 0)
