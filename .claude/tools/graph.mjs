@@ -26301,12 +26301,28 @@ if (mode === "verify") {
     for (const [name, at, fromShelf] of docSources) {
       const dir = norm(path.dirname(at));
       const prose = proseOf(at);
+      // Протокол свода называет удалённый файл предмета отпечатком «нет
+      // файла» и тем же путём — в таблице частей: это путь удалённого, а не
+      // битый. Прежде цепочка краснела на самом протоколе, и удаление с
+      // переименованием не коммитились (находка Н-7 плана `2026-10-20`).
+      const deleted =
+        CONFIG.barProtocol != null &&
+        norm(at) === norm(path.join(BASE, CONFIG.barProtocol))
+          ? new Set(
+              [
+                ...prose.matchAll(
+                  /^\|\s*`([^`]+)`\s*\|\s*`нет файла`\s*\|\s*$/gm,
+                ),
+              ].map((m) => m[1]),
+            )
+          : new Set();
       for (const hit of prose.matchAll(/`([^`\n]+)`/g)) {
         // Адрес — с номером строки: файл называет одно имя и дважды, и две
         // одинаковые строки находки не говорили, где второе.
         const where =
           name + ":" + prose.slice(0, hit.index).split(NEWLINE).length;
         let tok = hit[1].trim();
+        if (deleted.has(tok)) continue;
         if (/[\s(){}*[\]<>|,]/.test(tok)) continue;
         tok = tok.replace(/[:#].*$/, "");
         // Адрес, принадлежащий ЛЮБОМУ проекту, а не этому: в тексте полки его

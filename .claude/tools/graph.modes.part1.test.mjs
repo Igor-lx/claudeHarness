@@ -818,6 +818,13 @@ describe("удалённый файл кода в предмете", () => {
       const said = fs.readFileSync(protoAt, "utf8");
       for (const name of names) expect(said).toContain(name);
       expect(said).toContain("нет файла");
+      // Строка предмета об удалённом — законная запись, а не битый путь:
+      // иначе цепочка красна на самом протоколе, и удаление не коммитится.
+      const pathsOf = () =>
+        (verifyIn(box).get("Пути в обратных кавычках") ?? []).filter((l) =>
+          l.includes("bar-protocol.md"),
+        );
+      expect(pathsOf()).toEqual([]);
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(run("bar").stdout).toContain("печать поставлена");
       expect(run("stop", "--hook").status).toBe(0);
@@ -835,6 +842,8 @@ describe("удалённый файл кода в предмете", () => {
       for (const name of ["app/zzOld.ts", "app/zzNew.ts"])
         expect(moved.stderr).toContain(name);
       run("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain("app/zzOld.ts");
+      expect(pathsOf()).toEqual([]);
       fillBar(protoAt, { release: "не нужно: проба" });
       expect(run("bar").stdout).toContain("печать поставлена");
       expect(run("stop", "--hook").status).toBe(0);
