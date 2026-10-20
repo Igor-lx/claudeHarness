@@ -3583,7 +3583,7 @@ describe("находки мини-стенда: факты, долг, отлож
   it("таблица файлов базы сверяется с семенами в обе стороны: строка без семени, семя без строки и файл созданный работой без строки краснят её", () => {
     const box = seatEmpty("base-table-");
     try {
-      const doc = path.join(box, ".claude", "rules", "base.md");
+      const doc = path.join(box, ".claude", "rules", "base-format.md");
       const map = path.join(box, ".claude", "seat", "map.json");
       const clean = fs.readFileSync(doc, "utf8");
       const mapClean = fs.readFileSync(map, "utf8");
@@ -3626,7 +3626,7 @@ describe("находки мини-стенда: факты, долг, отлож
       );
       expect(drift()).toEqual([
         expect.stringContaining(
-          "строка 02-todo.md в таблице `base.md` повторена",
+          "строка 02-todo.md в таблице `base-format.md` повторена",
         ),
       ]);
       fs.writeFileSync(doc, clean);

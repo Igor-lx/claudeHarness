@@ -3346,7 +3346,7 @@ describe("матрица читателей прозы", () => {
         ".context/16-findings.md",
         ".claude/tools/checks.md",
         ".claude/rules/entry.md",
-        ".claude/rules/base.md",
+        ".claude/rules/base-format.md",
         ".claude/skills/README.md",
       ];
       const before = reds(box);

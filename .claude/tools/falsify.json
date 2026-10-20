@@ -682,7 +682,7 @@
     },
     {
       "section": "Таблица файлов базы сходится с семенами",
-      "file": ".claude/rules/base.md",
+      "file": ".claude/rules/base-format.md",
       "find": "| `02-todo.md` |",
       "replace": "| `02-todo-нет.md` |"
     },

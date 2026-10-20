@@ -27796,7 +27796,7 @@ if (mode === "verify") {
 
   // Таблица файлов базы сходится с семенами.
   //
-  // Таблица в `rules/base.md` решает, куда записать новое, и обещает, когда
+  // Таблица в `rules/base-format.md` решает, куда записать новое, и обещает, когда
   // файл появляется. Две её строки обещали файлы, которых посадка не кладёт и
   // ни один проект не видел, а перечень семян с таблицей ничто не сверяло.
   // Спрашивается в обе стороны: семя в `.context/` без строки таблицы и строка
@@ -27806,7 +27806,7 @@ if (mode === "verify") {
   let baseTableLooked = 0;
   checkStep(() => {
     {
-      const doc = shelfAt("rules/base.md");
+      const doc = shelfAt("rules/base-format.md");
       const mapAt = shelfAt("seat/map.json");
       if (
         doc !== null &&
@@ -27844,28 +27844,28 @@ if (mode === "verify") {
         // строками таблицы — это и называется.
         if (from < 0 || rows.length === 0)
           baseTableDrift.push(
-            "в `base.md` не найден раздел «Файлы» с таблицей, строки которой начинаются файлом в обратных кавычках",
+            "в `base-format.md` не найден раздел «Файлы» с таблицей, строки которой начинаются файлом в обратных кавычках",
           );
         else {
           for (const f of new Set(rows))
             if (rows.indexOf(f) !== rows.lastIndexOf(f))
               baseTableDrift.push(
-                `строка ${f} в таблице \`base.md\` повторена`,
+                `строка ${f} в таблице \`base-format.md\` повторена`,
               );
           for (const f of seeded)
             if (!rows.includes(f))
               baseTableDrift.push(
-                `семя ${f} посадка кладёт, а в таблице \`base.md\` строки о нём нет`,
+                `семя ${f} посадка кладёт, а в таблице \`base-format.md\` строки о нём нет`,
               );
           for (const f of rows)
             if (!seeded.includes(f) && !made.includes(f))
               baseTableDrift.push(
-                `строка ${f} в таблице \`base.md\` есть, а семени нет и среди созданных работой (\`baseFilesNotSeeded\`) он не назван`,
+                `строка ${f} в таблице \`base-format.md\` есть, а семени нет и среди созданных работой (\`baseFilesNotSeeded\`) он не назван`,
               );
           for (const f of made)
             if (!rows.includes(f))
               baseTableDrift.push(
-                `${f} назван в \`baseFilesNotSeeded\`, а строки о нём в таблице \`base.md\` нет`,
+                `${f} назван в \`baseFilesNotSeeded\`, а строки о нём в таблице \`base-format.md\` нет`,
               );
         }
       }
