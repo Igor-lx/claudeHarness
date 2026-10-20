@@ -601,9 +601,12 @@ describe("classifyRun", () => {
  * образца по расширению — правило о документах, а не о коде, и её не сличают.
  */
 describe("шапки правил о коде — перечнем словаря", () => {
-  it("расширения в шапке каждого правила с образцом — ровно расширения кода и стилей", () => {
+  // `styles.md` приходит с листом стилей, а не с кодом: его шапка — ровно
+  // расширения стилей словаря.
+  it("расширения в шапке каждого правила с образцом — ровно расширения кода и стилей, у styles.md — стилей", () => {
     const rules = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "rules");
     const want = [...vocabulary.CODE_EXTENSIONS, ...vocabulary.STYLE_EXTENSIONS].sort();
+    const styles = [...vocabulary.STYLE_EXTENSIONS].sort();
     let headed = 0;
     for (const name of fs.readdirSync(rules).filter((n) => n.endsWith(".md"))) {
       const head = /^---\n([\s\S]*?)\n---\n/.exec(fs.readFileSync(path.join(rules, name), "utf8"));
@@ -615,9 +618,9 @@ describe("шапки правил о коде — перечнем словар�
         continue;
       headed += 1;
       const exts = [...head[1].matchAll(/"\*\*\/\*\.\{([^}]+)\}"/g)].flatMap((m) => m[1].split(","));
-      expect(exts.sort(), name).toEqual(want);
+      expect(exts.sort(), name).toEqual(name === "styles.md" ? styles : want);
     }
-    expect(headed).toBeGreaterThanOrEqual(3);
+    expect(headed).toBeGreaterThanOrEqual(4);
   });
 });
 
