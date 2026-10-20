@@ -18,6 +18,7 @@ import {
   verifyIn,
   sectionOf,
   fillBar,
+  mutationMeasured,
   barRowsCited,
   fakeCheck,
   seriesStaged,
@@ -594,6 +595,7 @@ describe("гарантия поведения держится тестом", ()
       expect(tool("bar")).toMatch(
         /J13: чисто, а работа изменила утверждения теста гарантии, и в основании не сказано, держит ли он прежнее обещание или строка гарантии изменена той же правкой: П\d+/,
       );
+      mutationMeasured(box);
       fs.rmSync(protoAt);
       tool("bar");
       fillBar(protoAt, { release: "не нужно: проба" });
@@ -713,6 +715,7 @@ describe("гарантия поведения держится тестом", ()
       const said = tool("bar");
       expect(said).toMatch(/J11: чисто, а гарантия поведения называет узел этой работы[^:]*: П\d+/);
       expect(said).toMatch(/J12: нет предмета, а в модели он есть: П\d+/);
+      mutationMeasured(box);
       fs.rmSync(protoAt);
       tool("bar");
       const ids = [...fs.readFileSync(protoAt, "utf8").matchAll(/\| (П\d+) \| гарантия \|/g)].map((m) => m[1]);

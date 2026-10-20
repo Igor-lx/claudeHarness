@@ -14,6 +14,7 @@ import {
   verifyIn,
   sectionOf,
   fillBar,
+  mutationMeasured,
   crossFilled,
 } from "./graph.modes.shared.mjs";
 
@@ -241,6 +242,7 @@ describe("свод на правке — по той же области, что
         "src/components/ZzCounter/tests/ZzCounter.test.tsx",
         'import { ZzCounter } from "../ZzCounter";\n\nexport const zzProbe = ZzCounter;\n',
       );
+      mutationMeasured(box);
       fs.rmSync(protoAt);
       tool("bar");
       const testRow = "| `components/ZzCounter/tests/ZzCounter.test.tsx` |  |  |  |";
@@ -385,6 +387,7 @@ describe("свод на правке — по той же области, что
         pick: { "J9-тер": "нет предмета |  | тестов не трогали | " },
       });
       expect(tool("bar")).toMatch(/J9-тер: нет предмета, а в модели он есть: П\d+/);
+      mutationMeasured(box);
       fs.rmSync(protoAt);
       tool("bar");
       const radiusId = /\| (П\d+) \| радиус \|/.exec(fs.readFileSync(protoAt, "utf8"))[1];
@@ -1709,6 +1712,7 @@ describe("проба планки в существующем коде", () => {
         .split("\n")
         .filter(Boolean);
       expect(changed.length).toBe(3);
+      mutationMeasured(sandbox);
       run(sandbox, "bar");
       const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
       const relCulprit = path.relative(path.join(sandbox, "src"), culprit).split(path.sep).join("/");
@@ -4165,6 +4169,62 @@ describe("признаки по всей планке в модели свода
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  it("на правке узла с тестами «чисто» по J10 без свежего замера печать не ставит, на чтении не режет", () => {
+    const box = seatEmpty("mutcut-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=m", "-c", "user.email=m@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, stdio: ["ignore", "pipe", "pipe"] },
+        );
+      put("src/shared/zzMut/zzMut.ts", "export const zzMut = (n: number) => n + 1;\n");
+      put(
+        "src/shared/zzMut/tests/zzMut.test.ts",
+        'import { expect, it } from "vitest";\nimport { zzMut } from "../zzMut";\nit("adds", () => {\n  expect(zzMut(1)).toBe(2);\n});\n',
+      );
+      const cfg = fs.readFileSync(path.join(box, ".context", "graph.config.mjs"), "utf8");
+      const mutateAt = path.join(box, ".context", cfg.match(/mutationConfig: "([^"]+)"/)[1]);
+      fs.writeFileSync(
+        mutateAt,
+        JSON.stringify({
+          ...JSON.parse(fs.readFileSync(mutateAt, "utf8")),
+          mutate: ["src/shared/zzMut/zzMut.ts"],
+        }),
+      );
+      const ledgerAt = path.join(box, ".context", cfg.match(/mutationLedger: "([^"]+)"/)[1]);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const cut = /J10: чисто, а замер по правленому файлу не мерен либо устарел[^\n]*П\d+/;
+      tool("bar", "shared/zzMut/zzMut.ts");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar", "shared/zzMut/zzMut.ts")).not.toMatch(cut);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "база", "--no-verify");
+      const code = "export const zzMut = (n: number) => n + 2;\n";
+      put("src/shared/zzMut/zzMut.ts", code);
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const refused = tool("bar");
+      expect(refused).not.toContain("печать поставлена");
+      expect(refused).toMatch(cut);
+      const stamp = createHash("sha1").update(code).digest("hex").slice(0, 12);
+      fs.writeFileSync(
+        ledgerAt,
+        JSON.stringify({ "src/shared/zzMut/zzMut.ts": { killed: 3, alive: 0, hash: stamp } }),
+      );
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const sealed = tool("bar");
+      expect(sealed).not.toMatch(cut);
+      expect(sealed).toContain("печать поставлена");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 
   it("граф: повтор, постоянный довод, тесты, союз, приглушение, зависимость", () => {
     const box = seatEmpty("graph-");

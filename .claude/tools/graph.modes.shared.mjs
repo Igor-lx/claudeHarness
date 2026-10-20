@@ -296,6 +296,28 @@ export const fillWords = (protoAt) => {
       .join("\n"),
   );
 };
+/** Мутационный замер на нынешнем содержимом каждого файла кода под `src` —
+ * реестр, какой оставляет сессия, прогнавшая замер по правке. Печать на
+ * правке узла с тестами без свежего замера «чисто» по `J10` не ставит, а
+ * тесту, который судит другое, нужен честный свод. */
+export const mutationMeasured = (box) => {
+  const cfg = fs.readFileSync(path.join(box, ".context", "graph.config.mjs"), "utf8");
+  const at = path.join(box, ".context", cfg.match(/mutationLedger: "([^"]+)"/)[1]);
+  const ledger = fs.existsSync(at) ? JSON.parse(fs.readFileSync(at, "utf8")) : {};
+  for (const one of fs.readdirSync(path.join(box, "src"), { recursive: true })) {
+    const rel = String(one).split(path.sep).join("/");
+    if (!/\.[cm]?[jt]sx?$/.test(rel) || rel.endsWith(".d.ts")) continue;
+    if (/(^|\/)tests\//.test(rel) || rel.includes(".test.")) continue;
+    const text = fs.readFileSync(path.join(box, "src", rel), "utf8").split("\r\n").join("\n");
+    ledger["src/" + rel] = {
+      killed: 1,
+      alive: 0,
+      hash: createHash("sha1").update(text).digest("hex").slice(0, 12),
+    };
+  }
+  fs.writeFileSync(at, JSON.stringify(ledger, null, 2) + "\n");
+};
+
 export const fillBar = (
   protoAt,
   { release, pick = {}, holds = "да", keepParts = false },
