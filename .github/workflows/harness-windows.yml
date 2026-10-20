@@ -1,0 +1,40 @@
+# Runs the harness self-tests on Windows: the harness promises portability,
+# and its tool compares paths that Windows writes with another separator.
+name: harness-windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  self-tests:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+
+      - name: Git identity for the test seat commits
+        run: |
+          git config --global user.name "harness-ci"
+          git config --global user.email "harness-ci@users.noreply.github.com"
+
+      - name: Machine fits the verified set
+        run: node .claude/tools/graph.mjs env
+
+      - name: Seat a test stand from this shelf
+        # The seat exit code is the knowledge-base check code; the stand is
+        # still laid when it is red, and the self-tests below must run.
+        run: |
+          set +e
+          node .claude/tools/graph.mjs seat "$RUNNER_TEMP/wseat"
+          echo "seat exit $?"
+
+      - name: Harness self-tests
+        working-directory: ${{ runner.temp }}/wseat
+        run: npx vitest run --config .claude/tools/vitest.config.mjs
