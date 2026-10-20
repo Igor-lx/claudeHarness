@@ -3012,6 +3012,30 @@ describe("номер записи в заголовке не счёт", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  it("номер из нескольких уровней и название раздела в ёлочках молчат, ёлочки без раздела краснеют", () => {
+    const box = seatEmpty("nomer-levels-");
+    try {
+      const todo = path.join(box, ".context", "02-todo.md");
+      fs.appendFileSync(
+        todo,
+        "\n### 2.2. Тексты правил\n\n2.3. Сверка файлов.\n\n- 1.4. Замер модулей\n\n" +
+          "| 2.5. Правка строк | да |\n\nПодшаг — раздел «2.2. Тексты правил»; он же раздел «Тексты правил».\n\n" +
+          "Опора — `environment.md`, раздел «Два файла разрешений, и границу между ними проводит среда».\n",
+      );
+      const said = () =>
+        (verifyIn(box).get("Числа в прозе базы") ?? []).join("\n");
+      const first = verifyIn(box);
+      expect((first.get("Числа в прозе базы") ?? []).join("\n")).toBe("");
+      expect((first.get("Ссылки на разделы") ?? []).join("\n")).not.toContain(
+        "Тексты правил",
+      );
+      fs.appendFileSync(todo, "\nОпора — «Два файла правил».\n");
+      expect(said()).toContain("— Два файла");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 describe("сводка открытого собирает записи, а не образцы в ограде", () => {

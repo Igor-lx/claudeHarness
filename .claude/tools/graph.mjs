@@ -3164,6 +3164,52 @@ const fencedLines = (lines) => {
  */
 const proseOf = (at) => unfenced(readFileSync(at, "utf8"));
 
+/** Файлы прозы под папкой, вглубь; папки нет — пусто. */
+const mdUnder = (dir) => {
+  if (dir === null || !existsSync(dir)) return [];
+  const out = [];
+  for (const e of readdirSync(dir)) {
+    const full = path.join(dir, e);
+    if (statSync(full).isDirectory()) out.push(...mdUnder(full));
+    else if (e.endsWith(".md")) out.push(full);
+  }
+  return out;
+};
+
+/** Заголовки разделов файла прозы — со второго уровня, без решёток. */
+const headingsOf = (at) =>
+  readFileSync(at, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => /^#{2,}\s/.test(line))
+    .map((line) => line.replace(/^#+\s*/, "").trim());
+
+/** Называет ли текст ссылки один из заголовков набора.
+ *
+ * Без регистра и без нумератора: разделы идут буквой либо номером любой
+ * глубины — «## B. Форма контракта», «### 2.2. Подшаг», — а ссылаются на них
+ * без номера. Название может быть началом заголовка — до тире либо двоеточия:
+ * «Отчёт» не называет ни «Отчётность», ни «Отчёт о сборке обвязки».
+ * Буквальное сравнение объявляло висячей живую ссылку — замерено на первом же
+ * расширении корпуса сверки «Ссылки на разделы».
+ */
+const headingNamed = (heads, title) => {
+  const bare = (one) =>
+    one
+      .toLowerCase()
+      .replace(/^[a-zа-яё0-9]{1,3}(?:\.\d+)*[.)]\s*/i, "")
+      .trim();
+  const want = bare(title);
+  for (const h of heads) {
+    const has = bare(h);
+    if (
+      has === want ||
+      (has.startsWith(want) && /^\s*[—–:-]/.test(has.slice(want.length)))
+    )
+      return true;
+  }
+  return false;
+};
+
 /** Строковые литералы исходника — разбором, а не парами кавычек по тексту.
  *
  * Апостроф в комментарии — «Prettier's job», «React's act» — для образца,
@@ -22318,24 +22364,9 @@ if (mode === "verify") {
       // подпапкой, и на её разделы ссылается `CLAUDE.md`. Плоский обход находил
       // только верхний уровень — и живая ссылка на «Эталонный узел» читалась как
       // висячая у проекта, посаженного из донора. Найдено пробой.
-      const mdUnder = (dir) => {
-        if (!existsSync(dir)) return [];
-        const out = [];
-        for (const e of readdirSync(dir)) {
-          const full = path.join(dir, e);
-          if (statSync(full).isDirectory()) out.push(...mdUnder(full));
-          else if (e.endsWith(".md")) out.push(full);
-        }
-        return out;
-      };
-      const headSources = [
-        ...mdUnder(BASE),
-        ...(shelfAt === null ? [] : mdUnder(shelfAt)),
-      ];
+      const headSources = [...mdUnder(BASE), ...mdUnder(shelfAt)];
       for (const at of headSources)
-        for (const line of readFileSync(at, "utf8").split(NEWLINE))
-          if (/^#{2,}\s/.test(line))
-            allHeads.add(line.replace(/^#+\s*/, "").trim());
+        for (const h of headingsOf(at)) allHeads.add(h);
       // Скиллы — тот же корпус, что правила: их читают и по ним действуют, а
       // именная ссылка внутри скилла не проверялась ничем. Найдено пробой:
       // ссылка на несуществующий раздел прошла зелёной. Класс уже записан у
@@ -22353,9 +22384,7 @@ if (mode === "verify") {
                 .filter((at) => existsSync(at));
             })();
       for (const at of skillFiles)
-        for (const line of readFileSync(at, "utf8").split(NEWLINE))
-          if (/^#{2,}\s/.test(line))
-            allHeads.add(line.replace(/^#+\s*/, "").trim());
+        for (const h of headingsOf(at)) allHeads.add(h);
       const skip = new Set(CONFIG.rulesManifest.refExceptions);
       const skipUsed = new Set();
       const REF_RE = /(?:раздел[ае]?|§)\s+«([^»]+)»/g;
@@ -22386,9 +22415,7 @@ if (mode === "verify") {
       // Заголовки берутся из ТОГО ЖЕ корпуса, что и ссылки: иначе живая ссылка
       // внутрь доктрины объявляется висячей.
       for (const [, at] of sources)
-        for (const line of readFileSync(at, "utf8").split(NEWLINE))
-          if (/^#{2,}\s/.test(line))
-            allHeads.add(line.replace(/^#+\s*/, "").trim());
+        for (const h of headingsOf(at)) allHeads.add(h);
       // Ссылка, назвавшая файл, разрешается в НЁМ, а не в любом заголовке
       // корпуса. Прежде заголовки шли одним набором на весь корпус, и ссылка на
       // переименованный раздел находила одноимённый в другом файле — или в
@@ -22400,10 +22427,7 @@ if (mode === "verify") {
           norm,
         ),
       )) {
-        const own = new Set();
-        for (const line of readFileSync(at, "utf8").split(NEWLINE))
-          if (/^#{2,}\s/.test(line)) own.add(line.replace(/^#+\s*/, "").trim());
-        headsOfFile.set(at, own);
+        headsOfFile.set(at, new Set(headingsOf(at)));
         const name = path.basename(at);
         filesByName.set(name, [...(filesByName.get(name) ?? []), at]);
       }
@@ -22449,22 +22473,6 @@ if (mode === "verify") {
           // `\w` в JS — это латиница: на кириллице такой предикат молча не
           // срабатывает, и первая версия этой проверки именно так и промолчала.
           if (/глобальн[а-яё]*\s+правил/i.test(around)) continue;
-          // Заголовок могли назвать началом: «раздел «Планка качества»» против
-          // «## Планка качества — сверяется, а не подразумевается».
-          //
-          // Сравнение без регистра и без НУМЕРАТОРА: разделы доктрины идут
-          // буквой или числом («## B. Форма контракта: …»), а ссылаются на них
-          // строчными и без номера. Буквальное сравнение объявляло висячей
-          // живую ссылку — ложное срабатывание, а крикливой сверке перестают
-          // верить. Замерено на первом же расширении корпуса.
-          const bare = (one) =>
-            one
-              .toLowerCase()
-              .replace(/^[a-zа-яё0-9]{1,3}[.)]\s*/i, "")
-              .trim();
-          const want = bare(title);
-          // Начало заголовка — до тире либо двоеточия: «Отчёт» не называет ни
-          // «Отчётность», ни «Отчёт о сборке обвязки».
           const target = namedFile(
             at,
             body.slice(Math.max(0, m.index - 80), m.index),
@@ -22474,15 +22482,7 @@ if (mode === "verify") {
             target === null
               ? allHeads
               : new Set(target.flatMap((f) => [...headsOfFile.get(f)]));
-          const found = [...pool].some((h) => {
-            const has = bare(h);
-            return (
-              has === want ||
-              (has.startsWith(want) &&
-                /^\s*[—–:-]/.test(has.slice(want.length)))
-            );
-          });
-          if (!found)
+          if (!headingNamed(pool, title))
             danglingRefs.push(
               `${name}: «${title}»` +
                 (target === null
@@ -27461,11 +27461,37 @@ if (mode === "verify") {
   // или сразу за вертикальной чертой таблицы. И номер записи в заголовке —
   // «## Вопрос 12. …», «### Пункт 10. …» — вместе со ссылкой на такой раздел
   // ёлочками: номер двузначный, и слово за ним из списка счёта, — прогон
-  // краснел на заголовке. Замерено планом перехода стенда.
+  // краснел на заголовке. Замерено планом перехода стенда. Номер бывает и
+  // многоуровневым, «### 2.2. …»: одноуровневый образец краснел на
+  // заголовках подшагов плана обвязки.
   const NUMBERING = checkStep(
     () =>
-      /(^|[-*|#]\s*|\*\*|(?:^#+|«)\s*[А-ЯЁA-Z][а-яёa-z]+\s+)[A-ZА-Я]?\d+\.\s/g,
+      /(^|[-*|#]\s*|\*\*|(?:^#+|«)\s*[А-ЯЁA-Z][а-яёa-z]+\s+)[A-ZА-Я]?\d+(?:\.\d+)*\.\s/g,
   );
+  // Название раздела в ёлочках — имя, а не счёт: раздел `environment.md` о
+  // файлах разрешений начинается словом счёта. Разрешается ли оно, держит
+  // сверка «Ссылки на разделы»; ёлочки, не назвавшие раздела, читаются.
+  // Гасится по всему тексту, а не по строке: ссылка переносится, и номер
+  // строки сохраняется.
+  let corpusHeads = null;
+  const withoutTitles = (text) =>
+    text.replace(/«([^«»]+)»/g, (whole, title) => {
+      corpusHeads ??= new Set(
+        [
+          ...mdUnder(BASE),
+          ...mdUnder(SHELF),
+          ...docFiles,
+          ...(CONFIG.rulesManifest?.rules ?? []).map((one) =>
+            path.join(BASE, one),
+          ),
+        ]
+          .filter((at) => existsSync(at))
+          .flatMap(headingsOf),
+      );
+      return headingNamed(corpusHeads, title.replace(/\s+/g, " ").trim())
+        ? whole.replace(/[^\n]/g, " ")
+        : whole;
+    });
   const outsideTicks = (line) =>
     line
       .split(BACKTICK)
@@ -27494,16 +27520,16 @@ if (mode === "verify") {
       if (name === CONFIG.barProtocol) continue;
       let inBaseline = false;
       // Образец в ограде кода — не запись базы: счёт в нём показан, а не заявлен.
-      for (const [i, line] of proseOf(path.join(BASE, name))
-        .split(NEWLINE)
-        .entries()) {
+      const prose = proseOf(path.join(BASE, name));
+      const counted = withoutTitles(prose).split(NEWLINE);
+      for (const [i, line] of prose.split(NEWLINE).entries()) {
         if (/^##\s/.test(line))
           inBaseline = (CONFIG.baselineSections ?? []).some((one) =>
             line.includes(one),
           );
         if (inBaseline) continue;
         if (DECLARED_NUM.some((rx) => rx.test(line))) continue;
-        const bare = outsideTicks(line).replace(NUMBERING, " ");
+        const bare = outsideTicks(counted[i]).replace(NUMBERING, " ");
         const hit = bare.match(PROSE_NUM);
         if (hit !== null)
           frozenNumbers.push(`${name}:${i + 1} — ${hit.join(" | ")}`);
@@ -27529,7 +27555,7 @@ if (mode === "verify") {
       const memo = shelfAt("README.md");
       if (memo !== null && existsSync(memo)) own.push(memo);
       for (const at of own) {
-        const rows = proseOf(at).split(NEWLINE);
+        const rows = withoutTitles(proseOf(at)).split(NEWLINE);
         shelfNumLines += rows.length;
         rows.forEach((line, i) => {
           const bare = outsideTicks(line).replace(NUMBERING, " ");
