@@ -3884,6 +3884,71 @@ describe("ответы свода файлом", () => {
 });
 
 describe("серия", () => {
+  // Ослабленный конфиг цепочки уходил в историю зелёным: кода нет — свод не
+  // спрашивался (находка Н-10, решение Р7).
+  it("коммит конфига цепочки: ворота требуют цепочку, свода не требуют", () => {
+    const box = seatEmpty("konfig-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=k", "-c", "user.email=k@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8", input: "{}" },
+        );
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      fakeCheck(box, "RED");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      const tsAt = path.join(box, "tsconfig.json");
+      const was = fs.readFileSync(tsAt, "utf8");
+      fs.writeFileSync(tsAt, was.replace('"strict": true', '"strict": false'));
+      git("add", "tsconfig.json");
+      const held = tool("gate");
+      expect(held.code, held.out).toBe(1);
+      expect(held.out).toContain("конфигов цепочки в индексе: 1");
+      expect(held.out).toContain("    tsconfig.json");
+      expect(held.out).toContain("дерево индекса цепочку не проходило");
+      // Серия без протокола: правка без кода — одна часть.
+      fs.writeFileSync(path.join(box, "RED"), "");
+      const red = tool("series");
+      expect(red.code, red.out).toBe(1);
+      expect(red.out).toContain("=== Серия встала ===");
+      fs.rmSync(path.join(box, "RED"));
+      const green = tool("series");
+      expect(green.code, green.out).toBe(0);
+      expect(tool("series", "--stage", "1").code).toBe(0);
+      const passed = tool("gate");
+      expect(passed.code, passed.out).toBe(0);
+      expect(passed.out).toContain("свод не спрашивается, дерево индекса прошло цепочку");
+      expect(fs.existsSync(path.join(box, ".context", "bar-protocol.md"))).toBe(false);
+      // Настройка инструмента — тоже конфиг цепочки; база — нет.
+      git("commit", "-qm", "конфиг", "--no-verify");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.appendFileSync(cfgAt, "\n");
+      fs.appendFileSync(path.join(box, ".context", "02-todo.md"), "\n");
+      git("add", "-A");
+      const tool2 = tool("gate");
+      expect(tool2.code, tool2.out).toBe(1);
+      expect(tool2.out).toContain("    .context/graph.config.mjs");
+      expect(tool2.out).not.toContain("02-todo.md");
+      git("reset", "-q", "--", ".context/graph.config.mjs");
+      fs.writeFileSync(cfgAt, git("show", "HEAD:.context/graph.config.mjs"));
+      const base = tool("gate");
+      expect(base.code, base.out).toBe(0);
+      expect(base.out).toContain("кода в коммите нет — свод не спрашивается");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("прогон по частям, отметки по дереву, красная часть названа, индекс — ровно дерево части", () => {
     const box = seatEmpty("seriya-");
     try {
@@ -4233,7 +4298,10 @@ describe("серия", () => {
             "seriesSince: " + JSON.stringify(first),
           ),
       );
-      expect(git("commit", "-qam", "revision bases").status).toBe(0);
+      // Настройка инструмента — конфиг цепочки: коммит идёт деревом,
+      // прошедшим цепочку, а свода не требует.
+      seriesStaged(box);
+      expect(git("commit", "-qm", "revision bases").status).toBe(0);
       const past = () =>
         tool("verify")
           .out.split("=== Коммит с кодом накрыт сводом ===")[1]

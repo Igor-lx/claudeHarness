@@ -97,6 +97,16 @@ export const isStylePath = (f) => STYLE_FILE.test(f);
 /** Документ. */
 export const isDocPath = (f) => /\.md$/.test(f);
 
+/** Конфиг цепочки проверок, путь от корня репозитория: компилятора, линта,
+ * формата, раннера и сборки, мутационного прогона, манифест с его замком.
+ * Полка и пакеты — не проект. Ослабленный такой конфиг уходил в историю мимо
+ * цепочки, и сверка краснела на следующем коммите (находка Н-10 плана
+ * `2026-10-20`, решение Р7). */
+const CHAIN_CONFIG =
+  /(?:^|\/)(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|[jt]sconfig(?:\.[\w-]+)?\.json|\.eslintrc(?:\.\w+)?|\.oxlintrc\.json|\.prettierrc(?:\.\w+)?|\.prettierignore|(?:eslint|prettier|vite|vitest|stryker)\.config\.[cm]?[jt]s(?:on)?|vitest\.workspace\.[cm]?[jt]s)$/;
+export const isChainConfigPath = (f) =>
+  CHAIN_CONFIG.test(f) && !/(?:^|\/)(?:node_modules|\.claude)\//.test(f);
+
 /**
  * Исполняемый модуль: то, у чего есть форма и ответ, то есть контракт. Тест
  * сюда не входит — он сам проверка, поверхности у него нет.
@@ -5168,6 +5178,28 @@ export const PREDICATE_CASES = [
   // --- isDocPath ---
   ["isDocPath", "src/a/README.md", true],
   ["isDocPath", "src/a/b.ts", false],
+
+  // --- isChainConfigPath: конфиг цепочки, полка и пакеты — не проект ---
+  ["isChainConfigPath", "package.json", true],
+  ["isChainConfigPath", "app/package-lock.json", true],
+  ["isChainConfigPath", "pnpm-lock.yaml", true],
+  ["isChainConfigPath", "yarn.lock", true],
+  ["isChainConfigPath", "tsconfig.app.json", true],
+  ["isChainConfigPath", "jsconfig.json", true],
+  ["isChainConfigPath", ".eslintrc.cjs", true],
+  ["isChainConfigPath", ".oxlintrc.json", true],
+  ["isChainConfigPath", ".prettierrc", true],
+  ["isChainConfigPath", ".prettierignore", true],
+  ["isChainConfigPath", "eslint.config.js", true],
+  ["isChainConfigPath", "prettier.config.mjs", true],
+  ["isChainConfigPath", "vite.config.ts", true],
+  ["isChainConfigPath", "vitest.config.mts", true],
+  ["isChainConfigPath", "stryker.config.json", true],
+  ["isChainConfigPath", "vitest.workspace.ts", true],
+  ["isChainConfigPath", "src/config.ts", false],
+  ["isChainConfigPath", "README.md", false],
+  ["isChainConfigPath", ".claude/seat/templates/tsconfig.json", false],
+  ["isChainConfigPath", "web/node_modules/x/package.json", false],
 
   // --- isCodePath: дефект — тест считался кодом с поверхностью ---
   ["isCodePath", "src/a/b.ts", true],

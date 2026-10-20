@@ -92,6 +92,7 @@ import {
   inComment,
   isCodePath,
   isDocPath,
+  isChainConfigPath,
   BAR_PAGES_DIR,
   CODE_EXTENSIONS,
   CODE_FILE,
@@ -17301,8 +17302,71 @@ if (mode === "gate") {
       (formatted ? ", и ещё " + formatted + " — одно приведение формата" : ""),
   );
   if (!want.length) {
-    console.log("  кода в коммите нет — свод не спрашивается");
-    process.exit(0);
+    // Конфиг цепочки свода не требует, а цепочку требует: ослабленный, он
+    // уходил в историю зелёным, и сверка краснела следующим коммитом
+    // (находка Н-10, решение Р7). Нетронутое семя и одно приведение формата
+    // — не правка, как у кода.
+    const toolConfig = norm(
+      path.relative(REPO_AT, path.join(BASE, "graph.config.mjs")),
+    );
+    const configs = [];
+    for (const { status, one } of staged) {
+      const at = norm(one);
+      if (!isChainConfigPath(at) && at !== toolConfig) continue;
+      if (status !== "D") {
+        let body;
+        try {
+          body = git(["show", ":./" + one]);
+        } catch {
+          continue;
+        }
+        const seedAt = seeds.has(one) ? shelfAt(seeds.get(one)) : null;
+        if (
+          seedAt !== null &&
+          existsSync(seedAt) &&
+          sameAsSeed(body, readFileSync(seedAt, "utf8"))
+        )
+          continue;
+        let head = null;
+        try {
+          head = git(["show", "HEAD:./" + one]);
+        } catch {
+          head = null;
+        }
+        if (await formatOnly(head, body, norm(path.join(REPO_AT, one))))
+          continue;
+      }
+      configs.push(at);
+    }
+    if (configs.length === 0) {
+      console.log("  кода в коммите нет — свод не спрашивается");
+      process.exit(0);
+    }
+    console.log("  конфигов цепочки в индексе: " + configs.length);
+    for (const one of configs) console.log("    " + one);
+    let chained;
+    try {
+      chained = seriesGateFault(REPO_AT);
+    } catch {
+      chained = null;
+    }
+    if (chained === null) {
+      console.log(
+        "  коммитов ещё нет — цепочку спросить не с чего: коммит проходит",
+      );
+      process.exit(0);
+    }
+    if (chained === "") {
+      console.log(
+        "  свод не спрашивается, дерево индекса прошло цепочку: коммит проходит",
+      );
+      process.exit(0);
+    }
+    console.log("  Коммит не проходит: конфиг цепочки — " + chained);
+    console.log(
+      "  Свод конфигу не нужен: серия гоняет цепочку на правке без кода одной частью.",
+    );
+    process.exit(1);
   }
   for (const one of want) console.log("    " + one.file);
   const body = stagedProtocol();
@@ -17949,8 +18013,12 @@ if (mode === "series") {
     CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
   const was = barHeader(at);
   const subject = await barChangedSubject(REPO_AT);
-  const parts =
-    was === null || subject === null
+  // Правка без кода — конфиг цепочки, манифест — свода не требует, а
+  // цепочку требует: она идёт одной частью на всё правленое (решение Р7).
+  const codeFree = subject !== null && subject.length === 0;
+  const parts = codeFree
+    ? { table: null, holes: [], splits: new Map(), partOf: new Map() }
+    : was === null || subject === null
       ? null
       : barPartsOf({ subject, repoRoot: REPO_AT, body: was.body });
   const count =
@@ -17961,9 +18029,9 @@ if (mode === "series") {
     for (const one of why) console.log("  " + one);
     process.exit(1);
   };
-  if (was === null)
-    refuse("Протокола свода нет: сперва `node .claude/tools/graph.mjs bar`.");
   if (subject === null) refuse("Состояние репозитория прочитать не удалось.");
+  if (was === null && !codeFree)
+    refuse("Протокола свода нет: сперва `node .claude/tools/graph.mjs bar`.");
   if (parts.holes.length > 0)
     refuse(
       "Раскладка правки по частям с дырами — сперва их закрыть в протоколе:",
@@ -17971,7 +18039,7 @@ if (mode === "series") {
     );
   // Деревья частей строят из рабочего дерева, и ворота верят им без
   // отпечатков: серия гоняется только на правке, которую печать покрывает.
-  const cover = barCoverFault(barMarks(subject), was.body);
+  const cover = codeFree ? "" : barCoverFault(barMarks(subject), was.body);
   if (cover !== "")
     refuse(
       "Свод не покрывает правку: " + cover,
