@@ -2213,6 +2213,36 @@ describe("база о своём: документы узла, сторона т
     }
   }, 180000);
 
+  it("досье, план и уровни на документ отвечают про документ, на файл правил — вне области разбора", () => {
+    const box = seatEmpty("dokument-");
+    try {
+      const unit = path.join(box, "src", "components", "ZzDoc");
+      fs.mkdirSync(path.join(unit, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(unit, "ZzDoc.tsx"), "export const ZzDoc = () => null;\n");
+      fs.writeFileSync(path.join(unit, "docs", "README.md"), "# ZzDoc\n");
+      fs.mkdirSync(path.join(box, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(box, "docs", "zzGuide.md"), "# руководство\n");
+      const said = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+        }).stdout;
+      for (const [m, a] of [
+        ["brief", "src/components/ZzDoc/docs/README.md"],
+        ["brief", "docs/zzGuide.md"],
+        ["plan", "ZzDoc/docs/README.md"],
+        ["levels", "docs/zzGuide.md"],
+      ]) {
+        const out = said(m, a);
+        expect(out, m + " " + a).toContain("— это документ:");
+        expect(out, m + " " + a).not.toContain("вне области разбора");
+      }
+      expect(said("brief", ".claude/rules/quality.md")).toContain("вне области разбора");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("файл объявленной папки тестов — сторона тестов, а не код карты", () => {
     const box = seatEmpty("testdir-");
     try {
