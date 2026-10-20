@@ -856,6 +856,56 @@ describe("удалённый файл кода в предмете", () => {
 });
 
 /**
+ * Имя, которое потребитель берёт через бочку, взято и у самой бочки. Строка
+ * поверхности считала взятым только имя, объявленное файлом сам, и у каждой
+ * тронутой бочки писала «снаружи не берут» обо всех её именах — ложный
+ * вопрос `B7` и `H4` (находка Н-8 плана `2026-10-20`).
+ */
+describe("поверхность бочки в модели свода", () => {
+  it("имена, взятые через бочку, у неё взяты; не взятое никем — названо", () => {
+    const box = seatEmpty("bochka-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=b", "-c", "user.email=b@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const area = path.join(box, "src", "shared", "zzArea");
+      const use = path.join(box, "src", "components", "ZzUse");
+      fs.mkdirSync(area, { recursive: true });
+      fs.mkdirSync(use, { recursive: true });
+      fs.writeFileSync(path.join(area, "zzA.ts"), "export const zzA = (n: number): number => n + 1;\n");
+      fs.writeFileSync(path.join(area, "index.ts"), 'export { zzA } from "./zzA";\n');
+      fs.writeFileSync(
+        path.join(use, "ZzUse.tsx"),
+        'import { zzA } from "../../shared/zzArea";\n\nexport const ZzUse = () => <p>{zzA(1)}</p>;\n',
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "база", "--no-verify");
+      fs.writeFileSync(path.join(area, "zzB.ts"), "export const zzB = (n: number): number => n - 1;\n");
+      fs.appendFileSync(path.join(area, "index.ts"), 'export { zzB } from "./zzB";\n');
+      git("add", "-A");
+      spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar"], {
+        cwd: box,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const row = fs
+        .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
+        .split("\n")
+        .find((l) => /\| поверхность \| `shared\/zzArea\/index\.ts` \|/.test(l));
+      expect(row, "строка поверхности бочки").toBeDefined();
+      expect(row).toContain("имена: zzA, zzB");
+      expect(row).toContain("снаружи не берут: zzB");
+      expect(row).not.toMatch(/снаружи не берут: [^|]*zzA/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
  * Печать — открытый отпечаток, и посчитать её можно руками. Протокол со
  * словом «чисто» в каждой пустой строке исхода и такой печатью проходил
  * ворота по одной печати, а сверку — по счёту исходов. Теперь ворота и сверка

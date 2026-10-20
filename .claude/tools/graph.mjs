@@ -12411,12 +12411,17 @@ const takenNamesOf = (f) => {
             (isTest(u) ? byTests : outside).add(n);
         continue;
       }
+      // Имя, взятое через бочку, взято и у неё самой: прежде бочка числила
+      // своим одно объявленное, и каждое её имя выходило «снаружи не берут».
       for (const n of one.names)
-        if (definerOf(one.target, n) === f)
+        if (one.target === f || definerOf(one.target, n) === f)
           (isTest(u) ? byTests : outside).add(n);
     }
-    for (const out of reexportsOf.get(u)?.named.keys() ?? [])
+    for (const [out, vias] of reexportsOf.get(u)?.named ?? []) {
       if (definerOf(u, out) === f) outside.add(out);
+      for (const via of vias)
+        if (via.target === f && via.name !== "*") outside.add(via.name);
+    }
     // Звёздная переотдача имён не называет: имя взято, если бочка отдаёт
     // его из этого файла.
     if ((reexportsOf.get(u)?.stars.length ?? 0) > 0)
