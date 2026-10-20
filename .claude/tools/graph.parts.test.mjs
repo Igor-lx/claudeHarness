@@ -56,6 +56,23 @@ describe("части правки: таблица в протоколе", () => 
     ]);
     expect(partsTableOf("# протокол\n| 1 | `x.ts` | что |\n")).toBeNull();
   });
+
+  it("раздел первой строкой и последним в тексте, строка короче трёх клеток, дефис в номере", () => {
+    const body = [
+      "## Части правки",
+      "| часть | файлы | что |",
+      "| --- | --- | --- |",
+      "| -1 | `a.ts` | правка |",
+      "| 2- |",
+      "| 3 | `b.ts` |",
+    ].join("\n");
+    expect(partsTableOf(body)).toEqual([
+      { n: "-1", files: ["a.ts"], what: "правка", line: 4 },
+      { n: "2-", files: [], what: "", line: 5 },
+      { n: "3", files: ["b.ts"], what: "", line: 6 },
+    ]);
+    expect(partsTableOf("")).toBeNull();
+  });
 });
 
 describe("части правки: компоненты связности", () => {
@@ -80,6 +97,11 @@ describe("части правки: записи файла базы", () => {
     expect(r[3]).toEqual([0, 5]);
     expect(r[2]).toEqual([0, 5]);
     expect(r[7]).toEqual([6, 7]);
+    // Заголовок — в своём разделе, а не в прежнем.
+    expect(r[6]).toEqual([6, 7]);
+    expect(r[0]).toEqual([0, 5]);
+    expect(linesOf("")).toEqual([]);
+    expect(recordsOf([])).toEqual([]);
   });
 });
 

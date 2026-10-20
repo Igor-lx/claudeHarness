@@ -75,6 +75,19 @@ describe("страж протокола: чтение инструментом R
     expect(protocolReadFault(protocol, 6, NaN)).not.toBe("");
   });
 
+  it("без limit Read отдаёт столько строк, сколько обещает среда, — 2000", () => {
+    const big = [
+      "# P",
+      MODEL_TITLE,
+      ...Array.from({ length: 1999 }, (_, i) => "П" + (i + 1)),
+      "## Исходы",
+      "| A1 | чисто |",
+    ].join("\n");
+    expect(modelWindowOf(big)).toEqual({ offset: 2, limit: 2000 });
+    expect(protocolReadFault(big, 2, NaN)).toBe("");
+    expect(protocolReadFault(big, 3, NaN)).not.toBe("");
+  });
+
   it("протокол без раздела модели стражу не предмет", () => {
     expect(protocolReadFault("# P\n## Исходы\n", NaN, NaN)).toBe("");
   });
