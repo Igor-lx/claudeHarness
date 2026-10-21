@@ -275,7 +275,7 @@ describe("каждая альтернатива образца в словаре
  * поставлен, — в посадке.
  */
 describe("держатель «линт» и семя конфига линта", () => {
-  const seed = new URL("../seat/templates/eslint.config.mjs", import.meta.url).pathname;
+  const seed = fileURLToPath(new URL("../seat/templates/eslint.config.mjs", import.meta.url));
   const severity = (value) => {
     const raw = Array.isArray(value) ? value[0] : value;
     return { off: 0, warn: 1, error: 2 }[raw] ?? raw;

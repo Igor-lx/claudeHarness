@@ -5095,6 +5095,13 @@ export const PREDICATE_CASES = [
   ["barMorePlacesOf", "два источника; ещё мест: `shared/a.ts:8`, `app/b.tsx:9`", "shared/a.ts:8,app/b.tsx:9"],
   ["barMorePlacesOf", "линт: r — x; ещё нарушений `2`: src/a.ts:3, src/b.ts:4", "src/a.ts:3,src/b.ts:4"],
   ["barMorePlacesOf", "два источника номера страницы", ""],
+  // --- pathUnder: файл под папкой в любом виде записи пути ---
+  ["pathUnder", "D:/a/wseat/src/app/tests/App.test.tsx\nD:\\a\\wseat", true],
+  ["pathUnder", "D:/a/wseat/src/x.test.ts\nD:\\a\\wseat\\src\\", true],
+  ["pathUnder", "D:/a/wseat2/x.test.ts\nD:\\a\\wseat", false],
+  ["pathUnder", "/repo/src/x.test.ts\n/repo/src/", true],
+  ["pathUnder", "/repo/srcx/a.test.ts\n/repo/src", false],
+  ["pathUnder", "/repo/src\n/repo/src", false],
   // --- scriptCallsTool: скрипт зовёт инструмент хоть одной командой ---
   ["scriptCallsTool", "^\\s*tsc\\b[^&|]*$\ntsc -b && vite build", true],
   ["scriptCallsTool", "^\\s*tsc\\b[^&|]*$\nvite build", false],
@@ -6330,6 +6337,18 @@ const shellCommandsOf = (command) => {
   }
   endCommand();
   return commands;
+};
+
+/** Лежит ли файл под папкой — в любом виде записи пути. Вход — путь файла,
+ * перевод строки, путь папки. Граф держит пути с прямой косой, а `path`
+ * отдаёт их в родном виде: на Windows папка приходит с обратной косой, и
+ * сравнение началом строки не сходилось ни на одном файле. Найдено прогоном
+ * на Windows: сверка области сбора объявляла несобираемым каждый тест
+ * проекта. */
+export const pathUnder = (row) => {
+  const at = row.indexOf(NEWLINE);
+  const slash = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  return slash(row.slice(0, at)).startsWith(slash(row.slice(at + 1)) + "/");
 };
 
 /** Зовёт ли скрипт манифеста инструмент хоть одной своей командой. Вход —

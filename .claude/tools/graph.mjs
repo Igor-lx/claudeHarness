@@ -50,6 +50,7 @@ import {
   plantKind,
   plantGripOf,
   scriptCallsTool,
+  pathUnder,
   bareCodeOf,
   commentlessOf,
   closeOf,
@@ -24039,7 +24040,7 @@ if (mode === "verify") {
               .filter((f) => TEST_SUFFIX.test(f))
               .filter(
                 (f) =>
-                  !f.startsWith(dir + path.sep) ||
+                  !pathUnder(f + "\n" + dir) ||
                   !collected(norm(path.relative(root, f))),
               )
               .map((f) => norm(path.relative(path.join(BASE, ".."), f)));
