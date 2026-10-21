@@ -5095,6 +5095,14 @@ export const PREDICATE_CASES = [
   ["barMorePlacesOf", "два источника; ещё мест: `shared/a.ts:8`, `app/b.tsx:9`", "shared/a.ts:8,app/b.tsx:9"],
   ["barMorePlacesOf", "линт: r — x; ещё нарушений `2`: src/a.ts:3, src/b.ts:4", "src/a.ts:3,src/b.ts:4"],
   ["barMorePlacesOf", "два источника номера страницы", ""],
+  // --- scriptCallsTool: скрипт зовёт инструмент хоть одной командой ---
+  ["scriptCallsTool", "^\\s*tsc\\b[^&|]*$\ntsc -b && vite build", true],
+  ["scriptCallsTool", "^\\s*tsc\\b[^&|]*$\nvite build", false],
+  ["scriptCallsTool", "^\\s*tsc\\b[^&|]*$\ntsc --noEmit", true],
+  ["scriptCallsTool", "^\\s*tsc\\b[^&|]*$\necho \"tsc && x\"", false],
+  ["scriptCallsTool", "^\\s*prettier\\b[^&|]*--check[^&|]*$\neslint . && prettier --check .", true],
+  ["scriptCallsTool", "^\\s*eslint\\b(?![^&|]*--fix)[^&|]*$\neslint . --fix", false],
+  ["scriptCallsTool", "^\\s*stryker\\s+run\\b\nnpm ci; stryker run", true],
   // --- plantGripOf: опора поимки посадки пробы планки ---
   ["plantGripOf", "H4|", "сверка"],
   ["plantGripOf", "H6-бис|", "вопрос модели"],
@@ -6322,6 +6330,21 @@ const shellCommandsOf = (command) => {
   }
   endCommand();
   return commands;
+};
+
+/** Зовёт ли скрипт манифеста инструмент хоть одной своей командой. Вход —
+ * образец звена из карты посадки, перевод строки, тело скрипта. Образец
+ * описывает скрипт, который весь одна команда: так звено зовёт связка
+ * проверок. Конфиг же читает и скрипт из нескольких команд — сборка
+ * `tsc -b && vite build` читает конфиг компилятора, хотя звеном типов не
+ * служит, — и сверка, судившая по целому скрипту, называла такой конфиг
+ * лежащим без вызова. Найдено образцом заготовки `create vite` в корпусе. */
+export const scriptCallsTool = (row) => {
+  const at = row.indexOf(NEWLINE);
+  const pattern = new RegExp(row.slice(0, at));
+  return shellCommandsOf(row.slice(at + 1)).some((words) =>
+    pattern.test(words.join(" ")),
+  );
 };
 
 /** Обход ворот git в команде оболочки — причина, иначе пустая строка.

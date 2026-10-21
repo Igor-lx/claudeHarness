@@ -49,6 +49,7 @@ import {
   barWitnessVerdict,
   plantKind,
   plantGripOf,
+  scriptCallsTool,
   bareCodeOf,
   commentlessOf,
   closeOf,
@@ -1263,8 +1264,8 @@ const recipeVars = (fresh) => {
   };
 };
 /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые
- * скрипты узнаются образцом звена; `null` — такого нет. */
-const delegatedLink = (re, scripts) => {
+ * скрипты узнаёт проверка `calls`; `null` — такого нет. */
+const delegatedLink = (calls, scripts) => {
   const rootAt = path.join(BASE, CONFIG.manifest ?? "../package.json");
   const globs = readJson(rootAt, {}).workspaces ?? [];
   const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
@@ -1285,14 +1286,23 @@ const delegatedLink = (re, scripts) => {
   for (const [name, body] of Object.entries(scripts)) {
     const m = /\bnpm run ([\w:-]+)\s+(?:--workspaces|-ws)\b/.exec(body);
     if (m === null) continue;
-    if (packs.some((p) => re.test(p.scripts?.[m[1]] ?? ""))) return name;
+    if (packs.some((p) => calls(p.scripts?.[m[1]] ?? ""))) return name;
   }
   return null;
 };
 /** Звено зовётся в манифесте — прямо либо делегированием пакетам. */
 const linkCalled = (re, scripts) =>
   Object.values(scripts).some((body) => re.test(body)) ||
-  delegatedLink(re, scripts) !== null;
+  delegatedLink((body) => re.test(body), scripts) !== null;
+/** Инструмент звена зовёт хоть одна команда скрипта — прямо либо
+ * делегированием пакетам. Звеном такой скрипт может и не служить: сборка
+ * `tsc -b && vite build` читает конфиг компилятора. */
+const toolCalled = (re, scripts) => {
+  const calls = (body) => scriptCallsTool(re.source + "\n" + body);
+  return (
+    Object.values(scripts).some(calls) || delegatedLink(calls, scripts) !== null
+  );
+};
 
 /** Образцы, которыми звено опознаётся: свой и — когда своего скрипта нет —
  * образец звена, названного полем `or`. Нужно звену тестов: прогон с
@@ -3732,7 +3742,7 @@ const typeCheckConfigs = () => {
     for (const body of Object.values(rootScripts))
       if (re.test(body)) calls.push([path.dirname(manifestAt), body]);
     // Делегирование: корневой скрипт раздаёт одноимённые скрипты пакетам.
-    const handed = delegatedLink(re, rootScripts);
+    const handed = delegatedLink((body) => re.test(body), rootScripts);
     if (handed !== null) {
       const m = /\bnpm run ([\w:-]+)/.exec(rootScripts[handed]);
       const globs = readJson(manifestAt, {}).workspaces ?? [];
@@ -19802,7 +19812,7 @@ if (mode === "verify") {
     // дописывала в корень свой `tsc --noEmit`, слепой к коду пакетов, —
     // посаженную ошибку в пакете он пропускал кодом ноль. Замерено посадкой
     // по инструкции в монорепозиторий.
-    return delegatedLink(re, scripts);
+    return delegatedLink((body) => re.test(body), scripts);
   };
   const linkNeeds = new Map();
   checkStep(() => {
@@ -30752,7 +30762,7 @@ if (mode === "verify") {
               .map(([n]) => n);
             // Делегирующий корневой скрипт — то же звено, и рядом со своим
             // вызовом инструмента в корне он близнец.
-            const handed = delegatedLink(re, scripts);
+            const handed = delegatedLink((body) => re.test(body), scripts);
             if (handed !== null && !hits.includes(handed)) hits.push(handed);
             if (hits.length > 1)
               chainTwins.push(
@@ -30984,7 +30994,7 @@ if (mode === "verify") {
         const one = chain.find((e) => e.name === link.script);
         if (one === undefined || one.recognise == null) continue;
         const re = new RegExp(one.recognise);
-        if (linkCalled(re, scripts)) continue;
+        if (toolCalled(re, scripts)) continue;
         idleSaid.add(link.config);
         idleConfig.push(
           path.relative(REPO_AT, configAt).split(path.sep).join("/") +
@@ -31009,7 +31019,7 @@ if (mode === "verify") {
         const one = chain.find((c) => c.name === e.neededBy);
         if (one === undefined || one.recognise == null) continue;
         const re = new RegExp(one.recognise);
-        if (linkCalled(re, scripts)) continue;
+        if (toolCalled(re, scripts)) continue;
         idleConfig.push(
           e.to +
             " — семя звена «" +

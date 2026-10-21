@@ -1914,6 +1914,29 @@ describe("ошибка настройки звена долгом не гаси�
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  // Конфиг звена читает и скрипт из нескольких команд: сборка `tsc -b &&
+  // vite build` зовёт компилятор, хотя звеном типов не служит. Сверка судила
+  // по целому скрипту и называла конфиг компилятора лежащим без вызова —
+  // найдено образцом заготовки `create vite` в корпусе.
+  it("конфиг звена, чей инструмент зовёт одна команда скрипта сборки, не лежит без вызова", () => {
+    const box = seatEmpty("sostavnoy-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const idle = (build) => {
+        const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+        delete pkg.scripts.typecheck;
+        pkg.scripts.build = build;
+        fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+        return (verifyIn(box).get("Звену цепочки есть на чём работать") ?? []).join("\n");
+      };
+      const said = "tsconfig.json — конфиг звена «typecheck» лежит, а инструмент его не зовёт ни один скрипт манифеста";
+      expect(idle("tsc -b && vite build")).not.toContain(said);
+      expect(idle("vite build")).toContain(said);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 describe("связка проверок: прогон с покрытием и запуск списком", () => {
