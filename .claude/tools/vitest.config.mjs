@@ -13,9 +13,11 @@ export default defineConfig({
     root: fileURLToPath(new URL("../..", import.meta.url)),
     include: [".claude/tools/**/*.test.mjs"],
     environment: "node",
-    // Тесты разбирают вывод сверки по секциям — им полный.
+    // Тесты разбирают вывод сверки по секциям — им полный. `CI` конвейера
+    // снимает требование ворот, а тесты ждут машину разработчика.
     env: {
       GRAPH_VERIFY_FULL: "1",
+      CI: "",
       ...(process.platform === "win32" ? { TEMP: temp, TMP: temp } : {}),
     },
   },

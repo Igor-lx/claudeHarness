@@ -350,6 +350,11 @@ describe("испытательная посадка одной командой"
       const dest = path.join(box, "p");
       const cache = path.join(box, "npm-cache");
       fs.mkdirSync(cache);
+      // Имена среды на Windows регистр не различают: своя настройка npm
+      // машины под другим регистром взяла бы верх над этой.
+      const own = Object.entries(process.env).filter(
+        ([k]) => !/^npm_config_(offline|cache|registry|fetch_retries)$/i.test(k),
+      );
       const said = spawnSync(
         process.execPath,
         [
@@ -361,13 +366,15 @@ describe("испытательная посадка одной командой"
           cwd: path.join(box, "shelf"),
           encoding: "utf8",
           env: {
-            ...process.env,
+            ...Object.fromEntries(own),
             npm_config_offline: "true",
             npm_config_cache: cache,
+            npm_config_registry: "http://127.0.0.1:9/",
+            npm_config_fetch_retries: "0",
           },
         },
       );
-      expect(said.status).toBe(1);
+      expect(said.status, said.stdout + said.stderr).toBe(1);
       expect(said.stdout).toContain("=== Посадка не собрана ===");
       expect(said.stdout).toContain("Пакеты не встали");
       expect(fs.existsSync(dest)).toBe(false);
