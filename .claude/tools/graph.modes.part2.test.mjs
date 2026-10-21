@@ -1741,7 +1741,10 @@ describe("проба планки в существующем коде", () => {
       // Суд сличает виновника ПУТЁМ: тот же протокол против одноимённого
       // файла в другой папке — адрес другой, а не «поймано».
       const twin = sandbox + "-двойник";
-      fs.cpSync(sandbox, twin, { recursive: true });
+      // На Windows копия с пакетами-ссылками выходила без папки базы и без
+      // ошибки. Суду пакеты не нужны.
+      const noPackages = { recursive: true, filter: (src) => path.basename(src) !== "node_modules" };
+      fs.cpSync(sandbox, twin, noPackages);
       const twinMark = path.join(os.tmpdir(), "bar-probe-" + id + "9.plant.json");
       const elsewhere = path.join(twin, "src", "zzElsewhere", path.basename(culprit));
       fs.writeFileSync(
@@ -1771,7 +1774,7 @@ describe("проба планки в существующем коде", () => {
       // Место, названное в графе «что» после «ещё мест:», суд засчитывает:
       // строка на работу одна, а нарушений одного критерия бывает несколько.
       const twinMore = sandbox + "-ещё";
-      fs.cpSync(sandbox, twinMore, { recursive: true });
+      fs.cpSync(sandbox, twinMore, noPackages);
       const moreAt = path.join(twinMore, ".context", "bar-protocol.md");
       const moreWhere = path.join(twinMore, "src", "zzElsewhere", path.basename(culprit));
       fs.writeFileSync(
