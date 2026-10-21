@@ -1837,6 +1837,205 @@ describe("опора посадки", () => {
 });
 
 /**
+ * Посадка удалением и в соседе вписана в последний коммит песочницы, а
+ * правка идёт поверх неё: удаление потребителя либо прикрытие в соседе.
+ * Нарушение стоит там, где правка его не трогала, — в владельце имени,
+ * оставшегося без потребителя, и в соседе правленого (находки Н-9 и Н-18).
+ */
+describe("проба планки удалением и в соседе", () => {
+  // Два модуля, соседние по графу, и третий без соседей; прочие файлы кода
+  // несут имена посадки и прикрытия, и посадка их обходит.
+  const project = (prefix) => {
+    const box = seatEmpty(prefix);
+    for (const [rel, text] of [
+      ["src/shared/zzA/zzA.ts", "export const zzA = (n: number): number => n + 1;\n"],
+      ["src/shared/zzB/zzB.ts", 'import { zzA } from "../zzA/zzA";\n\nexport const zzB = (n: number): number => zzA(n) - 1;\n'],
+      // Свободный модуль без соседей: прикрытие в него — не в соседе.
+      ["src/shared/zzC/zzC.ts", "export const zzC = (n: number): number => n * 3;\n"],
+    ]) {
+      fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+      fs.writeFileSync(path.join(box, rel), text);
+    }
+    const codeUnder = (dir) =>
+      fs.readdirSync(path.join(box, dir), { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory()
+          ? e.name === "tests"
+            ? []
+            : codeUnder(dir + "/" + e.name)
+          : /\.tsx?$/.test(e.name) && !e.name.endsWith(".d.ts")
+            ? [dir + "/" + e.name]
+            : [],
+      );
+    for (const rel of codeUnder("src").filter((r) => !/\/zz[ABC]\.ts$/.test(r)))
+      fs.appendFileSync(
+        path.join(box, rel),
+        "\nexport const zzGone = 0;\nexport const zzEmptiness = 0;\nexport const zzCover = 0;\n",
+      );
+    return box;
+  };
+  const cover = {
+    file: "модуль",
+    text: "export const zzCover = () => 1;",
+    ts: "export const zzCover = (): number => 1;",
+  };
+  const removal = {
+    criterion: "H4",
+    why: "удалённый узел оставил имя без потребителя",
+    change: "удаление",
+    into: [
+      {
+        role: "владелец",
+        file: "модуль",
+        text: "export const zzGone = (n) => n * 2;",
+        ts: "export const zzGone = (n: number): number => n * 2;",
+      },
+    ],
+    create: {
+      path: "app/zzUser.ts",
+      text: 'import { zzGone } from "{{from:владелец}}";\n\nexport const zzUser = (n: number): number => zzGone(n);\n',
+    },
+    culprits: ["владелец"],
+    held: "вопрос модели",
+  };
+  const neighbour = {
+    criterion: "H6-бис",
+    why: "булева функция названа существительным",
+    change: "сосед",
+    into: [
+      {
+        role: "виновник",
+        file: "модуль",
+        text: 'export const zzEmptiness = (text) => text.trim() === "";',
+        ts: 'export const zzEmptiness = (text: string): boolean => text.trim() === "";',
+      },
+    ],
+  };
+  const run = (cwd, ...args) => {
+    try {
+      return execFileSync(process.execPath, [path.join(cwd, ".claude", "tools", "graph.mjs"), ...args], {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      return String(e.stdout ?? "");
+    }
+  };
+  const statusOf = (box) =>
+    execFileSync("git", ["status", "--porcelain"], { cwd: box, encoding: "utf8" }).split("\n").filter(Boolean);
+  const planted = (box, ...args) => {
+    const out = run(box, "bar-probe", ...args);
+    const sandbox = /песочница: (.+)/.exec(out)?.[1]?.trim() ?? null;
+    const id = /bar-probe (\d+)/.exec(out)?.[1] ?? null;
+    expect(sandbox, out).not.toBeNull();
+    const markAt = path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
+    return { sandbox, id, markAt, mark: JSON.parse(fs.readFileSync(markAt, "utf8")) };
+  };
+  const relOf = (sandbox, f) => path.relative(path.join(sandbox, "src"), f).split(path.sep).join("/");
+
+  it("книга с полем change не своего вида неверна, и род отсекается флагом", () => {
+    const box = project("probarod-");
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      fs.writeFileSync(probes, JSON.stringify({ plants: [{ ...neighbour, change: "соседи" }], covers: [cover] }));
+      expect(run(box, "bar-probe")).toContain("=== Книга посадок неверна ===");
+      // Виновник удаления — созданный и снятый файл: судить было бы не о чем.
+      fs.writeFileSync(probes, JSON.stringify({ plants: [{ ...removal, culprits: ["app/zzUser.ts"] }], covers: [cover] }));
+      expect(run(box, "bar-probe")).toContain("#1 H4: виновник удаления среди снятого");
+      fs.writeFileSync(probes, JSON.stringify({ plants: [removal, neighbour], covers: [cover] }));
+      expect(run(box, "bar-probe", "--existing")).toContain("=== Сажать нечего ===");
+      expect(run(box, "bar-probe", "--new")).toContain("=== Сажать нечего ===");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("удаление: потребитель снят, владелец вписан в коммит, свод называет имя без потребителя, суд засчитывает", () => {
+    const box = project("probaudal-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      fs.writeFileSync(
+        path.join(box, ".claude", "tools", "bar-probes.json"),
+        JSON.stringify({ plants: [removal, neighbour], covers: [cover] }),
+      );
+      const one = planted(box, "--removal", "--seed=3");
+      ({ sandbox, markAt } = one);
+      expect(one.mark.kind).toBe("удалением");
+      const owner = one.mark.files[0];
+      expect(fs.readFileSync(owner, "utf8")).toContain("export const zzGone = (n: number): number => n * 2;");
+      // Правка — одно удаление; потребитель и его папка сняты, а в
+      // последнем коммите он берёт имя у владельца путём, вычисленным
+      // посадкой.
+      expect(statusOf(sandbox)).toEqual([" D src/app/zzUser.ts"]);
+      expect(fs.existsSync(path.join(sandbox, "src", "app", "zzUser.ts"))).toBe(false);
+      const spec = "../" + relOf(sandbox, owner).replace(/\.ts$/, "");
+      expect(execFileSync("git", ["show", "HEAD:src/app/zzUser.ts"], { cwd: sandbox, encoding: "utf8" })).toContain(
+        'import { zzGone } from "' + spec + '";',
+      );
+      run(sandbox, "bar");
+      const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
+      const proto = fs.readFileSync(protoAt, "utf8");
+      const surface = proto
+        .split("\n")
+        .find((l) => l.includes("| поверхность | `" + relOf(sandbox, owner) + "` |"));
+      expect(surface).toContain("после удаления app/zzUser.ts снаружи не берут: zzGone");
+      const row = /^\| (П\d+) \|/.exec(surface)[1];
+      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/" + relOf(sandbox, owner) + "`.\n");
+      const found = "нашлось | src/" + relOf(sandbox, owner) + ":1 | zzGone без потребителя | вопрос";
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        holds: { узел: "нет" },
+        pick: { H4: found, B7: found, B9: "чисто |  | " + row + " проба |  |" },
+      });
+      expect(run(sandbox, "bar")).toContain("печать поставлена");
+      expect(run(box, "bar-probe", one.id)).toContain("исход: поймано");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
+
+  it("в соседе: нарушение вписано в коммит, правка легла в соседа по графу, суд требует адрес соседа", () => {
+    const box = project("probasosed-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      fs.writeFileSync(
+        path.join(box, ".claude", "tools", "bar-probes.json"),
+        JSON.stringify({ plants: [removal, neighbour], covers: [cover] }),
+      );
+      const one = planted(box, "--neighbour", "--seed=5");
+      ({ sandbox, markAt } = one);
+      expect(one.mark.kind).toBe("в соседе");
+      const culprit = one.mark.files[0];
+      expect(["zzA.ts", "zzB.ts"]).toContain(path.basename(culprit));
+      expect(fs.readFileSync(culprit, "utf8")).toContain("export const zzEmptiness = (text: string): boolean =>");
+      // Виновник в коммите, правлен один сосед — второй модуль пары.
+      const near = path.basename(culprit) === "zzA.ts" ? "src/shared/zzB/zzB.ts" : "src/shared/zzA/zzA.ts";
+      expect(statusOf(sandbox)).toEqual([" M " + near]);
+      expect(fs.readFileSync(path.join(sandbox, near), "utf8")).toContain("export const zzCover = (): number => 1;");
+      run(sandbox, "bar");
+      const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
+      const line = fs.readFileSync(culprit, "utf8").split("\n").findIndex((l) => l.includes("zzEmptiness")) + 1;
+      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/" + relOf(sandbox, culprit) + "`.\n");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { "H6-бис": "нашлось | src/" + relOf(sandbox, culprit) + ":" + line + " | булева функция названа существительным | вопрос" },
+      });
+      const sealed = run(sandbox, "bar");
+      expect(sealed).toContain("печать поставлена");
+      expect(run(box, "bar-probe", one.id)).toContain("исход: поймано");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
+});
+
+/**
  * Песочница пробы берёт пакеты проекта ссылкой: с одними манифестами линт в
  * ней не разрешался, и правила линта как держатели в пробе молчали. Папки
  * кэшей не связываются. Найдено пробой планки.

@@ -47,7 +47,7 @@ import {
   barDeltaFault,
   barWitnessFault,
   barWitnessVerdict,
-  plantInExisting,
+  plantKind,
   plantGripOf,
   bareCodeOf,
   commentlessOf,
@@ -8788,35 +8788,52 @@ if (mode === "bar-probe") {
     console.log("  Ожидался файл: " + norm(at));
     process.exit(1);
   }
-  // Два рода посадки: новым файлом и в существующий код — правкой его
-  // (`into`, `patch`). Флаг сужает выбор до одного рода — серия замеров
-  // одного рода иначе зависела бы от того, что выпало.
+  // Четыре рода посадки: новым файлом; в существующий код — правкой его
+  // (`into`, `patch`); удалением и в соседе — поле `change`. Флаг сужает
+  // выбор до одного рода — серия замеров одного рода иначе зависела бы от
+  // того, что выпало.
+  const createsOf = (p) => (p.create === undefined ? [] : [p.create].flat());
   const kindOf = (p) =>
-    plantInExisting(
+    plantKind(
       [
         p.into === undefined ? "" : "into",
         p.create === undefined ? "" : "create",
         p.patch === undefined ? "" : "patch",
       ]
         .filter(Boolean)
-        .join("+"),
-    )
-      ? "в существующем коде"
-      : "новым файлом";
-  const only = process.argv.includes("--existing")
-    ? "в существующем коде"
-    : process.argv.includes("--new")
-      ? "новым файлом"
-      : null;
+        .join("+") + (p.change === undefined ? "" : "|" + p.change),
+    );
+  const only =
+    [
+      ["--existing", "в существующем коде"],
+      ["--new", "новым файлом"],
+      ["--removal", "удалением"],
+      ["--neighbour", "в соседе"],
+    ].find(([flag]) => process.argv.includes(flag))?.[1] ?? null;
   const probeBook = JSON.parse(readFileSync(at, "utf8"));
   // Книга проверяется до выбора: неверная посадка выпала бы случайно, и
-  // проба мерила бы не то.
-  const faultOf = (p) =>
-    p.held !== undefined && plantGripOf(p.criterion + "|" + p.held) === ""
-      ? "поле `held` «" +
+  // проба мерила бы не то. Посадка удалением снимает созданное ею, и
+  // виновник среди снятого делал бы суд невозможным.
+  const faultOf = (p) => {
+    if (kindOf(p) === "")
+      return (
+        "поле `change` «" +
+        p.change +
+        "» — «удаление» требует `create`, «сосед» — `into` без `create`"
+      );
+    if (p.held !== undefined && plantGripOf(p.criterion + "|" + p.held) === "")
+      return (
+        "поле `held` «" +
         p.held +
         "» — не опора этого критерия либо опора машины, а `held` называет опору слабее"
+      );
+    if (p.change !== "удаление") return "";
+    const made = createsOf(p).map((one) => one.path);
+    const blamed = p.culprits ?? (p.into === undefined ? made.slice(0, 1) : []);
+    return blamed.some((c) => made.includes(c))
+      ? "виновник удаления среди снятого — судить было бы не о чем"
       : "";
+  };
   const unjudgeable = probeBook.plants
     .map((p, i) => ({ p, number: i + 1, why: faultOf(p) }))
     .filter((one) => one.why !== "");
@@ -8897,8 +8914,7 @@ if (mode === "bar-probe") {
     const env = { ...process.env };
     delete env.CLAUDE_CODE_CHILD_SESSION;
     const bin = (name) => path.join(projectRoot, "node_modules", ".bin", name);
-    const createdBy = (p) =>
-      p.create === undefined ? [] : [p.create].flat().map((one) => one.path);
+    const createdBy = (p) => createsOf(p).map((one) => one.path);
     const pending = probeBook.plants
       .map((plant, i) => ({ plant, number: i + 1, alone: false }))
       .filter(
@@ -8981,14 +8997,23 @@ if (mode === "bar-probe") {
       const whose = (file) =>
         owner.get(path.resolve(box, file)) ??
         theBatch + ", файл " + norm(path.relative(box, path.resolve(box, file)));
-      const changed = spawnSync(
-        "git",
-        ["status", "--porcelain", "--untracked-files=all"],
-        { cwd: box, encoding: "utf8" },
-      )
-        .stdout.split("\n")
-        .filter((line) => line !== "" && !/^(?:D.|.D) /.test(line))
-        .map((line) => line.slice(3));
+      // Посадка удалением и в соседе вписана в коммит, и в правленом её нет:
+      // линт и формат берут её файлы по записи посадки.
+      const changed = [
+        ...new Set([
+          ...spawnSync(
+            "git",
+            ["status", "--porcelain", "--untracked-files=all"],
+            { cwd: box, encoding: "utf8" },
+          )
+            .stdout.split("\n")
+            .filter((line) => line !== "" && !/^(?:D.|.D) /.test(line))
+            .map((line) => line.slice(3)),
+          ...[...owner.keys()]
+            .filter((f) => existsSync(f))
+            .map((f) => norm(path.relative(box, f))),
+        ]),
+      ];
       const tsc = runTool(bin("tsc"), ["--noEmit", "-p", "."], { cwd: box });
       if (tsc.error !== null)
         failed.push(theBatch + " — компилятор " + tsc.error);
@@ -9206,18 +9231,46 @@ if (mode === "bar-probe") {
           .split(/[\\/.]/)
           .some((part) => part.includes(word)),
       );
-    const freeFor = (one, taken) =>
+    const freeFor = (one, taken, also = () => true) =>
       poolOf(one.file).find(
-        (x) => !taken.has(x) && !clashes(x, one) && !awayFrom(x, one),
+        (x) =>
+          !taken.has(x) && !clashes(x, one) && !awayFrom(x, one) && also(x),
       );
+    // Посадка в соседе: нарушение вписано в последний коммит, а правка —
+    // прикрытие — ложится в соседа виновника по графу, в обе стороны и
+    // сквозь бочки. Правленый сосед берёт виновника в область свода, и
+    // нарушение стоит там, где его правка не тронула. Найдено сессией нового
+    // узла: нарушение в соседе она назвала «вне правки».
+    const blamedOf = (p) =>
+      p.culprits ?? (p.into ?? []).map((one) => one.role ?? "виновник");
+    const nearCoverOf = (f, taken) => {
+      const near = new Set([
+        ...usesWithVia(f).uses.keys(),
+        ...dependentsOf(f),
+      ]);
+      for (const one of covers) {
+        const x = freeFor(one, taken, (y) => near.has(y));
+        if (x !== undefined) return [one, x];
+      }
+      return null;
+    };
     const rolesOf = (p, busy) => {
       const taken = new Set(busy);
       const roleFile = new Map();
+      const first = blamedOf(p)[0];
       for (const one of p.into) {
-        const f = freeFor(one, taken);
+        const role = one.role ?? "виновник";
+        const f = freeFor(
+          one,
+          taken,
+          (x) =>
+            p.change !== "сосед" ||
+            role !== first ||
+            nearCoverOf(x, new Set([...taken, x])) !== null,
+        );
         if (f === undefined) return null;
         taken.add(f);
-        roleFile.set(one.role ?? "виновник", f);
+        roleFile.set(role, f);
       }
       return { taken, roleFile };
     };
@@ -9232,18 +9285,26 @@ if (mode === "bar-probe") {
           readFileSync(f, "utf8").includes(one.find.split("\n").join(NEWLINE))
         );
       });
-    const createsOf = (p) =>
-      p.create === undefined
-        ? []
-        : Array.isArray(p.create)
-          ? p.create
-          : [p.create];
+    // Созданный файл не ложится на файл проекта: посадка затёрла бы его, а
+    // посадка удалением — снесла.
     const fits = (p, busy, made) => {
       if (!patchFits(p)) return null;
       if (createsOf(p).some((one) => made.has(one.path))) return null;
+      if (createsOf(p).some((one) => existsSync(path.join(ROOT, one.path))))
+        return null;
       if (p.into === undefined) return { taken: new Set(busy), roleFile: new Map() };
       const roles = rolesOf(p, busy);
       if (roles === null) return null;
+      if (p.change === "удаление") return roles;
+      if (p.change === "сосед") {
+        const near = nearCoverOf(
+          roles.roleFile.get(blamedOf(p)[0]),
+          roles.taken,
+        );
+        if (near === null) return null;
+        roles.taken.add(near[1]);
+        return { ...roles, near };
+      }
       return covers.some((one) => freeFor(one, roles.taken) !== undefined)
         ? roles
         : null;
@@ -9270,7 +9331,7 @@ if (mode === "bar-probe") {
       const plant = fitting[Math.floor(random() * fitting.length)];
       const roles = fits(plant, busy, new Set());
       busy = roles.taken;
-      chosen.push({ plant, roleFile: roles.roleFile });
+      chosen.push({ plant, roleFile: roles.roleFile, near: roles.near });
     } else {
       // Пачка — по посадке на каждый названный критерий либо номер книги, в
       // одной песочнице и под один свод: постоянная часть свода — тела
@@ -9303,7 +9364,7 @@ if (mode === "bar-probe") {
         const roles = fits(plant, busy, made);
         busy = roles.taken;
         for (const one of createsOf(plant)) made.add(one.path);
-        chosen.push({ plant, roleFile: roles.roleFile });
+        chosen.push({ plant, roleFile: roles.roleFile, near: roles.near });
       }
       if (chosen.length === 0)
         notPlanted("Ни один критерий пачки не вместился: " + unfit.join(", ") + ".");
@@ -9322,6 +9383,143 @@ if (mode === "bar-probe") {
         path.join(box, path.relative(projectRoot, BASE), CONFIG.barProtocol),
         { force: true },
       );
+    // Адрес посадки считается от корня ИСХОДНИКОВ: у чужого проекта он зовётся
+    // не `src`, и адрес, записанный от корня репозитория, лёг бы мимо. Правка
+    // конфига или записи базы адресуется от корня репозитория.
+    //
+    // Нарушение формы целого одним файлом не посадить: второй писатель,
+    // цикл, общий слой, берущий из приложения, — это связь двух узлов, и в
+    // каждом из них по отдельности строки безупречны. Поэтому посадка бывает
+    // из нескольких файлов, и виновники названы: адрес находки обязан назвать
+    // хотя бы одного.
+    const at = (p) => path.join(box, path.relative(projectRoot, ROOT), p);
+    const inBox = (f) => path.join(box, path.relative(projectRoot, f));
+    // В существующий код: нарушение дописывается в конец случайных файлов
+    // проекта, а в ещё один ложится обычная правка — нарушение не одно в
+    // правленом и не в файле, заведённом ради пробы. Файлы — разные: роль
+    // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`, и
+    // из созданного файла к роли тоже.
+    //
+    // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
+    // вариант с типами, импорт встаёт к импортам файла.
+    const typed = (f) => TS_FILE.test(f);
+    const bodyFor = (one, f) =>
+      (typed(f) && one.ts !== undefined ? one.ts : one.text)
+        .split("\n")
+        .join(NEWLINE);
+    const specFrom = (from, to) => {
+      let r = norm(path.relative(path.dirname(from), to)).replace(
+        CODE_FILE,
+        "",
+      );
+      if (!r.startsWith(".")) r = "./" + r;
+      return r;
+    };
+    // Импорт встаёт за последним импортом файла, тело — в конец. Файл без
+    // импортов получает импорт вместе с телом: модуль это допускает. Лист
+    // стилей импортов не разбирает: правило ложится в конец.
+    const place = (f, text) => {
+      let was = readFileSync(inBox(f), "utf8");
+      if (!CODE_FILE.test(f)) {
+        writeFileSync(
+          inBox(f),
+          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + text + NEWLINE,
+        );
+        return;
+      }
+      const lines = text.split(NEWLINE);
+      const imports = lines.filter((l) => /^import\b/.test(l));
+      const body = lines
+        .filter((l) => !/^import\b/.test(l))
+        .join(NEWLINE)
+        .replace(/^\n+/, "");
+      let last = -1;
+      const parsed = parseModule(was, f);
+      for (const s of parsed.froms)
+        if (s.keyword === "import") last = Math.max(last, s.end);
+      for (const one of parsed.bare) last = Math.max(last, one.end);
+      if (imports.length > 0 && last >= 0) {
+        const cut = was.indexOf(NEWLINE, last);
+        const at = cut < 0 ? was.length : cut;
+        was = was.slice(0, at) + NEWLINE + imports.join(NEWLINE) + was.slice(at);
+      }
+      const tail =
+        imports.length > 0 && last < 0
+          ? imports.join(NEWLINE) + NEWLINE + NEWLINE + body
+          : body;
+      writeFileSync(
+        inBox(f),
+        was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + tail + NEWLINE,
+      );
+    };
+    const plantOne = ({ plant, roleFile }) => {
+      const creates = createsOf(plant);
+      if (plant.into !== undefined) {
+        for (const one of plant.into) {
+          const f = roleFile.get(one.role ?? "виновник");
+          place(
+            f,
+            bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
+              specFrom(f, roleFile.get(role)),
+            ),
+          );
+        }
+      }
+      for (const one of creates) {
+        const where = at(one.path);
+        mkdirSync(path.dirname(where), { recursive: true });
+        writeFileSync(
+          where,
+          one.text
+            .split("\n")
+            .join(NEWLINE)
+            .replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
+              specFrom(path.join(ROOT, one.path), roleFile.get(role)),
+            ),
+        );
+      }
+      for (const one of plant.patch ?? []) {
+        const where = path.join(box, one.path);
+        writeFileSync(
+          where,
+          readFileSync(where, "utf8").replace(
+            one.find.split("\n").join(NEWLINE),
+            one.replace.split("\n").join(NEWLINE),
+          ),
+        );
+      }
+      // Виновник — роль посадки, путь созданного файла от корня исходников
+      // либо путь правленого конфига от корня репозитория.
+      const own = (c) =>
+        (plant.patch ?? []).some((one) => one.path === c)
+          ? path.join(box, c)
+          : roleFile.has(c)
+            ? inBox(roleFile.get(c))
+            : at(c);
+      const named =
+        plant.culprits ??
+        (plant.into !== undefined
+          ? plant.into.map((one) => one.role ?? "виновник")
+          : creates.length > 0
+            ? [creates[0].path]
+            : [plant.patch[0].path]);
+      const culprits = named.map((c) => norm(own(c)));
+      return {
+        criterion: plant.criterion,
+        why: plant.why,
+        kind: kindOf(plant),
+        number: plant.number,
+        file: culprits[0],
+        files: culprits,
+      };
+    };
+    // Посадка удалением и в соседе вписана в последний коммит песочницы, и
+    // правка — удаление созданного ею потребителя либо прикрытие в соседе —
+    // идёт поверх него: нарушение стоит там, где правка его не трогала.
+    const settled = chosen.filter(({ plant }) => plant.change !== undefined);
+    const loose = chosen.filter(({ plant }) => plant.change === undefined);
+    const placedOf = new Map();
+    for (const one of settled) placedOf.set(one, plantOne(one));
     try {
       execFileSync("git", ["init", "-q"], { cwd: box, stdio: "ignore" });
       execFileSync("git", ["add", "-A"], { cwd: box, stdio: "ignore" });
@@ -9397,132 +9595,26 @@ if (mode === "bar-probe") {
       rmSync(box, { recursive: true, force: true });
       process.exit(1);
     }
-    // Адрес посадки считается от корня ИСХОДНИКОВ: у чужого проекта он зовётся
-    // не `src`, и адрес, записанный от корня репозитория, лёг бы мимо. Правка
-    // конфига или записи базы адресуется от корня репозитория.
-    //
-    // Нарушение формы целого одним файлом не посадить: второй писатель,
-    // цикл, общий слой, берущий из приложения, — это связь двух узлов, и в
-    // каждом из них по отдельности строки безупречны. Поэтому посадка бывает
-    // из нескольких файлов, и виновники названы: адрес находки обязан назвать
-    // хотя бы одного.
-    const at = (p) => path.join(box, path.relative(projectRoot, ROOT), p);
-    const inBox = (f) => path.join(box, path.relative(projectRoot, f));
-    // В существующий код: нарушение дописывается в конец случайных файлов
-    // проекта, а в ещё один ложится обычная правка — нарушение не одно в
-    // правленом и не в файле, заведённом ради пробы. Файлы — разные: роль
-    // на файл. Путь между ролями посадка вычисляет сама — `{{from:роль}}`.
-    //
-    // Посаженное не выдаёт себя: имена обычные, в машинописный файл ложится
-    // вариант с типами, импорт встаёт к импортам файла.
-    const typed = (f) => TS_FILE.test(f);
-    const bodyFor = (one, f) =>
-      (typed(f) && one.ts !== undefined ? one.ts : one.text)
-        .split("\n")
-        .join(NEWLINE);
-    const specFrom = (from, to) => {
-      let r = norm(path.relative(path.dirname(from), to)).replace(
-        CODE_FILE,
-        "",
-      );
-      if (!r.startsWith(".")) r = "./" + r;
-      return r;
-    };
-    // Импорт встаёт за последним импортом файла, тело — в конец. Файл без
-    // импортов получает импорт вместе с телом: модуль это допускает. Лист
-    // стилей импортов не разбирает: правило ложится в конец.
-    const place = (f, text) => {
-      let was = readFileSync(inBox(f), "utf8");
-      if (!CODE_FILE.test(f)) {
-        writeFileSync(
-          inBox(f),
-          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + text + NEWLINE,
-        );
-        return;
+    // Удаление снимает созданного потребителя вместе с опустевшими папками:
+    // пустая папка выдавала бы, где он лежал.
+    const sourceAt = at("");
+    const changing = (word) => settled.filter((one) => one.plant.change === word);
+    for (const { plant } of changing("удаление"))
+      for (const one of createsOf(plant)) {
+        rmSync(at(one.path), { force: true });
+        for (
+          let dir = path.dirname(at(one.path));
+          dir.startsWith(sourceAt + path.sep) && readdirSync(dir).length === 0;
+          dir = path.dirname(dir)
+        )
+          rmSync(dir, { recursive: true, force: true });
       }
-      const lines = text.split(NEWLINE);
-      const imports = lines.filter((l) => /^import\b/.test(l));
-      const body = lines
-        .filter((l) => !/^import\b/.test(l))
-        .join(NEWLINE)
-        .replace(/^\n+/, "");
-      let last = -1;
-      const parsed = parseModule(was, f);
-      for (const s of parsed.froms)
-        if (s.keyword === "import") last = Math.max(last, s.end);
-      for (const one of parsed.bare) last = Math.max(last, one.end);
-      if (imports.length > 0 && last >= 0) {
-        const cut = was.indexOf(NEWLINE, last);
-        const at = cut < 0 ? was.length : cut;
-        was = was.slice(0, at) + NEWLINE + imports.join(NEWLINE) + was.slice(at);
-      }
-      const tail =
-        imports.length > 0 && last < 0
-          ? imports.join(NEWLINE) + NEWLINE + NEWLINE + body
-          : body;
-      writeFileSync(
-        inBox(f),
-        was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + tail + NEWLINE,
-      );
-    };
-    const placed = [];
-    let anyInto = false;
-    for (const { plant, roleFile } of chosen) {
-      const creates = createsOf(plant);
-      if (plant.into !== undefined) {
-        anyInto = true;
-        for (const one of plant.into) {
-          const f = roleFile.get(one.role ?? "виновник");
-          place(
-            f,
-            bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
-              specFrom(f, roleFile.get(role)),
-            ),
-          );
-        }
-      }
-      for (const one of creates) {
-        const where = at(one.path);
-        mkdirSync(path.dirname(where), { recursive: true });
-        writeFileSync(where, one.text.split("\n").join(NEWLINE));
-      }
-      for (const one of plant.patch ?? []) {
-        const where = path.join(box, one.path);
-        writeFileSync(
-          where,
-          readFileSync(where, "utf8").replace(
-            one.find.split("\n").join(NEWLINE),
-            one.replace.split("\n").join(NEWLINE),
-          ),
-        );
-      }
-      // Виновник — роль посадки, путь созданного файла от корня исходников
-      // либо путь правленого конфига от корня репозитория.
-      const own = (c) =>
-        (plant.patch ?? []).some((one) => one.path === c)
-          ? path.join(box, c)
-          : roleFile.has(c)
-            ? inBox(roleFile.get(c))
-            : at(c);
-      const named =
-        plant.culprits ??
-        (plant.into !== undefined
-          ? plant.into.map((one) => one.role ?? "виновник")
-          : creates.length > 0
-            ? [creates[0].path]
-            : [plant.patch[0].path]);
-      const culprits = named.map((c) => norm(own(c)));
-      placed.push({
-        criterion: plant.criterion,
-        why: plant.why,
-        kind: kindOf(plant),
-        number: plant.number,
-        file: culprits[0],
-        files: culprits,
-      });
-    }
+    for (const { near } of changing("сосед"))
+      place(near[1], bodyFor(near[0], near[1]));
+    for (const one of loose) placedOf.set(one, plantOne(one));
+    const placed = chosen.map((one) => placedOf.get(one));
     // Прикрытия — раз на песочницу, когда посажено в существующий код.
-    if (anyInto) {
+    if (loose.some(({ plant }) => plant.into !== undefined)) {
       const wanted = Math.min(covers.length, 1 + Math.floor(random() * 2));
       const coverFiles = [];
       for (const one of covers) {
@@ -9692,14 +9784,20 @@ if (mode === "bar-probe") {
         : [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
     // Посаженное пачкой — другой замер: правка с десятком дефектов стоит
     // иначе, чем с одним, и доли не смешиваются.
+    // Род без проб печатается, только если он из двух первых: остальные
+    // заведены позже, и пустая строка о них — шум.
+    const alone = (kind) => (r) =>
+      r.batch === undefined && (r.kind ?? "новым файлом") === kind;
     const groups = [
-      ["новым файлом", (r) => r.batch === undefined && (r.kind ?? "новым файлом") === "новым файлом"],
-      ["в существующем коде", (r) => r.batch === undefined && r.kind === "в существующем коде"],
-      ["пачкой", (r) => r.batch !== undefined],
+      ["новым файлом", alone("новым файлом"), true],
+      ["в существующем коде", alone("в существующем коде"), true],
+      ["удалением", alone("удалением"), false],
+      ["в соседе", alone("в соседе"), false],
+      ["пачкой", (r) => r.batch !== undefined, false],
     ];
-    for (const [kind, takes] of groups) {
+    for (const [kind, takes, always] of groups) {
       const mine = book.runs.filter(takes);
-      if (kind === "пачкой" && mine.length === 0) continue;
+      if (!always && mine.length === 0) continue;
       const wide = median(
         mine.filter((r) => typeof r.atPlant === "number").map((r) => r.atPlant),
       );

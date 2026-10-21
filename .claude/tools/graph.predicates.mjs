@@ -2656,15 +2656,26 @@ export const barWitnessVerdict = (row) => {
   return "";
 };
 
-/** Сажает ли посадка пробы планки в существующий код — по её виду: `into`,
- * `create`, `patch` через плюс. Новым файлом — посадка, которая кладёт файл и
- * не сажает в существующий; правка без нового файла (`patch`) стоит среди
- * обычной правки и по роду — в существующем коде. Прежде всё, что не `into`,
- * шло «новым файлом»: посадка `235` правкой формы считалась верхней границей
- * доли. */
-export const plantInExisting = (shape) => {
-  const has = new Set((shape ?? "").split("+").filter(Boolean));
-  return has.has("into") || (has.has("patch") && !has.has("create"));
+/** Род посадки пробы планки — по её виду и полю `change`: вход —
+ * `into`, `create`, `patch` через плюс, за чертой — значение `change`.
+ * Новым файлом — посадка, которая кладёт файл и не сажает в существующий;
+ * правка без нового файла (`patch`) стоит среди обычной правки и по роду — в
+ * существующем коде. Прежде всё, что не `into`, шло «новым файлом»: посадка
+ * `235` правкой формы считалась верхней границей доли. Удалением — посадка
+ * вписана в последний коммит, а правка — удаление созданного ею потребителя;
+ * в соседе — посадка вписана в последний коммит, а правка ложится в соседа
+ * по графу. Неизвестное `change` — пустая строка: книга с ним неверна. */
+export const plantKind = (shape) => {
+  const [parts, change = ""] = (shape ?? "").split("|");
+  const has = new Set(parts.split("+").filter(Boolean));
+  if (change === "удаление")
+    return has.has("create") ? "удалением" : "";
+  if (change === "сосед")
+    return has.has("into") && !has.has("create") ? "в соседе" : "";
+  if (change !== "") return "";
+  return has.has("into") || (has.has("patch") && !has.has("create"))
+    ? "в существующем коде"
+    : "новым файлом";
 };
 
 /** Называет ли текст адрес ЦЕЛИКОМ, а не как начало другого адреса.
@@ -5094,11 +5105,19 @@ export const PREDICATE_CASES = [
   ["plantGripOf", "H4|линт", ""],
   ["plantGripOf", "J10|срез", ""],
   ["plantGripOf", "H4|вопрос", ""],
-  // --- plantInExisting: род посадки пробы планки ---
-  ["plantInExisting", "into", true],
-  ["plantInExisting", "patch", true],
-  ["plantInExisting", "create", false],
-  ["plantInExisting", "create+patch", false],
+  // --- plantKind: род посадки пробы планки ---
+  ["plantKind", "into", "в существующем коде"],
+  ["plantKind", "patch", "в существующем коде"],
+  ["plantKind", "into+create", "в существующем коде"],
+  ["plantKind", "create", "новым файлом"],
+  ["plantKind", "create+patch", "новым файлом"],
+  ["plantKind", "into+create|удаление", "удалением"],
+  ["plantKind", "create|удаление", "удалением"],
+  ["plantKind", "into|удаление", ""],
+  ["plantKind", "into|сосед", "в соседе"],
+  ["plantKind", "into+create|сосед", ""],
+  ["plantKind", "create|сосед", ""],
+  ["plantKind", "into|соседи", ""],
   ["barMorePlacesOf", "x; ещё мест: `a.ts:2` — тоже", "a.ts:2` — тоже"],
   // --- barRowFault: строка протокола свода по планке ---
   ["barRowFault", "на изменение|чисто|||", ""],
