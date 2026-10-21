@@ -158,6 +158,11 @@ describe("посадка на месте: чистые помощники", () =
     expect(testCountsOf(" Test Files  3 passed (3)\n")).toBe(null);
     const noisy = "x Tests  9 passed, x Test Files  8 passed\n  Test Files  13 passed (13)\n      Tests  27 passed (27)\n";
     expect(testCountsOf(noisy)).toEqual({ tests: 27, files: 13 });
+    // Так `vitest` печатает на Windows и без терминала.
+    const colored =
+      "\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m2 passed\u001b[39m\u001b[22m\u001b[90m (2)\u001b[39m\n" +
+      "\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m5 passed\u001b[39m\u001b[22m\u001b[90m (5)\u001b[39m\n";
+    expect(testCountsOf(colored)).toEqual({ tests: 5, files: 2 });
   });
 
   it("порядок цены по классу читается и в одно, и в два слова", () => {

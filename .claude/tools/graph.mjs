@@ -153,6 +153,7 @@ import {
   SEAT_MARKER,
   systemTemp,
   toolVersion,
+  uncolored,
   verifiedOf,
   versionCmp,
 } from "./graph.seat.mjs";
@@ -1010,7 +1011,7 @@ if (mode === "types" || mode === "lint") {
     },
   });
   const said = run.out;
-  const plain = said.replace(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
+  const plain = uncolored(said);
   const found = wrap.count(plain);
   const debt = debtOf(mode);
   const head = () => {

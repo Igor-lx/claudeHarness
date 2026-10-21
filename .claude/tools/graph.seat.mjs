@@ -410,8 +410,15 @@ export const mergedLines = (own, seed) => {
   return (own.endsWith("\n") || own === "" ? own : own + "\n") + add.join("\n") + "\n";
 };
 
+/** Текст без кодов цвета терминала. На Windows раннеры красят вывод и без
+ * терминала: строку `Tests  2 passed` `vitest` печатал с кодами внутри, и
+ * разбор числа тестов её не узнавал. Найдено прогоном на Windows. */
+export const uncolored = (text) =>
+  String(text).replace(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
+
 /** Число тестов и файлов из вывода `vitest run`; не нашлось — `null`. */
-export const testCountsOf = (out) => {
+export const testCountsOf = (said) => {
+  const out = uncolored(said);
   const tests = /^\s*Tests\s+(\d+) passed/m.exec(out);
   const files = /^\s*Test Files\s+(\d+) passed/m.exec(out);
   return tests === null || files === null
@@ -515,7 +522,7 @@ const trialLinks = (target, env) => {
       writeFileSync(at, was);
       out.push({
         name: t.name,
-        caught: run.status !== 0 && run.out.includes(t.mark),
+        caught: run.status !== 0 && uncolored(run.out).includes(t.mark),
         said: run.out,
       });
     }
