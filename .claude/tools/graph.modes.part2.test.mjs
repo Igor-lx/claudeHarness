@@ -2492,10 +2492,13 @@ describe("ворота перед коммитом в конвейере", () =>
       expect(piped).not.toMatch(/^ {4}\S/m);
       expect(piped).toContain("конвейер");
       // Хук, который git пропустит, красен и в конвейере: это содержимое
-      // репозитория, а не настройка машины.
+      // репозитория, а не настройка машины. Бита исполнения у файла на
+      // Windows нет, и там сверка о нём не спрашивает.
       const hook = path.join(box, ".claude", "hooks", "git", "pre-commit");
       fs.chmodSync(hook, 0o644);
-      expect(gate({ ...local, CI: "true" })).toContain("не исполняемый");
+      const bit = gate({ ...local, CI: "true" });
+      if (process.platform === "win32") expect(bit).not.toContain("не исполняемый");
+      else expect(bit).toContain("не исполняемый");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
