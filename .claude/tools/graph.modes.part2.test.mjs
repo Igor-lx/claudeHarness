@@ -1749,10 +1749,23 @@ describe("проба планки в существующем коде", () => {
         JSON.stringify({ ...mark, box: twin, file: elsewhere, files: [elsewhere] }),
       );
       const missed = run(box, "bar-probe", id + "9");
-      expect(missed).toContain("исход: критерий назван, адрес другой");
+      const twinBase = path.join(twin, ".context");
+      expect(
+        missed,
+        fs.existsSync(twinBase) ? fs.readdirSync(twinBase).join(", ") : "нет папки " + twinBase,
+      ).toContain("исход: критерий назван, адрес другой");
+      expect(missed).not.toContain("протокол искали");
       // Промах разбирают по протоколу: песочница остаётся.
       expect(missed).toContain("песочница оставлена для разбора промаха");
       expect(fs.existsSync(path.join(twin, ".context", "bar-protocol.md"))).toBe(true);
+      // Протокола нет — суд называет, где его искал. Суд одной машины книгу
+      // проб не пишет, и счёт проб ниже он не сдвигает.
+      fs.rmSync(path.join(twinBase, "bar-protocol.md"));
+      const none = run(box, "bar-probe", id + "9", "--machine");
+      expect(none).toContain("исход: свода нет");
+      expect(none).toContain(
+        "протокол искали: " + path.join(twinBase, "bar-protocol.md").split(path.sep).join("/"),
+      );
       fs.rmSync(twin, { recursive: true, force: true });
       fs.rmSync(twinMark, { force: true });
       // Место, названное в графе «что» после «ещё мест:», суд засчитывает:
