@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { bareCodeOf } from "./graph.predicates.mjs";
 import { stepsOutline } from "./graph.steps.mjs";
@@ -1405,7 +1406,9 @@ describe("файл читается один раз, а не на каждое �
       if (mode !== "bar") spawnSync(process.execPath, [graph, "bar", "shared/zzWide"], { cwd: box, encoding: "utf8" });
       const got = spawnSync(
         process.execPath,
-        ["--import", counter, graph, ...(mode === "bar" ? ["bar", "shared/zzWide"] : [mode])],
+        // Модуль берут адресом, а не путём: путь с буквой диска Windows
+        // адресом модуля не является (W-8).
+        ["--import", pathToFileURL(counter).href, graph, ...(mode === "bar" ? ["bar", "shared/zzWide"] : [mode])],
         { cwd: box, encoding: "utf8" },
       );
       return Number(/ZZ_READS=(\d+)/.exec(got.stderr ?? "")?.[1] ?? "-1");

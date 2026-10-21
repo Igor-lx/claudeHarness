@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   BAR_CUTS,
@@ -3090,7 +3091,9 @@ describe("git без репозитория не шумит в отчёте ре
         [
           "--input-type=module",
           "-e",
-          `import { readMarks } from ${JSON.stringify(series)};` +
+          // Отдельный `node` берёт модуль адресом, а не путём: путь с буквой
+          // диска Windows адресом модуля не является (W-5).
+          `import { readMarks } from ${JSON.stringify(pathToFileURL(series).href)};` +
             "console.log(JSON.stringify(readMarks(process.argv[1])));",
           box,
         ],
