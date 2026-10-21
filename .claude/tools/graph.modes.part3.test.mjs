@@ -3686,6 +3686,12 @@ describe("временную папку системы берут через о�
       "file",
     );
     fs.writeFileSync(notDir, "");
+    // Та же папка под другим именем — ссылкой: короткое имя Windows ведёт
+    // себя так же, и песочница обязана получить настоящее.
+    const real = path.join(path.dirname(notDir), "real");
+    const alias = path.join(path.dirname(notDir), "alias");
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, alias, "junction");
     try {
       for (const name of TEMP_VARS) process.env[name] = notDir;
       expect(() => systemTemp()).toThrow(
@@ -3696,6 +3702,9 @@ describe("временную папку системы берут через о�
             TEMP_VARS[0],
         ),
       );
+      for (const name of TEMP_VARS) process.env[name] = alias;
+      expect(systemTemp()).toBe(fs.realpathSync.native(real));
+      expect(systemTemp()).not.toBe(alias);
     } finally {
       TEMP_VARS.forEach((name, i) => {
         if (was[i] === undefined) delete process.env[name];
