@@ -26,7 +26,7 @@ export const systemTemp = () => {
     if (!statSync(dir).isDirectory()) throw new Error("это не папка");
   } catch (e) {
     throw new Error(
-      `временная папка системы недоступна: ${dir} (${e.code ?? e.message}) — задать TMPDIR`,
+      `временная папка системы недоступна: ${dir} (${e.code ?? e.message}) — задать ${process.platform === "win32" ? "TEMP" : "TMPDIR"}`,
     );
   }
   return dir;

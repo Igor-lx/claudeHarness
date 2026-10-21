@@ -3566,6 +3566,10 @@ describe("снимок внутри репозитория", () => {
   }, 300000);
 });
 
+// Временную папку `os.tmpdir()` берёт из `TMPDIR`, а на Windows — из `TEMP`,
+// затем `TMP`: тест, задавший чужую переменную, папку не подменял.
+const TEMP_VARS = process.platform === "win32" ? ["TEMP", "TMP"] : ["TMPDIR"];
+
 describe("снимок без временной папки", () => {
   it("не собран, назван причиной и удалён, а не оставлен непроверенным", () => {
     const box = seatEmpty("handoff-no-tmp-");
@@ -3577,7 +3581,12 @@ describe("снимок без временной папки", () => {
         {
           cwd: box,
           encoding: "utf8",
-          env: { ...process.env, TMPDIR: path.join(box, "нет-такой-папки") },
+          env: {
+            ...process.env,
+            ...Object.fromEntries(
+              TEMP_VARS.map((name) => [name, path.join(box, "нет-такой-папки")]),
+            ),
+          },
         },
       );
       expect(run.status).toBe(1);
@@ -3668,24 +3677,27 @@ describe("временную папку системы берут через о�
       );
     expect(strays).toEqual([]);
     const { systemTemp } = await import("./graph.seat.mjs");
-    const was = process.env.TMPDIR;
+    const was = TEMP_VARS.map((name) => process.env[name]);
     const notDir = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "tmp-")),
       "file",
     );
     fs.writeFileSync(notDir, "");
     try {
-      process.env.TMPDIR = notDir;
+      for (const name of TEMP_VARS) process.env[name] = notDir;
       expect(() => systemTemp()).toThrow(
         new RegExp(
           "временная папка системы недоступна: " +
             notDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
-            ".*TMPDIR",
+            ".*" +
+            TEMP_VARS[0],
         ),
       );
     } finally {
-      if (was === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = was;
+      TEMP_VARS.forEach((name, i) => {
+        if (was[i] === undefined) delete process.env[name];
+        else process.env[name] = was[i];
+      });
       fs.rmSync(path.dirname(notDir), { recursive: true, force: true });
     }
     expect(systemTemp()).toBe(os.tmpdir());
@@ -3886,14 +3898,14 @@ describe("внешнюю команду запускает один помощн
 
   it("на win32 идёт через оболочку, не запустившаяся называет причину", async () => {
     const { runTool } = await import("./graph.seat.mjs");
-    // Через оболочку `$HOME` раскрывается, без неё приходит как есть.
+    // Через оболочку переменная раскрывается, без неё приходит как есть.
+    // Оболочка Windows — `cmd.exe`, и раскрывает она `%HOME%`, а не `$HOME`.
+    const ref = process.platform === "win32" ? "%HOME%" : "$HOME";
     const home = { env: { ...process.env, HOME: "/zz-home" } };
-    expect(runTool("echo", ["$HOME"], home, "win32").stdout.trim()).toBe(
+    expect(runTool("echo", [ref], home, "win32").stdout.trim()).toBe(
       "/zz-home",
     );
-    expect(runTool("echo", ["$HOME"], home, "linux").stdout.trim()).toBe(
-      "$HOME",
-    );
+    expect(runTool("echo", [ref], home, "linux").stdout.trim()).toBe(ref);
     const none = runTool("zz-no-such-tool", ["x"]);
     expect(none.status).toBe(null);
     expect(none.error).toContain("zz-no-such-tool");
