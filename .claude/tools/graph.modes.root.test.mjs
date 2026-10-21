@@ -1001,13 +1001,16 @@ describe("стенд проб", () => {
   // Критерий, который решает машина, проверяет не сессия: его посадку ловит
   // скелет свода сам — строкой линта либо среза, красной сверкой-держателем
   // либо фактом модели. Посадка, которую машина не ловит, держателя своего
-  // критерия не задевает, и проба по ней мерила бы не то. Одна пачка на всю
-  // книгу: строка линта и среза перечисляет все места, и посадки одного
-  // правила друг друга не прячут.
+  // критерия не задевает, и проба по ней мерила бы не то. Посадки одного
+  // критерия — в разных пачках: красная сверка-держатель называет критерий,
+  // а не место, и посадка, которую ловит сверка, засчитывала бы соседку, которую
+  // не ловит ничто. Найдено, когда заводили посадку удаления: в общей пачке
+  // посадку гарантии, изменившей поведение, прикрывала посадка
+  // переименованного теста. Посадка в форме, которой машина не видит,
+  // называет свою опору полем `held`, и её судит сессия.
   it("каждую посадку критерия, который решает машина, машина ловит сама", async () => {
     const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stand-machine-"));
-    let box = null;
-    let markAt = null;
+    const left = [];
     try {
       execFileSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "--stand-build", dest], {
         cwd: path.join(TOOL_DIR, "..", ".."),
@@ -1017,8 +1020,14 @@ describe("стенд проб", () => {
       const book = JSON.parse(fs.readFileSync(path.join(dest, ".claude", "tools", "bar-probes.json"), "utf8"));
       const machine = book.plants
         .map((p, i) => ({ p, number: i + 1 }))
-        .filter(({ p }) => ["сверка", "линт"].includes(P.barGripOf(p.criterion + "|")));
+        .filter(({ p }) => ["сверка", "линт"].includes(P.plantGripOf(p.criterion + "|" + (p.held ?? ""))));
       expect(machine.length).toBeGreaterThan(0);
+      const batches = [];
+      for (const one of machine) {
+        const free = batches.find((b) => b.every((x) => x.p.criterion !== one.p.criterion));
+        if (free === undefined) batches.push([one]);
+        else free.push(one);
+      }
       const env = { ...process.env };
       delete env.CLAUDE_CODE_CHILD_SESSION;
       const run = (cwd, ...args) =>
@@ -1027,46 +1036,51 @@ describe("стенд проб", () => {
           encoding: "utf8",
           env,
         }).stdout;
-      const planted = run(dest, "bar-probe", "--batch=" + machine.map(({ number }) => number).join(","), "--seed=1");
-      box = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
-      const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
-      expect(box, planted).not.toBeNull();
-      expect(planted).not.toContain("не вместились");
-      markAt = path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
-      const skeleton = run(box, "bar");
-      const disputed = new Set(
-        [
-          ...(/красна сверка-держатель о предмете строки: (.+) — исход/.exec(skeleton)?.[1] ?? "").matchAll(
-            /([A-Z][0-9]*(?:-[а-я]+)?) \(/g,
-          ),
-        ].map((m) => m[1]),
-      );
-      const record = JSON.parse(fs.readFileSync(markAt, "utf8"));
-      const judged = run(dest, "bar-probe", id, "--machine").split("  посажено: ").slice(1);
-      const proto = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8").split("\n");
-      const missed = record.plants
-        .filter((p, k) => {
-          if (/исход: поймано\n/.test(judged[k] ?? "")) return false;
-          if (disputed.has(p.criterion)) return false;
-          const files = p.files.map((f) => path.relative(path.join(box, "src"), f).split(path.sep).join("/"));
-          return !Object.entries(P.BAR_FACT_CRITERIA)
-            .filter(([, ids]) => ids.includes(p.criterion))
-            .some(([sort]) =>
-              proto.some(
-                (line) =>
-                  line.includes("| " + sort + " |") &&
-                  files.some((f) => line.includes(f)) &&
-                  /мимо входа|входа нет|против правила|новое/.test(line),
-              ),
-            );
-        })
-        .map((p) => "#" + p.number + " " + p.criterion + " — " + p.why);
-      expect(record.plants).toHaveLength(machine.length);
+      const missed = [];
+      for (const batch of batches) {
+        const planted = run(dest, "bar-probe", "--batch=" + batch.map(({ number }) => number).join(","), "--seed=1");
+        const box = /песочница: (.+)/.exec(planted)?.[1]?.trim() ?? null;
+        const id = /bar-probe (\d+)/.exec(planted)?.[1] ?? null;
+        expect(box, planted).not.toBeNull();
+        expect(planted).not.toContain("не вместились");
+        const markAt = path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json");
+        left.push(box, markAt);
+        const skeleton = run(box, "bar");
+        const disputed = new Set(
+          [
+            ...(/красна сверка-держатель о предмете строки: (.+) — исход/.exec(skeleton)?.[1] ?? "").matchAll(
+              /([A-Z][0-9]*(?:-[а-я]+)?) \(/g,
+            ),
+          ].map((m) => m[1]),
+        );
+        const record = JSON.parse(fs.readFileSync(markAt, "utf8"));
+        const judged = run(dest, "bar-probe", id, "--machine").split("  посажено: ").slice(1);
+        const proto = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8").split("\n");
+        expect(record.plants).toHaveLength(batch.length);
+        missed.push(
+          ...record.plants
+            .filter((p, k) => {
+              if (/исход: поймано\n/.test(judged[k] ?? "")) return false;
+              if (disputed.has(p.criterion)) return false;
+              const files = p.files.map((f) => path.relative(path.join(box, "src"), f).split(path.sep).join("/"));
+              return !Object.entries(P.BAR_FACT_CRITERIA)
+                .filter(([, ids]) => ids.includes(p.criterion))
+                .some(([sort]) =>
+                  proto.some(
+                    (line) =>
+                      line.includes("| " + sort + " |") &&
+                      files.some((f) => line.includes(f)) &&
+                      /мимо входа|входа нет|против правила|новое/.test(line),
+                  ),
+                );
+            })
+            .map((p) => "#" + p.number + " " + p.criterion + " — " + p.why),
+        );
+      }
       expect(missed, missed.join("\n")).toEqual([]);
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
-      if (box !== null) fs.rmSync(box, { recursive: true, force: true });
-      if (markAt !== null) fs.rmSync(markAt, { force: true });
+      for (const one of left) fs.rmSync(one, { recursive: true, force: true });
     }
   }, 300000);
 });

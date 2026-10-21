@@ -1790,6 +1790,53 @@ describe("проба планки в существующем коде", () => {
 });
 
 /**
+ * Опора посадки — поле `held`: опора, которая видит её форму, когда та
+ * слабее самой сильной опоры критерия. По ней ворота стенда и тест машинных
+ * посадок решают, суждение это или машина. Опора, которой у критерия нет,
+ * либо машинная — книга неверна, и режим не сажает.
+ */
+describe("опора посадки", () => {
+  it("held не своего критерия либо машинный — книга неверна; своя опора слабее — посадка встаёт", () => {
+    const box = seatEmpty("probaheld-");
+    const left = [];
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      const one = {
+        criterion: "H4",
+        why: "имя без потребителя",
+        create: { path: "shared/zzHeld/zzHeld.ts", text: "export const zzHeld = (n: number): number => n;\n" },
+      };
+      const run = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      for (const held of ["свидетель", "сверка", "линт"]) {
+        fs.writeFileSync(probes, JSON.stringify({ plants: [{ ...one, held }], covers: [] }));
+        const out = run("bar-probe");
+        expect(out).toContain("=== Книга посадок неверна ===");
+        expect(out).toContain("#1 H4: поле `held` «" + held + "»");
+      }
+      fs.writeFileSync(probes, JSON.stringify({ plants: [{ ...one, held: "вопрос модели" }], covers: [] }));
+      const planted = run("bar-probe");
+      expect(planted).toContain("=== Проба планки посажена ===");
+      const sandbox = /песочница: (.+)/.exec(planted)?.[1]?.trim();
+      const id = /bar-probe (\d+)/.exec(planted)?.[1];
+      left.push(sandbox, path.join(os.tmpdir(), "bar-probe-" + id + ".plant.json"));
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      for (const one of left) fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 120000);
+});
+
+/**
  * Песочница пробы берёт пакеты проекта ссылкой: с одними манифестами линт в
  * ней не разрешался, и правила линта как держатели в пробе молчали. Папки
  * кэшей не связываются. Найдено пробой планки.

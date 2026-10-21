@@ -48,6 +48,7 @@ import {
   barWitnessFault,
   barWitnessVerdict,
   plantInExisting,
+  plantGripOf,
   bareCodeOf,
   commentlessOf,
   closeOf,
@@ -8808,6 +8809,23 @@ if (mode === "bar-probe") {
       ? "новым файлом"
       : null;
   const probeBook = JSON.parse(readFileSync(at, "utf8"));
+  // Книга проверяется до выбора: неверная посадка выпала бы случайно, и
+  // проба мерила бы не то.
+  const faultOf = (p) =>
+    p.held !== undefined && plantGripOf(p.criterion + "|" + p.held) === ""
+      ? "поле `held` «" +
+        p.held +
+        "» — не опора этого критерия либо опора машины, а `held` называет опору слабее"
+      : "";
+  const unjudgeable = probeBook.plants
+    .map((p, i) => ({ p, number: i + 1, why: faultOf(p) }))
+    .filter((one) => one.why !== "");
+  if (unjudgeable.length > 0) {
+    console.log("=== Книга посадок неверна ===");
+    for (const { p, number, why } of unjudgeable)
+      console.log("  #" + number + " " + p.criterion + ": " + why);
+    process.exit(1);
+  }
   // Зерно делает посадку повторимой: одно и то же посаженное можно дать двум
   // сессиям и сравнить их, а тест — проверить без случая. Без зерна выбор
   // случаен.
@@ -8885,7 +8903,9 @@ if (mode === "bar-probe") {
       .map((plant, i) => ({ plant, number: i + 1, alone: false }))
       .filter(
         ({ plant }) =>
-          !["сверка", "линт"].includes(barGripOf(plant.criterion + "|")),
+          !["сверка", "линт"].includes(
+            plantGripOf(plant.criterion + "|" + (plant.held ?? "")),
+          ),
       );
     const total = pending.length;
     const failed = [];
