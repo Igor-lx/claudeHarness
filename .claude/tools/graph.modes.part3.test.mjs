@@ -3926,8 +3926,54 @@ describe("внешнюю команду запускает один помощн
     ).toBe(JSON.stringify(['a "b" (c)', "d&e"]));
     const none = runTool("zz-no-such-tool", ["x"]);
     expect(none.status).toBe(null);
-    expect(none.error).toContain("zz-no-such-tool");
-    expect(none.error).toContain("ENOENT");
+    expect(none.error).toBe("не запустилась: zz-no-such-tool (ENOENT)");
     expect(none.out).toBe("");
+  });
+
+  // За оболочкой ненайденную команду ищут там же, где `cmd.exe`; найденная
+  // отдаёт свой код. Довод платформы проверяет это на любой машине.
+  it("за оболочкой команду ищут по пути, PATH и PATHEXT; найденная отдаёт свой код", async () => {
+    const { runTool } = await import("./graph.seat.mjs");
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "runtool-"));
+    try {
+      const own = path.join(box, "own");
+      const plain = path.join(box, "plain");
+      const dotted = path.join(box, "my.com.d");
+      for (const d of [own, plain, dotted]) fs.mkdirSync(d);
+      fs.writeFileSync(path.join(own, "tool.CMD"), "");
+      fs.writeFileSync(path.join(plain, "tool.BAT"), "");
+      const count = path.join(dotted, "count");
+      fs.writeFileSync(count, "#!/bin/sh\necho $#\n", { mode: 0o755 });
+      const shellOnly = Object.fromEntries(
+        Object.entries(process.env).filter(([k]) => !/^(path|pathext)$/i.test(k)),
+      );
+      // Найденная запустилась: код её, причины отказа нет.
+      const found = (run) => [run.status !== null, run.error];
+      const none = runTool("zz-no-such-tool", ["x"], {}, "win32");
+      expect([none.status, none.error, none.out]).toEqual([
+        null,
+        "не запустилась: zz-no-such-tool (ENOENT)",
+        "",
+      ]);
+      // Встроенная команда оболочки файла не имеет, и код ноль — её.
+      expect(runTool("exit", ["0"], {}, "win32").status).toBe(0);
+      const withExt = { ...shellOnly, PATH: own + path.delimiter + process.env.PATH, PATHEXT: ".CMD" };
+      expect(found(runTool("tool", [], { env: withExt }, "win32"))).toEqual([true, null]);
+      expect(found(runTool("tool", [], { env: { ...shellOnly, PATH: plain } }, "win32"))).toEqual([true, null]);
+      expect(found(runTool("tool", [], { env: { ...shellOnly, Path: plain } }, "win32"))).toEqual([true, null]);
+      expect(found(runTool(path.join(own, "tool"), [], { env: withExt }, "win32"))).toEqual([true, null]);
+      expect(found(runTool("./tool", [], { cwd: own, env: withExt }, "win32"))).toEqual([true, null]);
+      expect(runTool(path.join(own, "nope"), [], { env: withExt }, "win32").status).toBe(null);
+      // Точка с `com` в имени папки исполняемым файлом команду не делает:
+      // она идёт через оболочку, и та делит довод по пробелу. Сценарий со
+      // строкой `#!` исполняет только оболочка POSIX.
+      if (process.platform !== "win32")
+        expect(runTool(count, ["a b"], {}, "win32").stdout.trim()).toBe("2");
+      // Вывод больше `64` КБ приходит целиком.
+      const big = runTool(process.execPath, ["-e", "process.stdout.write('x'.repeat(100000))"]);
+      expect([big.status, big.stdout.length]).toEqual([0, 100000]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
   });
 });

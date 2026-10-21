@@ -67,7 +67,6 @@ export const runTool = (
   // файла не имеет, но код у неё ноль.
   const missing =
     shell &&
-    process.platform === "win32" &&
     run.error === undefined &&
     run.status !== 0 &&
     !onWindowsPath(command, opts);
