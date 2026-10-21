@@ -3896,7 +3896,7 @@ describe("внешнюю команду запускает один помощн
     expect(strays).toEqual([]);
   });
 
-  it("на win32 идёт через оболочку, не запустившаяся называет причину", async () => {
+  it("на win32 идёт через оболочку, кроме исполняемого файла; не запустившаяся называет причину", async () => {
     const { runTool } = await import("./graph.seat.mjs");
     // Через оболочку переменная раскрывается, без неё приходит как есть.
     // Оболочка Windows — `cmd.exe`, и раскрывает она `%HOME%`, а не `$HOME`.
@@ -3906,6 +3906,12 @@ describe("внешнюю команду запускает один помощн
       "/zz-home",
     );
     expect(runTool("echo", [ref], home, "linux").stdout.trim()).toBe(ref);
+    // Исполняемый файл идёт мимо оболочки: она разобрала бы его доводы
+    // заново, и скрипт `node -e` с кавычками и скобками пришёл бы сломанным.
+    const script = 'console.log(JSON.stringify(process.argv.slice(1)))';
+    expect(
+      runTool(process.execPath, ["-e", script, 'a "b" (c)', "d&e"], {}, "win32").stdout.trim(),
+    ).toBe(JSON.stringify(['a "b" (c)', "d&e"]));
     const none = runTool("zz-no-such-tool", ["x"]);
     expect(none.status).toBe(null);
     expect(none.error).toContain("zz-no-such-tool");
