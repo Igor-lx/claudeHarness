@@ -2190,7 +2190,7 @@ export const barGripOf = (row) => {
  * посадку числили по критерию, и такую посадку не проверяли ворота стенда,
  * а в тесте машинных посадок её прикрывала соседка того же критерия. */
 export const plantGripOf = (row) => {
-  const [id, held = ""] = row.split("|");
+  const [id, held] = row.split("|");
   if (held === "") return barGripOf(id + "|");
   const kinds = barHoldOf(id + "|")
     .split(" · ")
@@ -4640,6 +4640,25 @@ export const PREDICATE_CASES = [
     "починено, а снятия нет у ресурса П1",
   ],
   ["barModelFault", "M3|чисто|снимается||П1:ресурс:нет", "чисто, а снятия нет у ресурса П1"],
+  // Замер по правленому файлу на задаче изменения обязателен: не мерен
+  // либо устарел — «чисто» и «починено» не проходят; на чтении о нём
+  // спрашивает вопрос модели, а не срез.
+  [
+    "barModelFault",
+    "J10|чисто|замер есть|на изменение|П1:мутации:устарело|единица",
+    "чисто, а замер по правленому файлу не мерен либо устарел — прогон по файлу правки обязателен, иначе «нашлось» с судьбой: П1",
+  ],
+  [
+    "barModelFault",
+    "J10|нашлось|прогон по файлу|на изменение|П1:мутации:не мерено|единица|починено",
+    "починено, а замер по правленому файлу не мерен либо устарел: П1",
+  ],
+  [
+    "barModelFault",
+    "J10|чисто|замер есть|на чтение|П1:мутации:устарело|единица",
+    "чисто, а мутационный замер не мерен, устарел либо оставил выживших, и в основании это не названо: П1",
+  ],
+  ["barModelFault", "J10|чисто|замер есть|на изменение|П1:мутации:мерено|единица", ""],
   // Строка, о которой критерий спрашивает, — его предмет: «нет предмета»
   // по поверхности при её лишних именах ложно. Поверхность без лишнего и
   // без сдвига вопроса не задаёт.
@@ -5255,6 +5274,11 @@ export const PREDICATE_CASES = [
   ["isChainConfigPath", ".oxlintrc.json", true],
   ["isChainConfigPath", ".prettierrc", true],
   ["isChainConfigPath", ".prettierignore", true],
+  ["isChainConfigPath", ".prettierrc.json", true],
+  ["isChainConfigPath", ".eslintrc", true],
+  ["isChainConfigPath", "vitest.workspace.mts", true],
+  // Временный файл, который сборщик кладёт рядом с конфигом, — не конфиг.
+  ["isChainConfigPath", "vite.config.ts.timestamp-1700000000000-4f2a.mjs", false],
   ["isChainConfigPath", "eslint.config.js", true],
   ["isChainConfigPath", "prettier.config.mjs", true],
   ["isChainConfigPath", "vite.config.ts", true],
