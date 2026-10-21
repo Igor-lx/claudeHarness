@@ -45,7 +45,8 @@ jobs:
           --reporter=dot --reporter=json
           --outputFile.json="$RUNNER_TEMP/tests.json"
 
-      # The last steps print the failures and red checks at the log's end.
+      # The last steps print the failures and red checks at the log's end;
+      # a failure keeps the head of its message, where the diff is.
       - name: Failed tests, one line each
         if: always()
         run: |
@@ -55,7 +56,7 @@ jobs:
               for (const t of f.assertionResults)
                 if (t.status === "failed")
                   console.log(f.name.split(/[\\/]/).pop() + " > " + t.fullName + " :: " +
-                    String(t.failureMessages[0] ?? "").split("\n")[0].slice(0, 240));
+                    String(t.failureMessages[0] ?? "").slice(0, 1200).replace(/\s*\n\s*/g, " | "));
           ' "$RUNNER_TEMP/tests.json"
 
       - name: Knowledge-base check of the stand
