@@ -45,31 +45,59 @@ export const runTool = (
   opts = {},
   platform = process.platform,
 ) => {
+  const shell =
+    platform === "win32" &&
+    command !== process.execPath &&
+    !/\.(?:exe|com)$/i.test(command);
   const run = spawnSync(command, args, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    shell:
-      platform === "win32" &&
-      command !== process.execPath &&
-      !/\.(?:exe|com)$/i.test(command),
+    shell,
     ...opts,
   });
+  // Ненайденную команду `cmd.exe` не отличает: отвечает кодом 1 своими
+  // словами. Её ищут сами, и ненайденная с ненулевым кодом — не
+  // запустившаяся; встроенная команда оболочки файла не имеет, но код у
+  // неё ноль.
+  const missing =
+    shell &&
+    process.platform === "win32" &&
+    run.error === undefined &&
+    run.status !== 0 &&
+    !onWindowsPath(command, opts);
   const stdout = String(run.stdout ?? "");
   const stderr = String(run.stderr ?? "");
   return {
-    status: run.error === undefined ? run.status : null,
+    status: run.error === undefined && !missing ? run.status : null,
     stdout,
     stderr,
     out: stdout + stderr,
     error:
-      run.error === undefined
-        ? null
-        : "не запустилась: " +
+      run.error !== undefined
+        ? "не запустилась: " +
           command +
           " (" +
           (run.error.code ?? run.error.message) +
-          ")",
+          ")"
+        : missing
+          ? "не запустилась: " + command + " (ENOENT)"
+          : null,
   };
+};
+
+/** Есть ли файл команды там, где его ищет `cmd.exe`: по пути, а голое имя —
+ * в папке запуска и в `PATH`, с каждым расширением `PATHEXT`. */
+const onWindowsPath = (command, { cwd = process.cwd(), env = process.env } = {}) => {
+  const exts = String(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .filter(Boolean);
+  const dirs = /[\\/]/.test(command)
+    ? [cwd]
+    : [cwd, ...String(env.PATH ?? env.Path ?? "").split(path.delimiter)];
+  return dirs
+    .filter(Boolean)
+    .map((dir) => path.resolve(dir, command))
+    .some((base) => [base, ...exts.map((e) => base + e)].some((f) => existsSync(f)));
 };
 
 /** Сравнение версий — одно на инструмент. Отрицательное — первая ниже.

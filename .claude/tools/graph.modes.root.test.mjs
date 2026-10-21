@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runTool } from "./graph.seat.mjs";
 import {
   TOOL_DIR,
   TOOL,
@@ -276,8 +277,9 @@ describe("испытательная посадка одной командой"
         untested,
         "export const zzUntested = (n: number): number => n + 1;\n",
       );
-      const npm = (script) =>
-        spawnSync("npm", ["run", script], { cwd: dest, encoding: "utf8" });
+      // `npm` на Windows — прослойка `.cmd`, и без оболочки её не найти:
+      // зовёт тот же помощник, что и инструмент.
+      const npm = (script) => runTool("npm", ["run", script], { cwd: dest });
       const build = npm("build");
       expect(build.status, build.stdout + build.stderr).toBe(0);
       const coverage = npm("test:coverage");
@@ -329,11 +331,7 @@ describe("испытательная посадка одной командой"
       expect(built.stdout).toContain("магазин поверх, файлов: ");
       const env = { ...process.env };
       delete env.CLAUDE_CODE_CHILD_SESSION;
-      const check = spawnSync("npm", ["run", "check"], {
-        cwd: dest,
-        encoding: "utf8",
-        env,
-      });
+      const check = runTool("npm", ["run", "check"], { cwd: dest, env });
       expect(
         check.status,
         (check.stdout + check.stderr).split("\n").slice(-40).join("\n"),
@@ -898,10 +896,7 @@ describe("стенд проб", () => {
       });
       const file = path.join(dest, "src", "shared", "notes", "half.ts");
       fs.writeFileSync(file, "export const half = (value: number): number => {\n  if (!(value > 0)) return 0;\n  return value / 2;\n};\n");
-      const lint = spawnSync(path.join(dest, "node_modules", ".bin", "eslint"), ["-f", "json", file], {
-        cwd: dest,
-        encoding: "utf8",
-      });
+      const lint = runTool(path.join(dest, "node_modules", ".bin", "eslint"), ["-f", "json", file], { cwd: dest });
       const messages = JSON.parse(lint.stdout).flatMap((one) => one.messages);
       expect(messages.map((m) => m.ruleId + ": " + m.message)).toEqual([]);
     } finally {
