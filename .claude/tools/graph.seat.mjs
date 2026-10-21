@@ -63,16 +63,16 @@ export const runTool = (
   });
   // Ненайденную команду `cmd.exe` не отличает: отвечает кодом 1 своими
   // словами. Её ищут сами, и ненайденная с ненулевым кодом — не
-  // запустившаяся; встроенная команда оболочки файла не имеет, но код у
-  // неё ноль.
+  // запустившаяся, без вывода, как везде; встроенная команда оболочки
+  // файла не имеет, но код у неё ноль.
   const missing =
     shell &&
     process.platform === "win32" &&
     run.error === undefined &&
     run.status !== 0 &&
     !onWindowsPath(command, opts);
-  const stdout = String(run.stdout ?? "");
-  const stderr = String(run.stderr ?? "");
+  const stdout = missing ? "" : String(run.stdout ?? "");
+  const stderr = missing ? "" : String(run.stderr ?? "");
   return {
     status: run.error === undefined && !missing ? run.status : null,
     stdout,
