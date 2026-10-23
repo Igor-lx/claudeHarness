@@ -96,6 +96,8 @@ import {
   isCodePath,
   isDocPath,
   isChainConfigPath,
+  isLedgerRow,
+  isProbeRun,
   BAR_PAGES_DIR,
   CODE_EXTENSIONS,
   CODE_FILE,
@@ -410,6 +412,39 @@ const readJson = (at, fallback) => {
   }
   return parsed;
 };
+
+/** Файл, который обвязка пишет сама и читает обратно: JSON-объект, чьи записи
+ * — по своей форме. Проверка одного верхнего уровня пропускала порченую
+ * запись: реестр мутаций печатал «NaN %, живых undefined» с кодом ноль, книга
+ * проб роняла `bar-hold` стеком. Порченый файл читается как `fallback` и
+ * называется сверкой «Файл, написанный обвязкой, читается»; писатель его не
+ * переписывает — потеряется история. */
+const readOwn = (at, fallback, faultOf) => {
+  const parsed = readJson(at, null);
+  if (parsed === null) return fallback;
+  const fault = faultOf(parsed);
+  if (fault === "") return parsed;
+  SPOILED.push(at + " — " + fault);
+  return fallback;
+};
+const recordText = (row) => String(JSON.stringify(row)).slice(0, 80);
+/** Реестр мутационных замеров: «путь → { killed, alive, hash }». */
+const readLedger = (at) =>
+  readOwn(at, {}, (ledger) => {
+    const bad = Object.entries(ledger).find(([, row]) => !isLedgerRow(row));
+    return bad === undefined
+      ? ""
+      : "запись «" + bad[0] + "» не по форме { killed, alive, hash }: " + recordText(bad[1]);
+  });
+/** Книга проб планки: `{ runs: [{ criterion, verdict, … }] }`. */
+const readProbeBook = (at) =>
+  readOwn(at, { runs: [] }, (book) => {
+    if (!Array.isArray(book.runs)) return "поле runs — не список: " + recordText(book.runs);
+    const k = book.runs.findIndex((row) => !isProbeRun(row));
+    return k < 0
+      ? ""
+      : "запись runs[" + k + "] не по форме { criterion, verdict, … }: " + recordText(book.runs[k]);
+  });
 
 const sayLooked = (unit, n) => {
   console.log("  осмотрено " + unit + ": " + n);
@@ -8589,7 +8624,7 @@ if (mode === "mutated") {
   const stamp = contentStamp;
 
   const spoiledBefore = SPOILED.length;
-  const ledger = existsSync(ledgerPath) ? readJson(ledgerPath, {}) : {};
+  const ledger = readLedger(ledgerPath);
   // Реестр — память обо всех прошлых замерах, и восстановит его только полный
   // прогон. Испорченный, он читался пустым, а слияние ниже переписывало его
   // одной свежей строкой: история пропадала без признака.
@@ -9896,7 +9931,16 @@ if (mode === "bar-probe") {
   }
 
   if (ledgerAt !== null && !machineOnly) {
-    const book = existsSync(ledgerAt) ? readJson(ledgerAt, {}) : { runs: [] };
+    const spoiledBefore = SPOILED.length;
+    const book = readProbeBook(ledgerAt);
+    if (SPOILED.length > spoiledBefore) {
+      console.log(NEWLINE + "=== Книга проб планки не читается ===");
+      console.log("    " + SPOILED.at(-1));
+      console.log(
+        "  книга не переписана: вернуть её из истории git либо удалить — счёт проб начнётся заново",
+      );
+      process.exit(1);
+    }
     for (const { plant, verdict, atPlant } of verdicts)
       book.runs.push({
         criterion: plant.criterion,
@@ -10832,7 +10876,7 @@ const mutationRowOf = (f) => {
       const at = path.join(BASE, CONFIG.mutationLedger);
       MUTATION_CACHE = {
         scope: globMatcher(globs, REPO_AT),
-        ledger: existsSync(at) ? readJson(at, {}) : {},
+        ledger: readLedger(at),
       };
     }
   }
@@ -18945,11 +18989,14 @@ if (mode === "bar-hold") {
     plantsOf.set(p.criterion, (plantsOf.get(p.criterion) ?? 0) + 1);
   const ledgerAt =
     CONFIG.barProbeLedger == null ? null : path.join(BASE, CONFIG.barProbeLedger);
-  const runs = ledgerAt !== null && existsSync(ledgerAt) ? (readJson(ledgerAt, {}).runs ?? []) : [];
+  const spoiledBook = SPOILED.length;
+  const runs = ledgerAt === null ? [] : readProbeBook(ledgerAt).runs;
+  const bookFault =
+    SPOILED.length > spoiledBook ? "книга проб не читается: " + SPOILED.at(-1) : null;
   const caught = new Set(runs.filter((r) => r.verdict === "поймано").map((r) => r.criterion));
   const machineOf = (held) =>
     held !== "" && held !== "лозунг" && !held.startsWith("вниманием");
-  const formFaults = [];
+  const formFaults = bookFault === null ? [] : [bookFault];
   let machine = 0;
   let closed = 0;
   let beyond = 0;
@@ -33006,7 +33053,9 @@ if (mode === "verify") {
     // защищено, а порча называется — и роняет прогон осмысленно.
     // Реестр мутаций сверки не читают, и порча его не попадала сюда вовсе.
     if (CONFIG.mutationLedger != null)
-      readJson(path.join(BASE, CONFIG.mutationLedger), null);
+      readLedger(path.join(BASE, CONFIG.mutationLedger));
+    if (CONFIG.barProbeLedger != null)
+      readProbeBook(path.join(BASE, CONFIG.barProbeLedger));
   });
   checkStep(() => {
     checkHead("Файл, написанный обвязкой, читается", () => ({

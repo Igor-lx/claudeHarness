@@ -5898,6 +5898,26 @@ export const PREDICATE_CASES = [
   ["isToolModule", "graph.modes.shared.mjs", false],
   ["isToolModule", "graph.md", false],
   ["isToolModule", "probe-shop.json", false],
+  // --- isLedgerRow: запись реестра мутаций — два счёта и отпечаток ---
+  ["isLedgerRow", { killed: 3, alive: 0, hash: "ab12" }, true],
+  ["isLedgerRow", { killed: 0, alive: 0, hash: "ab12" }, true],
+  ["isLedgerRow", 5, false],
+  ["isLedgerRow", null, false],
+  ["isLedgerRow", [1, 2], false],
+  ["isLedgerRow", { killed: "3", alive: 0, hash: "ab12" }, false],
+  ["isLedgerRow", { killed: 3, alive: -1, hash: "ab12" }, false],
+  ["isLedgerRow", { killed: 1.5, alive: 0, hash: "ab12" }, false],
+  ["isLedgerRow", { killed: 3, alive: 0 }, false],
+  ["isLedgerRow", { killed: 3, alive: 0, hash: "" }, false],
+  // --- isProbeRun: запись книги проб планки — критерий и исход строками ---
+  ["isProbeRun", { criterion: "M1", verdict: "поймано", kind: "в существующем коде" }, true],
+  ["isProbeRun", { criterion: "M1", verdict: "мимо" }, true],
+  ["isProbeRun", null, false],
+  ["isProbeRun", 5, false],
+  ["isProbeRun", ["M1"], false],
+  ["isProbeRun", { criterion: 5, verdict: "поймано" }, false],
+  ["isProbeRun", { criterion: "M1" }, false],
+  ["isProbeRun", { criterion: "", verdict: "поймано" }, false],
   // --- protocolReadByShell: чтение протокола свода командой оболочки ---
   ["protocolReadByShell", "cat .context/bar-protocol.md", "cat"],
   ["protocolReadByShell", "sed -n 1,50p .context/bar-protocol.md", "sed"],
@@ -6707,6 +6727,31 @@ export const closedMark = (title) => CLOSED_FORMS.some((re) => re.test(title));
  * оснастки. Инструмент разнесён по модулям — разбор кода, приём частей, серия,
  * — и перечень, названный руками, отстаёт от первого же нового модуля: правка
  * вынесенного разбора меняла модель свода, а печать стояла. */
+/** Запись реестра мутационных замеров: `{ killed, alive, hash }` — два
+ * неотрицательных целых счёта и непустой отпечаток содержимого. Запись не по
+ * форме читатели печатали как «NaN %, живых undefined» с кодом ноль. */
+export const isLedgerRow = (row) =>
+  row !== null &&
+  typeof row === "object" &&
+  !Array.isArray(row) &&
+  Number.isInteger(row.killed) &&
+  row.killed >= 0 &&
+  Number.isInteger(row.alive) &&
+  row.alive >= 0 &&
+  typeof row.hash === "string" &&
+  row.hash !== "";
+
+/** Запись книги проб планки: критерий и исход — непустые строки; прочие
+ * поля счёт читает с умолчаниями. Порченая запись роняла `bar-hold` стеком. */
+export const isProbeRun = (row) =>
+  row !== null &&
+  typeof row === "object" &&
+  !Array.isArray(row) &&
+  typeof row.criterion === "string" &&
+  row.criterion !== "" &&
+  typeof row.verdict === "string" &&
+  row.verdict !== "";
+
 export const isToolModule = (name) =>
   name.endsWith(".mjs") &&
   !name.includes(".test.") &&

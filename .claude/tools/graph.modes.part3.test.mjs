@@ -3481,6 +3481,12 @@ describe("испорченный реестр мутаций", () => {
         ["5", "JSON верхнего уровня не объект: 5"],
         ["[]", "JSON верхнего уровня не объект: массив"],
         ['"x"', "JSON верхнего уровня не объект: x"],
+        // Запись не по форме читалась как «NaN %, живых undefined» с кодом ноль.
+        ['{ "src/app/App.tsx": 5 }', "запись «src/app/App.tsx» не по форме"],
+        [
+          '{ "src/app/App.tsx": { "killed": "4", "alive": 1, "hash": "ab" } }',
+          "запись «src/app/App.tsx» не по форме",
+        ],
       ]) {
         fs.writeFileSync(at, torn);
         expect(
@@ -3502,6 +3508,36 @@ describe("испорченный реестр мутаций", () => {
         expect(run.stdout).toContain("Реестр мутационных замеров не читается");
         expect(run.stderr).not.toContain("TypeError");
         expect(fs.readFileSync(at, "utf8")).toBe(torn);
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("испорченная книга проб планки", () => {
+  // Тот же класс, что у реестра мутаций: проверялся один верхний уровень, и
+  // порченая запись роняла `bar-hold` стеком, а сверка книгу не читала.
+  it("называется сверкой и матрицей держателей, без стека", () => {
+    const box = seatEmpty("spoiled-book-");
+    try {
+      const at = path.join(box, ".context", "bar-probe-ledger.json");
+      for (const [torn, said] of [
+        ['{ "runs": [null] }', "запись runs\\[0\\] не по форме"],
+        ['{ "runs": 5 }', "поле runs — не список"],
+        ['{ "runs": [{ "criterion": "M1", "verdict": "поймано" }, { "criterion": 5 }] }', "запись runs\\[1\\] не по форме"],
+      ]) {
+        fs.writeFileSync(at, torn);
+        expect(verifyIn(box).get("Файл, написанный обвязкой, читается"), torn).toEqual([
+          expect.stringMatching(new RegExp("^bar-probe-ledger\\.json — " + said)),
+        ]);
+        const hold = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar-hold"], {
+          cwd: box,
+          encoding: "utf8",
+        });
+        expect(hold.status, torn).toBe(1);
+        expect(hold.stdout + hold.stderr).toContain("книга проб не читается");
+        expect(hold.stderr).not.toContain("TypeError");
       }
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
