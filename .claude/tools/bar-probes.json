@@ -2558,6 +2558,10 @@
           "find": "    setProblem(outcome === \"saved\" ? null : \"saveFailed\");\n",
           "replace": "    setProblem(outcome === \"saved\" ? null : \"saveFailed\");\n    if (outcome === \"failed\" && body !== initial.body) setBody(initial.body);\n"
         }
+      ],
+      "culprits": [
+        "src/components/NoteForm/NoteForm.tsx",
+        "components/NoteForm/tests/NoteForm.test.tsx"
       ]
     },
     {
