@@ -147,7 +147,8 @@ export const toolVersion = (name) => {
 
 /** Среда против проверенной связки: что отвечает и что ниже. Спрашиваются
  * среда и менеджер пакетов — пакеты на этом шаге ещё не стоят. Команда
- * подъёма отдаётся готовой: «поднимите менеджер» заставляло гадать. */
+ * подъёма отдаётся готовой, одна на обоих: загрузчик посадки ставит их сам. */
+export const ENV_BOOTSTRAP = "bash .claude/seat/bootstrap.sh";
 export const envLowOf = (declared, versionOf = toolVersion) => {
   const low = [];
   const seen = [];
@@ -156,7 +157,7 @@ export const envLowOf = (declared, versionOf = toolVersion) => {
     if (need === null) continue;
     const have = versionOf(name);
     if (have === null) {
-      low.push({ name, have: "не отвечает", need, how: "поставить" });
+      low.push({ name, have: "не отвечает", need, how: ENV_BOOTSTRAP });
       continue;
     }
     seen.push(name + " " + have + " (нужно " + need + ")");
@@ -165,10 +166,7 @@ export const envLowOf = (declared, versionOf = toolVersion) => {
         name,
         have,
         need,
-        how:
-          name === "npm"
-            ? "npm i -g npm@" + need.split(".")[0]
-            : "поставить отдельно: менеджером версий среды либо установщиком",
+        how: ENV_BOOTSTRAP,
       });
   }
   return { seen, low };
@@ -620,9 +618,8 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
     refuse(
       "Среда ниже проверенной связки — посадка не начата, папка не тронута:",
       ...low.map((one) => "  " + one.name + " " + one.have + " — нужно " + one.need),
-      "Чем поднять:",
-      ...low.map((one) => "  " + one.how),
-      "Поднимать ли — решает разработчик; после подъёма команду зовут снова.",
+      "Поднять: " + ENV_BOOTSTRAP + " — ставит Node.js и npm проверенной связки и git;",
+      "посадка зовёт его сама, сказав, что и куда ставит. Затем команду зовут снова.",
     );
 
   // Откат: всё, что положила посадка, снимается в обратном порядке.

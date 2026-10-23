@@ -1,0 +1,58 @@
+# Seats an empty folder on a machine without Node.js: the bootstrap installs
+# the verified Node.js and npm, then the one-command seating must pass.
+# The runners ship their own Node.js, so it is cut out of PATH first.
+name: harness-bootstrap
+
+on:
+  workflow_dispatch:
+
+jobs:
+  empty-machine:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Git identity for the seat commits
+        run: |
+          git config --global user.name "harness-ci"
+          git config --global user.email "harness-ci@users.noreply.github.com"
+
+      - name: Cut the runner's Node.js out of PATH
+        run: |
+          keep=""
+          IFS=: read -r -a dirs <<<"$PATH"
+          for d in "${dirs[@]}"; do
+            if [ -x "$d/node" ] || [ -x "$d/node.exe" ] || [ -x "$d/npm" ]; then continue; fi
+            keep="${keep:+$keep:}$d"
+          done
+          echo "PATH=$keep" >>"$GITHUB_ENV"
+
+      - name: No Node.js before the bootstrap
+        run: |
+          if command -v node; then echo "node is still on PATH"; exit 1; fi
+          bash .claude/seat/bootstrap.sh --plan
+
+      - name: Bootstrap the environment
+        run: bash .claude/seat/bootstrap.sh
+
+      - name: Seat an empty folder with the installed Node.js
+        run: |
+          set -e
+          home="${CLAUDE_HARNESS_HOME:-$HOME/.claude-harness}"
+          bin="$(ls -d "$home"/node-v*/bin 2>/dev/null || ls -d "$home"/node-v*)"
+          export PATH="$bin:$PATH"
+          node -v
+          npm -v
+          mkdir "$RUNNER_TEMP/empty"
+          cp -r .claude "$RUNNER_TEMP/empty/"
+          cd "$RUNNER_TEMP/empty"
+          node .claude/tools/graph.mjs seat .
+          npm test

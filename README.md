@@ -115,9 +115,10 @@ The same pass in the tool's own output - see
 folder in it is all it takes: seating installs the packages at the verified
 versions, lays out the configs, wires the check chain, creates the git
 repository and the commit gate, and checks that it all works. Nothing to
-pick or configure by hand. The machine only needs git, Claude Code and
-Node.js with npm no older than the verified set; if they are older, seating
-stops before touching anything and says how to upgrade.
+pick or configure by hand, not even the runtime: the machine only needs
+Claude Code. Node.js and npm of the verified set and git, if they are missing
+or older, are installed by seating itself - Node.js into your user folder,
+without administrator rights.
 
 From then on - ordinary tasks in plain words. A project with existing code,
 the requirements and all the details - in
@@ -362,8 +363,9 @@ not pick versions yourself:
 | tests | Vitest 4.1.11, jsdom 30.1.3, Testing Library React 16.3.3, Stryker 10.0.0 |
 | lint and format | ESLint 10.13.0, @eslint-react 5.28.7, jsx-a11y-x 0.2.0, SonarJS 4.2.2, Prettier 3.9.10 |
 
-On a machine with Node.js or npm below the set, seating stops before its
-first change. In a live project nothing is upgraded: seating adds only what is
+On a machine without Node.js, or with Node.js or npm below the set, seating
+installs the verified ones before its first change. In a live project no
+package is upgraded: seating adds only what is
 missing, and packages below the set are named by the run - a notice, not a
 failure; whether to upgrade is your call.
 
@@ -376,7 +378,10 @@ the rest, seat it and finish it.
 
 ## Installation and setup
 
-**Needs:** Node.js 22.23.2 or newer, npm 11.21.1 or newer, git and Claude Code.
+**Needs:** Claude Code. Node.js 22.23.2, npm 11.21.1 and git are installed by
+seating if they are missing or older: Node.js from the official nodejs.org
+archive into `~/.claude-harness`, checked by its checksum, without
+administrator rights; git by the system installer.
 
 **1. Copy the harness** into the root of the project:
 
@@ -405,9 +410,9 @@ caught; the assistant then asks what the project is and writes the answer
 into the project rules. An empty project gets a scaffold - a small app with
 a test, so the checks have something to work on from day one; a project with
 code gets no scaffold.
-Node.js or npm below the verified set stop seating before its first change;
-packages below the set are named by the run as a notice - whether to upgrade
-is your call.
+Node.js or npm missing or below the verified set are installed before the
+first change; packages below the set are named by the run as a notice -
+whether to upgrade is your call.
 
 **4. A project with existing code - "run the transition".** The assistant reads
 all of the code, builds the knowledge base, the dependency graph and the

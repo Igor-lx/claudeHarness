@@ -241,7 +241,7 @@ describe("посадка на месте: чистые помощники", () =
     );
   });
 
-  it("среда ниже связки названа с готовой командой подъёма; молчащая — «не отвечает»", () => {
+  it("среда ниже связки названа с загрузчиком посадки; молчащая — «не отвечает»", () => {
     const declared = { node: "22.23.2", npm: "11.0.0" };
     const at = (have) => (name) => have[name] ?? null;
     expect(envLowOf(declared, at({ node: "22.23.2", npm: "11.2.0" }))).toEqual({
@@ -250,16 +250,11 @@ describe("посадка на месте: чистые помощники", () =
     });
     const { low } = envLowOf(declared, at({ node: "22.22.0", npm: "10.9.4" }));
     expect(low).toEqual([
-      {
-        name: "node",
-        have: "22.22.0",
-        need: "22.23.2",
-        how: "поставить отдельно: менеджером версий среды либо установщиком",
-      },
-      { name: "npm", have: "10.9.4", need: "11.0.0", how: "npm i -g npm@11" },
+      { name: "node", have: "22.22.0", need: "22.23.2", how: "bash .claude/seat/bootstrap.sh" },
+      { name: "npm", have: "10.9.4", need: "11.0.0", how: "bash .claude/seat/bootstrap.sh" },
     ]);
     expect(envLowOf(declared, at({ node: "22.23.2" })).low).toEqual([
-      { name: "npm", have: "не отвечает", need: "11.0.0", how: "поставить" },
+      { name: "npm", have: "не отвечает", need: "11.0.0", how: "bash .claude/seat/bootstrap.sh" },
     ]);
     expect(envLowOf({ node: "22.23.2" }, at({ node: "22.23.2" })).low).toEqual([]);
   });
@@ -501,3 +496,72 @@ describe("записка к семени называет те значения,
     expect(pairs.filter((p) => !p.found)).toEqual([]);
   });
 });
+
+// Загрузчик среды ставит Node.js и npm проверенной связки и git сам, по
+// решению разработчика `2026-10-23`: человек с чистой машиной говорит
+// «посади обвязку» и не настраивает ничего. План сверяется на поддельных
+// орудиях, без сети; настоящую установку держит сценарий конвейера на трёх
+// системах (`.github/workflows/harness-bootstrap.yml`).
+describe("загрузчик среды посадки", () => {
+  const BOOT = path.join(SHELF, "seat", "bootstrap.sh");
+  const declared = verifiedOfSeed();
+  const fakeBin = (tools) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "boot-bin-"));
+    for (const [name, version] of Object.entries(tools)) {
+      const at = path.join(dir, name);
+      fs.writeFileSync(at, "#!/bin/sh\necho v" + version + "\n");
+      fs.chmodSync(at, 0o755);
+    }
+    for (const name of ["sed", "head", "uname", "cut", "grep", "dirname", "id", "printf"]) {
+      const real = spawnSync("sh", ["-c", "command -v " + name], { encoding: "utf8" }).stdout.trim();
+      if (real.startsWith("/")) fs.symlinkSync(real, path.join(dir, name));
+    }
+    return dir;
+  };
+  const bashAt = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim();
+  const plan = (tools) => {
+    const bin = fakeBin(tools);
+    try {
+      return spawnSync(bashAt, [BOOT, "--plan"], {
+        encoding: "utf8",
+        env: { HOME: os.tmpdir(), PATH: bin },
+      });
+    } finally {
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+  };
+
+  it.skipIf(process.platform === "win32" || bashAt === "")(
+    "ставит Node.js, которого нет либо который ниже связки, и поднимает отставший npm",
+    () => {
+      const none = plan({ git: "2.43.0" });
+      expect(none.status, none.stderr).toBe(0);
+      expect(none.stdout).toContain("node: нет — поставить " + declared.node);
+      expect(none.stdout).toContain("/v" + declared.node + "/node-v" + declared.node + "-");
+      const old = plan({ node: "22.0.0", npm: declared.npm, git: "2.43.0" });
+      expect(old.stdout).toContain("node: 22.0.0 — поставить " + declared.node);
+      const npmOld = plan({ node: declared.node, npm: "10.9.4", git: "2.43.0" });
+      expect(npmOld.stdout).toContain("npm: 10.9.4 — поднять до " + declared.npm);
+      expect(npmOld.stdout).not.toContain("— поставить");
+      const fine = plan({ node: declared.node, npm: declared.npm, git: "2.43.0" });
+      expect(fine.stdout).toContain("ставить нечего");
+      const newer = plan({ node: "24.1.0", npm: "11.30.0", git: "2.43.0" });
+      expect(newer.stdout).toContain("ставить нечего");
+      const noGit = plan({ node: declared.node, npm: declared.npm });
+      expect(noGit.stdout).toContain("git: нет — поставить: руками");
+      if (process.platform === "linux") {
+        const apt = plan({ node: declared.node, npm: declared.npm, "apt-get": "2.7.14" });
+        expect(apt.stdout).toMatch(/git: нет — поставить: (sudo )?apt-get update && (sudo )?apt-get install -y git/);
+      }
+    },
+  );
+});
+
+function verifiedOfSeed() {
+  const text = fs.readFileSync(path.join(SHELF, "seat", "templates", "graph.config.mjs"), "utf8");
+  const block = text.slice(text.indexOf("verifiedVersions: {"));
+  return {
+    node: /\bnode: "([^"]+)"/.exec(block)[1],
+    npm: /\bnpm: "([^"]+)"/.exec(block)[1],
+  };
+}

@@ -145,6 +145,7 @@ import {
 // настройки проекта, и внутри режимов, которые её разбирают.
 import {
   envLowOf,
+  ENV_BOOTSTRAP,
   layShelf,
   lintBlockersOf,
   runSeat,
@@ -763,13 +764,10 @@ if (mode === "env") {
   for (const one of low)
     console.log("  " + one.name + " " + one.have + " — нужно " + one.need);
   console.log("");
-  console.log("  Чем поднять:");
-  for (const one of low) console.log("    " + one.how);
-  console.log("");
-  console.log("  Спросить разработчика: поднимать? Ответ «да» — поднять и");
-  console.log("  продолжить с шага 1; заново начинать не с чего, проект ещё");
-  console.log("  не тронут. Ответ «нет» — посадка не начата, и это законно:");
-  console.log("  обвязка на этой связке не мерена и за неё не отвечает.");
+  console.log("  Поднять: " + ENV_BOOTSTRAP + " — ставит Node.js и npm проверенной");
+  console.log("  связки и git. Без вопроса: команда «посади обвязку» и есть");
+  console.log("  разрешение, — сказать одной строкой, что и куда ставится, и");
+  console.log("  продолжить с шага 1; проект ещё не тронут.");
   console.log("");
   console.log("  Почему остановка, а не предупреждение: ниже объявленного");
   console.log("  установка пакетов падает собственной ошибкой менеджера, где");
