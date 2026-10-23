@@ -477,3 +477,27 @@ describe("ссылка на раздел доктрины в тексте инс
     expect(missing).toEqual([]);
   });
 });
+
+describe("записка к семени называет те значения, что стоят в семени", () => {
+  // Записка `*-why.md` объясняет настройки семени и называет их формой
+  // «`ключ: значение`»; правка семени без правки записки оставляла её
+  // объяснять значение, которого нет, и ничто этого не называло.
+  it("каждая пара «ключ: значение» записки есть в её семени", () => {
+    const seat = path.join(SHELF, "seat");
+    const templates = path.join(seat, "templates");
+    const flat = (text) => text.replace(/["'\s]/g, "");
+    const pairs = [];
+    for (const note of fs.readdirSync(seat).filter((n) => n.endsWith("-why.md"))) {
+      const stem = note.slice(0, -"-why.md".length);
+      const seed = fs.readdirSync(templates).find((n) => n === stem || n.startsWith(stem + "."));
+      expect(seed, note).toBeDefined();
+      const body = flat(fs.readFileSync(path.join(templates, seed), "utf8"));
+      for (const m of fs.readFileSync(path.join(seat, note), "utf8").matchAll(/`([A-Za-z][\w.]*): ([^`]+)`/g)) {
+        const key = m[1].split(".").at(-1);
+        pairs.push({ note, pair: m[0], found: body.includes(flat(key + ":" + m[2])) });
+      }
+    }
+    expect(pairs.length).toBeGreaterThan(0);
+    expect(pairs.filter((p) => !p.found)).toEqual([]);
+  });
+});
