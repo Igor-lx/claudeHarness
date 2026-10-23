@@ -427,3 +427,16 @@ describe("среда посадки называет, чего лишится ж
     expect(envOf({ typescript: "~6.0.3" })).not.toContain("не встанет");
   });
 });
+
+describe("семя разрешений держит то, что доктрина называет разрешённым", () => {
+  // `environment.md`: запасной поиск — `grep` и `find` одной командой, `cd`
+  // стоит отдельно, белый список запуска. Запись, снятая с семени, ломала бы
+  // эти правила без признака: сверка разрешений сверяет только запреты.
+  it("каждая команда, названная разрешённой, стоит в allow семени", () => {
+    const allow = JSON.parse(
+      fs.readFileSync(path.join(SHELF, "seat", "templates", "settings.json"), "utf8"),
+    ).permissions.allow;
+    for (const command of ["grep", "find", "cd", "npm", "npx", "node", "cp", "git"])
+      expect(allow, command).toContain("Bash(" + command + " *)");
+  });
+});
