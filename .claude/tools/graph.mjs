@@ -23137,6 +23137,26 @@ if (mode === "verify") {
             "), а CONFIG.configDocs пуст",
         );
     }
+    // Таблица связей мимо графа: строки уже вписаны, а поле пусто — сверка
+    // связей таблицу не читает, и имя, которого в коде нет, проходило без
+    // признака. Найдено прогоном проб `2026-10-23`.
+    if (CONFIG.domTables == null) {
+      disarmedLooked += 1;
+      const at = path.join(BASE, "03-graph.md");
+      let rows = 0;
+      let inTable = false;
+      for (const line of existsSync(at) ? proseOf(at).split(NEWLINE) : []) {
+        if (/^\|\s*-{3}/.test(line)) inTable = true;
+        else if (!line.startsWith("|")) inTable = false;
+        else if (inTable) rows += 1;
+      }
+      if (rows > 0)
+        disarmed.push(
+          "связи мимо графа импортов уже записаны (03-graph.md, строк " +
+            rows +
+            "), а CONFIG.domTables пуст",
+        );
+    }
     // Направление зависимостей: правила проекта называют его ПРОЗОЙ, а таблицу,
     // по которой оно проверяется, не объявляют. Сверка направления осматривала
     // ноль правил во всех восьми замеренных прогонах — то есть доктрина

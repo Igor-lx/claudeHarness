@@ -3281,6 +3281,32 @@ describe("незамеренное в протоколе свода запись
   }, 180000);
 });
 
+describe("таблица связей при пустом поле настройки", () => {
+  // Сверка связей читает таблицу только по полю `domTables`; строка,
+  // вписанная при пустом поле, не сверялась ничем.
+  it("строка таблицы при пустом поле названа, пустая таблица молчит", () => {
+    const box = seatEmpty("domtables-");
+    try {
+      const disarmedOf = () =>
+        (verifyIn(box).get("Сверки, выключенные при живом предмете") ?? []).join("\n");
+      expect(disarmedOf()).not.toContain("domTables");
+      const at = path.join(box, ".context", "03-graph.md");
+      fs.writeFileSync(
+        at,
+        fs
+          .readFileSync(at, "utf8")
+          .replace(
+            "| Имя в коде | Кто пишет | Кто читает |\n| --- | --- | --- |\n",
+            "| Имя в коде | Кто пишет | Кто читает |\n| --- | --- | --- |\n| `zz-topic` | `src/app/App.tsx` | `src/app/main.tsx` |\n",
+          ),
+      );
+      expect(disarmedOf()).toContain("03-graph.md, строк 1), а CONFIG.domTables пуст");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("номер записи в заголовке не счёт", () => {
   it("заголовок и ссылка на него молчат, счёт в прозе краснеет", () => {
     const box = seatEmpty("nomer-");
