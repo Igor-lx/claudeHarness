@@ -17,7 +17,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
@@ -520,12 +520,17 @@ const rulesFreshnessStep = (said) => {
     }).trim();
     at = path.join(path.resolve(root, dir), "claude-harness-rules.json");
   } catch {
-    at = path.join(
-      tmpdir(),
-      "claude-harness-rules-" +
-        createHash("sha1").update(path.resolve(root)).digest("hex").slice(0, 12) +
-        ".json",
-    );
+    try {
+      at = path.join(
+        systemTemp(),
+        "claude-harness-rules-" +
+          createHash("sha1").update(path.resolve(root)).digest("hex").slice(0, 12) +
+          ".json",
+      );
+    } catch {
+      // Ни git, ни годной временной папки — сверять негде, хук молчит.
+      return "";
+    }
   }
   let state = null;
   try {
