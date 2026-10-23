@@ -111,6 +111,14 @@ The same pass in the tool's own output - see
 3. Open the project in Claude Code and say: **"seat the harness"** - the
    agent installs it and sets it up for the project.
 
+**A new project works out of the box.** An empty folder with the `.claude`
+folder in it is all it takes: seating installs the packages at the verified
+versions, lays out the configs, wires the check chain, creates the git
+repository and the commit gate, and checks that it all works. Nothing to
+pick or configure by hand. The machine only needs git, Claude Code and
+Node.js with npm no older than the verified set; if they are older, seating
+stops before touching anything and says how to upgrade.
+
 From then on - ordinary tasks in plain words. A project with existing code,
 the requirements and all the details - in
 [Installation and setup](#installation-and-setup).
@@ -336,8 +344,15 @@ goal. Seating is tuned to the stack:
 - some checks know the stack: class names used in code must exist in the
   component's stylesheet.
 
+**Best fit: a new project.** In an empty folder the whole stack comes out of
+the box: the packages, their configs, the check chain, git and the commit
+gate are installed and set up by seating, with no versions to choose and no
+settings to write. A project with existing code is seated too, but keeps its
+own choices, and the harness adapts to them.
+
 **Verified versions.** Seating is tested on a concrete set of versions,
-declared in the seed config:
+declared in the seed config. A new project gets exactly this set - you do
+not pick versions yourself:
 
 | Area | Packages |
 | --- | --- |
