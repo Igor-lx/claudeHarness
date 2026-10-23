@@ -480,8 +480,8 @@ it, each with its own question:
 
 ## Status
 
-**v0.3.0: ready for work.** Everything described here is in place, and this
-release closes a plan that checked it on real runs rather than by
+**v0.3.1: ready for work.** Everything described here is in place. v0.3.0
+closed a plan that checked it on real runs rather than by
 description: the full self-test suite passes on Linux and on Windows; every
 check that has its subject on the test stand catches its planted breakage;
 seating works in one command in an empty folder and by the instruction in a project like a fresh `create vite`
@@ -492,7 +492,19 @@ defects, all fixed. The architecture and the concept are settled. Next comes
 writing real projects on it; details of the rules, the checks and the tool's
 output may still change between versions.
 
-What changed since v0.2.1:
+What changed since v0.3.0:
+
+- **renames and moves are probed too**: the bar probe plants a defect in a
+  file that the edit renames or moves - in place, within a layer and between
+  layers - and the bar pass catches it at the new path;
+- **a rule hidden in a hook is asked about**: a shared hook that computes a
+  domain rule in place, instead of calling a plain function, now gets a
+  machine question on keeping domain logic out of the framework.
+
+What changed between v0.2.1 and v0.3.0:
+
+- **a clean machine is enough**: seating installs the verified Node.js and
+  npm, and git if it is missing, before its first change;
 
 - **seating an empty folder in one command**, with every link of the check
   chain tried on a planted breakage and the baseline written in numbers;
