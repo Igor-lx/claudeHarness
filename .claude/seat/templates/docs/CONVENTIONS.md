@@ -22,9 +22,13 @@ the code with nothing to catch it.
 
 ## Comments
 
-A comment states the reason, not the action. `// increment counter` above `i++`
-repeats the code and ages with it; `// the counter is read by the retry loop,
-so it must survive the early return` states what the reader cannot see.
+A comment is written only when four answers are yes: the code does not show
+it, it is not common knowledge, no document says it, and not knowing it breaks
+working code. The rule, its word limits and the checks that hold them are in
+`.claude/rules/code.md`, the section on comments.
+`// increment counter` above `i++` repeats the code and ages with it; `// the
+counter is read by the retry loop, so it must survive the early return` passes
+all four.
 
 Anchors from code to a document are written as a path: `// See docs/x.md`. A
 bare file name is prose, not a link, and nothing checks it.

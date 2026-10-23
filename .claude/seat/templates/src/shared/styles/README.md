@@ -33,5 +33,5 @@ load-bearing, not decoration: drop it and the promise of restyling quietly
 turns back into a race it may lose.
 
 The full scheme — what a component imports, what it declares, and what is
-created when the first styled component is written — is in the rules for
-working with code, in the section on how a component talks to its styles.
+created when the first styled component is written — is in the styles rules,
+`.claude/rules/styles.md`.
