@@ -1219,16 +1219,26 @@ describe("страницы чтения в своде по планке", () => 
         "src/shared/zzText/zzText.ts",
         'export const zzPad = (s: string) => " " + s;\nexport const zzOther = "other";\n\n\nexport const zzTrim = (s: string) => s.trim();\n',
       );
+      // Сосед длиннее среза: строки 1–88 и 94–95 предмета не касаются.
       put(
         "src/app/zzPage.ts",
-        'const zzHead = "head";\nconst zzFill = "fill";\n\nimport { ZzNote } from "../components/ZzNote/ZzNote";\n\nconst zzGap = "gap";\nexport const zzPage = () => zzHead + ZzNote({ text: zzFill }) + zzGap;\n',
+        [
+          ...Array.from({ length: 88 }, (_, k) => "const zzFill" + k + ' = "fill";'),
+          "",
+          'import { ZzNote } from "../components/ZzNote/ZzNote";',
+          "",
+          "export const zzPage = () => ZzNote({ text: zzFill0 });",
+          "",
+          'export const zzTail = "tail";',
+          'export const zzGap = "gap";',
+        ].join("\n") + "\n",
       );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar", "components/ZzNote");
       const text = fs.readFileSync(protoAt, "utf8");
       const rows = [...text.matchAll(/^\| (\d+) \| ([^|]+) \|  \|$/gm)].map((m) => [m[1], m[2].trim()]);
-      // Тела критериев, весь предмет, срез соседа: строки, где он берёт
-      // предмет, с соседними.
+      // Тела критериев, весь предмет, соседи: короткий целиком, длинный —
+      // строками, где он берёт предмет, с соседними.
       // Тела только тех критериев, на которые отвечает сессия: лозунг (A8) и
       // замеренная беспредметность (A5-бис — парных копий нет) разрывают
       // диапазон, и страница их тел не печатает.
@@ -1241,12 +1251,19 @@ describe("страницы чтения в своде по планке", () => 
       const code = rows.find(([, spec]) => spec.startsWith("код "));
       expect(code[1]).toBe("код `components/ZzNote/ZzNote.tsx`, строки 1–4");
       const near = rows.filter(([, spec]) => spec.startsWith("сосед ")).map(([, spec]) => spec);
-      // Строки 4 и 7 берут предмет; с соседними — с третьей по седьмую. У
-      // соседа, у которого предмет берёт, — объявление взятого с соседней.
+      // Строки 90 и 92 длинного соседа берут предмет; с соседними — с 89-й
+      // по 93-ю. Короткий сосед умещается в срез и идёт целиком: область
+      // читают целиком, а страница не длиннее среза.
       expect(near).toEqual([
-        "сосед `app/zzPage.ts`, строки 3–7",
-        "сосед `shared/zzText/zzText.ts`, строки 4–5",
+        "сосед `app/zzPage.ts`, строки 89–93",
+        "сосед `shared/zzText/zzText.ts`, строки 1–5",
       ]);
+      // Конец страницы длинного соседа называет строки за срезом.
+      const pageOf = (spec) => tool("bar-read", rows.find(([, s]) => s === spec)[0], "--print");
+      expect(pageOf(near[0])).toContain(
+        "за срезом — строки 1–88, 94–95 из 95: область читают целиком, их открывают файлом",
+      );
+      expect(pageOf(near[1])).not.toContain("за срезом");
       expect(tool("bar-read", "1", "--print")).toContain(
         "**A1. Узел отвечает на один вопрос.** (узел)",
       );

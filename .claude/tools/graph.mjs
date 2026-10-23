@@ -11447,8 +11447,9 @@ const BAR_READ_HEAD = "| страница | что | слово |";
 /** Сколько строк на странице. Страница — то, что читают за раз; длиннее —
  * её пролистывают, короче — слов становится больше, чем страниц смысла. */
 const PAGE_LINES = 150;
-/** Срез соседа — строки, где он берёт предмет либо даёт ему своё, с
- * соседними: соседа читают ради предмета, а не целиком. */
+/** Предел страницы соседа. Сосед не длиннее идёт целиком: область читают
+ * целиком. Длиннее — срезом: строки, где он берёт предмет либо даёт ему
+ * своё, с соседними, а конец страницы называет строки за срезом. */
 const PAGE_SLICE_LINES = 80;
 /** Слово страницы — два слова из списка: опечатку в нём видно глазом. */
 const PAGE_WORDS = (
@@ -11710,9 +11711,35 @@ const pageTextOf = (spec) => {
     }
     return policyPageOf(out);
   }
-  const code = /^(?:код|сосед) `([^`]+)`, строки (.+)$/.exec(spec);
-  if (code !== null) return numberedLines(absOfRel(code[1]), rangesOf(code[2]));
-  return "страницы такой нет";
+  const code = /^(код|сосед) `([^`]+)`, строки (.+)$/.exec(spec);
+  if (code === null) return "страницы такой нет";
+  const abs = absOfRel(code[2]);
+  const ranges = rangesOf(code[3]);
+  const text = numberedLines(abs, ranges);
+  const beyond = code[1] === "сосед" ? beyondSliceOf(abs, ranges) : "";
+  return beyond === "" ? text : text + LF + beyond;
+};
+
+/** Строки соседа за срезом страницы — строкой для её конца; срез покрыл
+ * весь файл — пусто. Без неё за срезом читали бы одним вниманием: проба
+ * `2026-10-21` — нарушение в конце соседа свод не увидел. */
+const beyondSliceOf = (abs, ranges) => {
+  if (!existsSync(abs)) return "";
+  const count = readFileSync(abs, "utf8").replace(/\r?\n$/, "").split(/\r?\n/).length;
+  const rest = [];
+  let next = 1;
+  for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
+    if (a > next) rest.push([next, a - 1]);
+    next = Math.max(next, b + 1);
+  }
+  if (next <= count) rest.push([next, count]);
+  return rest.length === 0
+    ? ""
+    : "за срезом — строки " +
+        rangesText(rest) +
+        " из " +
+        count +
+        ": область читают целиком, их открывают файлом";
 };
 
 /** Что правлено работой на странице кода — строками над её текстом, против
@@ -11805,6 +11832,10 @@ const barReadPagesOf = ({ ids, subject = [], neighbours = [] }) => {
   for (const n of [...neighbours].sort(barByRel)) {
     if (!existsSync(n)) continue;
     const lines = readFileSync(n, "utf8").replace(/\r?\n$/, "").split(/\r?\n/);
+    if (lines.length <= PAGE_SLICE_LINES) {
+      pages.push("сосед " + barQuoted(rel(n)) + ", строки " + rangesText([[1, lines.length]]));
+      continue;
+    }
     // Имена между соседом и предметом — в обе стороны: что сосед берёт у
     // предмета и что предмет берёт у соседа.
     const names = new Set();
@@ -11878,7 +11909,8 @@ const barReadSection = (pages, carried, prose = (lines) => lines) =>
             barQuoted("graph.mjs bar-read N") +
             " — либо все разом, без номера; в конце",
           "каждой — слово страницы, и его вписывают в графу «слово». Политику",
-          "читают телом каждого критерия, код — каждой строкой, соседа — его срезом.",
+          "читают телом каждого критерия, код — каждой строкой, соседа — целиком, а",
+          "длинного — срезом и файлом за ним: строки за срезом страница называет.",
           "Слово снимают, прочитав страницу: вынутое программой — поиском по",
           "выводу, расчётом по исходнику — подлог проверки, а не ответ. Правка",
           "файла меняет слова его страниц: изменившееся читают заново.",
