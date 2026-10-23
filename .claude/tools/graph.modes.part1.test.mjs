@@ -1647,6 +1647,18 @@ describe("конфиг в корне — под границей языка", ()
       expect(printed).toContain(
         "легли семенем, а полка несёт другую их редакцию: .gitignore ← seat/templates/.gitignore",
       );
+      // То же у семени базы: адрес её находок отсчитан от папки базы.
+      const flows = path.join(box, ".context", "05-flows.md");
+      fs.writeFileSync(flows, fs.readFileSync(flows, "utf8") + "\nСценарий проходит семь узлов.\n");
+      const base = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+        { cwd: box, encoding: "utf8" },
+      ).stdout;
+      expect(base).toContain("05-flows.md:");
+      expect(base).toContain(
+        "легли семенем, а полка несёт другую их редакцию: .context/05-flows.md ← seat/templates/05-flows.md",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

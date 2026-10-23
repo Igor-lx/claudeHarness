@@ -2759,8 +2759,12 @@ const seedDriftNote = (findings) => {
   const seeds = seedOfPath();
   const repoRoot = path.join(BASE, "..");
   const hit = new Set();
+  const baseDir = norm(path.relative(repoRoot, BASE));
   for (const one of findings) {
-    const file = one.split(":")[0];
+    // Адрес находки — от корня репозитория либо, у сверок прозы базы, от её
+    // папки: семя ищут под обоими.
+    const named = one.split(":")[0];
+    const file = seeds.has(named) ? named : baseDir + "/" + named;
     const from = seeds.get(file);
     const at = from === undefined ? null : shelfAt(from);
     const own = path.join(repoRoot, file);
@@ -22958,6 +22962,7 @@ if (mode === "verify") {
         : `  ведут в никуда: ${danglingRefs.length}`,
     );
     for (const d of danglingRefs) console.log("    " + d);
+    if (seedDriftNote(danglingRefs) !== "") console.log(seedDriftNote(danglingRefs));
   });
   // 13c. Скиллы проекта: объявлены, лежат на месте, совпадают с полкой.
   const skillDrift = [];
@@ -26122,6 +26127,7 @@ if (mode === "verify") {
       console.log("  синонимов в корпусе: " + bannedWords.length);
     for (const one of bannedWords)
       console.log("    " + one + ". Один термин — одна концепция");
+    if (seedDriftNote(bannedWords) !== "") console.log(seedDriftNote(bannedWords));
   });
 
   // Проза полки названа.
@@ -26908,6 +26914,7 @@ if (mode === "verify") {
     }));
     console.log(`  ведут в никуда: ${danglingPaths.length}`);
     for (const d of danglingPaths) console.log("    " + d);
+    if (seedDriftNote(danglingPaths) !== "") console.log(seedDriftNote(danglingPaths));
     if (plannedPaths.length)
       console.log(
         "  адресов будущих файлов в планах перехода и приведения: " +
@@ -27808,6 +27815,7 @@ if (mode === "verify") {
     }));
     console.log(`  нет в исходниках: ${goneCamel.length}`);
     for (const g of goneCamel) console.log("    " + g);
+    if (seedDriftNote(goneCamel) !== "") console.log(seedDriftNote(goneCamel));
   });
   const goneNames = [];
   let capsTokens = 0;
@@ -28047,6 +28055,7 @@ if (mode === "verify") {
     }));
     console.log(`  счётов вне формы: ${frozenNumbers.length}`);
     for (const f of frozenNumbers) console.log("    " + f);
+    if (seedDriftNote(frozenNumbers) !== "") console.log(seedDriftNote(frozenNumbers));
   });
   checkStep(() => {
     checkHead("Имена констант в тексте", () => ({
