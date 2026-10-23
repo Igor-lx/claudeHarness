@@ -440,3 +440,40 @@ describe("семя разрешений держит то, что доктрин
       expect(allow, command).toContain("Bash(" + command + " *)");
   });
 });
+
+describe("ссылка на раздел доктрины в тексте инструмента ведёт в существующий заголовок", () => {
+  // Сверка «Ссылки на разделы» читает прозу, а не строки инструмента:
+  // перенос таблицы файлов базы в `base-format.md` оставил вывод `tested`
+  // посылать в `base.md`, и ничто этого не назвало.
+  it("каждая ссылка вида «файл, раздел «…»» находит свой заголовок", () => {
+    const docs = new Map();
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const at = path.join(dir, e.name);
+        if (e.isDirectory() && e.name !== "node_modules") walk(at);
+        else if (e.name.endsWith(".md"))
+          docs.set(at, [...fs.readFileSync(at, "utf8").matchAll(/^#{1,6} (.+)$/gm)].map((m) => m[1].trim()));
+      }
+    };
+    walk(SHELF);
+    const tools = path.join(SHELF, "tools");
+    const refs = [];
+    for (const f of fs.readdirSync(tools).filter((f) => /^graph[\w.]*\.mjs$/.test(f) && !f.endsWith(".test.mjs")))
+      fs.readFileSync(path.join(tools, f), "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          // Комментарий описывает форму ссылки, а не ссылается.
+          if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) return;
+          for (const m of line.matchAll(/`([\w./-]+\.md)`, раздел[ае]? «([^»]+)»/g))
+            refs.push({ where: f + ":" + (i + 1), file: path.basename(m[1]), head: m[2] });
+        });
+    expect(refs.length).toBeGreaterThan(0);
+    const missing = refs.filter(
+      (r) =>
+        ![...docs]
+          .filter(([at]) => path.basename(at) === r.file)
+          .some(([, heads]) => heads.some((h) => h.startsWith(r.head))),
+    );
+    expect(missing).toEqual([]);
+  });
+});

@@ -4400,3 +4400,64 @@ describe("якорь из кода ведёт и в запись базы", () =
     }
   }, 180000);
 });
+
+describe("правка против её тестов называет записи базы, документацию и удалённое", () => {
+  // На эти секции `tested` опираются правила: записи соседей (`code.md`,
+  // «Как заводится новый узел», пункт 5), документация тронутого файла
+  // (`loop.md`, «Петля», шаг 6), записи об удалённом (`code.md`, «Как
+  // убирается узел»). Секцию документации, вырезанную целиком, прежде не
+  // заметил ни один тест режима.
+  it("каждая секция называет адрес своей записи", () => {
+    const box = seatEmpty("testedsec-");
+    try {
+      const put = (rel, text) => {
+        const at = path.join(box, ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      put("src/components/ZzCard/ZzCard.tsx", "export function ZzCard() {\n  return null;\n}\n");
+      put("src/components/ZzCard/docs/README.md", "# ZzCard\n\nThe card lives in `ZzCard.tsx`.\n");
+      put("src/shared/zzGone/zzGone.ts", "export const zzGone = 1;\n");
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const setupRow = "| `src/tests/setup.ts` |";
+      const map = fs.readFileSync(mapAt, "utf8");
+      const at = map.indexOf(setupRow);
+      const end = map.indexOf("\n", at);
+      fs.writeFileSync(
+        mapAt,
+        map.slice(0, end + 1) +
+          "| `src/components/ZzCard/ZzCard.tsx` | карточка | нет | нет |\n" +
+          "| `src/shared/zzGone/zzGone.ts` | уходящий узел | нет | нет |\n" +
+          map.slice(end + 1),
+      );
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=t", "-c", "user.email=t@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      put("src/components/ZzCard/ZzCard.tsx", "export function ZzCard() {\n  return undefined;\n}\n");
+      fs.rmSync(path.join(box, "src", "shared", "zzGone"), { recursive: true });
+      let out;
+      try {
+        out = execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "tested"], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (e) {
+        out = String(e.stdout ?? "");
+      }
+      const part = (head) => out.split("=== " + head + " ===")[1]?.split("\n=== ")[0] ?? "";
+      expect(part("Записи базы про тронутые файлы")).toMatch(/components\/ZzCard\/ZzCard\.tsx\n\s+00-map\.md:\d+/);
+      expect(part("Записи базы про тронутые файлы")).toContain("таблица в `base-format.md`, раздел «Файлы»");
+      expect(part("Документация тронутых файлов")).toContain("components/ZzCard/docs/README.md");
+      expect(part("Удалённые файлы: что о них осталось в базе")).toMatch(/shared\/zzGone\/zzGone\.ts\n\s+00-map\.md:\d+/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
