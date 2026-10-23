@@ -8951,8 +8951,8 @@ if (mode === "bar-probe") {
     console.log("  Ожидался файл: " + norm(at));
     process.exit(1);
   }
-  // Четыре рода посадки: новым файлом; в существующий код — правкой его
-  // (`into`, `patch`); удалением и в соседе — поле `change`. Флаг сужает
+  // Пять родов посадки: новым файлом; в существующий код — правкой его
+  // (`into`, `patch`); удалением, в соседе и переносом — поле `change`. Флаг сужает
   // выбор до одного рода — серия замеров одного рода иначе зависела бы от
   // того, что выпало.
   const createsOf = (p) => (p.create === undefined ? [] : [p.create].flat());
@@ -8972,6 +8972,7 @@ if (mode === "bar-probe") {
       ["--new", "новым файлом"],
       ["--removal", "удалением"],
       ["--neighbour", "в соседе"],
+      ["--move", "переносом"],
     ].find(([flag]) => process.argv.includes(flag))?.[1] ?? null;
   const probeBook = JSON.parse(readFileSync(at, "utf8"));
   // Книга проверяется до выбора: неверная посадка выпала бы случайно, и
@@ -8982,7 +8983,7 @@ if (mode === "bar-probe") {
       return (
         "поле `change` «" +
         p.change +
-        "» — «удаление» требует `create`, «сосед» — `into` без `create`"
+        "» — «удаление» требует `create`, «сосед» — `into` без `create`, «перенос» — `create` без `into`"
       );
     if (p.held !== undefined && plantGripOf(p.criterion + "|" + p.held) === "")
       return (
@@ -8990,8 +8991,17 @@ if (mode === "bar-probe") {
         p.held +
         "» — не опора этого критерия либо опора машины, а `held` называет опору слабее"
       );
-    if (p.change !== "удаление") return "";
     const made = createsOf(p).map((one) => one.path);
+    if (p.change === "перенос") {
+      const moves = p.move ?? [];
+      if (moves.length === 0) return "перенос без поля `move` — переносить нечего";
+      return moves.every(
+        (m) => made.includes(m.from) && m.to !== m.from && !made.includes(m.to),
+      )
+        ? ""
+        : "`move` переносит не созданный посадкой файл либо на место созданного";
+    }
+    if (p.change !== "удаление") return "";
     const blamed = p.culprits ?? (p.into === undefined ? made.slice(0, 1) : []);
     return blamed.some((c) => made.includes(c))
       ? "виновник удаления среди снятого — судить было бы не о чем"
@@ -9098,6 +9108,7 @@ if (mode === "bar-probe") {
         const paths = [
           ...(one.plant.patch ?? []).map((x) => x.path),
           ...createdBy(one.plant).map((x) => "src:" + x),
+          ...(one.plant.move ?? []).map((m) => "src:" + m.to),
         ];
         if (paths.some((x) => used.has(x))) continue;
         for (const x of paths) used.add(x);
@@ -9455,6 +9466,13 @@ if (mode === "bar-probe") {
       if (createsOf(p).some((one) => made.has(one.path))) return null;
       if (createsOf(p).some((one) => existsSync(path.join(ROOT, one.path))))
         return null;
+      // Перенос не ложится на файл проекта и на созданное другой посадкой.
+      if (
+        (p.move ?? []).some(
+          (m) => made.has(m.to) || existsSync(path.join(ROOT, m.to)),
+        )
+      )
+        return null;
       if (p.into === undefined) return { taken: new Set(busy), roleFile: new Map() };
       const roles = rolesOf(p, busy);
       if (roles === null) return null;
@@ -9527,6 +9545,7 @@ if (mode === "bar-probe") {
         const roles = fits(plant, busy, made);
         busy = roles.taken;
         for (const one of createsOf(plant)) made.add(one.path);
+        for (const m of plant.move ?? []) made.add(m.to);
         chosen.push({ plant, roleFile: roles.roleFile, near: roles.near });
       }
       if (chosen.length === 0)
@@ -9659,13 +9678,16 @@ if (mode === "bar-probe") {
           : roleFile.has(c)
             ? inBox(roleFile.get(c))
             : at(c);
-      const named =
+      // Перенесённый виновник судится на новом месте: там его видит свод.
+      const movedTo = new Map((plant.move ?? []).map((m) => [m.from, m.to]));
+      const named = (
         plant.culprits ??
         (plant.into !== undefined
           ? plant.into.map((one) => one.role ?? "виновник")
           : creates.length > 0
             ? [creates[0].path]
-            : [plant.patch[0].path]);
+            : [plant.patch[0].path])
+      ).map((c) => movedTo.get(c) ?? c);
       const culprits = named.map((c) => norm(own(c)));
       return {
         criterion: plant.criterion,
@@ -9774,6 +9796,43 @@ if (mode === "bar-probe") {
       }
     for (const { near } of changing("сосед"))
       place(near[1], bodyFor(near[0], near[1]));
+    // Перенос: файл уезжает на новое место, его относительные импорты и
+    // импорты его потребителей среди созданного посадкой правятся под новый
+    // адрес — так выглядит настоящее переименование. Опустевшая папка
+    // снимается: она выдавала бы, где файл лежал.
+    for (const { plant } of changing("перенос")) {
+      const finalOf = new Map(
+        createsOf(plant).map((one) => [one.path, one.path]),
+      );
+      for (const m of plant.move) finalOf.set(m.from, m.to);
+      const reroute = (text, wasAt, nowAt) =>
+        text.replace(
+          /(\bfrom\s*|\bimport\s*\(\s*)(["'])(\.{1,2}\/[^"']*)\2/g,
+          (whole, lead, quote, spec) => {
+            const target = path.resolve(path.dirname(wasAt), spec);
+            const moved = plant.move.find(
+              (m) => at(m.from).replace(CODE_FILE, "") === target,
+            );
+            const goal = moved === undefined ? target + ".ts" : at(moved.to);
+            if (moved === undefined && wasAt === nowAt) return whole;
+            return lead + quote + specFrom(nowAt, goal) + quote;
+          },
+        );
+      for (const m of plant.move) {
+        mkdirSync(path.dirname(at(m.to)), { recursive: true });
+        renameSync(at(m.from), at(m.to));
+        for (
+          let dir = path.dirname(at(m.from));
+          dir.startsWith(sourceAt + path.sep) && readdirSync(dir).length === 0;
+          dir = path.dirname(dir)
+        )
+          rmSync(dir, { recursive: true, force: true });
+      }
+      for (const [was, now] of finalOf) {
+        const f = at(now);
+        writeFileSync(f, reroute(readFileSync(f, "utf8"), at(was), f));
+      }
+    }
     for (const one of loose) placedOf.set(one, plantOne(one));
     const placed = chosen.map((one) => placedOf.get(one));
     // Прикрытия — раз на песочницу, когда посажено в существующий код.

@@ -2664,7 +2664,9 @@ export const barWitnessVerdict = (row) => {
  * `235` правкой формы считалась верхней границей доли. Удалением — посадка
  * вписана в последний коммит, а правка — удаление созданного ею потребителя;
  * в соседе — посадка вписана в последний коммит, а правка ложится в соседа
- * по графу. Неизвестное `change` — пустая строка: книга с ним неверна. */
+ * по графу; переносом — посадка вписана в последний коммит, а правка
+ * переносит либо переименовывает созданный ею файл. Неизвестное `change` —
+ * пустая строка: книга с ним неверна. */
 export const plantKind = (shape) => {
   const [parts, change = ""] = (shape ?? "").split("|");
   const has = new Set(parts.split("+").filter(Boolean));
@@ -2672,6 +2674,8 @@ export const plantKind = (shape) => {
     return has.has("create") ? "удалением" : "";
   if (change === "сосед")
     return has.has("into") && !has.has("create") ? "в соседе" : "";
+  if (change === "перенос")
+    return has.has("create") && !has.has("into") ? "переносом" : "";
   if (change !== "") return "";
   return has.has("into") || (has.has("patch") && !has.has("create"))
     ? "в существующем коде"
@@ -5152,6 +5156,10 @@ export const PREDICATE_CASES = [
   ["plantKind", "into+create|сосед", ""],
   ["plantKind", "create|сосед", ""],
   ["plantKind", "into|соседи", ""],
+  ["plantKind", "create|перенос", "переносом"],
+  ["plantKind", "create+patch|перенос", "переносом"],
+  ["plantKind", "into+create|перенос", ""],
+  ["plantKind", "into|перенос", ""],
   ["barMorePlacesOf", "x; ещё мест: `a.ts:2` — тоже", "a.ts:2` — тоже"],
   // --- barRowFault: строка протокола свода по планке ---
   ["barRowFault", "на изменение|чисто|||", ""],

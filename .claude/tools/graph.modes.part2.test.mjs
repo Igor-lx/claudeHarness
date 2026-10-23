@@ -2033,6 +2033,71 @@ describe("проба планки удалением и в соседе", () => 
     }
   }, 240000);
 
+  // Перенос: файл с нарушением вписан в коммит, правка переносит его в
+  // другую папку под другим именем и правит импорт потребителя.
+  const moving = {
+    criterion: "H7",
+    why: "число без имени в перенесённом файле",
+    change: "перенос",
+    create: [
+      {
+        path: "shared/zzDates/zzStamp.ts",
+        text: 'import { zzA } from "../zzA/zzA";\n\nexport const zzStamp = (ms: number): number => zzA(Math.round(ms / 86400000));\n',
+      },
+      {
+        path: "app/zzUse.ts",
+        text: 'import { zzStamp } from "../shared/zzDates/zzStamp";\n\nexport const zzUse = (ms: number): number => zzStamp(ms);\n',
+      },
+    ],
+    move: [{ from: "shared/zzDates/zzStamp.ts", to: "shared/zzTime/zzDays.ts" }],
+  };
+
+  it("перенос: файл уехал с правкой импортов, виновник — на новом месте, книга без move неверна", () => {
+    const box = project("probaperenos-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      const probes = path.join(box, ".claude", "tools", "bar-probes.json");
+      fs.writeFileSync(probes, JSON.stringify({ plants: [{ ...moving, move: undefined }], covers: [cover] }));
+      expect(run(box, "bar-probe")).toContain("#1 H7: перенос без поля `move`");
+      fs.writeFileSync(
+        probes,
+        JSON.stringify({ plants: [{ ...moving, move: [{ from: "app/zzOther.ts", to: "app/zzElse.ts" }] }], covers: [cover] }),
+      );
+      expect(run(box, "bar-probe")).toContain("#1 H7: `move` переносит не созданный посадкой файл");
+      fs.writeFileSync(probes, JSON.stringify({ plants: [removal, neighbour, moving], covers: [cover] }));
+      const one = planted(box, "--move", "--seed=2");
+      ({ sandbox, markAt } = one);
+      expect(one.mark.kind).toBe("переносом");
+      expect(relOf(sandbox, one.mark.files[0])).toBe("shared/zzTime/zzDays.ts");
+      expect(statusOf(sandbox).sort()).toEqual([
+        " D src/shared/zzDates/zzStamp.ts",
+        " M src/app/zzUse.ts",
+        "?? src/shared/zzTime/",
+      ]);
+      expect(fs.readFileSync(path.join(sandbox, "src", "app", "zzUse.ts"), "utf8")).toContain(
+        'import { zzStamp } from "../shared/zzTime/zzDays";',
+      );
+      expect(fs.readFileSync(path.join(sandbox, "src", "shared", "zzTime", "zzDays.ts"), "utf8")).toContain(
+        'import { zzA } from "../zzA/zzA";',
+      );
+      expect(fs.existsSync(path.join(sandbox, "src", "shared", "zzDates"))).toBe(false);
+      run(sandbox, "bar");
+      const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
+      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/shared/zzTime/zzDays.ts`.\n");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { H7: "нашлось | src/shared/zzTime/zzDays.ts:3 | 86400000 без имени | вопрос" },
+      });
+      expect(run(sandbox, "bar")).toContain("печать поставлена");
+      expect(run(box, "bar-probe", one.id)).toContain("исход: поймано");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
+
   it("в соседе: нарушение вписано в коммит, правка легла в соседа по графу, суд требует адрес соседа", () => {
     const box = project("probasosed-");
     let sandbox = null;
