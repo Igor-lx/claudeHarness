@@ -181,9 +181,7 @@ describe("проверенная связка в README названа теми 
     }
     const own = fs.readFileSync(path.join(TOOL_DIR, "..", "README.md"), "utf8");
     expect(own).toContain("`" + CONFIG.verifiedVersions.node + "`");
-    expect(own).toContain(
-      "npm `" + CONFIG.verifiedVersions.npm.split(".")[0] + "`",
-    );
+    expect(own).toContain("npm `" + CONFIG.verifiedVersions.npm + "`");
   });
 });
 

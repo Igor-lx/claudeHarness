@@ -341,11 +341,11 @@ declared in the seed config:
 
 | Area | Packages |
 | --- | --- |
-| runtime | Node.js 22.23.2, npm 11.0.0 |
-| language and build | TypeScript 6.0.3, Vite 8.3.0 |
-| UI | React 19.3.0, React DOM 19.3.0, Sass (sass-embedded) 1.89.2 |
-| tests | Vitest 4.1.11, jsdom 30.0.1, Testing Library React 16.3.3, Stryker 10.0.0 |
-| lint and format | ESLint 10.10.0, @eslint-react 5.24.2, jsx-a11y-x 0.2.0, SonarJS 4.2.2, Prettier 3.9.6 |
+| runtime | Node.js 22.23.2, npm 11.21.1 |
+| language and build | TypeScript 6.0.3, Vite 8.3.5 |
+| UI | React 19.3.1, React DOM 19.3.1, Sass (sass-embedded) 1.106.1 |
+| tests | Vitest 4.1.11, jsdom 30.1.3, Testing Library React 16.3.3, Stryker 10.0.0 |
+| lint and format | ESLint 10.13.0, @eslint-react 5.28.7, jsx-a11y-x 0.2.0, SonarJS 4.2.2, Prettier 3.9.10 |
 
 On a machine with Node.js or npm below the set, seating stops before its
 first change. In a live project nothing is upgraded: seating adds only what is
@@ -361,7 +361,7 @@ the rest, seat it and finish it.
 
 ## Installation and setup
 
-**Needs:** Node.js 22.23.2 or newer, npm 11 or newer, git and Claude Code.
+**Needs:** Node.js 22.23.2 or newer, npm 11.21.1 or newer, git and Claude Code.
 
 **1. Copy the harness** into the root of the project:
 
@@ -477,6 +477,8 @@ What changed since v0.2.1:
 - **seating an empty folder in one command**, with every link of the check
   chain tried on a planted breakage and the baseline written in numbers;
 - **Windows** is verified: the self-test suite runs there in CI;
+- **the seed pins exact versions**: a new project gets exactly the set the
+  self-tests ran on, and the verified set is raised to it;
 - **the bar pass reads more and decides less by itself**: a short neighbour
   is read whole, a "clean" on mutation coverage needs a fresh measurement,
   removal of a node names exports left without a consumer, a commit of a
