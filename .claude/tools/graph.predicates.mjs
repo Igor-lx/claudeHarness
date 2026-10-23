@@ -1022,6 +1022,7 @@ export const BAR_SIGNALS = [
   { ids: ["H6-тер"], sort: "имя", mark: "сокращение", words: "в предмете сокращённые имена, и в основании не сказано, термины ли это предметной области" },
   { ids: ["H7-бис"], sort: "величина", words: "у величины нет единицы в имени, и в основании не сказано, где её единица" },
   { ids: ["C15", "M6", "G8"], sort: "мемо", words: "в предмете есть запомненное, и в основании не сказано, всем ли оно ключуется и замерена ли нужда" },
+  { ids: ["A7"], sort: "мемо", mark: "правило", words: "хук, отданный наружу, запоминает вычисление, записанное на месте, и в основании не сказано, живёт ли это правило вне фреймворка" },
   { ids: ["M1", "M2"], sort: "однократно", words: "эффект рассчитан на один запуск, и в основании не сказано, что при повторном монтаже" },
   { ids: ["M5"], sort: "однократно", mark: "захват", words: "однократный эффект читает состояние, и в основании не сказано, почему значение не устареет" },
   { ids: ["C12", "C7", "G1"], sort: "эффект", words: "эффект только записывает выведенное, и в основании не сказано, почему это не вычисление" },
@@ -1329,7 +1330,6 @@ export const LINT_EXEMPT_FORM =
  * обвязки, и новый критерий в планку без этого решения не входит. Найден
  * признак — запись уходит, а критерий получает вопрос модели. */
 export const BAR_ATTENTION = {
-  A7: "где кончается предметная логика и начинается фреймворк — суждение: хук с правилом и хук-обёртка пишутся одинаково",
   "A8-бис": "граница области названа словами в базе и документации, а не в коде",
   "B2-бис": "единообразие — свойство всех узлов разом: одно по смыслу под разными именами текстом не опознать",
   B6: "безопасная сторона умолчания зависит от смысла входа; булево умолчание спрашивает `B1`",
@@ -1865,6 +1865,11 @@ export const BAR_FORMS = {
     "устаревший захват в обработчике либо колбэке вне хука — правило линта судит списки зависимостей хуков, а пометку «захват» признак ставит эффекту с пустыми зависимостями, который читает состояние и заводит таймер, слушатель либо подписку",
   ],
   M6: ["механическое запоминание через свою обёртку — признак видит вызовы `useMemo`, `useCallback`, `memo`, `computed` и `memoize`"],
+  A7: [
+    "предметное правило в теле компонента, в обработчике события либо в эффекте, без хука запоминания — пометку «правило» признак ставит вычислению на месте внутри `useMemo` либо `computed` хука, отданного наружу",
+    "правило в хуке, который не отдан наружу, либо в файле, где хук отдан под именем не с `use`, — признак смотрит хуки, отданные с этим именем",
+    "правило, которое хук-обёртка зовёт одним вызовом функции, сама написанная на фреймворке, — один вызов признак считает обёрткой",
+  ],
   N1: [UNSEEN.motion],
   N2: [UNSEEN.motion],
   N3: ["кадровый цикл не на `requestAnimationFrame`: `setInterval`, таймер, библиотека — признак видит `requestAnimationFrame`"],
@@ -3725,10 +3730,26 @@ const codeSignalsOf = (file, text, own) => {
     });
 
   // --- модель рендера: запомненное, эффекты, переходы, проброс --------------
+  // Вычисление, записанное на месте внутри хука, которым файл отдаёт
+  // наружу, — правило, живущее только во фреймворке (`A7`). Хук-обёртка
+  // зовёт готовую чистую функцию одним вызовом и пометки не получает.
+  const exportsHook = /\bexport\s+(?:const|function)\s+use[A-Z]/.test(bare);
   each(
     /\b(?:React\s*\.\s*)?(?:useMemo|useCallback|memo)\s*\(|\bcomputed\s*\(|\bmemoize\w*\s*\(/g,
     bare,
-    (m) => at("мемо", m.index, m[0]),
+    (m) => {
+      let mark = "";
+      if (exportsHook && /(?:useMemo|computed)\s*\($/.test(m[0])) {
+        const p = m.index + m[0].length - 1;
+        const q = closeOf(bare, p);
+        const first = q < 0 ? "" : (topLevelParts(bare.slice(p + 1, q), p + 1)[0]?.text ?? "").trim();
+        const arrow = /^\(\s*\)\s*=>\s*([\s\S]+)$/.exec(first);
+        const inner = arrow === null ? "" : arrow[1].trim();
+        const oneCall = /^[\w$.]+\s*\((?:[^()]|\([^()]*\))*\)$/.test(inner);
+        if (inner !== "" && !oneCall) mark = "правило";
+      }
+      at("мемо", m.index, m[0], mark);
+    },
   );
   each(DOCUMENT_QUERY, bare, (m) =>
     at("документ", m.index, m[0].replace(/\s*(?:<[^<>()]*>)?\s*\($/, "")),
@@ -5693,6 +5714,13 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const delay = 300;", "1:величина"],
   ["signalsSummary", "src/a.ts\nexport const delayMs = 300;", ""],
   ["signalsSummary", "src/a.ts\nexport const v = useMemo(() => calc(a), [a]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) =>\n  useMemo(() => t.trim().toUpperCase(), [t]);", "2:мемо/правило"],
+  ["signalsSummary", "src/a.ts\nexport function useTotal(xs) {\n  return useMemo(() => {\n    return xs.reduce((s, x) => s + x, 0);\n  }, [xs]);\n}", "2:мемо/правило"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(() => titleCase(t), [t]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(() => fmt.title(t, opts(t)), [t]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nconst useTitle = (t) => useMemo(() => t.trim().toUpperCase(), [t]);", "1:мемо;1:мёртвое"],
+  ["signalsSummary", "src/a.ts\nexport const useTotal = (xs) => computed(() => xs.a + xs.b);", "1:мемо/правило"],
+  ["signalsSummary", "src/a.ts\nexport const useOnSave = (t) => useCallback(() => t.trim().toUpperCase(), [t]);", "1:мемо"],
   ["signalsSummary", "src/a.ts\nuseEffect(() => {\n  start();\n}, []);", "1:однократно"],
   ["signalsSummary", "src/a.ts\nconst [count, setCount] = useState(0);\nuseEffect(() => {\n  const id = setInterval(() => log(count), 1);\n  return () => clearInterval(id);\n}, []);", "2:однократно/захват"],
   ["signalsSummary", "src/a.ts\nuseEffect(() => {\n  setFull(first + last);\n}, [first, last]);", "1:эффект/только запись"],
