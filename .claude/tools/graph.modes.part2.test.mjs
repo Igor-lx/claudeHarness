@@ -3297,6 +3297,10 @@ describe("номер записи в заголовке не счёт", () => {
       expect(said()).toBe("");
       fs.appendFileSync(todo, "\nОсталось 10 файлов.\n");
       expect(said()).toContain("02-todo.md");
+      // Узел и компонент — счёт того же рода, что файлы.
+      fs.appendFileSync(todo, "\nВ области семь узлов и два компонента.\n");
+      expect(said()).toContain("семь узлов");
+      expect(said()).toContain("два компонента");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
