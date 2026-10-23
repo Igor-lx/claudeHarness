@@ -23142,6 +23142,24 @@ if (mode === "verify") {
             "), а CONFIG.configDocs пуст",
         );
     }
+    // Смоук в браузере: проект его завёл, а область пуста — `tested` на каждой
+    // правке отвечает «прогон не нужен», и «по требованию» становится
+    // «никогда» без признака. Найдено прогоном проб `2026-10-23`.
+    if ((CONFIG.smokeScope ?? []).length === 0) {
+      disarmedLooked += 1;
+      const script = /\brun\s+(\S+)/.exec(CONFIG.smokeCommand ?? "")?.[1] ?? null;
+      const scripts =
+        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {};
+      const config = readdirSync(REPO).find((n) => /^playwright\.config\.[cm]?[jt]s$/.test(n));
+      const where =
+        script !== null && Object.hasOwn(scripts, script)
+          ? "скрипт " + script + " в манифесте"
+          : config !== undefined
+            ? config
+            : null;
+      if (where !== null)
+        disarmed.push("смоук в браузере заведён (" + where + "), а CONFIG.smokeScope пуст");
+    }
     // Таблица связей мимо графа: строки уже вписаны, а поле пусто — сверка
     // связей таблицу не читает, и имя, которого в коде нет, проходило без
     // признака. Найдено прогоном проб `2026-10-23`.

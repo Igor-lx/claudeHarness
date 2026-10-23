@@ -3307,6 +3307,30 @@ describe("таблица связей при пустом поле настро�
   }, 180000);
 });
 
+describe("смоук заведён при пустой области", () => {
+  // Пустая область смоука при заведённом смоуке превращала «по требованию»
+  // в «никогда»: `tested` на каждой правке отвечал, что прогон не нужен.
+  it("скрипт смоука либо конфиг Playwright при пустой области названы", () => {
+    const box = seatEmpty("smoke-");
+    try {
+      const disarmedOf = () =>
+        (verifyIn(box).get("Сверки, выключенные при живом предмете") ?? []).join("\n");
+      expect(disarmedOf()).not.toContain("smokeScope");
+      const manifestAt = path.join(box, "package.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestAt, "utf8"));
+      manifest.scripts["test:e2e"] = "playwright test";
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest, null, 2) + "\n");
+      expect(disarmedOf()).toContain("смоук в браузере заведён (скрипт test:e2e в манифесте), а CONFIG.smokeScope пуст");
+      delete manifest.scripts["test:e2e"];
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest, null, 2) + "\n");
+      fs.writeFileSync(path.join(box, "playwright.config.ts"), "export default {};\n");
+      expect(disarmedOf()).toContain("смоук в браузере заведён (playwright.config.ts), а CONFIG.smokeScope пуст");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("номер записи в заголовке не счёт", () => {
   it("заголовок и ссылка на него молчат, счёт в прозе краснеет", () => {
     const box = seatEmpty("nomer-");
