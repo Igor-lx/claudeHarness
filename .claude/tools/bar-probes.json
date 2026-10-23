@@ -2593,6 +2593,112 @@
           "ts": "export const emptiness = (items: readonly unknown[]): boolean =>\n  items.length === 0;"
         }
       ]
+    },
+    {
+      "criterion": "B5",
+      "why": "переименованный файл держит функцию с именем, которое не говорит, что она делает",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/notes/notePreview.ts",
+          "text": "import type { Note } from \"./notes\";\n\nconst PREVIEW_LENGTH = 80;\n\nexport const handle = (note: Note): string =>\n  note.body.length > PREVIEW_LENGTH\n    ? `${note.body.slice(0, PREVIEW_LENGTH)}…`\n    : note.body;\n"
+        },
+        {
+          "path": "app/previewLine.ts",
+          "text": "import type { Note } from \"../shared/notes/notes\";\nimport { handle } from \"../shared/notes/notePreview\";\n\nexport const previewLine = (note: Note): string =>\n  `${note.title}: ${handle(note)}`;\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/notes/notePreview.ts",
+          "to": "shared/notes/bodyPreview.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "C10",
+      "why": "перенесённая внутри слоя логика берёт время на месте, а не входом",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/storage/staleness.ts",
+          "text": "import type { Note } from \"../notes/notes\";\n\nconst STALE_AFTER_MS = 2_592_000_000;\n\nexport const isOutdated = (note: Note): boolean =>\n  Date.now() - note.createdAt > STALE_AFTER_MS;\n"
+        },
+        {
+          "path": "app/staleNotes.ts",
+          "text": "import type { Note } from \"../shared/notes/notes\";\nimport { isOutdated } from \"../shared/storage/staleness\";\n\nexport const staleNotes = (notes: readonly Note[]): Note[] =>\n  notes.filter(isOutdated);\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/storage/staleness.ts",
+          "to": "shared/notes/staleness.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "A16",
+      "why": "узел одного компонента перенесён в общий слой, а берёт его по-прежнему одна единица",
+      "held": "вопрос модели",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "components/Pulse/beatCount.ts",
+          "text": "export const beatCount = (elapsedMs: number, periodMs: number): number =>\n  Math.floor(elapsedMs / periodMs);\n"
+        },
+        {
+          "path": "components/Pulse/beatsIn.ts",
+          "text": "import { beatCount } from \"./beatCount\";\n\nexport const beatsIn = (spansMs: readonly number[], periodMs: number): number =>\n  spansMs.reduce((sum, span) => sum + beatCount(span, periodMs), 0);\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "components/Pulse/beatCount.ts",
+          "to": "shared/pulse/beatCount.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "A7",
+      "why": "предметное правило перенесено в общий слой внутри хука фреймворка",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "app/useTitleCase.ts",
+          "text": "import { useMemo } from \"react\";\n\nimport type { Note } from \"../shared/notes/notes\";\n\nexport const useTitleCase = (note: Note): string =>\n  useMemo(\n    () =>\n      note.title\n        .trim()\n        .split(/\\s+/)\n        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))\n        .join(\" \"),\n    [note.title],\n  );\n"
+        },
+        {
+          "path": "app/NoteHeading.tsx",
+          "text": "import type { Note } from \"../shared/notes/notes\";\nimport { useTitleCase } from \"./useTitleCase\";\n\nexport function NoteHeading({ note }: { readonly note: Note }) {\n  return <h2>{useTitleCase(note)}</h2>;\n}\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "app/useTitleCase.ts",
+          "to": "shared/notes/useTitleCase.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "B1",
+      "why": "при переносе в общий слой функция сохранила булев флаг, меняющий её смысл",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "app/clampPage.ts",
+          "text": "export const clampPage = (\n  page: number,\n  total: number,\n  wrap: boolean,\n): number =>\n  wrap\n    ? ((page % total) + total) % total\n    : Math.min(Math.max(page, 0), total - 1);\n"
+        },
+        {
+          "path": "app/pageAfter.ts",
+          "text": "import { clampPage } from \"./clampPage\";\n\nexport const pageAfter = (page: number, total: number): number =>\n  clampPage(page + 1, total, true);\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "app/clampPage.ts",
+          "to": "shared/paging/pageIndex.ts"
+        }
+      ]
     }
   ],
   "covers": [
