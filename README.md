@@ -383,9 +383,13 @@ project folder, otherwise they do not apply.
 **3. Say "seat the harness".** Following `.claude/seat/seat.md`, the assistant
 lays out the configs, the knowledge base, the gates and the checks, adds the
 missing check commands and packages to the manifest without touching any
-existing version, runs the check chain and reports in numbers. An empty
-project gets a scaffold - a small app with a test, so the checks have
-something to work on from day one; a project with code gets no scaffold.
+existing version, runs the check chain and reports in numbers. In an empty
+folder all of this is one command, `node .claude/tools/graph.mjs seat .`,
+which also plants a breakage in each link of the chain to show that it is
+caught; the assistant then asks what the project is and writes the answer
+into the project rules. An empty project gets a scaffold - a small app with
+a test, so the checks have something to work on from day one; a project with
+code gets no scaffold.
 Node.js or npm below the verified set stop seating before its first change;
 packages below the set are named by the run as a notice - whether to upgrade
 is your call.
@@ -456,15 +460,32 @@ it, each with its own question:
 
 ## Status
 
-**v0.2.1: functionally complete; in the tuning phase.** Everything described here is
-in place and working: the quality bar and the seal, the graph and the
-knowledge base, the gates, seating and the transition, the self-checks. The
-architecture and the concept are settled and will not change. Current work is
-on how well it all works: tuning, fixing defects and testing - every
-criterion of the bar has a planted defect, and probes measure whether the bar
-pass catches it: all judgement criteria have been probed, and repeated runs on
-existing code confirm the catch criterion by criterion. Details of the rules, the checks and the tool's output may
-still change between versions.
+**v0.3.0: ready for work.** Everything described here is in place, and this
+release closes a plan that checked it on real runs rather than by
+description: the full self-test suite passes on Linux and on Windows; every
+check that has its subject on the test stand catches its planted breakage;
+seating works in one command in an empty folder and by the instruction in a project like a fresh `create vite`
+template; the bar pass, measured by planting known defects into existing
+code, caught every plant - a group of twenty-four and the single re-runs of
+the misses; a forty-nine-probe run of the harness as a process found thirteen
+defects, all fixed. The architecture and the concept are settled. Next comes
+writing real projects on it; details of the rules, the checks and the tool's
+output may still change between versions.
+
+What changed since v0.2.1:
+
+- **seating an empty folder in one command**, with every link of the check
+  chain tried on a planted breakage and the baseline written in numbers;
+- **Windows** is verified: the self-test suite runs there in CI;
+- **the bar pass reads more and decides less by itself**: a short neighbour
+  is read whole, a "clean" on mutation coverage needs a fresh measurement,
+  removal of a node names exports left without a consumer, a commit of a
+  check-chain config passes the chain;
+- **the rules come at their moment**: settings, skills and styles rules load
+  with their files, so the entry doctrine is about a tenth smaller, and the
+  guard names rules that changed on disk after the session started;
+- **the files the harness writes itself** are checked record by record, and
+  a seed of an older edition is named as such after an update.
 
 ## License
 
