@@ -63,3 +63,47 @@ export const protocolShellFault = (reader, text) =>
   reader +
   "`).\n" +
   exit(text === null ? null : modelWindowOf(text));
+
+/** Правила на входе — `CLAUDE.md` корня и файлы правил без шапки `paths:` —
+ * среда кладёт в контекст при старте сессии и больше не обновляет: правка их
+ * на диске посреди сессии — `git pull`, переключение ветки — оставляет в
+ * контексте прежний текст без признака. Здесь — шаг состояния: снимок
+ * отпечатков на старте, сверка на каждом вызове, напоминание о расхождении.
+ *
+ * `state` — прежнее состояние либо `null`; `now` — путь от корня → отпечаток;
+ * `call` — вызов: сессия, инструмент, путь файла от корня либо `null`.
+ * Первый вызов сессии делает снимок. Чтение файла инструментом `Read` снимает
+ * его из устаревших. Своя правка (`Edit`, `Write`) принимается следующим
+ * вызовом: сессия видела её сама. Найдено прогоном проб `2026-10-23`. */
+export const rulesFreshnessOf = (state, now, call) => {
+  if (state === null || state.session !== call.session)
+    return { state: { session: call.session, seen: { ...now }, own: [] }, stale: [] };
+  const seen = { ...state.seen };
+  for (const rel of state.own ?? [])
+    if (rel in now) seen[rel] = now[rel];
+    else delete seen[rel];
+  const own = [];
+  if (call.file !== null && (call.file in now || call.file in seen)) {
+    if (call.tool === "Read" && call.file in now) seen[call.file] = now[call.file];
+    if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(call.tool)) own.push(call.file);
+  }
+  const stale = [];
+  for (const rel of Object.keys({ ...seen, ...now }).sort()) {
+    if (own.includes(rel)) continue;
+    if (!(rel in seen)) stale.push({ rel, how: "новый" });
+    else if (!(rel in now)) stale.push({ rel, how: "снят" });
+    else if (seen[rel] !== now[rel]) stale.push({ rel, how: "изменён" });
+  }
+  // Снятый называется раз: перечитывать нечего.
+  for (const one of stale) if (one.how === "снят") delete seen[one.rel];
+  return { state: { session: call.session, seen, own }, stale };
+};
+
+/** Напоминание об устаревших правилах — одной строкой для контекста;
+ * пусто — напоминать не о чем. */
+export const rulesFreshnessText = (stale) =>
+  stale.length === 0
+    ? ""
+    : "Обвязка: правила изменились после начала сессии, и в контексте их прежний текст — " +
+      stale.map((s) => "`" + s.rel + "` (" + s.how + ")").join(", ") +
+      ". Изменённый и новый перечитать инструментом Read: пока не перечитан, напоминание повторяется; снятый больше не действует.";

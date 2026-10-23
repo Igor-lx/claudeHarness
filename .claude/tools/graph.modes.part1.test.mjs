@@ -4461,3 +4461,43 @@ describe("правка против её тестов называет запи�
     }
   }, 180000);
 });
+
+describe("хуки называют правила, изменённые после начала сессии", () => {
+  // Правила без шапки среда кладёт в контекст при старте и не обновляет:
+  // после `git pull` посреди сессии в контексте оставался прежний текст.
+  it("снимок на первом вызове, напоминание до чтения, своя правка и правила с шапкой — без напоминания", () => {
+    const box = seatEmpty("rules-");
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: box });
+      const hook = (mode, said) => {
+        const out = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), mode, "--hook"],
+          { cwd: box, encoding: "utf8", input: JSON.stringify({ session_id: "zz-s", ...said }) },
+        );
+        const json = out.stdout.trim();
+        return json === "" ? "" : (JSON.parse(json).hookSpecificOutput?.additionalContext ?? "");
+      };
+      const bash = { tool_name: "Bash", tool_input: { command: "ls" } };
+      const rule = (name) => path.join(box, ".claude", "rules", name);
+      expect(hook("guard", bash)).toBe("");
+      fs.appendFileSync(rule("loop.md"), "\nновая строка\n");
+      // Правило с шапкой приходит заново, когда открыт его файл: о нём молчат.
+      fs.appendFileSync(rule("quality.md"), "\nновая строка\n");
+      const said = hook("guard", bash);
+      expect(said).toContain("`.claude/rules/loop.md` (изменён)");
+      expect(said).not.toContain("quality.md");
+      expect(hook("guard", bash)).toContain("loop.md");
+      expect(hook("guard", { tool_name: "Read", tool_input: { file_path: rule("loop.md") } })).toBe("");
+      // Своя правка через Edit — напоминания нет ни на ней, ни после.
+      expect(hook("transition", { tool_name: "Edit", tool_input: { file_path: rule("safety.md") } })).toBe("");
+      fs.appendFileSync(rule("safety.md"), "\nсвоя строка\n");
+      expect(hook("guard", bash)).toBe("");
+      // Новая сессия — новый снимок.
+      fs.appendFileSync(rule("base.md"), "\nновая строка\n");
+      expect(hook("guard", { ...bash, session_id: "zz-s2" })).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

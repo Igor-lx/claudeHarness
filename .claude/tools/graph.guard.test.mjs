@@ -4,6 +4,8 @@ import {
   modelWindowOf,
   protocolReadFault,
   protocolShellFault,
+  rulesFreshnessOf,
+  rulesFreshnessText,
 } from "./graph.guard.mjs";
 
 /** Протокол, в котором модель занимает строки 6–10 (заголовок — строка 6). */
@@ -102,5 +104,57 @@ describe("страж протокола: чтение оболочкой", () =>
     expect(blind).toContain("(`sed`)");
     expect(blind).not.toContain("offset");
     expect(blind).toContain("graph.mjs bar");
+  });
+});
+
+describe("правила, изменённые после начала сессии", () => {
+  const call = (tool = "Bash", file = null, session = "s1") => ({ session, tool, file });
+  const first = rulesFreshnessOf(null, { a: "1", b: "2" }, call());
+
+  it("первый вызов сессии делает снимок и молчит, новая сессия — новый снимок", () => {
+    expect(first.stale).toEqual([]);
+    expect(first.state.seen).toEqual({ a: "1", b: "2" });
+    const next = rulesFreshnessOf(first.state, { a: "9", b: "2" }, call("Bash", null, "s2"));
+    expect(next.stale).toEqual([]);
+    expect(next.state.seen).toEqual({ a: "9", b: "2" });
+  });
+
+  it("изменённый, новый и снятый названы; изменённый повторяется, пока его не прочли Read", () => {
+    const now = { a: "9", c: "3" };
+    const one = rulesFreshnessOf(first.state, now, call());
+    expect(one.stale).toEqual([
+      { rel: "a", how: "изменён" },
+      { rel: "b", how: "снят" },
+      { rel: "c", how: "новый" },
+    ]);
+    const two = rulesFreshnessOf(one.state, now, call());
+    expect(two.stale).toEqual([
+      { rel: "a", how: "изменён" },
+      { rel: "c", how: "новый" },
+    ]);
+    const read = rulesFreshnessOf(two.state, now, call("Read", "a"));
+    expect(read.stale).toEqual([{ rel: "c", how: "новый" }]);
+    // Чтение чужого файла ничего не снимает.
+    expect(rulesFreshnessOf(read.state, now, call("Read", "z")).stale).toEqual([
+      { rel: "c", how: "новый" },
+    ]);
+  });
+
+  it("своя правка принимается следующим вызовом, а не напоминается", () => {
+    const edit = rulesFreshnessOf(first.state, { a: "1", b: "2" }, call("Edit", "a"));
+    expect(edit.stale).toEqual([]);
+    const after = rulesFreshnessOf(edit.state, { a: "5", b: "2" }, call());
+    expect(after.stale).toEqual([]);
+    // Правка, пришедшая после, — снова чужая.
+    expect(rulesFreshnessOf(after.state, { a: "6", b: "2" }, call()).stale).toEqual([
+      { rel: "a", how: "изменён" },
+    ]);
+  });
+
+  it("напоминание называет каждый файл и как его вернуть", () => {
+    expect(rulesFreshnessText([])).toBe("");
+    const text = rulesFreshnessText([{ rel: ".claude/rules/loop.md", how: "изменён" }]);
+    expect(text).toContain("`.claude/rules/loop.md` (изменён)");
+    expect(text).toContain("перечитать инструментом Read");
   });
 });

@@ -17,7 +17,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
@@ -164,6 +164,8 @@ import {
   modelWindowOf,
   protocolReadFault,
   protocolShellFault,
+  rulesFreshnessOf,
+  rulesFreshnessText,
 } from "./graph.guard.mjs";
 // Части правки: таблица в протоколе свода, связность, записи и наложение.
 import {
@@ -468,13 +470,95 @@ const protocolFault = async (read, command) => {
   return reader === "" ? "" : protocolShellFault(reader, text);
 };
 
+/** Отпечатки правил на входе: `CLAUDE.md` корня и файлы `.claude/rules/` без
+ * шапки `paths:` — путь от корня → отпечаток содержимого. */
+const entryRulesNow = (root) => {
+  const now = {};
+  const add = (rel) => {
+    try {
+      now[rel] = createHash("sha1")
+        .update(readFileSync(path.join(root, rel)))
+        .digest("hex");
+    } catch {
+      // Файла нет — в отпечатках его нет.
+    }
+  };
+  add("CLAUDE.md");
+  let names = [];
+  try {
+    names = readdirSync(path.join(root, ".claude", "rules"));
+  } catch {
+    // Папки правил нет — сверять нечего.
+  }
+  for (const name of names.filter((n) => n.endsWith(".md")).sort()) {
+    const rel = ".claude/rules/" + name;
+    let text;
+    try {
+      text = readFileSync(path.join(root, rel), "utf8");
+    } catch {
+      continue;
+    }
+    const head = text.startsWith("---") ? text.split(/\r?\n---/)[0] : "";
+    if (!/^paths:/m.test(head)) add(rel);
+  }
+  return now;
+};
+
+/** Шаг свежести правил на вызове хука: состояние сессии лежит в папке git
+ * (без git — во временной папке, своей на проект), напоминание — строкой.
+ * Ручной вызов без номера сессии ничего не пишет. */
+const rulesFreshnessStep = (said) => {
+  const session = String(said?.session_id ?? "");
+  if (session === "") return "";
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  let at;
+  try {
+    const dir = execFileSync("git", ["rev-parse", "--git-dir"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    at = path.join(path.resolve(root, dir), "claude-harness-rules.json");
+  } catch {
+    at = path.join(
+      tmpdir(),
+      "claude-harness-rules-" +
+        createHash("sha1").update(path.resolve(root)).digest("hex").slice(0, 12) +
+        ".json",
+    );
+  }
+  let state = null;
+  try {
+    state = JSON.parse(readFileSync(at, "utf8"));
+  } catch {
+    // Состояния нет либо оно испорчено — снимок с этого вызова.
+  }
+  const fileAt = said?.tool_input?.file_path ?? said?.tool_input?.notebook_path;
+  const file =
+    typeof fileAt === "string"
+      ? path.relative(root, path.resolve(root, fileAt)).split(path.sep).join("/")
+      : null;
+  const step = rulesFreshnessOf(state, entryRulesNow(root), {
+    session,
+    tool: String(said?.tool_name ?? ""),
+    file,
+  });
+  try {
+    writeFileSync(at, JSON.stringify(step.state) + "\n");
+  } catch {
+    // Состояние не легло — следующий вызов сделает снимок заново.
+  }
+  return rulesFreshnessText(step.stale);
+};
+
 if (mode === "guard") {
   const hook = process.argv.includes("--hook");
   let command = "";
   let read = null;
+  let said = null;
   if (hook && !process.stdin.isTTY)
     try {
-      const said = JSON.parse(readFileSync(0, "utf8"));
+      said = JSON.parse(readFileSync(0, "utf8"));
       if (said?.tool_name === "Bash")
         command = String(said?.tool_input?.command ?? "");
       if (said?.tool_name === "Read") read = said?.tool_input ?? {};
@@ -488,7 +572,19 @@ if (mode === "guard") {
   const page = pageReadByShell(command);
   const protocol = await protocolFault(read, command);
   if (hook) {
-    if (why === "" && page === "" && protocol === "") process.exit(0);
+    const stale = rulesFreshnessStep(said);
+    if (why === "" && page === "" && protocol === "") {
+      if (stale !== "")
+        console.log(
+          JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              additionalContext: stale,
+            },
+          }),
+        );
+      process.exit(0);
+    }
     if (why !== "")
       process.stderr.write(
         "Обвязка: команда снимает ворота перед коммитом (" +
@@ -6648,14 +6744,18 @@ if (mode === "transition") {
   // каждой съедал бы контекст. Перечень печатает начало сессии.
   if (process.argv.includes("--hook")) {
     let event = "PreToolUse";
+    let said = null;
     if (!process.stdin.isTTY)
       try {
-        const said = JSON.parse(readFileSync(0, "utf8"));
+        said = JSON.parse(readFileSync(0, "utf8"));
         if (typeof said.hook_event_name === "string")
           event = said.hook_event_name;
       } catch {
         // Вход пуст или не JSON — событие остаётся по умолчанию.
       }
+    // Своя правка файла правил принимается здесь, до неё самой: сессия
+    // видела её, и напоминание о ней было бы ложным.
+    const stale = rulesFreshnessStep(said);
     const steps = transitionOpen();
     const debt = transitionDebt();
     const found = findingsOpen();
@@ -6677,15 +6777,22 @@ if (mode === "transition") {
       parts.push(
         "открытых находок " + found.length + ", реестр " + CONFIG.findings.file,
       );
-    if (parts.length)
+    const lines = [
+      ...(parts.length
+        ? [
+            "Обвязка: " +
+              parts.join("; ") +
+              ". Перечень — `node .claude/tools/graph.mjs transition`.",
+          ]
+        : []),
+      ...(stale === "" ? [] : [stale]),
+    ];
+    if (lines.length)
       console.log(
         JSON.stringify({
           hookSpecificOutput: {
             hookEventName: event,
-            additionalContext:
-              "Обвязка: " +
-              parts.join("; ") +
-              ". Перечень — `node .claude/tools/graph.mjs transition`.",
+            additionalContext: lines.join(LF),
           },
         }),
       );
