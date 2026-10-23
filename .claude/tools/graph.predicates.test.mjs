@@ -622,6 +622,23 @@ describe("шапки правил о коде — перечнем словар�
     }
     expect(headed).toBeGreaterThanOrEqual(4);
   });
+
+  // Шапка `base-format.md` называет файлы базы поимённо, а таблица «Файлы»
+  // того же файла — их состав. Файл, вписанный в таблицу без строки в шапке,
+  // правило при записи в него не приносит. Карта и факты исключены намеренно:
+  // их открывают на каждом входе.
+  it("шапка base-format.md называет каждый файл базы своей таблицы, кроме карты и фактов", () => {
+    const at = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "rules", "base-format.md");
+    const text = fs.readFileSync(at, "utf8");
+    const head = /^---\n([\s\S]*?)\n---\n/.exec(text)[1];
+    const named = [...head.matchAll(/"\*\*\/\.context\/([^"]+)"/g)].map((m) => m[1]).sort();
+    const table = [...text.matchAll(/^\| `([^`]+\.md)` \|/gm)]
+      .map((m) => m[1])
+      .filter((f) => f !== "00-map.md" && f !== "01-facts.md")
+      .sort();
+    expect(table.length).toBeGreaterThan(10);
+    expect(named).toEqual(table);
+  });
 });
 
 /**
