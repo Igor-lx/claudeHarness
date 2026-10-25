@@ -26,6 +26,8 @@ import { builtinModules, createRequire } from "node:module";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  localiseRecipe,
+  recipeStepFromSeed,
   gitHookBypass,
   pageReadByShell,
   protocolReadByShell,
@@ -6235,13 +6237,11 @@ if (mode === "falsify") {
     );
     return (to) => seeded.has(String(to).split("\\").join("/"));
   })();
+  const stepFromSeed = (e) => recipeStepFromSeed(e, fromSeed);
   /** Тот же вопрос к СОСТАВНОМУ рецепту: поля `file` у него нет, адреса
    * лежат по шагам. Хоть один шаг метит в семя — рецепт про устройство
    * умолчания, а не про этот проект. */
-  const stepsFromSeed = (r) =>
-    (r.edits ?? []).some((e) =>
-      fromSeed(e.file ?? e.copyTo ?? e.create?.path ?? e.mkdir),
-    );
+  const stepsFromSeed = (r) => (r.edits ?? []).some(stepFromSeed);
   const foreign = [];
   // Рецепт написан, а предмета у сверки в ЭТОМ проекте не заводится вовсе:
   // поле настройки пусто. Это не «перенацелить на свои файлы» — цели нет, и
@@ -6487,12 +6487,7 @@ if (mode === "falsify") {
         ) ?? file
       );
     };
-    const localise = (r0) => {
-      const r = recipeSubst(r0, vars);
-      for (const step of r.edits ?? [r])
-        if (step.file !== undefined) step.file = otherName(step.file);
-      return r;
-    };
+    const localise = (r0) => localiseRecipe(recipeSubst(r0, vars), otherName);
     // Предмета у рецепта нет по устройству проекта, а не по пустому полю:
     // `whenNull` — ветка про ПУСТОЕ поле, а поле задано; `whenScript` — нет
     // скрипта, который рецепт правит; семя звена, которое посадка по правилу
@@ -6613,7 +6608,7 @@ if (mode === "falsify") {
       if (!existsSync(at)) {
         (subjectless(r.section)
           ? idle
-          : r.project !== true && (r.own === true || fromSeed(r.file))
+          : r.project !== true && (r.own === true || stepFromSeed(r))
             ? foreign
             : broken
         ).push(r.section + " — файла нет: " + r.file);
@@ -6653,7 +6648,7 @@ if (mode === "falsify") {
           if (at0 < 0) {
             (subjectless(r.section)
               ? idle
-              : r.project !== true && (r.own === true || fromSeed(r.file))
+              : r.project !== true && (r.own === true || stepFromSeed(r))
                 ? foreign
                 : broken
             ).push(r.section + " — якорь дописывания не найден: " + r.after);
@@ -6669,7 +6664,7 @@ if (mode === "falsify") {
         if (!before.includes(r.find.split("\n").join(NEWLINE))) {
           (subjectless(r.section)
             ? idle
-            : r.project !== true && (r.own === true || fromSeed(r.file))
+            : r.project !== true && (r.own === true || stepFromSeed(r))
               ? foreign
               : broken
           ).push(r.section + " — рецепт не находит своего места");
@@ -12477,17 +12472,25 @@ const levelFacts = () => {
           unit: unitHasEntry(t) ? null : unitOf(t),
           text: rel(f) + " → " + rel(t) + " — " + insideText(t),
         });
+  const fromCode = [];
   for (const [key, byFile] of storeWriters())
-    if (unitsAmong([...byFile.keys()]) > 1)
+    if (unitsAmong([...byFile.keys()]) > 1) {
+      fromCode.push({ key: /«(.+)»$/.exec(key)?.[1] ?? key, files: [...byFile.keys()].sort().join("|") });
       facts.push({
         kind: "писатель",
         where: [...byFile.keys()],
         names: [],
         text: key + ": пишут " + [...byFile.keys()].map(rel).sort().join(", "),
       });
+    }
   for (const r of stateRecords()) {
     const writing = filesNamedIn(r.writers);
-    if (unitsAmong(writing) > 1)
+    // Запись о том же ключе и тех же писателях, что нашёл код, — тот же
+    // факт: печатанный дважды, он требовал два ответа на одно.
+    const twin = fromCode.some(
+      (c) => c.files === [...writing].sort().join("|") && r.what.includes(c.key),
+    );
+    if (unitsAmong(writing) > 1 && !twin)
       facts.push({
         kind: "писатель",
         where: writing,
@@ -29759,6 +29762,28 @@ if (mode === "verify") {
   //
   // Имя узла берётся у папки, а не угадывается: папка компонента названа им
   // же, и файл узла лежит её именем со строчной буквы либо точно её именем.
+  //
+  // Папка возможности живого проекта зовётся предметом, а не компонентом:
+  // `menu/MenuList.tsx`. Файла имени папки нет — файлами узла считаются его
+  // компоненты в корне папки. Прежде обе сверки узла смотрели в такую папку
+  // как в пустую, и константа над компонентом проходила без признака —
+  // замерено повторной посадкой в живой проект.
+  const nodeFilesIn = (folder, name) => {
+    const own = readdirSync(folder).filter((one) => {
+      const at = path.join(folder, one);
+      if (statSync(at).isDirectory()) return false;
+      const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
+      return bare.toLowerCase() === name.toLowerCase();
+    });
+    if (own.length > 0) return new Set(own);
+    return new Set(
+      readdirSync(folder).filter(
+        (one) =>
+          /^[A-Z][A-Za-z0-9]*\.(?:tsx|jsx)$/.test(one) &&
+          !statSync(path.join(folder, one)).isDirectory(),
+      ),
+    );
+  };
   const nodeLitter = [];
   let nodeLooked = 0;
   checkStep(() => {
@@ -29774,11 +29799,13 @@ if (mode === "verify") {
           if (!statSync(folder).isDirectory()) continue;
           nodeLooked += 1;
           const loose = [];
+          const nodeFiles = nodeFilesIn(folder, name);
           for (const one of readdirSync(folder)) {
             const inside = path.join(folder, one);
             if (statSync(inside).isDirectory()) continue;
+            if (nodeFiles.has(one)) continue;
             const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
-            if (bare.toLowerCase() === name.toLowerCase()) continue;
+            if (nodeFiles.has(bare + ".module.css") || nodeFiles.has(bare + ".tsx")) continue;
             if (one === "types.ts" || one === "index.ts" || one === "index.tsx")
               continue;
             if (!isCodePath(norm(inside)) && !isStylePath(norm(inside)))
@@ -29834,18 +29861,21 @@ if (mode === "verify") {
         for (const name of readdirSync(root)) {
           const folder = path.join(root, name);
           if (!statSync(folder).isDirectory()) continue;
+          const nodeFiles = nodeFilesIn(folder, name);
           for (const one of readdirSync(folder)) {
             const at = path.join(folder, one);
             if (statSync(at).isDirectory() || !isCodePath(norm(at))) continue;
-            if (
-              one.replace(/\.[^.]+$/, "").toLowerCase() !== name.toLowerCase()
-            )
-              continue;
+            if (!nodeFiles.has(one)) continue;
             nodeFilesLooked += 1;
+            const self = one.replace(/\.[^.]+$/, "").toLowerCase();
             const text = readFileSync(at, "utf8");
             for (const line of text.split(NEWLINE)) {
               const m = DECL.exec(line);
-              if (m === null || m[1].toLowerCase() === name.toLowerCase())
+              if (
+                m === null ||
+                m[1].toLowerCase() === name.toLowerCase() ||
+                m[1].toLowerCase() === self
+              )
                 continue;
               // Функция, которую узел оборачивает: `memo(Inner)`, `forwardRef(Inner)`.
               const wrapped = new RegExp(

@@ -2389,6 +2389,24 @@ describe("факты по уровням без протокола", () => {
       const two = tool("levels");
       expect(two.code).toBe(1);
       expect(two.out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — не назван/);
+      // Запись о том же ключе и тех же писателях — тот же факт, а не второй.
+      const stateAt = path.join(box, ".context", "04-state.md");
+      const hadState = fs.existsSync(stateAt);
+      fs.copyFileSync(
+        path.join(box, ".claude", "seat", "templates", "04-state.md"),
+        stateAt,
+      );
+      fs.writeFileSync(
+        stateAt,
+        fs
+          .readFileSync(stateAt, "utf8")
+          .replace(
+            "| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n",
+            "| Что | Владелец | Кто пишет | Кто читает | Время жизни |\n| --- | --- | --- | --- | --- |\n| ключ `zz.count` | `src/components/ZzA/ZzA.tsx` | `src/components/ZzA/ZzA.tsx`, `src/components/ZzB/ZzB.tsx` | никто | пока не перепишут |\n",
+          ),
+      );
+      expect(tool("levels").out.match(/^ {2}писатель: /gm)).toHaveLength(1);
+      if (!hadState) fs.rmSync(stateAt);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
       // Вопрос — запись от заголовка до заголовка: файлы факта, названные в
@@ -3344,6 +3362,18 @@ describe("файл узла держит только сам узел", () => {
       expect(found).toContain("`zzExtra`");
       expect(found).not.toContain("ZzLoneInner");
       expect(found).not.toContain("ZzProps");
+      // Папка возможности зовётся предметом, компонент в ней — своим именем:
+      // файлом узла считается компонент корня папки.
+      const feature = path.join(box, "src", "components", "zzMenu");
+      fs.mkdirSync(feature, { recursive: true });
+      fs.writeFileSync(
+        path.join(feature, "ZzMenuList.tsx"),
+        'const zzPrefix = "Add";\nexport function ZzMenuList() {\n  return zzPrefix;\n}\n',
+      );
+      fs.writeFileSync(path.join(feature, "zzPrice.ts"), "export const zzPrice = 1;\n");
+      expect(said()).toContain("zzMenu/ZzMenuList.tsx: `zzPrefix`");
+      expect(said()).not.toContain("ZzMenuList`");
+      fs.rmSync(feature, { recursive: true });
       withTransitionDebt(box, [
         "| 1 | Объявления рядом с узлом | `1` | «В файле узла только сам узел» | перенести `zzExtra` в `src/components/ZzLone/constants/` | `1` объявление |",
       ]);

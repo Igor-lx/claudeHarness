@@ -601,6 +601,35 @@ describe("classifyRun", () => {
   });
 });
 
+describe("рецепт под другим именем семени остаётся рецептом семени", () => {
+  const seeded = (to) => to === "vite.config.ts";
+  const projectName = (file) =>
+    file === "vite.config.ts" ? "vitest.config.ts" : file;
+
+  it("одиночный: правит имя проекта, а в семя метит по прежнему адресу", () => {
+    const r = vocabulary.localiseRecipe({ file: "vite.config.ts" }, projectName);
+    expect(r.file).toBe("vitest.config.ts");
+    expect(vocabulary.recipeStepFromSeed(r, seeded)).toBe(true);
+  });
+
+  it("составной: шаг в семя под другим именем — тоже семя", () => {
+    const r = vocabulary.localiseRecipe(
+      { edits: [{ file: "src/App.tsx" }, { file: "vite.config.ts" }] },
+      projectName,
+    );
+    expect(r.edits.map((e) => e.file)).toEqual(["src/App.tsx", "vitest.config.ts"]);
+    expect(r.edits.map((e) => vocabulary.recipeStepFromSeed(e, seeded))).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("файл, семенем не приезжающий, семенем и не становится", () => {
+    const r = vocabulary.localiseRecipe({ file: "src/App.tsx" }, projectName);
+    expect(vocabulary.recipeStepFromSeed(r, seeded)).toBe(false);
+  });
+});
+
 /**
  * Шапка правила о коде грузит правило, когда сессия открыла файл под её
  * образец, а инструмент судит код по своему перечню расширений. Два перечня

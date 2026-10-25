@@ -6422,6 +6422,28 @@ export const classifyRun = (clean, after, section) => {
   return { how: "nowhere" };
 };
 
+/** Рецепт под этот проект: адрес каждого шага заменён именем, под которым
+ * проект держит тот же предмет, а прежний адрес остаётся полем `seedFile`.
+ * Мутирует рецепт: его отдают уже копией. */
+export const localiseRecipe = (recipe, otherName) => {
+  for (const step of recipe.edits ?? [recipe])
+    if (step.file !== undefined) {
+      step.seedFile = step.file;
+      step.file = otherName(step.file);
+    }
+  return recipe;
+};
+
+/** Метит ли шаг рецепта в семя — по адресу ДО подстановки другого имени.
+ * Подставленное имя семенем в карте не числится: `vitest.config.ts`
+ * проекта вместо `vite.config.ts` семени уводил рецепт в «устарел», и
+ * прогон краснел на законном устройстве. Замерено повторной посадкой в
+ * живой проект. */
+export const recipeStepFromSeed = (step, fromSeed) =>
+  fromSeed(
+    step.seedFile ?? step.file ?? step.copyTo ?? step.create?.path ?? step.mkdir,
+  );
+
 /** Первый адрес рецепта фальсификации, выводящий из песочницы, — иначе
  * пустая строка.
  *
