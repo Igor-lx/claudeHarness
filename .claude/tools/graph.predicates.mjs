@@ -659,6 +659,7 @@ export const MODEL_LEVEL = {
   однократно: "единица",
   эффект: "единица",
   команда: "единица",
+  оформление: "единица",
   постоянный: "единица",
   тест: "единица",
   стиль: "единица",
@@ -1031,6 +1032,7 @@ export const BAR_SIGNALS = [
   { ids: ["A10", "A9", "A1"], sort: "размер", words: "узел велик, и в основании не сказано, почему это одна граница" },
   { ids: ["A15"], sort: "создаёт", words: "узел создаёт соисполнителя сам, и в основании не сказано, почему тот не приходит входом" },
   { ids: ["B12", "A1-тер"], sort: "команда", words: "функция и меняет, и отвечает, и в основании не сказано почему" },
+  { ids: ["A1-тер"], sort: "оформление", words: "функция и считает, и оформляет строку ответа, и в основании не сказано, проверяется ли счёт без строки" },
   { ids: ["H4"], sort: "мёртвое", words: "объявление без обращений, и в основании не сказано, зачем оно" },
   { ids: ["A6", "B11"], sort: "дубль", words: "у числа в этом файле уже есть имя, и в основании не сказано, почему значение стоит дважды" },
   { ids: ["H1"], sort: "всегда", words: "условие истинно либо ложно всегда, и в основании не сказано, зачем оно" },
@@ -1418,7 +1420,8 @@ export const BAR_FORMS = {
     "предметное правило внутри разметки либо обработчика — условие предметной области и условие отрисовки пишутся одним `if`, и модель их не различает",
   ],
   "A1-тер": [
-    "вычисление вместе с форматированием — форматирование ничего не пишет, а признак команды ищет запись рядом с ответом",
+    "оформление своим помощником — `formatTotal(sum)`: признак оформления видит шаблон с текстом, склейку со строкой, `toFixed`, `toLocaleString` и `Intl`, а вызов помощника неотличим от вызова чистой функции",
+    "счёт без умножения, остатка, `reduce` и `Math` — сумма циклом, деление: признак оформления ищет счёт по этим формам, а `/` в тексте кода неотличима от образца",
     "запись через взятый импортом объект либо через сеть в функции, которая отвечает, — записью признак считает сеттер, хранилище, `this`, `dispatch` и переменную модуля",
     UNSEEN.method,
   ],
@@ -3919,6 +3922,19 @@ const codeSignalsOf = (file, text, own) => {
     if (/\breturn\s+[^\s;}]/.test(inner) && writesRe.test(inner))
       at("команда", one.at, one.name);
   }
+  // Счёт рядом с оформлением ответа: итог не проверить без строки (`A1-тер`).
+  for (const one of bodies) {
+    if (one.to < 0) continue;
+    const said = plain.slice(one.from + 1, one.to);
+    const templated = [...said.matchAll(/`[^`]*`/g)].some(
+      (t) => t[0].includes("${") && t[0].slice(1, -1).replace(/\$\{[^}]*\}/g, "").trim() !== "",
+    );
+    if (
+      /\.reduce(?:Right)?\s*\(|\bMath\.\w+\s*\(|[\w)\]]\s*[*%]\s*[\w(]/.test(bare.slice(one.from + 1, one.to)) &&
+      (templated || /\.(?:toFixed|toLocaleString)\s*\(|\bIntl\.|["'][^"'\n]*\S[^"'\n]*["']\s*\+|\+\s*["'][^"'\n]*\S/.test(said))
+    )
+      at("оформление", one.at, one.name);
+  }
   // Вход, из которого берут одно поле: узлу нужен элемент, а дают целое.
   for (const one of bodies) {
     if (one.to < 0) continue;
@@ -5580,6 +5596,17 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport function read(k) {\n  setLast(k);\n  return cache[k];\n}", "1:команда"],
   ["signalsSummary", "src/a.ts\nconst cache = load();\nexport function read(k) {\n  setLast(k);\n  return cache[k];\n}", "2:команда"],
   ["signalsSummary", "src/a.ts\nexport const read = k => {\n  setLast(k);\n  return cache[k];\n};", "1:команда"],
+  // --- оформление: счёт рядом с оформлением строки ответа (`A1-тер`) ---
+  ["signalsSummary", "src/a.ts\nexport const label = (xs) => {\n  const words = xs.reduce((s, x) => s + x.length, 0);\n  return `${String(words)} words`;\n};", "1:оформление"],
+  ["signalsSummary", "src/a.ts\nexport const label = (xs) => \"Total: \" + xs.reduceRight((s, x) => s + x, 0);", "1:оформление"],
+  ["signalsSummary", "src/a.ts\nexport const label = (x) => Math.round(x) + \" pt\";", "1:оформление"],
+  ["signalsSummary", "src/a.ts\nexport const label = (part) => (part * 100).toFixed(1);", "1:оформление;1:текст/формат"],
+  ["signalsSummary", "src/a.ts\nexport const label = (part) => (part % 7).toLocaleString();", "1:оформление;1:текст/формат"],
+  ["signalsSummary", "src/a.ts\nexport const label = (xs) => new Intl.NumberFormat().format(Math.max(...xs));", "1:оформление"],
+  ["signalsSummary", "src/a.ts\nexport const total = (xs) => xs.reduce((s, x) => s + x, 0);", ""],
+  ["signalsSummary", "src/a.ts\nexport const greet = (name) => `Hello, ${name}`;", ""],
+  ["signalsSummary", "src/a.ts\nexport const join = (xs) => `${xs.reduce((s, x) => s + x, 0)}${xs.length}`;", ""],
+  ["signalsSummary", "src/a.ts\nexport const key = (id) => \"note-\" + id;", ""],
   ["signalsSummary", "src/a.ts\nexport const read = (k) => {\n  const later = function () {\n    setLast(k);\n  };\n  later();\n  return cache[k];\n};", ""],
   ["signalsSummary", "src/a.ts\nexport const first = <T>(xs: T[]) => xs.at(start);", "1:обобщение"],
   ["signalsSummary", "src/a.ts\nexport type Box<T> = { value: T };\nexport interface Holder<T> { value: T }\nexport class Keeper<T> { value?: T }", "1:обобщение;2:обобщение;3:обобщение"],
