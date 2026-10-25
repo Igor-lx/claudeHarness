@@ -5966,6 +5966,34 @@ export const PREDICATE_CASES = [
   ["isProbeRun", { criterion: "", verdict: "поймано" }, false],
   ["isProbeRun", { criterion: "M1", verdict: "" }, false],
   ["isProbeRun", undefined, false],
+  // --- isStopState: пауза, след и счёт отказов — пусто либо по форме ---
+  ["isStopState", {}, true],
+  ["isStopState", { pause: null, trace: null, blocks: null }, true],
+  ["isStopState", { pause: { digest: "d", at: "2026-10-25", files: ["a.ts"], reason: "жду" } }, true],
+  ["isStopState", { trace: { digest: "d", at: "2026-10-25", files: [], fault: "нет свода" } }, true],
+  ["isStopState", { blocks: { digest: "d", count: 2 } }, true],
+  ["isStopState", null, false],
+  ["isStopState", [], false],
+  ["isStopState", { trace: { fault: "f" } }, false],
+  ["isStopState", { trace: { digest: "d", at: "x", files: [5], fault: "f" } }, false],
+  ["isStopState", { trace: { digest: "d", at: "x", files: [] } }, false],
+  ["isStopState", { trace: { digest: "d", files: [], fault: "f" } }, false],
+  ["isStopState", { trace: { at: "x", files: [], fault: "f" } }, false],
+  ["isStopState", { pause: { digest: "d", at: "x", files: [] } }, false],
+  ["isStopState", { pause: "x" }, false],
+  ["isStopState", { blocks: 5 }, false],
+  ["isStopState", { blocks: { digest: "d", count: "2" } }, false],
+  ["isStopState", { blocks: { count: 2 } }, false],
+  // --- isRulesState: сессия, снимок путь → отпечаток, своя правка ---
+  ["isRulesState", { session: "s1", seen: { "CLAUDE.md": "ab" }, own: [] }, true],
+  ["isRulesState", { session: "s1", seen: {}, own: ["CLAUDE.md"] }, true],
+  ["isRulesState", { session: "s1", seen: {}, own: 5 }, false],
+  ["isRulesState", { session: "s1", seen: {}, own: [null] }, false],
+  ["isRulesState", { session: "s1", seen: 7, own: [] }, false],
+  ["isRulesState", { session: "s1", seen: [], own: [] }, false],
+  ["isRulesState", { session: "s1", seen: { a: 1 }, own: [] }, false],
+  ["isRulesState", { seen: {}, own: [] }, false],
+  ["isRulesState", "x", false],
   // --- protocolReadByShell: чтение протокола свода командой оболочки ---
   ["protocolReadByShell", "cat .context/bar-protocol.md", "cat"],
   ["protocolReadByShell", "sed -n 1,50p .context/bar-protocol.md", "sed"],
@@ -6799,6 +6827,35 @@ export const isProbeRun = (row) =>
   row.criterion !== "" &&
   typeof row.verdict === "string" &&
   row.verdict !== "";
+
+const isPlain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const isTexts = (value) => Array.isArray(value) && value.every((one) => typeof one === "string");
+
+/** Состояние ворот конца хода: пауза, след хода без свода и счёт отказов —
+ * каждое либо пусто, либо по своей форме. След без списка файлов ронял начало
+ * каждой сессии стеком, и файл не лечился: прогон проб по холодному контуру. */
+export const isStopState = (state) => {
+  if (!isPlain(state)) return false;
+  const { pause, trace, blocks } = state;
+  const mark = (one) =>
+    isPlain(one) && typeof one.digest === "string" && typeof one.at === "string" && isTexts(one.files);
+  return (
+    (pause == null || (mark(pause) && typeof pause.reason === "string")) &&
+    (trace == null || (mark(trace) && typeof trace.fault === "string")) &&
+    (blocks == null ||
+      (isPlain(blocks) && typeof blocks.digest === "string" && Number.isInteger(blocks.count)))
+  );
+};
+
+/** Состояние напоминания о правилах: сессия, снимок «путь → отпечаток» и
+ * своя правка прошлого вызова. Порченое роняло страж и хук правки на каждом
+ * вызове: прогон проб по холодному контуру. */
+export const isRulesState = (state) =>
+  isPlain(state) &&
+  typeof state.session === "string" &&
+  isPlain(state.seen) &&
+  Object.values(state.seen).every((one) => typeof one === "string") &&
+  isTexts(state.own);
 
 export const isToolModule = (name) =>
   name.endsWith(".mjs") &&

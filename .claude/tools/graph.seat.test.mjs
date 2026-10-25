@@ -280,7 +280,8 @@ describe("посадка на месте: чистые помощники", () =
 
 describe("посадка на месте одной командой", () => {
   it("пустая папка: фаза 1 целиком, испытание звеньев, базовая линия, два коммита; второй вызов — уже сделано", () => {
-    const dest = boxWithShelf("seat-here-");
+    // Пробел в пути: папка «My Projects» — обычное место проекта на чужой машине.
+    const dest = boxWithShelf("seat here-");
     try {
       const run = seatHere(dest, "--packages", ROOT);
       expect(run.status, run.stdout + run.stderr).toBe(0);
@@ -537,7 +538,8 @@ describe("загрузчик среды посадки", () => {
       const none = plan({ git: "2.43.0" });
       expect(none.status, none.stderr).toBe(0);
       expect(none.stdout).toContain("node: нет — поставить " + declared.node);
-      expect(none.stdout).toContain("/v" + declared.node + "/node-v" + declared.node + "-");
+      expect(none.stdout).toMatch(new RegExp("/v" + declared.node + "/node-v" + declared.node + "-[a-z]+-(x64|arm64)\\.(tar\\.gz|zip) в "));
+      expect(none.stdout).toContain("откат: удалить папку ");
       const old = plan({ node: "22.0.0", npm: declared.npm, git: "2.43.0" });
       expect(old.stdout).toContain("node: 22.0.0 — поставить " + declared.node);
       const npmOld = plan({ node: declared.node, npm: "10.9.4", git: "2.43.0" });
@@ -547,6 +549,7 @@ describe("загрузчик среды посадки", () => {
       expect(fine.stdout).toContain("ставить нечего");
       const newer = plan({ node: "24.1.0", npm: "11.30.0", git: "2.43.0" });
       expect(newer.stdout).toContain("ставить нечего");
+      expect(none.stdout).toContain("скачать нечем: нет ни curl, ни wget");
       const noGit = plan({ node: declared.node, npm: declared.npm });
       expect(noGit.stdout).toContain("git: нет — поставить: руками");
       if (process.platform === "linux") {
@@ -555,6 +558,86 @@ describe("загрузчик среды посадки", () => {
       }
     },
   );
+
+  // Установка с архива, который отдаёт поддельный `nodejs.org` по `file://`:
+  // сумма сходится всегда, а запустится ли поставленное — решает его `node`.
+  const shell = ["curl", "tar", "gzip", "mktemp", "rm", "mkdir", "mv", "touch", "tail", "ln", "readlink"];
+  const canInstall =
+    process.platform === "linux" &&
+    bashAt !== "" &&
+    ["sha256sum", ...shell].every((name) => spawnSync("sh", ["-c", "command -v " + name]).status === 0);
+  const install = (nodeSays, before = () => {}, without = "", sums = (text) => text) => {
+    // Апостроф в пути — как в имени профиля `O'Brien`.
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "boot-o'brien-"));
+    const name = "node-v" + declared.node + "-linux-" + (os.arch() === "arm64" ? "arm64" : "x64");
+    const dist = path.join(box, "dist", "v" + declared.node);
+    const pkg = path.join(box, "pkg", name, "bin");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(path.join(pkg, "node"), "#!/bin/sh\n" + nodeSays + "\n");
+    fs.writeFileSync(path.join(pkg, "npm"), "#!/bin/sh\necho " + declared.npm + "\n");
+    for (const one of ["node", "npm"]) fs.chmodSync(path.join(pkg, one), 0o755);
+    spawnSync("tar", ["-czf", path.join(dist, name + ".tar.gz"), "-C", path.join(box, "pkg"), name]);
+    const sum = spawnSync("sha256sum", [name + ".tar.gz"], { cwd: dist, encoding: "utf8" }).stdout;
+    fs.writeFileSync(path.join(dist, "SHASUMS256.txt"), sums(sum));
+    const bin = fakeBin({ git: "2.43.0" });
+    for (const one of ["sha256sum", ...shell].filter((one) => one !== without)) {
+      const real = spawnSync("sh", ["-c", "command -v " + one], { encoding: "utf8" }).stdout.trim();
+      fs.symlinkSync(real, path.join(bin, one));
+    }
+    const home = path.join(box, "home");
+    fs.mkdirSync(home);
+    const dest = path.join(home, ".claude-harness", name);
+    before(dest);
+    const run = spawnSync(bashAt, [BOOT], {
+      encoding: "utf8",
+      env: { HOME: home, PATH: bin, CLAUDE_HARNESS_NODE_DIST: "file://" + path.join(box, "dist") },
+    });
+    const profile = path.join(home, ".profile");
+    const out = {
+      run,
+      profile: fs.existsSync(profile) ? fs.readFileSync(profile, "utf8") : null,
+      left: fs.existsSync(path.dirname(dest)) ? fs.readdirSync(path.dirname(dest)).sort() : [],
+      dest,
+    };
+    fs.rmSync(box, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+    return out;
+  };
+
+  it.skipIf(!canInstall)("ставит запускаемый Node.js и записывает PATH только после проверки запуском", () => {
+    const fine = install("echo v" + declared.node);
+    expect(fine.run.status, fine.run.stdout + fine.run.stderr).toBe(0);
+    expect(fine.run.stdout).toContain("node: не было → " + declared.node);
+    expect(fine.run.stdout).toContain("откат: удалить папку " + fine.dest + " и строки «claude-harness»");
+    expect(fine.profile).toContain(fine.dest + "/bin:$PATH");
+    expect(fine.left).toEqual([path.basename(fine.dest)]);
+
+    const broken = install('echo "version GLIBC_2.28 not found" >&2; exit 127');
+    expect(broken.run.status).toBe(1);
+    expect(broken.run.stdout).toContain("на этой системе не запускается: version GLIBC_2.28 not found");
+    expect(broken.profile).toBe(null);
+    expect(broken.left).toEqual([]);
+
+    // Полупапка от прерванной установки готовой не считается.
+    const stale = install("echo v" + declared.node, (dest) => {
+      fs.mkdirSync(path.join(dest, "bin"), { recursive: true });
+      fs.writeFileSync(path.join(dest, "bin", "node"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    });
+    expect(stale.run.status, stale.run.stdout + stale.run.stderr).toBe(0);
+    expect(stale.left).toEqual([path.basename(stale.dest)]);
+
+    const blind = install("echo v" + declared.node, () => {}, "curl");
+    expect(blind.run.status).toBe(1);
+    expect(blind.run.stdout).toContain("скачать нечем: нет ни curl, ни wget");
+    expect(blind.left).toEqual([]);
+
+    const forged = install("echo v" + declared.node, () => {}, "", (text) => (text[0] === "0" ? "1" : "0") + text.slice(1));
+    expect(forged.run.stdout).toContain("не сошлась с SHASUMS256.txt");
+    const unlisted = install("echo v" + declared.node, () => {}, "", () => "");
+    expect(unlisted.run.stdout).toContain("нет строки для node-v" + declared.node);
+    expect([forged.left, unlisted.left, forged.profile, unlisted.profile]).toEqual([[], [], null, null]);
+  });
 });
 
 function verifiedOfSeed() {

@@ -39,7 +39,9 @@ version_of() {
 
 say() { printf '  %s\n' "$*"; }
 log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+tmp=""
+part=""
+trap 'rm -rf "$log" "$tmp" "$part"' EXIT
 orig_path="$PATH"
 # Обновление npm с выводом в журнал: на сбое печатается его конец, а не одно «не встал».
 npm_up() {
@@ -71,16 +73,15 @@ root="${CLAUDE_HARNESS_HOME:-$HOME/.claude-harness}"
 name="node-v$node_need-$os-$arch"
 dest="$root/$name"
 if [ "$os" = win ]; then bin="$dest"; else bin="$dest/bin"; fi
+if [ "$os" = win ]; then file="$name.zip"; else file="$name.tar.gz"; fi
+if [ "$os" = win ]; then undo_path="запись о ней в PATH пользователя"; else undo_path="строки «claude-harness» в файлах настройки оболочки и ссылки на неё в $HOME/.local/bin"; fi
 dist="${CLAUDE_HARNESS_NODE_DIST:-https://nodejs.org/dist}/v$node_need"
 
+downloader() {
+  if command -v curl >/dev/null 2>&1; then echo curl; elif command -v wget >/dev/null 2>&1; then echo wget; fi
+}
 fetch() {
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q "$1" -O "$2"
-  else
-    return 1
-  fi
+  if [ "$(downloader)" = curl ]; then curl -fsSL "$1" -o "$2"; else wget -nv "$1" -O "$2"; fi
 }
 
 sha256_of() {
@@ -91,36 +92,52 @@ sha256_of() {
   fi
 }
 
+# Путь литералом PowerShell: апостроф в имени профиля удваивается, иначе строка рвётся.
+ps_path() {
+  local w q="'"
+  w="$(cygpath -w "$1")"
+  printf "'%s'" "${w//$q/$q$q}"
+}
+node_in() { if [ "$os" = win ]; then echo "$1/node.exe"; else echo "$1/bin/node"; fi; }
+# Годна ли папка: Node.js в ней запускается и называет нужную версию.
+node_fits() { [ "$("$(node_in "$1")" --version 2>/dev/null)" = "v$node_need" ]; }
+
 install_node() {
   [ "$os" != unknown ] && [ "$arch" != unknown ] ||
     fail "Система $(uname -s) $(uname -m) не опознана: Node.js $node_need ставят с nodejs.org руками."
-  if [ -x "$bin/node" ] || [ -x "$bin/node.exe" ]; then return 0; fi
-  local file tmp want got
-  if [ "$os" = win ]; then file="$name.zip"; else file="$name.tar.gz"; fi
+  node_fits "$dest" && return 0
+  local want got why
+  [ -n "$(downloader)" ] || fail "Архив Node.js скачать нечем: нет ни curl, ни wget. Поставить один из них и позвать посадку снова."
   tmp="$(mktemp -d)"
   fetch "$dist/$file" "$tmp/$file" && fetch "$dist/SHASUMS256.txt" "$tmp/SHASUMS256.txt" ||
-    fail "Архив $dist/$file не скачан: нужна сеть до nodejs.org."
+    fail "Архив $dist/$file не скачан: причину $(downloader) напечатал выше."
   want="$(grep "  $file\$" "$tmp/SHASUMS256.txt" | cut -d ' ' -f 1)"
   got="$(sha256_of "$tmp/$file")"
-  [ -n "$want" ] && [ "$want" = "$got" ] ||
-    fail "Контрольная сумма $file не сошлась с SHASUMS256.txt: архив не ставится."
+  [ -n "$want" ] || fail "В $dist/SHASUMS256.txt нет строки для $file: сборки под эту систему там нет."
+  [ "$want" = "$got" ] || fail "Контрольная сумма $file не сошлась с SHASUMS256.txt: архив не ставится."
+  # Распаковка рядом и перенос одним шагом: прерванная не оставляет на месте полупапку.
   mkdir -p "$root"
+  part="$(mktemp -d "$root/.part-XXXXXX")"
   if [ "$os" = win ]; then
-    powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath '$(cygpath -w "$tmp/$file")' -DestinationPath '$(cygpath -w "$root")' -Force" ||
+    powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath $(ps_path "$tmp/$file") -DestinationPath $(ps_path "$part") -Force" ||
       fail "Архив $file не распакован."
   else
-    tar -xzf "$tmp/$file" -C "$root" || fail "Архив $file не распакован."
+    tar -xzf "$tmp/$file" -C "$part" || fail "Архив $file не распакован."
   fi
-  rm -rf "$tmp"
+  # Сумма удостоверяет архив, а не то, что эта система его запустит: musl, старая glibc.
+  if ! node_fits "$part/$name"; then
+    why="$("$(node_in "$part/$name")" --version 2>&1 | head -n 1)"
+    fail "Node.js $node_need с nodejs.org на этой системе не запускается: ${why:-ответа нет}. Сборку под систему ставят руками; для musl (Alpine) она на unofficial-builds.nodejs.org."
+  fi
+  rm -rf "$dest"
+  mv "$part/$name" "$dest" || fail "Node.js не перенесён в $dest."
 }
 
 # Новые окна терминала и перезапущенный Claude Code видят Node.js сами.
 persist_path() {
   local mark="# claude-harness: Node.js"
   if [ "$os" = win ]; then
-    local w
-    w="$(cygpath -w "$bin")"
-    powershell.exe -NoProfile -Command "\$b='$w'; \$p=[Environment]::GetEnvironmentVariable('Path','User'); \$k=@(\$p -split ';' | Where-Object { \$_ -and \$_ -notlike '*\\.claude-harness\\node-*' }); [Environment]::SetEnvironmentVariable('Path', ((@(\$b) + \$k) -join ';'), 'User')" ||
+    powershell.exe -NoProfile -Command "\$b=$(ps_path "$bin"); \$p=[Environment]::GetEnvironmentVariable('Path','User'); \$k=@(\$p -split ';' | Where-Object { \$_ -and \$_ -notlike '*\\.claude-harness\\node-*' }); [Environment]::SetEnvironmentVariable('Path', ((@(\$b) + \$k) -join ';'), 'User')" ||
       fail "Путь к Node.js не записан в PATH пользователя."
     return 0
   fi
@@ -185,7 +202,9 @@ fi
 
 if [ "$plan" = 1 ]; then
   if [ "$use_own" = 1 ]; then
-    say "node: ${node_have:-нет} — поставить $node_need из $dist/$name в $dest"
+    say "node: ${node_have:-нет} — поставить $node_need из $dist/$file в $dest"
+    say "откат: удалить папку $dest и $undo_path"
+    [ -n "$(downloader)" ] || say "скачать нечем: нет ни curl, ни wget — поставить один из них"
     say "npm: поднять до $npm_need в той же папке"
     todo=1
   elif [ -z "$npm_have" ] || ver_lt "$npm_have" "$npm_need"; then
@@ -250,9 +269,8 @@ for one in "${done_lines[@]}"; do say "$one"; done
 # Виден ли свой Node.js сразу — по факту: какой node находит PATH, с которым загрузчик позвали.
 if [ "$use_own" = 1 ] && [ "$(PATH="$orig_path" version_of node || true)" = "$node_need" ]; then
   say "Node.js $node_need виден сразу, этой сессии и её хукам"
-  say "откат: удалить папку $dest, ссылки node, npm, npx на неё в $HOME/.local/bin и строки «claude-harness» в файлах настройки оболочки"
 elif [ "$use_own" = 1 ]; then
   say "в этой сессии команды зовут с PATH=\"$bin:\$PATH\"; новые окна терминала и перезапущенный Claude Code видят Node.js сами"
-  say "откат: удалить папку $dest, ссылки на неё в $HOME/.local/bin, если легли, и строки «claude-harness» в файлах настройки оболочки либо в PATH пользователя"
 fi
+[ "$use_own" = 1 ] && say "откат: удалить папку $dest и $undo_path"
 exit 0

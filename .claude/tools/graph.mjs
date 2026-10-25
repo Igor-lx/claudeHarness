@@ -98,6 +98,8 @@ import {
   isChainConfigPath,
   isLedgerRow,
   isProbeRun,
+  isRulesState,
+  isStopState,
   BAR_PAGES_DIR,
   CODE_EXTENSIONS,
   CODE_FILE,
@@ -568,12 +570,10 @@ const rulesFreshnessStep = (said) => {
       return "";
     }
   }
-  let state = null;
-  try {
-    state = JSON.parse(readFileSync(at, "utf8"));
-  } catch {
-    // Состояния нет либо оно испорчено — снимок с этого вызова.
-  }
+  // Нет состояния либо оно не по форме — снимок с этого вызова.
+  const state = readOwn(at, null, (one) =>
+    isRulesState(one) ? "" : "состояние не по форме { session, seen, own }: " + recordText(one),
+  );
   const fileAt = said?.tool_input?.file_path ?? said?.tool_input?.notebook_path;
   const file =
     typeof fileAt === "string"
@@ -7676,7 +7676,11 @@ if (mode === "stop") {
   const stateAt =
     gitDir === null ? null : path.join(gitDir, "claude-harness-stop.json");
   const state =
-    stateAt !== null && existsSync(stateAt) ? readJson(stateAt, {}) : {};
+    stateAt === null
+      ? {}
+      : readOwn(stateAt, {}, (one) =>
+          isStopState(one) ? "" : "состояние не по форме { pause, trace, blocks }: " + recordText(one),
+        );
   const save = () => {
     if (stateAt !== null)
       writeFileSync(stateAt, JSON.stringify(state, null, 2) + NEWLINE);
@@ -21708,6 +21712,10 @@ if (mode === "verify") {
   // клон без пакетов печатал «осмотрено» всех объявленных и «связка
   // совпадает». Найдено пробой по холодному контуру.
   const notInstalled = [];
+  // Пакет связки, которого проект не объявляет, — не «не поставлен»: посадка
+  // его законно не дописала (`sass-embedded` без листов стилей), и звать к
+  // установке не за чем. Найдено пробой по холодному контуру.
+  const notDeclared = [];
   checkStep(() => {
     if (CONFIG.verifiedVersions != null) {
       // Версия установленного: у `node` она своя, у МЕНЕДЖЕРА ПАКЕТОВ —
@@ -21731,7 +21739,8 @@ if (mode === "verify") {
       for (const [name, want] of Object.entries(CONFIG.verifiedVersions)) {
         const have = installed(name);
         if (have === null) {
-          notInstalled.push(name);
+          const tool = name === "node" || name === "npm";
+          (tool || declaredPackages?.has(name) ? notInstalled : notDeclared).push(name);
           continue;
         }
         if (versionCmp(have, want) < 0)
@@ -21751,13 +21760,18 @@ if (mode === "verify") {
       () => ({
         n:
           Object.keys(CONFIG.verifiedVersions ?? {}).length -
-          notInstalled.length,
+          notInstalled.length -
+          notDeclared.length,
         unit: "установленных из объявленных версий",
       }),
     );
     if (notInstalled.length > 0)
       console.log(
         `  не установлено, не сравнивалось: ${notInstalled.length} — ${notInstalled.join(", ")}. Пакеты не поставлены`,
+      );
+    if (notDeclared.length > 0)
+      console.log(
+        `  проектом не объявлено, не сравнивалось: ${notDeclared.length} — ${notDeclared.join(", ")}. Ставить не нужно`,
       );
     console.log(
       CONFIG.verifiedVersions == null

@@ -5,6 +5,13 @@ name: harness-bootstrap
 
 on:
   workflow_dispatch:
+  # A bootstrap edit or a new verified set is tested without being remembered.
+  push:
+    branches: [main]
+    paths:
+      - .claude/seat/bootstrap.sh
+      - .claude/seat/templates/graph.config.mjs
+      - .github/workflows/harness-bootstrap.yml
 
 jobs:
   empty-machine:
@@ -24,6 +31,12 @@ jobs:
         run: |
           git config --global user.name "harness-ci"
           git config --global user.email "harness-ci@users.noreply.github.com"
+
+      - name: Install home under a profile name with an apostrophe
+        run: |
+          t="$RUNNER_TEMP"
+          if command -v cygpath >/dev/null; then t="$(cygpath -u "$t")"; fi
+          echo "CLAUDE_HARNESS_HOME=$t/o'brien/.claude-harness" >>"$GITHUB_ENV"
 
       - name: Cut the runner's Node.js out of PATH
         run: |

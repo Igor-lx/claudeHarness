@@ -70,7 +70,8 @@ export const protocolShellFault = (reader, text) =>
  * контексте прежний текст без признака. Здесь — шаг состояния: снимок
  * отпечатков на старте, сверка на каждом вызове, напоминание о расхождении.
  *
- * `state` — прежнее состояние либо `null`; `now` — путь от корня → отпечаток;
+ * `state` — прежнее состояние по форме `isRulesState` либо `null`; `now` —
+ * путь от корня → отпечаток;
  * `call` — вызов: сессия, инструмент, путь файла от корня либо `null`.
  * Первый вызов сессии делает снимок. Чтение файла инструментом `Read` снимает
  * его из устаревших. Своя правка (`Edit`, `Write`) принимается следующим
@@ -79,7 +80,7 @@ export const rulesFreshnessOf = (state, now, call) => {
   if (state === null || state.session !== call.session)
     return { state: { session: call.session, seen: { ...now }, own: [] }, stale: [] };
   const seen = { ...state.seen };
-  for (const rel of state.own ?? [])
+  for (const rel of state.own)
     if (rel in now) seen[rel] = now[rel];
     else delete seen[rel];
   // Путь несут только `Read` и правки; правленый, новый тоже, принимается и следующим вызовом.

@@ -4,6 +4,13 @@ name: harness-windows
 
 on:
   workflow_dispatch:
+  # A tool or seat edit is tested on Windows without being remembered.
+  push:
+    branches: [main]
+    paths:
+      - .claude/tools/**
+      - .claude/seat/**
+      - .github/workflows/harness-windows.yml
 
 jobs:
   self-tests:
@@ -17,10 +24,13 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 22.23.2
+          # The verified set lives in the seed; a copy here would lag behind it.
+          node-version-file: .claude/seat/templates/.nvmrc
 
       - name: npm of the verified set
-        run: npm i -g npm@11
+        run: |
+          npm_need="$(node --input-type=module -e 'const { CONFIG } = await import("./.claude/seat/templates/graph.config.mjs"); console.log(CONFIG.verifiedVersions.npm)')"
+          npm i -g "npm@$npm_need"
 
       - name: Git identity for the test seat commits
         run: |

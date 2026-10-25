@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BAR_CHECK_KINDS } from "./graph.predicates.mjs";
+import { BAR_CHECK_KINDS, isRulesState, isStopState } from "./graph.predicates.mjs";
 import {
   TOOL_DIR,
   seatEmpty,
@@ -113,6 +113,28 @@ describe("ворота конца хода", () => {
       );
       expect(hook().status).toBe(0);
       expect(tool("stop", "--session")).toBe("");
+      // Состояния хуков, порченые по форме, читаются пустыми и лечатся:
+      // прежде начало сессии и страж падали на них на каждом вызове.
+      fs.writeFileSync(at, "export const zzStop = 3;\n");
+      const stopAt = path.join(box, ".git", "claude-harness-stop.json");
+      const rulesAt = path.join(box, ".git", "claude-harness-rules.json");
+      fs.writeFileSync(stopAt, '{"trace":{"fault":"f"}}');
+      fs.writeFileSync(rulesAt, '{"session":"s1","seen":{},"own":5}');
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: JSON.stringify({ session_id: "s1", tool_name: "Bash", tool_input: { command: "ls" } }),
+        });
+      const session = run("stop", "--session");
+      expect(session.status, session.stderr).toBe(0);
+      expect(session.stderr).toContain("состояние не по форме { pause, trace, blocks }");
+      expect(run("stop", "--hook").status).toBe(2);
+      expect(isStopState(JSON.parse(fs.readFileSync(stopAt, "utf8")))).toBe(true);
+      const guard = run("guard", "--hook");
+      expect(guard.status, guard.stderr).toBe(0);
+      expect(guard.stderr).toContain("состояние не по форме { session, seen, own }");
+      expect(isRulesState(JSON.parse(fs.readFileSync(rulesAt, "utf8")))).toBe(true);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

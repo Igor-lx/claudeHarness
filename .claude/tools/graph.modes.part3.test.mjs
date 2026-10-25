@@ -3568,6 +3568,19 @@ describe("сверка версий в чистом клоне", () => {
         .split("\n")
         .filter((line) => /^\s*["'\w@/.-]+["']?:/.test(line)).length;
       expect(Number(looked[1]) + Number(missing[1])).toBe(declared);
+      expect(head).not.toContain("проектом не объявлено");
+      // Пакет, который проект не объявляет, ставить не зовут.
+      const manifest = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+      delete pkg.devDependencies["sass-embedded"];
+      fs.writeFileSync(manifest, JSON.stringify(pkg, null, 2) + "\n");
+      const again = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"],
+        { cwd: box, encoding: "utf8" },
+      ).stdout.split("=== Версии установленного (предупреждение, прогон не роняет) ===")[1];
+      expect(again).toContain("проектом не объявлено, не сравнивалось: 1 — sass-embedded. Ставить не нужно");
+      expect(/не установлено, не сравнивалось: \d+ — ([^.]*)\./.exec(again)[1]).not.toContain("sass-embedded");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
