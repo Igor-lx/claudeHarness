@@ -3581,6 +3581,20 @@ describe("сверка версий в чистом клоне", () => {
       ).stdout.split("=== Версии установленного (предупреждение, прогон не роняет) ===")[1];
       expect(again).toContain("проектом не объявлено, не сравнивалось: 1 — sass-embedded. Ставить не нужно");
       expect(/не установлено, не сравнивалось: \d+ — ([^.]*)\./.exec(again)[1]).not.toContain("sass-embedded");
+      // Пакет семени с условием звено требует, только пока семя лежит.
+      delete pkg.devDependencies["@testing-library/jest-dom"];
+      fs.writeFileSync(manifest, JSON.stringify(pkg, null, 2) + "\n");
+      const tools = () =>
+        spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"],
+          { cwd: box, encoding: "utf8" },
+        )
+          .stdout.split("=== Инструменты звеньев на месте (предупреждение, прогон не роняет) ===")[1]
+          .split("\n===")[0];
+      expect(tools()).toContain("@testing-library/jest-dom");
+      fs.rmSync(path.join(box, "src", "tests", "setup.ts"));
+      expect(tools()).not.toContain("@testing-library/jest-dom");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

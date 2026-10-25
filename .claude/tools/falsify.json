@@ -1339,8 +1339,8 @@
       "section": "Версии зависимостей закреплены",
       "own": true,
       "file": "package.json",
-      "find": "\"vitest\": \"",
-      "replace": "\"vitest\": \"^"
+      "find": "\"devDependencies\": {",
+      "replace": "\"devDependencies\": {\n    \"зависимость-диапазоном\": \"^1.0.0\","
     },
     {
       "section": "Красное звено названо находкой",

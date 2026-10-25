@@ -1917,6 +1917,19 @@ describe("ошибка настройки звена долгом не гаси�
       );
       expect(parse.status).toBe(1);
       expect(parse.out).toContain("ошибка настройки (Parsing error");
+      // Правило, которому нужна опция компилятора, без неё не проверяет
+      // ничего: линт читал нестрогий конфиг, и находка — его настройка.
+      const option = run(
+        "lint",
+        [
+          "/p/src/a.ts",
+          "  0:0  error  This rule requires the `strictNullChecks` compiler option to be turned on to function correctly  @typescript-eslint/prefer-nullish-coalescing",
+          "✖ 2 problems (2 errors, 0 warnings)",
+        ],
+        1,
+      );
+      expect(option.status).toBe(1);
+      expect(option.out).toContain("ошибка настройки (requires the `strictNullChecks` compiler option");
       // Долг линта держит пункт долга перехода, называющий звено линта.
       const said = () =>
         (verifyIn(box).get("Объявленный долг назван планом перехода") ?? []).join(" ");
@@ -2351,6 +2364,22 @@ describe("база о своём: документы узла, сторона т
       expect(mute()).not.toContain("zzReader.ts");
       withRow("| счёт | `src/app/zzHolder.ts` | он же | он же | всегда |\n");
       expect(mute()).not.toContain("zzHolder.ts");
+      // Второй писатель чужого ключа своего состояния не держит: его называет
+      // графа «Кто пишет». Файл со своим состоянием та же графа не называет.
+      fs.writeFileSync(
+        path.join(app, "zzWriter.ts"),
+        'export const zzClear = (): void => {\n  localStorage.setItem(\n    "zz-key",\n    "",\n  );\n};\n',
+      );
+      expect(mute()).toContain("app/zzWriter.ts");
+      withRow(
+        "| ключ `zz-key` | `src/app/zzHolder.ts` | `src/app/zzHolder.ts`, `src/app/zzWriter.ts` | он же | пока не перепишут |\n",
+      );
+      expect(mute()).not.toContain("zzWriter.ts");
+      withRow(
+        "| ключ `zz-key` | `src/app/zzWriter.ts` | `src/app/zzHolder.ts` | он же | пока не перепишут |\n",
+      );
+      expect(mute()).toContain("не назван в графе «Владелец» app/zzHolder.ts");
+      fs.rmSync(path.join(app, "zzWriter.ts"));
       // Пробел в файле порядка держателем владельца состояния не служит: C6
       // спорит только со строкой о записи состояния.
       fs.writeFileSync(

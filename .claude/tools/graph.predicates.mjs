@@ -3159,6 +3159,12 @@ export const STATE_FORMS = [
 /** Форма состояния, которую держит текст, либо пустая строка. */
 export const stateFormOf = (text) =>
   STATE_FORMS.find(([, re]) => re.test(text))?.[0] ?? "";
+/** Своя форма состояния помимо хранилища браузера, либо пустая строка: файл,
+ * который только пишет чужой ключ, своего состояния не держит. */
+export const ownStateFormOf = (text) =>
+  STATE_FORMS.find(
+    ([name, re]) => name !== "хранилище браузера" && re.test(text),
+  )?.[0] ?? "";
 
 /** Обращения наружу: пометка — род внешнего. Флаги сборки (`DEV`, `PROD`,
  * `MODE`, `SSR`, `BASE_URL`, `NODE_ENV`) — не вход снаружи: сборщик вшивает
@@ -4335,6 +4341,8 @@ export const PREDICATE_CASES = [
   ["stateFormOf", "localStorage.setItem(k, v);", "хранилище браузера"],
   ["stateFormOf", "const localStorageKey = \"k\";", ""],
   ["stateFormOf", "import localforage from \"localforage\";", "хранилище браузера"],
+  ["ownStateFormOf", "localStorage.setItem(\"k\", v);", ""],
+  ["ownStateFormOf", "const [a, setA] = useState(0);\nlocalStorage.setItem(\"k\", a);", "хук состояния"],
   ["stateFormOf", "import { mock } from \"localforage-mock\";", ""],
   ["stateFormOf", "const [query] = useSearchParams();", "адрес страницы"],
   ["stateFormOf", "const params = new URLSearchParams(body);", ""],

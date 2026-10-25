@@ -58,6 +58,7 @@ import {
   signalsOf,
   tagComparisonsOf,
   stateFormOf,
+  ownStateFormOf,
   escapeRe,
   joinsTwo,
   BAR_SIGNALS,
@@ -1089,9 +1090,11 @@ for (const [field, v] of Object.entries(CONFIG)) {
 // принявший настройку, и линтер, не нашедший плагина, кода не проверяли
 // вовсе, и их «одна ошибка» — не долг, а слепое звено: замерено посадкой, где
 // устаревшая опция настройки дала одну ошибку вместо пятидесяти шести, и
-// посаженная в код ошибка типа прошла незамеченной.
+// посаженная в код ошибка типа прошла незамеченной. Правило, требующее
+// опции компилятора, без неё тоже не проверяет ничего: замерено переходом,
+// где линт читал нестрогий конфиг, — `57` таких строк шли бы долгом.
 const LINT_SETUP_FAULT =
-  /Oops! Something went wrong|Failed to load (plugin|config)|Cannot find module|Parsing error/;
+  /Oops! Something went wrong|Failed to load (plugin|config)|Cannot find module|Parsing error|requires the `\w+` compiler option/;
 const DEBT_WRAPPERS = {
   types: {
     title: "Ошибки типов против долга",
@@ -3033,20 +3036,33 @@ const owedFor = (file) => {
     const r = rel(file);
     const holds = (cell) =>
       quotedIn(cell).some((t) => t === r || t.endsWith("/" + r));
+    // Файл, который только пишет чужой ключ хранилища, своего состояния не
+    // держит: его называет графа «Кто пишет» строки владельца ключа. Своё
+    // состояние рядом с записью по-прежнему спрашивает владельца.
+    const writerOnly =
+      one.subject === "state" && ownStateFormOf(body) === "";
     let named = false;
     let column = -1;
+    let writers = -1;
     for (const line of lines) {
       if (!line.startsWith("|")) {
         column = -1;
+        writers = -1;
         continue;
       }
       const cells = line.split("|").slice(1, -1).map((c) => c.trim());
       if (one.column !== undefined && cells.includes(one.column)) {
         column = cells.indexOf(one.column);
+        writers = writerOnly ? cells.indexOf("Кто пишет") : -1;
         continue;
       }
       if (/^[-:\s|]+$/.test(line)) continue;
-      if (one.column === undefined ? holds(line) : column >= 0 && holds(cells[column] ?? "")) {
+      if (
+        one.column === undefined
+          ? holds(line)
+          : (column >= 0 && holds(cells[column] ?? "")) ||
+            (writers >= 0 && holds(cells[writers] ?? ""))
+      ) {
         named = true;
         break;
       }
@@ -12591,18 +12607,26 @@ const storeFacts = () => {
   for (const f of files) {
     if (isTest(f)) continue;
     const text = codeOf(readFileSync(f, "utf8"));
-    text
-      .split(LF)
-      .forEach((line, i) => {
-        if (/^\s*(\/\/|\*)/.test(line)) return;
-        for (const kind of WRITER_KINDS) {
-          for (const m of line.matchAll(kind.take))
-            note(STORE_FACTS.writers, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
-          for (const m of line.matchAll(kind.drop))
-            note(STORE_FACTS.drops, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
-          if (kind.wipe.test(line)) note(STORE_FACTS.wipes, kind.kind, f, i + 1);
-        }
+    const lines = text.split(LF);
+    const remark = (i) => /^\s*(\/\/|\*)/.test(lines[i]);
+    // Вызов ищут по всему тексту: форматтер переносит ключ на строку ниже
+    // открывающей скобки, и построчный поиск такого писателя не видел.
+    const lineAt = (at) => text.slice(0, at).split(LF).length - 1;
+    for (const kind of WRITER_KINDS) {
+      for (const m of text.matchAll(kind.take)) {
+        const i = lineAt(m.index);
+        if (!remark(i))
+          note(STORE_FACTS.writers, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
+      }
+      for (const m of text.matchAll(kind.drop)) {
+        const i = lineAt(m.index);
+        if (!remark(i))
+          note(STORE_FACTS.drops, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
+      }
+      lines.forEach((line, i) => {
+        if (!remark(i) && kind.wipe.test(line)) note(STORE_FACTS.wipes, kind.kind, f, i + 1);
       });
+    }
   }
   return STORE_FACTS;
 };
@@ -18647,6 +18671,17 @@ if (mode === "bar-read") {
   }
   const parsed = barRowsOf(was.body);
   sayLooked("страниц чтения в протоколе", parsed.reads.length);
+  // Протокол слоя перехода страниц не несёт по устройству: слой судят по
+  // фактам модели, а код его единиц читают их протоколы.
+  if (
+    parsed.reads.length === 0 &&
+    /^- род: `на переход`$/m.test(was.body) &&
+    !was.body.includes("## Прочитано")
+  ) {
+    console.log("=== Страниц у протокола нет: слой судят по фактам модели ===");
+    console.log("  Код его единиц читают их протоколы, политику — протокол приложения.");
+    process.exit(0);
+  }
   if (parsed.reads.length === 0 || was.salt === null) {
     console.log("=== В протоколе страниц нет ===");
     console.log(
@@ -23977,6 +24012,14 @@ if (mode === "verify") {
         ]);
         const gaps = [];
         const elsewhere = [];
+        // Пакет семени с условием нужен, только пока семя лежит: без
+        // подготовки прогона её библиотека утверждений звену не нужна.
+        const mapAt = shelfAt("seat/map.json");
+        const unlaid = new Set(
+          (mapAt === null || !existsSync(mapAt) ? [] : readJson(mapAt, {}).copy ?? [])
+            .filter((e) => e.onlyWith != null && !existsSync(path.join(REPO_AT, e.to)))
+            .flatMap((e) => e.packages ?? []),
+        );
         for (const link of CONFIG.toolchain) {
           // Звено без предмета пробелом не является: его не дописывают намеренно.
           if (!linkHasSubject(link.script)) continue;
@@ -23987,7 +24030,9 @@ if (mode === "verify") {
           // Спрашивается ПРОЕКТНОЕ имя звена, а не семенное.
           const own = linkOwnName(link.script, scripts) ?? link.script;
           const noScript = link.script != null && scripts[own] == null;
-          const missing = (link.packages ?? []).filter((p) => !declared.has(p));
+          const missing = (link.packages ?? []).filter(
+            (p) => !declared.has(p) && !unlaid.has(p),
+          );
           if (!noScript && missing.length === 0) continue;
           const what = [
             noScript ? `команды \`${link.script}\` нет` : null,
@@ -25435,9 +25480,11 @@ if (mode === "verify") {
       // компонентов не слеп — ему нечего смотреть, и это разные состояния.
       const ownLayout =
         layoutSaid !== null && layoutSaid.includes("раскладка проекта своя");
+      // Тот же слой читают ещё три сверки, и слепы они вместе: находка одна
+      // на всех, иначе «осмотрено 0» у каждой неотличимо от здоровья.
       if (seen.size === 0 && ownLayout && CONFIG.componentsAt == null)
         readmeBlind =
-          "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — сверка не смотрит никуда";
+          "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — не смотрят никуда «У компонента есть README», «Документы компонента лежат в его `docs/`», «В корне узла только сам узел», «В файле узла только сам узел». Объявить папку компонентов проекта";
     }
   });
   // 13m. Язык внутри корня исходников.
@@ -25558,7 +25605,7 @@ if (mode === "verify") {
       n: componentDirs,
       unit: "папок компонентов",
     }));
-    if (readmeBlind !== null) console.log("  " + readmeBlind);
+    if (readmeBlind !== null) console.log("    " + readmeBlind);
     console.log(
       "  папок компонентов без README: " + noReadme.length + debtTail("readme"),
     );

@@ -2376,14 +2376,16 @@ describe("факты по уровням без протокола", () => {
       };
       const loose = () =>
         (verifyIn(box).get("Архитектурный факт назван записью") ?? []).join("\n");
-      // Два компонента пишут один ключ хранилища сами: второй писатель.
-      for (const name of ["ZzA", "ZzB"])
-        put(
-          "components/" + name + "/" + name + ".tsx",
-          "export function " +
-            name +
-            '() {\n  return <button onClick={() => window.localStorage.setItem("zz.count", "1")}>x</button>;\n}\n',
-        );
+      // Два компонента пишут один ключ хранилища сами: второй писатель. У
+      // второго ключ на строке ниже вызова — так его переносит форматтер.
+      put(
+        "components/ZzA/ZzA.tsx",
+        'export function ZzA() {\n  return <button onClick={() => window.localStorage.setItem("zz.count", "1")}>x</button>;\n}\n',
+      );
+      put(
+        "components/ZzB/ZzB.tsx",
+        'export function ZzB() {\n  return (\n    <button\n      onClick={() =>\n        window.localStorage.setItem(\n          "zz.count",\n          "1",\n        )\n      }\n    >\n      x\n    </button>\n  );\n}\n',
+      );
       const two = tool("levels");
       expect(two.code).toBe(1);
       expect(two.out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx — не назван/);
@@ -3156,6 +3158,21 @@ describe("долг перехода: список, держатель, отст�
       );
       expect(said).toContain("ДОЛГ ПЕРЕХОДА");
       expect(said).toContain("1 — Раскладка проекта своя — сейчас: 1");
+      // Своя раскладка без слоя компонентов: четыре сверки слоя смотрят в
+      // ноль, и это находка, а не строка к сведению.
+      const blind = (found.get("У компонента есть README") ?? []).join("\n");
+      expect(blind).toContain("`componentsAt`");
+      expect(blind).toContain("«В файле узла только сам узел»");
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfg,
+        fs
+          .readFileSync(cfg, "utf8")
+          .replace("componentsAt: null,", 'componentsAt: ["zzOwn"],'),
+      );
+      expect(
+        (verifyIn(box).get("У компонента есть README") ?? []).join("\n"),
+      ).not.toContain("`componentsAt`");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
