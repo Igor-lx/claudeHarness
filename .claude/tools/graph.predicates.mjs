@@ -2673,8 +2673,8 @@ export const barWitnessVerdict = (row) => {
  * переносит либо переименовывает созданный ею файл. Неизвестное `change` —
  * пустая строка: книга с ним неверна. */
 export const plantKind = (shape) => {
-  const [parts, change = ""] = (shape ?? "").split("|");
-  const has = new Set(parts.split("+").filter(Boolean));
+  const [parts, change = ""] = shape.split("|");
+  const has = new Set(parts.split("+"));
   if (change === "удаление")
     return has.has("create") ? "удалением" : "";
   if (change === "сосед")
@@ -3735,15 +3735,15 @@ const codeSignalsOf = (file, text, own) => {
   // зовёт готовую чистую функцию одним вызовом и пометки не получает.
   const exportsHook = /\bexport\s+(?:const|function)\s+use[A-Z]/.test(bare);
   each(
-    /\b(?:React\s*\.\s*)?(?:useMemo|useCallback|memo)\s*\(|\bcomputed\s*\(|\bmemoize\w*\s*\(/g,
+    /\b(?:useMemo|useCallback|memo)\s*\(|\bcomputed\s*\(|\bmemoize\w*\s*\(/g,
     bare,
     (m) => {
       let mark = "";
-      if (exportsHook && /(?:useMemo|computed)\s*\($/.test(m[0])) {
+      if (exportsHook && (m[0].startsWith("useMemo") || m[0].startsWith("computed"))) {
         const p = m.index + m[0].length - 1;
         const q = closeOf(bare, p);
-        const first = q < 0 ? "" : (topLevelParts(bare.slice(p + 1, q), p + 1)[0]?.text ?? "").trim();
-        const arrow = /^\(\s*\)\s*=>\s*([\s\S]+)$/.exec(first);
+        const first = q < 0 ? "" : topLevelParts(bare.slice(p + 1, q), 0)[0].text;
+        const arrow = /^\(\s*\)\s*=>([\s\S]+)/.exec(first);
         const inner = arrow === null ? "" : arrow[1].trim();
         const oneCall = /^[\w$.]+\s*\((?:[^()]|\([^()]*\))*\)$/.test(inner);
         if (inner !== "" && !oneCall) mark = "правило";
@@ -5718,6 +5718,14 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport function useTotal(xs) {\n  return useMemo(() => {\n    return xs.reduce((s, x) => s + x, 0);\n  }, [xs]);\n}", "2:мемо/правило"],
   ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(() => titleCase(t), [t]);", "1:мемо"],
   ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(() => fmt.title(t, opts(t)), [t]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (text) => useMemo(() => titleCase(clean(text)), [text]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(build, [t]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(wrap(() => t + 1), [t]);", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(()=>t+1, [t]);", "1:мемо/правило"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(( ) => t + 1, [t]);", "1:мемо/правило"],
+  ["signalsSummary", "src/a.ts\nexport   function   useTotal(xs) {\n  return useMemo(() => xs.a + xs.b, [xs]);\n}", "2:мемо/правило"],
+  ["signalsSummary", "src/a.ts\nexport const useTitle = (t) => useMemo(() => t + 1", "1:мемо"],
+  ["signalsSummary", "src/a.ts\nexport const total = memoize (sum);", "1:мемо"],
   ["signalsSummary", "src/a.ts\nconst useTitle = (t) => useMemo(() => t.trim().toUpperCase(), [t]);", "1:мемо;1:мёртвое"],
   ["signalsSummary", "src/a.ts\nexport const useTotal = (xs) => computed(() => xs.a + xs.b);", "1:мемо/правило"],
   ["signalsSummary", "src/a.ts\nexport const useOnSave = (t) => useCallback(() => t.trim().toUpperCase(), [t]);", "1:мемо"],
@@ -5942,6 +5950,8 @@ export const PREDICATE_CASES = [
   ["isLedgerRow", [1, 2], false],
   ["isLedgerRow", { killed: "3", alive: 0, hash: "ab12" }, false],
   ["isLedgerRow", { killed: 3, alive: -1, hash: "ab12" }, false],
+  ["isLedgerRow", { killed: -1, alive: 0, hash: "ab12" }, false],
+  ["isLedgerRow", undefined, false],
   ["isLedgerRow", { killed: 1.5, alive: 0, hash: "ab12" }, false],
   ["isLedgerRow", { killed: 3, alive: 0 }, false],
   ["isLedgerRow", { killed: 3, alive: 0, hash: "" }, false],
@@ -5954,6 +5964,8 @@ export const PREDICATE_CASES = [
   ["isProbeRun", { criterion: 5, verdict: "поймано" }, false],
   ["isProbeRun", { criterion: "M1" }, false],
   ["isProbeRun", { criterion: "", verdict: "поймано" }, false],
+  ["isProbeRun", { criterion: "M1", verdict: "" }, false],
+  ["isProbeRun", undefined, false],
   // --- protocolReadByShell: чтение протокола свода командой оболочки ---
   ["protocolReadByShell", "cat .context/bar-protocol.md", "cat"],
   ["protocolReadByShell", "sed -n 1,50p .context/bar-protocol.md", "sed"],

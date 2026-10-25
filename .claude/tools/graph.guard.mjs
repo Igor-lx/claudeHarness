@@ -82,14 +82,11 @@ export const rulesFreshnessOf = (state, now, call) => {
   for (const rel of state.own ?? [])
     if (rel in now) seen[rel] = now[rel];
     else delete seen[rel];
-  const own = [];
-  if (call.file !== null && (call.file in now || call.file in seen)) {
-    if (call.tool === "Read" && call.file in now) seen[call.file] = now[call.file];
-    if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(call.tool)) own.push(call.file);
-  }
+  // Путь несут только `Read` и правки; правленый, новый тоже, принимается и следующим вызовом.
+  if (call.file in now) seen[call.file] = now[call.file];
+  const own = ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(call.tool) ? [call.file] : [];
   const stale = [];
   for (const rel of Object.keys({ ...seen, ...now }).sort()) {
-    if (own.includes(rel)) continue;
     if (!(rel in seen)) stale.push({ rel, how: "новый" });
     else if (!(rel in now)) stale.push({ rel, how: "снят" });
     else if (seen[rel] !== now[rel]) stale.push({ rel, how: "изменён" });

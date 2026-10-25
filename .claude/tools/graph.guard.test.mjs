@@ -151,10 +151,41 @@ describe("правила, изменённые после начала сесс�
     ]);
   });
 
+  it.each(["Edit", "Write", "MultiEdit", "NotebookEdit"])(
+    "%s нового файла правил и снятие своего не напоминаются",
+    (tool) => {
+      const made = rulesFreshnessOf(first.state, { a: "1", b: "2" }, call(tool, "0"));
+      expect(made.stale).toEqual([]);
+      const after = rulesFreshnessOf(made.state, { 0: "7", a: "1", b: "2" }, call());
+      expect(after.stale).toEqual([]);
+      const gone = rulesFreshnessOf(after.state, { a: "1", b: "2" }, call(tool, "0"));
+      expect(rulesFreshnessOf(gone.state, { a: "1", b: "2" }, call()).stale).toEqual([]);
+    },
+  );
+
+  it("своя правка не прячет чужое изменение другого файла и чтение снятого его не снимает", () => {
+    const edit = rulesFreshnessOf(first.state, { a: "9", b: "3" }, call("Edit", "a"));
+    expect(edit.stale).toEqual([{ rel: "b", how: "изменён" }]);
+    const read = rulesFreshnessOf(first.state, { a: "1" }, call("Read", "b"));
+    expect(read.stale).toEqual([{ rel: "b", how: "снят" }]);
+  });
+
+  it("устаревшие идут по пути, а не по порядку снимка", () => {
+    const out = rulesFreshnessOf(first.state, { a: "1", b: "4", "CLAUDE.md": "5" }, call());
+    expect(out.stale).toEqual([
+      { rel: "CLAUDE.md", how: "новый" },
+      { rel: "b", how: "изменён" },
+    ]);
+  });
+
   it("напоминание называет каждый файл и как его вернуть", () => {
     expect(rulesFreshnessText([])).toBe("");
-    const text = rulesFreshnessText([{ rel: ".claude/rules/loop.md", how: "изменён" }]);
-    expect(text).toContain("`.claude/rules/loop.md` (изменён)");
+    const text = rulesFreshnessText([
+      { rel: ".claude/rules/loop.md", how: "изменён" },
+      { rel: "CLAUDE.md", how: "новый" },
+    ]);
+    expect(text).toContain("правила изменились после начала сессии");
+    expect(text).toContain("`.claude/rules/loop.md` (изменён), `CLAUDE.md` (новый)");
     expect(text).toContain("перечитать инструментом Read");
   });
 });
