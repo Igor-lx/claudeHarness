@@ -98,6 +98,7 @@ import {
   isChainConfigPath,
   isLedgerRow,
   isProbeRun,
+  isPinnedSpec,
   isRulesState,
   isStopState,
   BAR_PAGES_DIR,
@@ -944,6 +945,7 @@ const DEBT_KINDS = [
   "lint",
   "markers",
   "guarantees",
+  "pins",
 ];
 const DEBT = CONFIG.debt ?? {};
 const debtOf = (kind) => DEBT[kind] ?? 0;
@@ -5743,6 +5745,7 @@ const CHECK_SECTIONS = [
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
   "Диапазон среды объявлен",
+  "Версии зависимостей закреплены",
   "Красное звено названо находкой",
   "Незамеренное названо находкой",
 ];
@@ -23915,6 +23918,34 @@ if (mode === "verify") {
       },
     );
 
+    // Версия зависимости диапазоном (`R1-бис`) — на другой машине соберётся
+    // другое. Модель свода спрашивала об этом только правку кода, а правка
+    // одного манифеста свода не требует: `"3.9.10"` → `"^3.9.10"` не встречала
+    // ничего. Найдено горячим раундом проб `2026-10-25`. Одноранговые
+    // зависимости — диапазон по смыслу, их не спрашивают.
+    const pinsLoose = [];
+    let pinsLooked = 0;
+    checkRegion(["Версии зависимостей закреплены"], () => {
+      if (CONFIG.manifest == null)
+        return "манифест не объявлен: поле `manifest` настройки пусто";
+      const pkg = readJson(path.join(BASE, CONFIG.manifest), {});
+      for (const part of ["dependencies", "devDependencies", "optionalDependencies"])
+        for (const [name, spec] of Object.entries(pkg[part] ?? {})) {
+          pinsLooked += 1;
+          if (!isPinnedSpec(spec)) pinsLoose.push(name + "@" + String(spec) + " в " + part);
+        }
+      checkHead("Версии зависимостей закреплены", {
+        n: pinsLooked,
+        unit: "зависимостей манифеста",
+      });
+      console.log("  диапазоном: " + pinsLoose.length + debtTail("pins"));
+      debtNote("pins", pinsLoose.length);
+      for (const one of debtList("pins", pinsLoose))
+        console.log(
+          "    " + one + " — диапазон: на другой машине встанет другая версия. Закрепить точной",
+        );
+    });
+
     // Инструменты обязательной цепочки: есть ли они вообще.
     // Версия среды отвечает «та ли», а этот вопрос — «есть ли», и он первее:
     // проверять версию линтера, которого нет, бессмысленно. Как и версия,
@@ -32423,6 +32454,8 @@ if (mode === "verify") {
         // Строку таблицы переход пишет сразу; остаётся витрина без теста, а
         // тест — код.
         "guarantees",
+        // Диапазон закрепляет правка манифеста, а не запись в базе.
+        "pins",
       ]),
   );
   const debtUnplanned = checkStep(
@@ -32475,6 +32508,7 @@ if (mode === "verify") {
     tongue: ["Язык внутри корня исходников"],
     markers: ["Найденное — исправлено, а не отложено"],
     guarantees: ["Гарантия держится тестом"],
+    pins: ["Версии зависимостей закреплены"],
     // Долг ошибок типов и находок линтера держит не сверка, а звено: его
     // зовут и каноническим именем, и тем, под которым звено живёт в
     // манифесте проекта.

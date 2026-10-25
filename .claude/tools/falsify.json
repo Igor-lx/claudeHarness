@@ -1336,6 +1336,13 @@
       "replace": "18"
     },
     {
+      "section": "Версии зависимостей закреплены",
+      "own": true,
+      "file": "package.json",
+      "find": "\"vitest\": \"",
+      "replace": "\"vitest\": \"^"
+    },
+    {
       "section": "Красное звено названо находкой",
       "own": true,
       "file": ".context/01-facts.md",

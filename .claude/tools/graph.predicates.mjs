@@ -1183,6 +1183,7 @@ export const BAR_CHECKS = {
     "Класс из листа стилей спрошен кодом",
   ],
   R2: ["Одноранговая зависимость не продублирована", "Пакет платформы не второй ответ"],
+  "R1-бис": ["Версии зависимостей закреплены"],
   R6: ["Диапазон среды объявлен", "Версия среды (предупреждение, прогон не роняет)"],
   U1: ["Конвейер зовёт проверки", "Связка проверок зовёт живые звенья"],
   U2: ["Точечные исключения линта", "Выключения правил линта"],
@@ -1950,7 +1951,10 @@ export const BAR_FORMS = {
     "сторонний код через загрузчик, `import()` по адресу либо `Worker` с чужим адресом — признак видит `eval`, `new Function`, `<script>`, `<iframe>` и их создание через `createElement`, чужой адрес в листе стилей, а правила линта — песочницу фрейма и код строкой в таймере",
   ],
   R1: [UNSEEN.manifest, "зависимость вне манифеста: скрипт с сети, вендорная копия в репозитории — признак читает манифест"],
-  "R1-бис": [UNSEEN.manifest, "версия точная, а файла блокировки в репозитории нет, — признак читает манифест"],
+  "R1-бис": [
+    "манифест пакета монорепозитория, кроме объявленного настройкой, — сверка читает один манифест, поле `manifest`",
+    "версия точная, а файла блокировки в репозитории нет, — сверка и признак читают манифест, а версии зависимостей зависимостей держит только блокировка",
+  ],
   R2: [
     UNSEEN.manifest,
     "два пакета одного назначения под разными именами — сверки ловят одноранговую зависимость, объявленную дважды, и пакет, повторяющий платформу",
@@ -6021,6 +6025,28 @@ export const PREDICATE_CASES = [
   ["isRulesState", { session: "s1", seen: { a: 1 }, own: [] }, false],
   ["isRulesState", { seen: {}, own: [] }, false],
   ["isRulesState", "x", false],
+  // --- isPinnedSpec: версия зависимости закреплена (`R1-бис`) ---
+  ["isPinnedSpec", "3.9.10", true],
+  ["isPinnedSpec", "=3.9.10", true],
+  ["isPinnedSpec", "v3.9.10", true],
+  ["isPinnedSpec", "1.0.0-beta.2+build.7", true],
+  ["isPinnedSpec", "workspace:*", true],
+  ["isPinnedSpec", "file:../lib", true],
+  ["isPinnedSpec", "link:./pkg", true],
+  ["isPinnedSpec", "portal:./pkg", true],
+  ["isPinnedSpec", "npm:string-width@4.2.3", true],
+  ["isPinnedSpec", "npm:@scope/pkg@1.2.3", true],
+  ["isPinnedSpec", "github:user/repo#1a2b3c4d", true],
+  ["isPinnedSpec", "^3.9.10", false],
+  ["isPinnedSpec", "~3.9.10", false],
+  ["isPinnedSpec", ">=3.0.0", false],
+  ["isPinnedSpec", "3.x", false],
+  ["isPinnedSpec", "*", false],
+  ["isPinnedSpec", "latest", false],
+  ["isPinnedSpec", "", false],
+  ["isPinnedSpec", "npm:string-width@^4.2.3", false],
+  ["isPinnedSpec", "github:user/repo#main", false],
+  ["isPinnedSpec", "1.2.3 || 2.0.0", false],
   // --- protocolReadByShell: чтение протокола свода командой оболочки ---
   ["protocolReadByShell", "cat .context/bar-protocol.md", "cat"],
   ["protocolReadByShell", "sed -n 1,50p .context/bar-protocol.md", "sed"],
@@ -6883,6 +6909,18 @@ export const isRulesState = (state) =>
   isPlain(state.seen) &&
   Object.values(state.seen).every((one) => typeof one === "string") &&
   isTexts(state.own);
+
+/** Закреплена ли версия зависимости в манифесте (`R1-бис`): точная версия,
+ * псевдоним `npm:` с точной версией либо коммит git. Локальный пакет —
+ * `workspace:`, `file:`, `link:`, `portal:` — версии из реестра не берёт и
+ * закреплён самим репозиторием. Диапазон — другая сборка на другой машине. */
+export const isPinnedSpec = (spec) => {
+  const said = String(spec).trim();
+  if (/^(?:workspace|file|link|portal):/.test(said)) return true;
+  const version = /^npm:(?:@[^/@]+\/)?[^@]+@(.+)$/.exec(said)?.[1] ?? said;
+  if (/#[0-9a-f]{7,40}$/i.test(version)) return true;
+  return /^=?v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
+};
 
 export const isToolModule = (name) =>
   name.endsWith(".mjs") &&
