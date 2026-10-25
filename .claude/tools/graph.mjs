@@ -5183,6 +5183,26 @@ const transitionOpen = () => {
   return steps.length ? steps : null;
 };
 
+/** Сверки знания, которые открытый шаг перехода держит, пока называет их
+ * ёлочками в графе «Чем проверяется»: их находки — работа этого шага, а не
+ * поломка. Список закрыт: шаг не держит ничего, кроме записей о живом коде,
+ * которые пишет одно чтение. Прежде сверка базы краснела до конца перехода,
+ * и ворота не пускали ни коммит посадки, ни уменьшение долга — замерено
+ * переходом эмулированного проекта. */
+const HELD_BY_STEP = [
+  "Запись о пустоте не пережила появление кода",
+  "Файл базы о живом коде назвал его адрес",
+];
+const heldByOpenSteps = () => {
+  const steps = transitionOpen() ?? [];
+  return HELD_BY_STEP.filter((name) =>
+    steps.some((st) => {
+      const proof = st.line.split("|").slice(1, -1)[3] ?? "";
+      return proof.includes("«" + name + "»");
+    }),
+  );
+};
+
 /** Баннер перехода. Печатается ПЕРВОЙ строкой каждого прогона и своим
  * режимом — из него же его зовёт хук среды при правке файлов проекта.
  *
@@ -5253,6 +5273,11 @@ const printTransition = () => {
       "  Открытых шагов: " + steps.length + ". План: " + CONFIG.transition.file,
     );
     for (const st of steps) console.log("  " + st.no + ". " + st.what);
+    const held = heldByOpenSteps();
+    if (held.length) {
+      console.log("  Пока шаг открыт, прогон не роняют — их находки и есть его работа:");
+      for (const one of held) console.log("  «" + one + "»");
+    }
     console.log("  Закрыли шаг — удалили строку. Шагов не осталось — знание");
     console.log("  собрано, и в файле остаётся только долг перехода.");
     console.log("");
@@ -5764,6 +5789,7 @@ const CHECK_SECTIONS = [
   "Версии зависимостей закреплены",
   "Красное звено названо находкой",
   "Незамеренное названо находкой",
+  "Непромеренное названо долгом перехода",
 ];
 
 /** Заголовок БАННЕРА — и он НЕ заголовок сверки.
@@ -20059,7 +20085,7 @@ if (mode === "verify") {
       };
       if (!full)
         process.on("exit", () => {
-          for (const line of verifyBriefOf(SAID, WARNING))
+          for (const line of verifyBriefOf(SAID, WARNING, softNow()))
             process.stdout.write(line + "\n");
         });
     }
@@ -20079,12 +20105,15 @@ if (mode === "verify") {
     "Шаблон правил заполнен",
     "Отложенное семя слито",
   ]);
-  const printedRed = () =>
-    printedIsRed(
-      SAID,
-      WARNING,
-      new Set(seatingIsUp() ? SOFT_WHILE_SEATING : []),
-    );
+  // Смягчённое одним множеством: его судит код возврата и его же считает
+  // короткий вывод — разойтись им нечем.
+  function softNow() {
+    return new Set([
+      ...(seatingIsUp() ? SOFT_WHILE_SEATING : []),
+      ...heldByOpenSteps(),
+    ]);
+  }
+  const printedRed = () => printedIsRed(SAID, WARNING, softNow());
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
   const NEWLINE = checkStep(() => String.fromCharCode(10));
@@ -33464,6 +33493,53 @@ if (mode === "verify") {
       console.log(
         "    замер отложен, а напомнить о нём нечему. Записать пунктом долга перехода",
       );
+  });
+
+  // Непромеренная мутациями поверхность живого проекта — вид долга перехода
+  // (`seat.md`, «Что идёт в долг перехода»), и держать его обязан пункт,
+  // называющий режим `mutated`. Пока его спрашивало только чтение, переход
+  // закрывался без пункта при десяти непромеренных файлах — замерено
+  // переходом эмулированного проекта. Спрашивается, пока план перехода
+  // лежит: проект, родившийся под обвязкой, меряет по правке.
+  let unprobed = [];
+  let unprobedHeld = true;
+  let planLies = false;
+  checkStep(() => {
+    if (CONFIG.transition == null || CONFIG.mutationLedger == null) return;
+    planLies = existsSync(path.join(BASE, CONFIG.transition.file));
+    if (!planLies) return;
+    const ledger = readLedger(path.join(BASE, CONFIG.mutationLedger));
+    const key = (f) => norm(path.relative(REPO_AT, f));
+    unprobed = mutationArea()
+      .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
+      .filter(
+        (f) =>
+          ledger[key(f)] === undefined ||
+          ledger[key(f)].hash !== contentStamp(f),
+      );
+    if (unprobed.length > 0)
+      unprobedHeld = transitionDebt().some((row) =>
+        /`[^`]*\bmutated\b[^`]*`/.test(row.holds),
+      );
+  });
+  checkStep(() => {
+    checkHead("Непромеренное названо долгом перехода", () => ({
+      n: planLies ? unprobed.length : 0,
+      unit: "непромеренных файлов в области мутаций",
+    }));
+    if (!planLies) {
+      console.log("  плана перехода нет: проект меряет по правке");
+      return;
+    }
+    if (unprobed.length === 0 || unprobedHeld) {
+      console.log("  не названо: 0");
+      return;
+    }
+    console.log(
+      "    непромеренных файлов `" +
+        unprobed.length +
+        "`, а пункта долга перехода, который держит режим `graph.mjs mutated`, нет. Завести пункт с этим числом и планом замера",
+    );
   });
 
   // Хвост прогона идёт вне шагов: он подводит их итог. Упавший шаг уже

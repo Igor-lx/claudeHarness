@@ -3178,6 +3178,70 @@ describe("долг перехода: список, держатель, отст�
     }
   }, 240000);
 
+  it("открытый шаг записей о живом коде держит сверки пустоты, закрытый — нет", () => {
+    const box = seatEmpty("shag-derzhit-");
+    try {
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzThing.ts"),
+        "export const zzThing = 1;\n",
+      );
+      withTransitionDebt(box, []);
+      // Счёт смягчённых печатает короткий вывод, а набор зовёт полный.
+      const env = { ...process.env };
+      delete env.GRAPH_VERIFY_FULL;
+      const brief = () => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const heldOf = (out) =>
+        Number(/держит посадка либо шаг перехода: (\d+)/.exec(out)?.[1] ?? 0);
+      const open = brief();
+      expect(open).toContain("Пока шаг открыт, прогон не роняют");
+      expect(open).toContain("«Запись о пустоте не пережила появление кода»");
+      expect(open).toContain("=== Файл базы о живом коде назвал его адрес ===");
+      // Шаг закрыт, а пометки остались — обе сверки снова красные.
+      const plan = path.join(box, ".context", "15-transition.md");
+      fs.writeFileSync(
+        plan,
+        fs
+          .readFileSync(plan, "utf8")
+          .split("\n")
+          .filter((l) => !l.startsWith("| 2 | Записи о живом коде"))
+          .join("\n"),
+      );
+      const closed = brief();
+      expect(closed).not.toContain("Пока шаг открыт, прогон не роняют");
+      expect(heldOf(open) - heldOf(closed)).toBe(2);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("непромеренное при плане перехода держит пункт, называющий режим mutated", () => {
+    const box = seatEmpty("nepromer-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Непромеренное названо долгом перехода") ?? []).join("\n");
+      // Без плана перехода проект меряет по правке.
+      expect(said()).toBe("");
+      withTransitionDebt(box, []);
+      expect(said()).toContain("`graph.mjs mutated`");
+      withTransitionDebt(box, [
+        "| 1 | непромеренное мутациями | `3` | `graph.mjs mutated` | мерить по правке | `3` файла |",
+      ]);
+      expect(said()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("без плана перехода: пока стоит флаг посадки, проект не назван родившимся под обвязкой", () => {
     const box = seatEmpty("bezplana-");
     try {

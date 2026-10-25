@@ -6989,7 +6989,7 @@ export const printedIsRed = (lines, warning, soft) => {
  * Баннер, напечатанный телом зелёной секции, остаётся в выводе со всем, что
  * под ним: прежде он уходил вместе с секцией, и `npm run check` молчал, что
  * посадка не закончена, — найдено посадкой по инструкции `2026-10-19`. */
-export const verifyBriefOf = (lines, warning) => {
+export const verifyBriefOf = (lines, warning, soft = new Set()) => {
   const out = [];
   const sections = [];
   let cur = null;
@@ -7004,11 +7004,13 @@ export const verifyBriefOf = (lines, warning) => {
   const blind = [];
   let red = 0;
   let warned = 0;
+  let held = 0;
   let hidden = 0;
   for (const s of sections) {
     if (s.body.some((l) => /^ {4}\S/.test(l))) {
       out.push(s.line, ...s.body);
       if (s.title.includes(warning)) warned += 1;
+      else if (soft.has(s.title)) held += 1;
       else red += 1;
       continue;
     }
@@ -7029,6 +7031,7 @@ export const verifyBriefOf = (lines, warning) => {
       red +
       ", с предупреждением: " +
       warned +
+      (held > 0 ? ", держит посадка либо шаг перехода: " + held : "") +
       ", зелёных не показано: " +
       hidden +
       " — полный вывод: `graph.mjs verify --full`",
