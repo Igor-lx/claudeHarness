@@ -281,6 +281,14 @@ const openFindings = () => {
   }
   return out;
 };
+/** Сколько находок сверки держат пункт долга перехода и открытые строки
+ * реестра, назвавшие её ёлочками, — не больше, чем она нашла. Его зовёт
+ * каждая сверка о свойстве кода проекта: такое чинит правка кода, а посадка
+ * код не трогает. Сверка, не позвавшая его, держала живой проект красным до
+ * правки кода. Выведено: третья посадка в живой проект — имя класса без
+ * объявления в листе. */
+const heldOpen = (name, found) =>
+  Math.min(found, openFindings().get(name) ?? 0);
 /** Имена, названные ЛЮБОЙ строкой реестра — открытой либо закрытой.
  *
  * Нужно там, где спрашивается запись ПРОШЛОГО: базовая линия — замер на
@@ -1715,9 +1723,19 @@ const seededBase = () => {
  * всего остального, а в корпус текстовых сверок она входила не везде. */
 const shelfProse = () => {
   if (SHELF === null) return [];
+  // Своё проекта в папке обвязки — разрешения, команды, агенты — обвязкой
+  // не является: его не называет ни один её файл, и правилам её прозы оно
+  // не подчиняется. Выведено: третья посадка в живой проект — команда
+  // проекта краснела сверкой «Проза полки названа».
+  const mapAt = shelfAt("seat/map.json");
+  const own = new Set(
+    (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+      .projectOwnedInsideHarness ?? [],
+  );
   const out = [];
   (function walk(dir) {
     for (const e of readdirSync(dir)) {
+      if (dir === norm(SHELF) && own.has(e)) continue;
       const full = norm(path.join(dir, e));
       if (statSync(full).isDirectory()) {
         walk(full);
@@ -1729,7 +1747,7 @@ const shelfProse = () => {
         full,
       ]);
     }
-  })(SHELF);
+  })(norm(SHELF));
   return out;
 };
 
@@ -2747,12 +2765,22 @@ const barPartsLineOf = (body) => {
   );
 };
 
-/** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет. */
+/** Путь проекта → путь его семени на полке. Пусто, если карты рядом нет.
+ * Другое имя того же предмета (`alsoKnownAs`) ведёт к тому же семени:
+ * `.prettierrc`, слитый с семенем `.prettierrc.json` целиком, — тоже семя.
+ * Выведено: третья посадка в живой проект — ворота требовали серию у
+ * коммита формата, где конфиг форматтера лежал семенем под другим именем. */
 const seedOfPath = () => {
   const mapAt = shelfAt("seat/map.json");
   const out = new Map();
   if (mapAt === null || !existsSync(mapAt)) return out;
-  for (const e of readJson(mapAt, {}).copy ?? []) out.set(e.to, e.from);
+  for (const e of readJson(mapAt, {}).copy ?? []) {
+    out.set(e.to, e.from);
+    for (const name of e.alsoKnownAs ?? []) {
+      const at = path.posix.join(path.posix.dirname(e.to), name);
+      if (!out.has(at)) out.set(at, e.from);
+    }
+  }
   return out;
 };
 
@@ -5205,6 +5233,22 @@ const heldByOpenSteps = () => {
   );
 };
 
+/** Сверки содержимого правил проекта, которые держит НЕСЛИТОЕ семя правил:
+ * у проекта свой файл правил, семя легло рядом `.seat`-ом, и сливает его фаза
+ * 2. Пока флаг посадки стоит, их находки — её работа, а не поломка. Выведено:
+ * третья посадка в живой проект — свой `CLAUDE.md` проекта, и фаза 1
+ * кончалась красной на таблице проверок, которую нёс отложенный файл. */
+const HELD_BY_RULES_SEAT = [
+  "Названное доктриной исполнимо",
+  "Правила проекта не спорят с реестром решений",
+];
+const heldByRulesSeat = () =>
+  (CONFIG.rulesManifest?.rules ?? []).some((r) =>
+    existsSync(path.join(BASE, r + ".seat")),
+  )
+    ? HELD_BY_RULES_SEAT
+    : [];
+
 /** Баннер перехода. Печатается ПЕРВОЙ строкой каждого прогона и своим
  * режимом — из него же его зовёт хук среды при правке файлов проекта.
  *
@@ -6532,6 +6576,15 @@ if (mode === "falsify") {
       if (r.whenScript !== undefined && scriptsNow()[r.whenScript] == null)
         return true;
       if ((r.whenLink ?? []).some((name) => !linkLives(name))) return true;
+      // `whenSectionOff` — раздел планки, который рецепт оживляет своим
+      // предметом: объявленный живым, он оживлён и без рецепта, и поломку
+      // принимает не он, а сверка нового файла. Выведено: третья посадка в
+      // живой проект — сетевой файл при живом разделе `K`.
+      if (
+        r.whenSectionOff !== undefined &&
+        qualityScopeDeclared()?.get(r.whenSectionOff)?.live === true
+      )
+        return true;
       return (r.edits ?? [r]).some((step) => {
         if (step.file === undefined) return false;
         if (existsSync(path.join(tmp, step.file))) return false;
@@ -12475,7 +12528,13 @@ const levelFacts = () => {
   const fromCode = [];
   for (const [key, byFile] of storeWriters())
     if (unitsAmong([...byFile.keys()]) > 1) {
-      fromCode.push({ key: /«(.+)»$/.exec(key)?.[1] ?? key, files: [...byFile.keys()].sort().join("|") });
+      fromCode.push({
+        names: [
+          /«(.+)»$/.exec(key)?.[1] ?? key,
+          ...(storeFacts().names.get(key) ?? []),
+        ],
+        files: [...byFile.keys()].sort().join("|"),
+      });
       facts.push({
         kind: "писатель",
         where: [...byFile.keys()],
@@ -12486,9 +12545,12 @@ const levelFacts = () => {
   for (const r of stateRecords()) {
     const writing = filesNamedIn(r.writers);
     // Запись о том же ключе и тех же писателях, что нашёл код, — тот же
-    // факт: печатанный дважды, он требовал два ответа на одно.
+    // факт: печатанный дважды, он требовал два ответа на одно. Ключ запись
+    // называет значением либо именем его константы.
     const twin = fromCode.some(
-      (c) => c.files === [...writing].sort().join("|") && r.what.includes(c.key),
+      (c) =>
+        c.files === [...writing].sort().join("|") &&
+        c.names.some((name) => r.what.includes(name)),
     );
     if (unitsAmong(writing) > 1 && !twin)
       facts.push({
@@ -12612,7 +12674,12 @@ const stateRecords = () => {
 let STORE_FACTS = null;
 const storeFacts = () => {
   if (STORE_FACTS !== null) return STORE_FACTS;
-  STORE_FACTS = { writers: new Map(), drops: new Map(), wipes: new Map() };
+  STORE_FACTS = {
+    writers: new Map(),
+    drops: new Map(),
+    wipes: new Map(),
+    names: new Map(),
+  };
   // Ключ — строкой, как его увидит хранилище: литерал как есть, имя —
   // значением своей константы, в том же файле либо экспортом соседа. Иначе
   // один ключ, названный в одном узле строкой, а в другом константой,
@@ -12628,6 +12695,14 @@ const storeFacts = () => {
         "\\s*(?::[^=]+)?=\\s*[\"'`]([^\"'`]+)[\"'`]",
     ).exec(text);
     return here !== null ? here[1] : (codeLiteralOf(t) ?? t);
+  };
+  // Имена ключа: значение и каждая константа, которой код его назвал. Запись
+  // о состоянии вправе назвать ключ любым из них, и это тот же ключ.
+  const named = (key, raw) => {
+    const id = raw.trim();
+    if (!STORE_FACTS.names.has(key)) STORE_FACTS.names.set(key, new Set());
+    if (/^[A-Za-z_$][\w$]*$/.test(id)) STORE_FACTS.names.get(key).add(id);
+    return key;
   };
   const note = (map, key, f, line) => {
     if (!map.has(key)) map.set(key, new Map());
@@ -12645,12 +12720,12 @@ const storeFacts = () => {
       for (const m of text.matchAll(kind.take)) {
         const i = lineAt(m.index);
         if (!remark(i))
-          note(STORE_FACTS.writers, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
+          note(STORE_FACTS.writers, named(kind.kind + " «" + keyOf(m[1], text) + "»", m[1]), f, i + 1);
       }
       for (const m of text.matchAll(kind.drop)) {
         const i = lineAt(m.index);
         if (!remark(i))
-          note(STORE_FACTS.drops, kind.kind + " «" + keyOf(m[1], text) + "»", f, i + 1);
+          note(STORE_FACTS.drops, named(kind.kind + " «" + keyOf(m[1], text) + "»", m[1]), f, i + 1);
       }
       lines.forEach((line, i) => {
         if (!remark(i) && kind.wipe.test(line)) note(STORE_FACTS.wipes, kind.kind, f, i + 1);
@@ -20112,7 +20187,7 @@ if (mode === "verify") {
   // короткий вывод — разойтись им нечем.
   function softNow() {
     return new Set([
-      ...(seatingIsUp() ? SOFT_WHILE_SEATING : []),
+      ...(seatingIsUp() ? [...SOFT_WHILE_SEATING, ...heldByRulesSeat()] : []),
       ...heldByOpenSteps(),
     ]);
   }
@@ -20756,7 +20831,8 @@ if (mode === "verify") {
       );
       console.log("  прогон не роняют сверки, чей предмет доделывает фаза 2.");
       console.log("  Найденное они печатают целиком — это и есть её работа:");
-      for (const one of SOFT_WHILE_SEATING) console.log("  «" + one + "»");
+      for (const one of [...SOFT_WHILE_SEATING, ...heldByRulesSeat()])
+        console.log("  «" + one + "»");
       console.log(
         "  Снять флаг — отдельное действие, и делает его фаза 2, а не",
       );
@@ -20790,6 +20866,35 @@ if (mode === "verify") {
   const unnamed = checkStep(() =>
     testFiles.filter((f) => !testMentions.has(f)),
   );
+  // Тест вне корня исходников и вне объявленных папок тестов обвязка не видит
+  // вовсе: ни реестр, ни раскладка, ни покрытие правки. Раннер его собирает, а
+  // сверки отвечали «тестовых файлов: 2» при пяти. Выведено: третья посадка
+  // в живой проект — тесты в корневой `test/`. Признак — имя теста; ищется
+  // по всему репозиторию с исключениями описи кода.
+  const unseenTests = checkStep(() => {
+    const out = [];
+    // Семя, которое кладёт карта посадки, — тест обвязки, а не проекта: его
+    // называет её же реестр, и объявлять под него папку проекту незачем.
+    const seeded = seedOfPath();
+    const covered = (full) =>
+      [...SRC_ROOTS, ...TEST_DIRS].some(
+        (d) => full === norm(d) || full.startsWith(norm(d) + "/"),
+      );
+    (function walk(dir) {
+      if (!walkable(dir)) return;
+      for (const e of readdirSync(dir)) {
+        const full = norm(path.join(dir, e));
+        if (outOfTree(e, full) || covered(full)) continue;
+        if (statSync(full).isDirectory()) walk(full);
+        else if (
+          TEST_SUFFIX.test(e) &&
+          !seeded.has(norm(path.relative(REPO_AT, full)))
+        )
+          out.push(full);
+      }
+    })(norm(REPO_AT));
+    return out.sort();
+  });
   checkStep(() => {
     checkHead("Покрытие тестов", () => ({
       n: testFiles.length,
@@ -20805,6 +20910,14 @@ if (mode === "verify") {
     debtNote("tests", unnamed.length);
     for (const f of debtList("tests", unnamed)) console.log("    " + rel(f));
     for (const t of goneTests) console.log("    " + t);
+    if (unseenTests.length)
+      console.log("  вне корня исходников и объявленных папок тестов: " + unseenTests.length);
+    for (const f of unseenTests)
+      console.log(
+        "    " +
+          norm(path.relative(REPO_AT, f)) +
+          " — тест, которого обвязка не видит: объявить его папку полем `testDirs`",
+      );
   });
 
   // 6-бис. гарантия поведения держится тестом.
@@ -25165,13 +25278,20 @@ if (mode === "verify") {
       }
     }
   });
+  // Имя без объявления снимает правка кода, а не посадка: до неё его держит
+  // пункт долга перехода числом либо строка реестра.
+  const driftOpen = checkStep(() =>
+    heldOpen("Имена классов из кода есть в листе стилей", classDrift.length),
+  );
   checkStep(() => {
     checkHead("Имена классов из кода есть в листе стилей", () => ({
       n: files.length,
       unit: "файлов кода",
     }));
-    console.log("  расхождений: " + classDrift.length);
-    for (const d of classDrift) console.log("    " + d);
+    console.log("  расхождений: " + (classDrift.length - driftOpen));
+    if (driftOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + driftOpen);
+    for (const d of classDrift.slice(driftOpen)) console.log("    " + d);
   });
 
   // Сторона обратная: класс объявлен листом, и не спрашивает его никто.
@@ -25228,10 +25348,7 @@ if (mode === "verify") {
   // Мёртвое правило в листе живого проекта снимает правка кода, а не посадка:
   // до неё его держит пункт долга перехода числом либо строка реестра на класс.
   const deadOpen = checkStep(() =>
-    Math.min(
-      classDead.length,
-      openFindings().get("Класс из листа стилей спрошен кодом") ?? 0,
-    ),
+    heldOpen("Класс из листа стилей спрошен кодом", classDead.length),
   );
   checkStep(() => {
     checkHead("Класс из листа стилей спрошен кодом", () => ({
@@ -29768,22 +29885,31 @@ if (mode === "verify") {
   // компоненты в корне папки. Прежде обе сверки узла смотрели в такую папку
   // как в пустую, и константа над компонентом проходила без признака —
   // замерено повторной посадкой в живой проект.
+  //
+  // Файл узла — файл КОДА: лист стилей с именем папки — главный лист узла, а
+  // не узел. Прежде им считался любой файл с именем папки, и у папки
+  // `Header` с компонентом в `index.tsx` узлом стал `Header.module.css`, а
+  // объявления над компонентом проходили без признака — замерено третьей
+  // посадкой в живой проект. Порядок: файл кода с именем папки; иначе
+  // `index.tsx` либо `index.jsx`; иначе компоненты корня папки.
   const nodeFilesIn = (folder, name) => {
-    const own = readdirSync(folder).filter((one) => {
-      const at = path.join(folder, one);
-      if (statSync(at).isDirectory()) return false;
-      const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
-      return bare.toLowerCase() === name.toLowerCase();
-    });
-    if (own.length > 0) return new Set(own);
-    return new Set(
-      readdirSync(folder).filter(
-        (one) =>
-          /^[A-Z][A-Za-z0-9]*\.(?:tsx|jsx)$/.test(one) &&
-          !statSync(path.join(folder, one)).isDirectory(),
-      ),
+    const code = readdirSync(folder).filter(
+      (one) =>
+        !statSync(path.join(folder, one)).isDirectory() &&
+        isCodePath(norm(path.join(folder, one))) &&
+        !isTest(norm(path.join(folder, one))),
     );
+    const named = code.filter(
+      (one) => one.replace(/\.[^.]+$/, "").toLowerCase() === name.toLowerCase(),
+    );
+    if (named.length > 0) return new Set(named);
+    const entry = code.filter((one) => /^index\.(?:tsx|jsx)$/.test(one));
+    if (entry.length > 0) return new Set(entry);
+    return new Set(code.filter((one) => /^[A-Z][A-Za-z0-9]*\.(?:tsx|jsx)$/.test(one)));
   };
+  /** Имя файла без расширения и без `.module`: по нему лист стилей узнаёт
+   * свой файл кода. */
+  const bareName = (one) => one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
   const nodeLitter = [];
   let nodeLooked = 0;
   checkStep(() => {
@@ -29804,8 +29930,14 @@ if (mode === "verify") {
             const inside = path.join(folder, one);
             if (statSync(inside).isDirectory()) continue;
             if (nodeFiles.has(one)) continue;
-            const bare = one.replace(/\.[^.]+$/, "").replace(/\.module$/, "");
-            if (nodeFiles.has(bare + ".module.css") || nodeFiles.has(bare + ".tsx")) continue;
+            // Лист узла: назван, как папка, либо как файл узла.
+            const bare = bareName(one).toLowerCase();
+            if (
+              isStylePath(norm(inside)) &&
+              (bare === name.toLowerCase() ||
+                [...nodeFiles].some((f) => bareName(f).toLowerCase() === bare))
+            )
+              continue;
             if (one === "types.ts" || one === "index.ts" || one === "index.tsx")
               continue;
             if (!isCodePath(norm(inside)) && !isStylePath(norm(inside)))
@@ -29829,10 +29961,7 @@ if (mode === "verify") {
   // Разложить узел по папкам — правка кода, а посадка код не трогает: живой
   // проект держит свалку пунктом долга перехода, числом узлов в нём.
   const litterOpen = checkStep(() =>
-    Math.min(
-      nodeLitter.length,
-      openFindings().get("В корне узла только сам узел") ?? 0,
-    ),
+    heldOpen("В корне узла только сам узел", nodeLitter.length),
   );
   checkStep(() => {
     checkHead("В корне узла только сам узел", () => ({
@@ -29897,10 +30026,7 @@ if (mode === "verify") {
     }
   });
   const extrasOpen = checkStep(() =>
-    Math.min(
-      nodeExtras.length,
-      openFindings().get("В файле узла только сам узел") ?? 0,
-    ),
+    heldOpen("В файле узла только сам узел", nodeExtras.length),
   );
   checkStep(() => {
     checkHead("В файле узла только сам узел", () => ({

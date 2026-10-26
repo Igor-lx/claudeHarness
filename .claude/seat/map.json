@@ -224,7 +224,13 @@
       "to": ".gitignore"
     }
   ],
-  "projectOwnedInsideHarness": ["settings.local.json", "settings.json"],
+  "projectOwnedInsideHarness": [
+    "settings.local.json",
+    "settings.json",
+    "commands",
+    "agents",
+    "output-styles"
+  ],
   "mergeWhenBusy": [
     "package.json",
     "tsconfig.json",

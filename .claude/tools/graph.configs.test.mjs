@@ -349,6 +349,14 @@ describe("выключения линта, написанные автором",
       { scope: "x/**", rule: "spaced" },
       { scope: "x/**", rule: "wide" },
     ]);
+    // Длинный массив форматтер переносит на строки: область та же.
+    expect(
+      lintOffWritten(
+        ["{", "  files: [", '    "x/**",', "  ],", '  rules: { tight: "off" },', "}"].join(
+          "\n",
+        ),
+      ),
+    ).toEqual([{ scope: "x/**", rule: "tight" }]);
     expect(lintOffWritten(text)).toEqual([
       { scope: "src/**", rule: "a/one" },
       { scope: "tests/**", rule: "a/one" },

@@ -4030,6 +4030,13 @@ describe("серия", () => {
       const base = tool("gate");
       expect(base.code, base.out).toBe(0);
       expect(base.out).toContain("кода в коммите нет — свод не спрашивается");
+      // Семя под другим именем того же предмета — тоже семя: конфиг
+      // форматтера, слитый с семенем целиком, серии не требует.
+      fs.copyFileSync(path.join(box, ".prettierrc.json"), path.join(box, ".prettierrc"));
+      git("add", "--", ".prettierrc");
+      const alias = tool("gate");
+      expect(alias.code, alias.out).toBe(0);
+      expect(alias.out).toContain("кода в коммите нет — свод не спрашивается");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

@@ -247,10 +247,11 @@ export const lintOffWritten = (text) => {
   for (const line of text.split("\n")) {
     const opens = (line.match(/\{/g) ?? []).length;
     const closes = (line.match(/\}/g) ?? []).length;
-    if (depth === 0 && opens > 0) block = { files: [], off: [] };
+    if (depth === 0 && opens > 0) block = { text: "", off: [] };
     if (block !== null) {
-      const f = /files:\s*\[([^\]]*)\]/.exec(line);
-      if (f !== null) block.files.push(...stringsOf(f[1]));
+      // Область — по всему тексту блока: форматтер переносит длинный массив
+      // `files` на строки, и построчный разбор такой блок читал блоком `**`.
+      block.text += line + "\n";
       for (const m of line.matchAll(
         /(["']?)([\w@/-]+)\1\s*:\s*\[?\s*(["'])off\3/g,
       ))
@@ -258,8 +259,10 @@ export const lintOffWritten = (text) => {
     }
     depth += opens - closes;
     if (depth <= 0 && block !== null) {
+      const f = /files:\s*\[([^\]]*)\]/.exec(block.text);
+      const files = f === null ? [] : stringsOf(f[1]);
       for (const rule of block.off)
-        for (const scope of block.files.length ? block.files : ["**"])
+        for (const scope of files.length ? files : ["**"])
           found.push({ scope, rule });
       block = null;
       depth = 0;

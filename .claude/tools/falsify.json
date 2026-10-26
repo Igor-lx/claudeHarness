@@ -31,6 +31,13 @@
       }
     },
     {
+      "section": "Покрытие тестов",
+      "create": {
+        "path": "zzOutside/zzProbe.test.ts",
+        "text": "export const zzProbe = 1;"
+      }
+    },
+    {
       "section": "Гарантия держится тестом",
       "file": ".context/05-flows.md",
       "find": "| Гарантия | Род | Что наблюдают | Источник | Узлы | Тест |\n| --- | --- | --- | --- | --- | --- |",
@@ -1656,6 +1663,7 @@
     },
     {
       "section": "Применимость разделов планки",
+      "whenSectionOff": "K",
       "edits": [
         {
           "create": {

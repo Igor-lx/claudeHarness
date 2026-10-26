@@ -902,13 +902,19 @@ export const CONFIG = {
     file: "../eslint.config.mjs",
     allowed: [
       [
-        "**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
         "@typescript-eslint/require-await",
       ],
-      ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "react-hooks/globals"],
-      ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "react-hooks/refs"],
       [
-        "**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "react-hooks/globals",
+      ],
+      [
+        "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "react-hooks/refs",
+      ],
+      [
+        "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
         "@typescript-eslint/no-magic-numbers",
       ],
       ["**", "sonarjs/todo-tag"],

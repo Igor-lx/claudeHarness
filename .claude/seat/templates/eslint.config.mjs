@@ -178,13 +178,17 @@ export default tseslint.config(
 
   // `act` gives a thenable only in async: helpers are `async` without `await`.
   {
-    files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+    files: [
+      "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+    ],
     rules: { "@typescript-eslint/require-await": "off" },
   },
 
   // Both rules are about component code; a test may change fixtures and refs.
   {
-    files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+    files: [
+      "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+    ],
     rules: {
       "react-hooks/globals": "off",
       "react-hooks/refs": "off",
@@ -193,7 +197,9 @@ export default tseslint.config(
 
   // Test expectations stay literal (`J13`): a constant pulls them from code.
   {
-    files: ["**/tests/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+    files: [
+      "**/{tests/**/*,__tests__/**/*,*.test,*.spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+    ],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },
   },
 

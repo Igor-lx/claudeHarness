@@ -2406,6 +2406,16 @@ describe("факты по уровням без протокола", () => {
           ),
       );
       expect(tool("levels").out.match(/^ {2}писатель: /gm)).toHaveLength(1);
+      // Запись вправе назвать ключ именем его константы — тот же факт.
+      put(
+        "components/ZzA/ZzA.tsx",
+        'const ZZ_KEY = "zz.count";\n\nexport function ZzA() {\n  return <button onClick={() => window.localStorage.setItem(ZZ_KEY, "1")}>x</button>;\n}\n',
+      );
+      fs.writeFileSync(
+        stateAt,
+        fs.readFileSync(stateAt, "utf8").replace("| ключ `zz.count` |", "| ключ `ZZ_KEY` |"),
+      );
+      expect(tool("levels").out.match(/^ {2}писатель: /gm)).toHaveLength(1);
       if (!hadState) fs.rmSync(stateAt);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
@@ -3374,6 +3384,22 @@ describe("файл узла держит только сам узел", () => {
       expect(said()).toContain("zzMenu/ZzMenuList.tsx: `zzPrefix`");
       expect(said()).not.toContain("ZzMenuList`");
       fs.rmSync(feature, { recursive: true });
+      // Компонент во входе папки, рядом лист её имени: файл узла — вход, а
+      // лист — главный лист узла, не свалка.
+      const head = path.join(box, "src", "components", "ZzHead");
+      fs.mkdirSync(head, { recursive: true });
+      fs.writeFileSync(
+        path.join(head, "index.tsx"),
+        'const zzLinks = ["a"];\nexport function ZzHead() {\n  return zzLinks.length;\n}\n',
+      );
+      fs.writeFileSync(path.join(head, "ZzHead.module.css"), ".zzHead {\n  margin: 0;\n}\n");
+      fs.writeFileSync(path.join(head, "zzCount.ts"), "export const zzCount = 1;\n");
+      fs.writeFileSync(path.join(head, "zzToggle.ts"), "export const zzToggle = 1;\n");
+      expect(said()).toContain("ZzHead/index.tsx: `zzLinks`");
+      const litter = (verifyIn(box).get("В корне узла только сам узел") ?? []).join("\n");
+      expect(litter).toContain("zzCount.ts, zzToggle.ts");
+      expect(litter).not.toContain("ZzHead.module.css");
+      fs.rmSync(head, { recursive: true });
       withTransitionDebt(box, [
         "| 1 | Объявления рядом с узлом | `1` | «В файле узла только сам узел» | перенести `zzExtra` в `src/components/ZzLone/constants/` | `1` объявление |",
       ]);
@@ -5221,4 +5247,65 @@ describe("витрина называет код номером гарантии
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+});
+
+/**
+ * Третья посадка в живой проект: своя папка `.claude/` проекта, тесты вне
+ * корня исходников, висячее имя класса и свой файл правил проекта. Каждое
+ * из четырёх держало прогон красным либо молчало там, где обязано говорить.
+ */
+describe("живой проект: своё в обвязке, тест вне корня, имя класса, правила под семенем", () => {
+  it("команда проекта не проза полки; тест вне корня назван; имя класса держит долг; правила под семенем смягчены", () => {
+    const box = seatEmpty("tretya-");
+    try {
+      // Своё проекта внутри `.claude/` — не проза полки. Имя собрано из
+      // частей: этот файл лежит в полке, и целиком оно назвало бы команду.
+      const command = ["zz", "Release.md"].join("");
+      const own = path.join(box, ".claude", "commands");
+      fs.mkdirSync(own, { recursive: true });
+      fs.writeFileSync(path.join(own, command), "Bump the version.\n");
+      expect((verifyIn(box).get("Проза полки названа") ?? []).join("\n")).not.toContain(
+        command,
+      );
+      // Тест вне корня исходников, папка которого не объявлена.
+      const outside = path.join(box, "zzOutside");
+      fs.mkdirSync(outside, { recursive: true });
+      fs.writeFileSync(path.join(outside, "zz.test.ts"), "export const zz = 1;\n");
+      expect((verifyIn(box).get("Покрытие тестов") ?? []).join("\n")).toContain(
+        "zzOutside/zz.test.ts — тест, которого обвязка не видит",
+      );
+      fs.rmSync(outside, { recursive: true });
+      // Висячее имя класса держит пункт долга, назвавший сверку.
+      const card = path.join(box, "src", "components", "ZzCard");
+      fs.mkdirSync(card, { recursive: true });
+      fs.writeFileSync(
+        path.join(card, "ZzCard.tsx"),
+        'import styles from "./ZzCard.module.css";\nexport function ZzCard() {\n  return <i className={styles.zzMissing} />;\n}\n',
+      );
+      fs.writeFileSync(path.join(card, "ZzCard.module.css"), ".zzCard {\n  margin: 0;\n}\n");
+      const drift = () =>
+        (verifyIn(box).get("Имена классов из кода есть в листе стилей") ?? []).join("\n");
+      expect(drift()).toContain("`styles.zzMissing`");
+      withTransitionDebt(box, [
+        "| 1 | имя класса без объявления в листе | `1` | «Имена классов из кода есть в листе стилей» | объявить класс в `src/components/ZzCard/ZzCard.module.css` | `1` место |",
+      ]);
+      expect(drift()).toBe("");
+      // Свой файл правил ждёт слияния с семенем: сверки о его содержимом
+      // смягчены, пока стоит флаг посадки.
+      const banner = () => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
+          { cwd: box, encoding: "utf8" },
+        );
+        return r.stdout.split("ПЕРЕХОД")[0];
+      };
+      expect(banner()).not.toContain("«Названное доктриной исполнимо»");
+      fs.copyFileSync(path.join(box, "CLAUDE.md"), path.join(box, "CLAUDE.md.seat"));
+      expect(banner()).toContain("«Названное доктриной исполнимо»");
+      expect(banner()).toContain("«Правила проекта не спорят с реестром решений»");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
