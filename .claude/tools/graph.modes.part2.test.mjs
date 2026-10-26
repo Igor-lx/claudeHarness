@@ -5581,6 +5581,14 @@ describe("команды правил проекта исполнимы", () => 
       expect(said()).toBe("");
       fs.appendFileSync(path.join(box, "CLAUDE.md"), "\n| Проба | `npm run zznope` |\n");
       expect(said()).toContain("npm run zznope — звена нет в манифесте проекта (../CLAUDE.md)");
+      // Скрипт каркаса называет, кто снимает его строку: фаза 1.
+      const manifestAt = path.join(box, "package.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestAt, "utf8"));
+      delete manifest.scripts.preview;
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest, null, 2) + "\n");
+      expect(said()).toContain(
+        "npm run preview — скрипт каркаса, у проекта его нет: строку снимает фаза 1 (`seat/seat.md`, шаг 1) (../CLAUDE.md)",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

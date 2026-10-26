@@ -30470,6 +30470,11 @@ if (mode === "verify") {
         ...(own.devDependencies ?? {}),
       });
       const shelfSide = new Set(shelfProse().map(([, full]) => full));
+      // Скрипт каркаса без скрипта у проекта — строка семени правил, которую
+      // фаза 1 не сняла: находка называет, кто её снимает.
+      const frameScripts = new Set(
+        readJson(shelfAt("seat/map.json") ?? "", {}).frameScripts ?? [],
+      );
       for (const [where, full] of [...shelfProse(), ...baseProse]) {
         runnableLooked += 1;
         const flat = proseOf(full);
@@ -30479,7 +30484,13 @@ if (mode === "verify") {
         const whose = fromShelf ? "манифесте семени" : "манифесте проекта";
         for (const m of flat.matchAll(RUN))
           if (!names.has(m[1]))
-            say("npm run " + m[1], "звена нет в " + whose, where);
+            say(
+              "npm run " + m[1],
+              !fromShelf && frameScripts.has(m[1])
+                ? "скрипт каркаса, у проекта его нет: строку снимает фаза 1 (`seat/seat.md`, шаг 1)"
+                : "звена нет в " + whose,
+              where,
+            );
         for (const m of flat.matchAll(NPX))
           if (!packs.some((d) => d === m[1] || d.includes(m[1])))
             say("npx " + m[1], "пакета нет в " + whose, where);
@@ -31586,7 +31597,8 @@ if (mode === "verify") {
         seedAt !== null &&
         existsSync(seedAt)
       ) {
-        const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
+        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const declared = seatMap.chainScripts;
         if (Array.isArray(declared)) {
           const seedScripts =
             JSON.parse(readFileSync(seedAt, "utf8")).scripts ?? {};
@@ -31598,7 +31610,12 @@ if (mode === "verify") {
               );
           // Обратная сторона названа списком исключений, а не догадкой: скрипты
           // каркаса нужны пустому проекту и не нужны живому, и это НЕ дыра.
-          const frameScripts = new Set(["dev", "build", "preview"]);
+          const frameScripts = new Set(seatMap.frameScripts ?? []);
+          for (const one of frameScripts)
+            if (seedScripts[one] === undefined)
+              chainDrift.push(
+                one + " — скрипт каркаса объявлен, а в семени его нет",
+              );
           for (const one of Object.keys(seedScripts))
             if (!names.includes(one) && !frameScripts.has(one))
               chainDrift.push(

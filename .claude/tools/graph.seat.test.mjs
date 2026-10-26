@@ -8,10 +8,12 @@ import {
   envLowOf,
   factsWithBaseline,
   inPlaceKindOf,
+  layShelfLive,
   lintBlockersOf,
   mergedLines,
   testCountsOf,
   tiersFrom,
+  withoutFrameRows,
 } from "./graph.seat.mjs";
 
 // Посадка на месте одной командой: полка лежит в `.claude` папки, режим
@@ -434,6 +436,63 @@ describe("семя разрешений держит то, что доктрин
     ).permissions.allow;
     for (const command of ["grep", "find", "cd", "npm", "npx", "node", "cp", "git"])
       expect(allow, command).toContain("Bash(" + command + " *)");
+  });
+});
+
+describe("семя правил в живом проекте без строк скриптов каркаса", () => {
+  // Решено разработчиком `2026-10-26`: строки `dev`, `build`, `preview`, которых у
+  // проекта нет, снимает фаза 1, а не сессия руками по красной сверке.
+  const TABLE = [
+    "| Проверка | Команда |",
+    "| --- | --- |",
+    "| Сервер разработки | `npm run dev` |",
+    "| Сборка | `npm run build` |",
+    "| Тесты | `npm test` |",
+    "Скрипт `npm run dev` в прозе остаётся.",
+  ].join("\n");
+
+  it("снимает строку таблицы, чьего скрипта каркаса у проекта нет, и только её", () => {
+    expect(withoutFrameRows(TABLE, ["dev", "build", "preview"], ["build", "test"])).toBe(
+      [
+        "| Проверка | Команда |",
+        "| --- | --- |",
+        "| Сборка | `npm run build` |",
+        "| Тесты | `npm test` |",
+        "Скрипт `npm run dev` в прозе остаётся.",
+      ].join("\n"),
+    );
+  });
+
+  it("скрипт не из списка каркаса не снимает, даже если у проекта его нет", () => {
+    expect(withoutFrameRows(TABLE, ["preview"], [])).toBe(TABLE);
+  });
+
+  it("механика фазы 1 кладёт семя правил и его отложенную копию без таких строк", () => {
+    const frame = JSON.parse(
+      fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"),
+    ).frameScripts;
+    expect(frame).toEqual(["dev", "build", "preview"]);
+    for (const busy of [false, true]) {
+      const box = fs.mkdtempSync(path.join(os.tmpdir(), "frame-rows-"));
+      try {
+        fs.writeFileSync(
+          path.join(box, "package.json"),
+          JSON.stringify({ scripts: { build: "vite build", test: "vitest" } }),
+        );
+        if (busy) fs.writeFileSync(path.join(box, "CLAUDE.md"), "# свои правила\n");
+        layShelfLive(SHELF, box);
+        const laid = fs.readFileSync(
+          path.join(box, busy ? "CLAUDE.md.seat" : "CLAUDE.md"),
+          "utf8",
+        );
+        expect(laid).not.toContain("`npm run dev`");
+        expect(laid).not.toContain("`npm run preview`");
+        expect(laid).toContain("`npm run build`");
+        expect(laid).toContain("`npm run typecheck`");
+      } finally {
+        fs.rmSync(box, { recursive: true, force: true });
+      }
+    }
   });
 });
 

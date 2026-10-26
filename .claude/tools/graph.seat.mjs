@@ -332,7 +332,8 @@ export const layShelf = (shelf, target) => {
 /** Механика фазы 1 в живой проект: обвязка с полки, папки посадки и
  * семена, кроме каркаса и отложенных; семя, столкнувшееся с файлом проекта,
  * ложится рядом с суффиксом `.seat` — сливает его фаза 2 (`seat/seat.md`,
- * шаг 1). Слияния, которые требуют суждения, — манифест, настройки среды, —
+ * шаг 1); семя прозы — без строк скриптов каркаса, которых у проекта нет.
+ * Слияния, которые требуют суждения, — манифест, настройки среды, —
  * здесь не делаются. Зовёт её корпус чужих проектов: он сверяет, как
  * инструмент читает проект, устроенный не по умолчаниям обвязки. Отдаёт
  * отложенные в `.seat`. */
@@ -345,15 +346,39 @@ export const layShelfLive = (shelf, target) => {
     mkdirSync(path.join(target, d), { recursive: true });
   for (const r of files)
     cpSync(path.join(shelf, r), path.join(target, ".claude", r));
+  const manifestAt = path.join(target, "package.json");
+  const own = existsSync(manifestAt)
+    ? Object.keys(JSON.parse(readFileSync(manifestAt, "utf8")).scripts ?? {})
+    : [];
   const deferred = [];
   for (const one of map.copy ?? []) {
     if (one.notAtSeating !== undefined || one.onlyWhenEmpty === true) continue;
     const to = path.join(target, one.to);
     const busy = existsSync(to);
-    cpSync(path.join(shelf, one.from), busy ? to + ".seat" : to);
+    const at = busy ? to + ".seat" : to;
+    cpSync(path.join(shelf, one.from), at);
+    if (at.endsWith(".md") || at.endsWith(".md.seat"))
+      writeFileSync(
+        at,
+        withoutFrameRows(readFileSync(at, "utf8"), map.frameScripts ?? [], own),
+      );
     if (busy) deferred.push(one.to);
   }
   return deferred;
+};
+
+/** Текст семени без строк таблицы, чья команда — скрипт каркаса, которого у
+ * проекта нет (`frameScripts` карты посадки, `seat/seat.md`, шаг 1). */
+export const withoutFrameRows = (text, frame, own) => {
+  const drop = frame.filter((one) => !own.includes(one));
+  return text
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.trimStart().startsWith("|") ||
+        !drop.some((one) => line.includes("`npm run " + one + "`")),
+    )
+    .join("\n");
 };
 
 /** Имена, которые витрина хостинга кладёт в новый репозиторий: описание,
