@@ -887,3 +887,19 @@ describe("рецепт копии под имя проекта", () => {
     expect(plain).toMatchObject({ file: ".nvmrc", copyTo: ".node-version" });
   });
 });
+
+/**
+ * Карта называет, что обвязке принадлежит в смешанных папках; прочее там —
+ * проектное. Имя обвязки, не названное картой, снимок перестал бы возить.
+ */
+describe("смешанные папки обвязки названы картой целиком", () => {
+  it("каждое имя в смешанной папке полки названо картой", () => {
+    const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
+    const shelf = path.join(TOOL_DIR, "..");
+    const map = JSON.parse(fs.readFileSync(path.join(shelf, "seat", "map.json"), "utf8"));
+    const mixed = Object.entries(map.harnessInside ?? {});
+    expect(mixed.length).toBeGreaterThan(0);
+    for (const [dir, mine] of mixed)
+      expect(fs.readdirSync(path.join(shelf, dir)).sort(), dir).toEqual([...mine].sort());
+  });
+});

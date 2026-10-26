@@ -61,7 +61,8 @@
     {
       "from": "seat/templates/.nvmrc",
       "to": ".nvmrc",
-      "alsoKnownAs": [".node-version", ".tool-versions"]
+      "alsoKnownAs": [".node-version", ".tool-versions"],
+      "inManifest": "volta"
     },
     {
       "from": "seat/templates/tsconfig.json",
@@ -224,6 +225,8 @@
       "to": ".gitignore"
     }
   ],
+  "_harnessInside": "Папки обвязки, куда проект кладёт и своё: в них обвязке принадлежат только названные имена, а прочее — проектное, как projectOwnedInsideHarness, и снимок его не увозит. Выведено: пятая посадка в живой проект — свой хук проекта в hooks/ уехал снимком в чужой проект.",
+  "harnessInside": { "hooks": ["git"] },
   "projectOwnedInsideHarness": [
     "settings.local.json",
     "settings.json",

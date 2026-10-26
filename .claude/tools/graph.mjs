@@ -1577,6 +1577,37 @@ const SHELF_CHECKS_TABLE = SHELF === null ? null : path.join(SHELF, "tools/check
  */
 const REPO_AT = path.join(BASE, "..");
 
+/** Конфиг мутационного прогона, прочитанный так, как его читает сам Stryker:
+ * JSON — разбором, модуль — импортом. Прежде его разбирали как JSON всегда, и
+ * свой `stryker.conf.mjs` проекта сверка звала испорченным файлом обвязки с
+ * советом удалить, а область прогона — заглушкой. Выведено: пятая посадка в
+ * живой проект. Ждут раз на прогон, до первого чтения; `null` — поля либо
+ * файла нет, `{}` — модуль не загрузился. */
+let MUTATION_CONF = undefined;
+const mutationConfigLoad = async () => {
+  if (MUTATION_CONF !== undefined) return MUTATION_CONF;
+  MUTATION_CONF = null;
+  if (CONFIG?.mutationConfig == null) return MUTATION_CONF;
+  const at = path.join(BASE, CONFIG.mutationConfig);
+  if (!existsSync(at)) return MUTATION_CONF;
+  if (/\.json$/.test(at)) {
+    MUTATION_CONF = readJson(at, {});
+    return MUTATION_CONF;
+  }
+  try {
+    const { pathToFileURL } = await import("node:url");
+    const mod = await import(pathToFileURL(at).href);
+    const got = mod.default ?? mod;
+    MUTATION_CONF = got !== null && typeof got === "object" ? got : {};
+  } catch {
+    MUTATION_CONF = {};
+  }
+  return MUTATION_CONF;
+};
+await mutationConfigLoad();
+/** Конфиг мутаций, уже прочитанный: `null` — поля либо файла нет. */
+const mutationConfigNow = () => MUTATION_CONF ?? null;
+
 /** Разбор модуля: компилятором TypeScript из пакетов проекта, когда он есть,
  * иначе регулярными выражениями. Хуки среды графа не читают, а загрузка
  * компилятора стоит `~200 мс` на каждый конец хода и каждую правку: им —
@@ -1759,9 +1790,19 @@ const seededBase = () => {
  * посадки в живой проект — команда и скилл проекта. */
 const shelfProjectOwn = () => {
   const mapAt = shelfAt("seat/map.json");
+  const map = mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {};
+  // В смешанной папке обвязке принадлежит названное картой, прочее — проекту.
+  const mixed = Object.entries(map.harnessInside ?? {}).flatMap(([dir, mine]) => {
+    const at = SHELF === null ? null : path.join(SHELF, dir);
+    return at === null || !existsSync(at)
+      ? []
+      : readdirSync(at)
+          .filter((name) => !mine.includes(name))
+          .map((name) => dir + "/" + name);
+  });
   return [
-    ...((mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
-      .projectOwnedInsideHarness ?? []),
+    ...(map.projectOwnedInsideHarness ?? []),
+    ...mixed,
     ...(CONFIG.skills?.own ?? []).map((name) => "skills/" + name),
   ];
 };
@@ -2075,9 +2116,7 @@ const contentStamp = (f) =>
  */
 const mutationArea = () => {
   if (CONFIG.mutationConfig == null) return [];
-  const at = path.join(BASE, CONFIG.mutationConfig);
-  if (!existsSync(at)) return [];
-  const globs = readJson(at, {}).mutate ?? [];
+  const globs = mutationConfigNow()?.mutate ?? [];
   if (!globs.length) return [];
   const inside = globMatcher(globs, REPO_AT);
   // Путь считается от КОРНЯ РЕПОЗИТОРИЯ: образцы в конфиге Stryker написаны
@@ -2967,6 +3006,54 @@ const formatterSameAsSeed = async (name, body, seedAt) => {
   } finally {
     rmSync(box, { recursive: true, force: true });
   }
+};
+/** Манифест изменён только в полях, где он держит настройку семени
+ * (`inManifest` карты), и каждое такое поле теперь равно своему семени: это
+ * тот же конфиг, слитый с семенем, что и `.prettierrc.yaml`. Выведено: пятая
+ * посадка в живой проект — настройка форматтера полем `prettier`. */
+const manifestOnlySeedFields = (head, body) => {
+  let before;
+  let after;
+  try {
+    before = JSON.parse(head);
+    after = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  const mapAt = shelfAt("seat/map.json");
+  const fields = (
+    mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).copy ?? []) : []
+  ).filter((e) => e.inManifest !== undefined);
+  const sorted = (v) =>
+    v !== null && typeof v === "object" && !Array.isArray(v)
+      ? JSON.stringify(Object.keys(v).sort().map((k) => [k, v[k]]))
+      : JSON.stringify(v);
+  const rest = (o) =>
+    sorted(
+      Object.fromEntries(
+        Object.entries(o).filter(([k]) => !fields.some((e) => e.inManifest === k)),
+      ),
+    );
+  if (rest(before) !== rest(after)) return false;
+  let touched = false;
+  for (const e of fields) {
+    const was = sorted(before[e.inManifest]);
+    const now = sorted(after[e.inManifest]);
+    if (was === now) continue;
+    touched = true;
+    const seedAt = shelfAt(e.from);
+    if (seedAt === null || !existsSync(seedAt)) return false;
+    const seedText = readFileSync(seedAt, "utf8");
+    let seed;
+    try {
+      seed = JSON.parse(seedText);
+    } catch {
+      // Семя-текст — версия среды: поле держит её объектом `{ node }`.
+      seed = { node: seedText.trim() };
+    }
+    if (sorted(after[e.inManifest]) !== sorted(seed)) return false;
+  }
+  return touched;
 };
 /** Правленые файлы без тех, чья правка — одно приведение формата. Прежнее
  * содержимое берётся из последнего коммита. */
@@ -8850,9 +8937,8 @@ if (mode === "mutated") {
   // всему `src` значило бы врать: часть файлов исключена намеренно и с
   // записанной причиной, и они бы числились долгом навсегда.
   const mutateGlobs = (() => {
-    const cfg = path.join(BASE, CONFIG.mutationConfig);
-    if (!existsSync(cfg)) return null;
-    return readJson(cfg, {}).mutate ?? [];
+    const conf = mutationConfigNow();
+    return conf === null ? null : (conf.mutate ?? []);
   })();
   // Третье состояние, которого не было: конфиг ЕСТЬ, а область в нём не
   // заполнена. Семя привозит его с заглушкой, и заполняет её проект. Пока не
@@ -10616,6 +10702,16 @@ const WRITER_KINDS = [
     wipe: /\b(?:localStorage|sessionStorage)\s*\.\s*clear\s*\(/,
     named: /localStorage|sessionStorage|хранилищ|storage/i,
   },
+  // Промежуточный слой Zustand `persist` пишет состояние в хранилище
+  // браузера под ключом `name`. Выведено: пятая посадка в живой проект.
+  {
+    kind: "хранилище",
+    when: /from\s+["']zustand\/middleware["']/,
+    take: /\bpersist\s*\([\s\S]*?\bname\s*:\s*([^,}\n]+)/g,
+    drop: /(?!)/g,
+    wipe: /(?!)/,
+    named: /localStorage|sessionStorage|хранилищ|storage|persist/i,
+  },
   {
     kind: "внешнее хранилище",
     take: /\blocalforage\s*\.\s*(?:setItem|removeItem)\s*\(\s*([^,)]+)/g,
@@ -11140,7 +11236,7 @@ const mutationRowOf = (f) => {
       CONFIG.mutationConfig == null
         ? null
         : path.join(BASE, CONFIG.mutationConfig);
-    const globs = cfg !== null && existsSync(cfg) ? (readJson(cfg, {}).mutate ?? []) : [];
+    const globs = cfg !== null ? (mutationConfigNow()?.mutate ?? []) : [];
     if (globs.length > 0 && !globs.every((g) => /^<.*>$/.test(String(g).trim()))) {
       const at = path.join(BASE, CONFIG.mutationLedger);
       MUTATION_CACHE = {
@@ -12796,24 +12892,48 @@ const storeFacts = () => {
   const keyOf = (raw, text) => {
     const t = raw.trim();
     const lit = /^["'`]([^"'`]+)["'`]$/.exec(t);
-    if (lit !== null) return lit[1];
+    if (lit !== null && !lit[1].includes("${")) return lit[1];
+    // Шаблонная строка, чьи вставки — литералы либо строковые константы
+    // этого файла, — тоже один ключ; вставка иного рода оставляет её как есть.
+    const tpl = /^`((?:[^`$]|\$\{[^}]*\}|\$(?!\{))*)`$/.exec(t);
+    if (tpl !== null) {
+      let whole = true;
+      const value = tpl[1].replace(/\$\{\s*([^}]*?)\s*\}/g, (_, inner) => {
+        const quoted = /^["']([^"']*)["']$/.exec(inner);
+        if (quoted !== null) return quoted[1];
+        const named = /^[A-Za-z_$][\w$]*$/.test(inner)
+          ? new RegExp(
+              "\\b(?:const|let|var)\\s+" + inner + "\\s*(?::[^=]+)?=\\s*[\"'`]([^\"'`$]+)[\"'`]",
+            ).exec(text)
+          : null;
+        if (named !== null) return named[1];
+        whole = false;
+        return "${" + inner + "}";
+      });
+      return whole ? value : t;
+    }
     // Член объекта-константы ключей — `KEYS.workouts`: значение поля в
     // объявлении объекта, в том же файле либо у файла, который его отдаёт.
     // Выведено: четвёртая посадка в живой проект — владелец писал
     // `KEYS.workouts`, второй узел снимал ту же запись строкой.
     const member = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(t);
     if (member !== null) {
+      // Объект-константа (`KEYS.workouts`) либо перечисление
+      // (`StorageKey.Books`): поле через двоеточие у первого, через знак
+      // равенства у второго. Выведено: пятая посадка — перечисление ключей.
       const field = (body) => {
         const obj = new RegExp(
-          "\\b(?:const|let|var)\\s+" +
+          "\\b(?:(?:const|let|var)\\s+" +
             member[1] +
-            "\\s*(?::[^=]+)?=\\s*\\{([^}]*)\\}",
+            "\\s*(?::[^=]+)?=\\s*|(?:const\\s+)?enum\\s+" +
+            member[1] +
+            "\\s*)\\{([^}]*)\\}",
         ).exec(body);
         const hit =
           obj === null
             ? null
             : new RegExp(
-                "(?:^|[\\s,{])[\"']?" + member[2] + "[\"']?\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]",
+                "(?:^|[\\s,{])[\"']?" + member[2] + "[\"']?\\s*[:=]\\s*[\"'`]([^\"'`]+)[\"'`]",
               ).exec(obj[1]);
         return hit === null ? null : hit[1];
       };
@@ -12856,6 +12976,7 @@ const storeFacts = () => {
     // открывающей скобки, и построчный поиск такого писателя не видел.
     const lineAt = (at) => text.slice(0, at).split(LF).length - 1;
     for (const kind of WRITER_KINDS) {
+      if (kind.when !== undefined && !kind.when.test(text)) continue;
       for (const m of text.matchAll(kind.take)) {
         const i = lineAt(m.index);
         if (!remark(i))
@@ -17996,6 +18117,8 @@ if (mode === "gate") {
           head = null;
         }
         if (await formatOnly(head, body, norm(path.join(REPO_AT, one))))
+          continue;
+        if (head !== null && one === "package.json" && manifestOnlySeedFields(head, body))
           continue;
       }
       configs.push(at);
@@ -23519,11 +23642,23 @@ if (mode === "verify") {
       // проект со своими решениями в документах посадку проходил с пустым
       // полем, и сверка адресуемости решений не вооружалась никогда —
       // напоминание, обещанное шагом 2, не звучало. Замерено посадкой по инструкции.
+      // В документах папку узнают по форме, а не по имени: пронумерованные
+      // документы — это реестр решений, как бы он ни звался. Выведено:
+      // пятая посадка в живой проект — `docs/decisions/` под именем `adr`
+      // не искали.
       const docsAt = path.join(REPO, "docs");
+      const numbered = (d) => readdirSync(d).some((n) => /^\d+-.+\.md$/.test(n));
+      const docDirs = (dir) => [
+        dir,
+        ...readdirSync(dir)
+          .map((n) => path.join(dir, n))
+          .filter((d) => statSync(d).isDirectory() && !outOfTree(path.basename(d), d))
+          .flatMap(docDirs),
+      ];
       const found = [
-        ...SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")),
-        ...(existsSync(docsAt) ? dirsUnder(docsAt, "adr") : []),
-      ].filter((d) => readdirSync(d).some((n) => /^\d+.*\.md$/.test(n)));
+        ...SRC_ROOTS.flatMap((one) => dirsUnder(one, "adr")).filter(numbered),
+        ...(existsSync(docsAt) ? docDirs(docsAt).filter(numbered) : []),
+      ];
       if (found.length)
         disarmed.push(
           "решения уже есть (" +
@@ -24186,11 +24321,19 @@ if (mode === "verify") {
         const nvmEntry = (
           nvmMapAt !== null && existsSync(nvmMapAt) ? (readJson(nvmMapAt, {}).copy ?? []) : []
         ).find((e) => e.to === ".nvmrc");
-        const nvmName =
+        let nvmName =
           [".nvmrc", ...(nvmEntry?.alsoKnownAs ?? [])].find((n) =>
             existsSync(path.join(path.dirname(at), n)),
           ) ?? ".nvmrc";
         const nvmAt = path.join(path.dirname(at), nvmName);
+        // Поле манифеста — то же место версии (`inManifest` карты): `volta`
+        // держит её объектом `{ node }`. Выведено: пятая посадка в живой
+        // проект — `volta.node` расходился с `engines` без признака.
+        const pinField = nvmEntry?.inManifest;
+        const pinned =
+          pinField === undefined || !existsSync(at)
+            ? null
+            : (JSON.parse(readFileSync(at, "utf8"))[pinField]?.node ?? null);
         const nvmLine = existsSync(nvmAt)
           ? (readFileSync(nvmAt, "utf8")
               .split(NEWLINE)
@@ -24198,7 +24341,11 @@ if (mode === "verify") {
               .filter((l) => l !== "" && !l.startsWith("#"))
               .map((l) => /^(?:nodejs|node)\s+(\S+)$/.exec(l)?.[1] ?? (nvmName === ".tool-versions" ? null : l))
               .find((l) => l !== null) ?? null)
-          : null;
+          : typeof pinned === "string"
+            ? pinned
+            : null;
+        if (!existsSync(nvmAt) && typeof pinned === "string")
+          nvmName = pinField + ".node в манифесте";
         const nvmParts =
           nvmLine === null
             ? null
@@ -26284,8 +26431,14 @@ if (mode === "verify") {
         const installed = link.packages.every((p) => deps.includes(p));
         if (!installed) continue;
         // Конфиг живого проекта часто лежит под другим именем того же
-        // предмета — `.prettierrc` вместо `.prettierrc.json`.
-        if (linkConfigAt(link) === null)
+        // предмета — `.prettierrc` вместо `.prettierrc.json` — либо полем
+        // манифеста (`inManifest` карты). Выведено: пятая посадка в живой
+        // проект — настройка форматтера полем `prettier`.
+        const mapAt = shelfAt("seat/map.json");
+        const field = (
+          mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).copy ?? []) : []
+        ).find((e) => e.to === link.config)?.inManifest;
+        if (linkConfigAt(link) === null && !(field !== undefined && Object.hasOwn(pkg, field)))
           toolchainDrift.push(
             `${link.script}: пакеты стоят, а конфига нет — ${link.config}`,
           );
@@ -29958,7 +30111,7 @@ if (mode === "verify") {
               CONFIG.mutationConfig,
           );
         else {
-          const mutConf = readJson(at, {});
+          const mutConf = mutationConfigNow() ?? {};
           const area = mutConf.mutate ?? [];
           // Папка обвязки в песочнице прогона — чужой груз с последствием:
           // прогон вписывает `// @ts-nocheck` первой строкой в файлы кода под

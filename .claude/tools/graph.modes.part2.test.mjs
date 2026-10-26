@@ -2433,6 +2433,23 @@ describe("факты по уровням без протокола", () => {
       const member = tool("levels").out;
       expect(member.match(/^ {2}писатель: /gm)).toHaveLength(1);
       expect(member).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
+      // Перечисление ключей и шаблонная строка с постоянной вставкой — тот
+      // же ключ.
+      put(
+        "components/ZzA/ZzA.tsx",
+        'enum ZzKey {\n  Count = "zz.count",\n}\n\nexport function ZzA() {\n  return <button onClick={() => window.localStorage.setItem(ZzKey.Count, "1")}>x</button>;\n}\n',
+      );
+      put(
+        "components/ZzB/ZzB.tsx",
+        'const ZZ_PART = "count";\n\nexport function ZzB() {\n  return <button onClick={() => window.localStorage.removeItem(`zz.${ZZ_PART}`)}>x</button>;\n}\n',
+      );
+      expect(tool("levels").out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
+      // Zustand `persist` пишет в хранилище под ключом `name`.
+      put(
+        "components/ZzA/ZzA.tsx",
+        'import { create } from "zustand";\nimport { persist } from "zustand/middleware";\n\nexport const useZz = create()(persist(() => ({ n: 0 }), { name: "zz.count" }));\n',
+      );
+      expect(tool("levels").out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
       if (!hadState) fs.rmSync(stateAt);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
@@ -5553,4 +5570,115 @@ describe("команды правил проекта исполнимы", () => 
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+});
+
+/**
+ * Пятая посадка в живой проект: тот же предмет под другим именем либо
+ * форматом — папка решений, поле манифеста, конфиг-модуль.
+ */
+describe("предмет под другим именем и форматом", () => {
+  const put = (box, rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+    fs.writeFileSync(path.join(box, rel), text);
+  };
+  const setField = (box, from, to) => {
+    const at = path.join(box, ".context", "graph.config.mjs");
+    const had = fs.readFileSync(at, "utf8");
+    expect(had).toContain(from);
+    fs.writeFileSync(at, had.replace(from, to));
+  };
+
+  it("папка решений узнаётся по пронумерованным документам, а не по имени `adr`", () => {
+    const box = seatEmpty("adr-form-");
+    try {
+      const disarmed = () =>
+        (verifyIn(box).get("Сверки, выключенные при живом предмете") ?? []).join("\n");
+      put(box, "docs/decisions/notes.md", "# Notes\n");
+      expect(disarmed()).not.toContain("CONFIG.adr");
+      put(box, "docs/decisions/0001-zustand.md", "# 1. Zustand\n");
+      expect(disarmed()).toContain("решения уже есть (docs/decisions), а CONFIG.adr пуст");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("настройка форматтера полем манифеста — конфиг на месте", () => {
+    const box = seatEmpty("prettier-field-");
+    try {
+      const drift = () =>
+        (verifyIn(box).get("Конфиг звена цепочки на месте") ?? []).join("\n");
+      fs.rmSync(path.join(box, ".prettierrc.json"));
+      expect(drift()).toContain("format:check: пакеты стоят, а конфига нет");
+      const at = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(at, "utf8"));
+      pkg.prettier = { semi: false };
+      fs.writeFileSync(at, JSON.stringify(pkg, null, 2) + "\n");
+      expect(drift()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("версия среды полем `volta` сверяется с `engines` и рядом с `.nvmrc` названа вторым местом", () => {
+    const box = seatEmpty("volta-");
+    try {
+      const at = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(at, "utf8"));
+      pkg.volta = { node: "20.11.1" };
+      fs.writeFileSync(at, JSON.stringify(pkg, null, 2) + "\n");
+      const found = verifyIn(box);
+      expect((found.get("Один предмет — один файл настройки") ?? []).join("\n")).toContain(
+        ".nvmrc и поле `volta` в package.json — один предмет, два места настройки",
+      );
+      fs.rmSync(path.join(box, ".nvmrc"));
+      expect(verifyIn(box).get("Диапазон среды объявлен")).toEqual([
+        expect.stringMatching(/^volta\.node в манифесте называет 20\.11\.1,/),
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("конфиг мутаций модулем читается как модуль: не порча и не заглушка", () => {
+    const box = seatEmpty("stryker-module-");
+    try {
+      const seed = JSON.parse(fs.readFileSync(path.join(box, "stryker.config.json"), "utf8"));
+      fs.rmSync(path.join(box, "stryker.config.json"));
+      seed.mutate = ["src/**/*.ts"];
+      put(box, "stryker.conf.mjs", "export default " + JSON.stringify(seed) + ";\n");
+      setField(box, '  mutationConfig: "../stryker.config.json",', '  mutationConfig: "../stryker.conf.mjs",');
+      const found = verifyIn(box);
+      expect(found.get("Файл, написанный обвязкой, читается") ?? []).toEqual([]);
+      expect((found.get("Мутационный прогон исполним") ?? []).join("\n")).not.toContain("заглушка");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * В смешанной папке обвязки — `hooks/` — проект кладёт своё, и снимок увозил
+ * его в чужой проект. Выведено: пятая посадка в живой проект — свой хук.
+ */
+describe("своё проекта в смешанной папке обвязки", () => {
+  it("свой хук проекта снимок не увозит, хуки обвязки — увозит", () => {
+    const box = seatEmpty("own-hook-");
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "own-hook-snap-"));
+    fs.rmSync(out, { recursive: true, force: true });
+    try {
+      fs.writeFileSync(path.join(box, ".claude", "hooks", "zz-own.sh"), "#!/bin/sh\necho zz\n");
+      const r = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "handoff", out],
+        { cwd: box, encoding: "utf8" },
+      );
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(r.stdout).toContain("исключено: .claude/hooks/zz-own.sh — файл проекта, не обвязки");
+      expect(fs.existsSync(path.join(out, ".claude", "hooks", "zz-own.sh"))).toBe(false);
+      expect(fs.existsSync(path.join(out, ".claude", "hooks", "git"))).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(out, { recursive: true, force: true });
+    }
+  }, 240000);
 });

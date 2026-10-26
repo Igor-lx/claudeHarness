@@ -4078,6 +4078,28 @@ describe("серия", () => {
       const other = tool("gate");
       expect(other.code, other.out).toBe(1);
       expect(other.out).toContain("    .prettierrc.yaml");
+      // Настройка полем манифеста: поле приведено к семени — не правка
+      // цепочки; рядом с ним правка другого поля — правка.
+      git("reset", "-q", "--", ".prettierrc.yaml");
+      fs.rmSync(yamlAt);
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.prettier = { semi: false };
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      git("add", "--", "package.json");
+      git("commit", "-qm", "свой форматтер", "--no-verify");
+      pkg.prettier = JSON.parse(fs.readFileSync(path.join(box, ".prettierrc.json"), "utf8"));
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      git("add", "--", "package.json");
+      const field = tool("gate");
+      expect(field.code, field.out).toBe(0);
+      expect(field.out).toContain("кода в коммите нет — свод не спрашивается");
+      pkg.scripts.zz = "echo zz";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      git("add", "--", "package.json");
+      const mixed = tool("gate");
+      expect(mixed.code, mixed.out).toBe(1);
+      expect(mixed.out).toContain("    package.json");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
