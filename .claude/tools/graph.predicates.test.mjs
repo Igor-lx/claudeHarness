@@ -819,3 +819,71 @@ describe("кандидаты перекрёстной сверки", () => {
     ).toEqual(["K1", "K4", "L4"]);
   });
 });
+
+/**
+ * Список сверок, которые держатся пунктом долга перехода, — данные; проза
+ * посадки и код сверок называют его же. Таблица фазы 3 называла две сверки из
+ * пяти, и посадка не знала, чем держать три другие. Выведено: четвёртая
+ * посадка в живой проект.
+ */
+describe("сверки, держимые пунктом долга, названы везде одним списком", () => {
+  const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
+  const read = (rel) => fs.readFileSync(path.join(TOOL_DIR, rel), "utf8");
+
+  it("каждую сверку списка зовёт помощник, называет таблица фазы 3 и таблица сверок", () => {
+    const tool = read("graph.mjs");
+    const seat = read("../seat/seat.md");
+    const checks = read("checks.md");
+    const phase3 = seat.slice(seat.indexOf("### Что идёт в долг перехода"));
+    expect(vocabulary.HELD_BY_DEBT_ROW.length).toBeGreaterThan(0);
+    for (const name of vocabulary.HELD_BY_DEBT_ROW) {
+      expect(tool, name).toContain('heldOpen("' + name + '"');
+      expect(phase3, name).toContain("«" + name + "»");
+      expect(checks, name).toContain("| " + name + " |");
+    }
+    const called = [...tool.matchAll(/heldOpen\("([^"]+)"/g)].map((m) => m[1]);
+    expect([...new Set(called)].sort()).toEqual([...vocabulary.HELD_BY_DEBT_ROW].sort());
+  });
+});
+
+/**
+ * Смягчение неслитым семенем стоит на ключе карты посадки: ключ, которого в
+ * карте нет, не смягчает ничего, и посадка краснеет без признака причины.
+ */
+describe("сверки, держимые неслитым семенем, стоят на семенах карты", () => {
+  const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
+  it("каждый ключ — семя карты посадки, каждая сверка — строка таблицы сверок", () => {
+    const map = JSON.parse(
+      fs.readFileSync(path.join(TOOL_DIR, "..", "seat", "map.json"), "utf8"),
+    );
+    const checks = fs.readFileSync(path.join(TOOL_DIR, "checks.md"), "utf8");
+    const seeds = new Set(map.copy.map((e) => e.from));
+    const entries = Object.entries(vocabulary.HELD_BY_WAITING_SEED);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [from, names] of entries) {
+      expect(seeds.has(from), from).toBe(true);
+      for (const name of names) expect(checks, name).toContain("| " + name + " |");
+    }
+  });
+});
+
+/**
+ * Рецепт копии под другое имя: после подстановки имени проекта файл и копия
+ * совпадали, и поломка ложилась сама на себя. Выведено: четвёртая посадка в
+ * живой проект — `.node-version` вместо `.nvmrc`.
+ */
+describe("рецепт копии под имя проекта", () => {
+  it("копия, совпавшая с файлом, встаёт под имя семени", () => {
+    const named = { ".nvmrc": ".node-version" };
+    const recipe = vocabulary.localiseRecipe(
+      { section: "проба", file: ".nvmrc", copyTo: ".node-version" },
+      (f) => named[f] ?? f,
+    );
+    expect(recipe).toMatchObject({ file: ".node-version", copyTo: ".nvmrc", seedFile: ".nvmrc" });
+    const plain = vocabulary.localiseRecipe(
+      { section: "проба", file: ".nvmrc", copyTo: ".node-version" },
+      (f) => f,
+    );
+    expect(plain).toMatchObject({ file: ".nvmrc", copyTo: ".node-version" });
+  });
+});

@@ -2416,6 +2416,23 @@ describe("факты по уровням без протокола", () => {
         fs.readFileSync(stateAt, "utf8").replace("| ключ `zz.count` |", "| ключ `ZZ_KEY` |"),
       );
       expect(tool("levels").out.match(/^ {2}писатель: /gm)).toHaveLength(1);
+      // Ключ членом объекта-константы, а второй узел снимает ту же запись
+      // строкой: снятие — тоже запись, и ключ один.
+      put(
+        "components/ZzA/ZzA.tsx",
+        'const ZZ_KEYS = { count: "zz.count" };\n\nexport function ZzA() {\n  return <button onClick={() => window.localStorage.setItem(ZZ_KEYS.count, "1")}>x</button>;\n}\n',
+      );
+      put(
+        "components/ZzB/ZzB.tsx",
+        'export function ZzB() {\n  return <button onClick={() => window.localStorage.removeItem("zz.count")}>x</button>;\n}\n',
+      );
+      fs.writeFileSync(
+        stateAt,
+        fs.readFileSync(stateAt, "utf8").replace("| ключ `ZZ_KEY` |", "| ключ `ZZ_KEYS.count` |"),
+      );
+      const member = tool("levels").out;
+      expect(member.match(/^ {2}писатель: /gm)).toHaveLength(1);
+      expect(member).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
       if (!hadState) fs.rmSync(stateAt);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
@@ -3531,6 +3548,29 @@ describe("смоук заведён при пустой области", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  // Семя несёт `npm run test:e2e`; у живого проекта со смоуком под другим
+  // именем `tested` велел прогнать несуществующий скрипт.
+  it("команда смоука без своего скрипта в манифесте названа", () => {
+    const box = seatEmpty("smokecmd-");
+    try {
+      const goneOf = () =>
+        (verifyIn(box).get("Объявленные области существуют") ?? []).join("\n");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs.readFileSync(cfgAt, "utf8").replace("  smokeScope: [],", '  smokeScope: ["src/app/App.tsx"],'),
+      );
+      expect(goneOf()).toContain("команда смоука: npm run test:e2e — скрипта test:e2e в манифесте нет");
+      const manifestAt = path.join(box, "package.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestAt, "utf8"));
+      manifest.scripts["test:e2e"] = "playwright test";
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest, null, 2) + "\n");
+      expect(goneOf()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 describe("номер записи в заголовке не счёт", () => {
@@ -3864,6 +3904,16 @@ describe("находки мини-стенда: факты, долг, отлож
           expect.stringMatching(/^\.nvmrc называет /),
         ]);
       }
+      // Та же версия под другим именем семени: `.node-version` и
+      // `.tool-versions` проекта читаются так же.
+      fs.rmSync(path.join(box, ".nvmrc"));
+      write(box, ".node-version", "18\n");
+      expect(range()).toEqual([expect.stringMatching(/^\.node-version называет 18,/)]);
+      write(box, ".node-version", "22.23.2\n");
+      expect(range()).toBeUndefined();
+      fs.rmSync(path.join(box, ".node-version"));
+      write(box, ".tool-versions", "python 3.12.1\nnodejs 18.0.0\n");
+      expect(range()).toEqual([expect.stringMatching(/^\.tool-versions называет 18\.0\.0,/)]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5304,8 +5354,203 @@ describe("живой проект: своё в обвязке, тест вне �
       fs.copyFileSync(path.join(box, "CLAUDE.md"), path.join(box, "CLAUDE.md.seat"));
       expect(banner()).toContain("«Названное доктриной исполнимо»");
       expect(banner()).toContain("«Правила проекта не спорят с реестром решений»");
+      // Та же форма у витрины: своя витрина проекта ждёт слияния с семенем.
+      expect(banner()).not.toContain("«Гарантия держится тестом»");
+      fs.copyFileSync(
+        path.join(box, "docs", "FEATURES.md"),
+        path.join(box, "docs", "FEATURES.md.seat"),
+      );
+      expect(banner()).toContain("«Гарантия держится тестом»");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+});
+
+/**
+ * Свой скилл проекта лежит в папке обвязки, но обвязкой не является: строка
+ * о нём в памятке уехала бы с обвязкой в чужой проект. Выведено: четвёртая
+ * посадка в живой проект — скилл `deploy` требовал строки в памятке обвязки.
+ */
+describe("свой скилл проекта объявляется полем настройки", () => {
+  it("необъявленный требует строки памятки, объявленный — нет, объявленный без папки назван", () => {
+    const box = seatEmpty("own-skill-");
+    try {
+      const skillDir = path.join(box, ".claude", "skills", "zzown");
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillDir, "SKILL.md"),
+        // Без признака вызова: шапку своего скилла решает проект.
+        "---\nname: zzown\ndescription: Выкатить сборку проекта.\n---\n\n# Выкатка\n",
+      );
+      const factsAt = path.join(box, ".context", "01-facts.md");
+      fs.writeFileSync(
+        factsAt,
+        fs
+          .readFileSync(factsAt, "utf8")
+          .replace(
+            "| `task` | `.claude/skills/task/SKILL.md` |\n",
+            "| `task` | `.claude/skills/task/SKILL.md` |\n| `zzown` | `.claude/skills/zzown/SKILL.md` |\n",
+          ),
+      );
+      const drift = () => (verifyIn(box).get("Скиллы проекта") ?? []).join("\n");
+      expect(drift()).toContain("нет строки в памятке: zzown — свой скилл проекта объявляют полем `skills.own` настройки");
+      expect(drift()).toContain("не вызываем по имени: zzown");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const own = (list) =>
+        fs.writeFileSync(
+          cfgAt,
+          fs.readFileSync(cfgAt, "utf8").replace(/\n {4}own: \[[^\]]*\],/, "\n    own: " + JSON.stringify(list) + ","),
+        );
+      own(["zzown"]);
+      expect(drift()).toBe("");
+      own(["zzown", "zzgone"]);
+      expect(drift()).toBe("объявлен своим, а папки нет: zzgone");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
+ * Пункт долга, назвавший сверку, держит её находки — только у сверок, которые
+ * это умеют. README в корне папки узла держал живой проект красным до правки
+ * кода, а пункт, назвавший сверку без такой формы, не держал ничего и не
+ * говорил об этом. Выведено: четвёртая посадка в живой проект.
+ */
+describe("пункт долга и названная им сверка", () => {
+  it("документ мимо `docs/` держится пунктом, пункт о сверке без формы долга назван", () => {
+    const box = seatEmpty("held-row-");
+    try {
+      const node = path.join(box, "src", "components", "ZzCard");
+      fs.mkdirSync(node, { recursive: true });
+      fs.writeFileSync(
+        path.join(node, "ZzCard.tsx"),
+        "export function ZzCard() {\n  return null;\n}\n",
+      );
+      fs.writeFileSync(path.join(node, "README.md"), "# ZzCard\n\nCard.\n");
+      const docs = () =>
+        (verifyIn(box).get("Документы компонента лежат в его `docs/`") ?? []).join("\n");
+      expect(docs()).toContain("ZzCard/README.md");
+      withTransitionDebt(box, [
+        "| 1 | README в корне папки узла | `1` | «Документы компонента лежат в его `docs/`» | перенести в `docs/` | `1` файл |",
+      ]);
+      const held = verifyIn(box);
+      expect(held.get("Документы компонента лежат в его `docs/`") ?? []).toEqual([]);
+      expect(held.get("Пункт долга держит названную сверку") ?? []).toEqual([]);
+      // Адрес в плане перехода — намеченный, и сверка путей его не судит;
+      // мёртвый адрес кладётся в карту.
+      fs.appendFileSync(path.join(box, ".context", "00-map.md"), "\nАдрес `src/zzNowhere.ts`.\n");
+      fs.appendFileSync(
+        path.join(box, ".context", "15-transition.md"),
+        "| 2 | Мёртвый адрес | `1` | «Пути в обратных кавычках» | снять адрес из карты | `1` место |\n",
+      );
+      expect(
+        (verifyIn(box).get("Пункт долга держит названную сверку") ?? []).join("\n"),
+      ).toContain("пункт 2 называет «Пути в обратных кавычках», а её находки он не держит");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Сквозные проверки собирает свой раннер, и область сбора раннера обвязки о
+ * них не спрашивают. Выведено: четвёртая посадка в живой проект — `e2e/` под
+ * Playwright сверка требовала собрать раннером тестов.
+ */
+describe("тесты другого раннера вне области сбора", () => {
+  it("тест в `e2e/` назван, пока Playwright не объявил папку своей", () => {
+    const box = seatEmpty("other-runner-");
+    try {
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs.readFileSync(cfgAt, "utf8").replace(/\n {2}testDirs: null,/, '\n  testDirs: ["../e2e"],'),
+      );
+      fs.mkdirSync(path.join(box, "e2e"));
+      fs.writeFileSync(
+        path.join(box, "e2e", "zz.spec.ts"),
+        "import { test } from '@playwright/test';\ntest('zz', () => {});\n",
+      );
+      const lost = () =>
+        (verifyIn(box).get("Настройка сборки знает про тесты") ?? []).join("\n");
+      expect(lost()).toContain("e2e/zz.spec.ts вне области сбора");
+      fs.writeFileSync(
+        path.join(box, "playwright.config.ts"),
+        'export default { testDir: "./e2e" };\n',
+      );
+      expect(lost()).not.toContain("e2e/zz.spec.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Держимая сверка — своим пунктом: одно число на две прощало каждой полное
+ * число и не говорило, у какой выросло. Выведено: четвёртая посадка в живой
+ * проект — пункт «свои идиомы узла» называл две сверки папки узла.
+ */
+describe("пункт долга о нескольких держимых сверках", () => {
+  it("пункт держит одну держимую сверку: две под одним числом названы, по пункту на каждую — нет", () => {
+    const box = seatEmpty("held-sum-");
+    try {
+      const node = path.join(box, "src", "components", "ZzCard");
+      fs.mkdirSync(node, { recursive: true });
+      fs.writeFileSync(
+        path.join(node, "ZzCard.tsx"),
+        "export function ZzCard() {\n  return null;\n}\n",
+      );
+      fs.writeFileSync(path.join(node, "README.md"), "# ZzCard\n\nCard.\n");
+      // Один помощник в корне законен, свалка — со второго.
+      fs.writeFileSync(path.join(node, "zzHelper.ts"), "export const zzHelper = () => 1;\n");
+      fs.writeFileSync(path.join(node, "zzOther.ts"), "export const zzOther = () => 2;\n");
+      const found = verifyIn(box);
+      expect((found.get("Документы компонента лежат в его `docs/`") ?? []).length).toBe(1);
+      expect((found.get("В корне узла только сам узел") ?? []).length).toBe(1);
+      const planAt = path.join(box, ".context", "15-transition.md");
+      withTransitionDebt(box, [
+        "| 1 | своё в папке узла | `1` | «Документы компонента лежат в его `docs/`» и «В корне узла только сам узел» | разнести по папкам | `2` места |",
+      ]);
+      const said = () =>
+        (verifyIn(box).get("Пункт долга держит названную сверку") ?? []).join("\n");
+      expect(said()).toContain(
+        "пункт 1 держит одним числом несколько сверок: «Документы компонента лежат в его `docs/`», «В корне узла только сам узел»",
+      );
+      fs.writeFileSync(
+        planAt,
+        fs
+          .readFileSync(planAt, "utf8")
+          .replace(
+            "| 1 | своё в папке узла | `1` | «Документы компонента лежат в его `docs/`» и «В корне узла только сам узел» | разнести по папкам | `2` места |",
+            "| 1 | документ мимо `docs/` | `1` | «Документы компонента лежат в его `docs/`» | перенести | `1` файл |\n| 2 | свалка в корне узла | `1` | «В корне узла только сам узел» | разнести по папкам | `1` узел |",
+          ),
+      );
+      expect(said()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/**
+ * Таблица команд правил проекта — то, что сессия запускает. Сверка читала
+ * прозу обвязки и базы, а правила проекта — нет. Выведено: четвёртая посадка
+ * в живой проект — семя правил называло `npm run preview`, которого у проекта
+ * нет.
+ */
+describe("команды правил проекта исполнимы", () => {
+  it("скрипт таблицы команд без скрипта в манифесте проекта назван", () => {
+    const box = seatEmpty("rules-cmd-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Названное доктриной исполнимо") ?? []).join("\n");
+      expect(said()).toBe("");
+      fs.appendFileSync(path.join(box, "CLAUDE.md"), "\n| Проба | `npm run zznope` |\n");
+      expect(said()).toContain("npm run zznope — звена нет в манифесте проекта (../CLAUDE.md)");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });

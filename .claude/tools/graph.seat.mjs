@@ -301,7 +301,9 @@ const walkFiles = (root, rel = ".", out = []) => {
 
 /** Файлы полки — всё, что едет с обвязкой, кроме файлов проекта внутри неё. */
 const shelfFiles = (shelf, own) =>
-  walkFiles(shelf).filter((r) => !(path.dirname(r) === "." && own.has(r)));
+  walkFiles(shelf).filter(
+    (r) => ![...own].some((one) => r === one || r.startsWith(one + "/")),
+  );
 
 /** Обвязка с полки в папку проекта: папки посадки, полка без файлов проекта,
  * семена, кроме тех, что кладут не при посадке. Порядок один на всех, кто

@@ -1917,6 +1917,22 @@ describe("ошибка настройки звена долгом не гаси�
       );
       expect(parse.status).toBe(1);
       expect(parse.out).toContain("ошибка настройки (Parsing error");
+      // Файл вне области конфига, который читает линт с типами: починка
+      // названа вместе с файлом.
+      const outside = run(
+        "lint",
+        [
+          "/p/e2e/home.spec.ts",
+          '  0:0  error  Parsing error: "parserOptions.project" has been provided for @typescript-eslint/parser.',
+          "The file was not found in any of the provided project(s): e2e/home.spec.ts",
+          "✖ 1 problem (1 error, 0 warnings)",
+        ],
+        1,
+      );
+      expect(outside.status).toBe(1);
+      expect(outside.out).toContain(
+        "вне области конфига компилятора, который читает линт с типами: e2e/home.spec.ts — дописать их папки в его `include`",
+      );
       // Правило, которому нужна опция компилятора, без неё не проверяет
       // ничего: линт читал нестрогий конфиг, и находка — его настройка.
       const option = run(
@@ -4037,6 +4053,31 @@ describe("серия", () => {
       const alias = tool("gate");
       expect(alias.code, alias.out).toBe(0);
       expect(alias.out).toContain("кода в коммите нет — свод не спрашивается");
+      // Тот же конфиг в другом формате равен семени по смыслу: его читает
+      // сам форматтер. Отличный по смыслу — правка конфига цепочки.
+      git("reset", "-q", "--", ".prettierrc");
+      fs.rmSync(path.join(box, ".prettierrc"));
+      const yamlAt = path.join(box, ".prettierrc.yaml");
+      const yaml = [
+        "printWidth: 80",
+        "tabWidth: 2",
+        "semi: true",
+        "singleQuote: false",
+        "trailingComma: all",
+        "arrowParens: always",
+        "endOfLine: auto",
+        "",
+      ].join("\n");
+      fs.writeFileSync(yamlAt, yaml);
+      git("add", "--", ".prettierrc.yaml");
+      const same = tool("gate");
+      expect(same.code, same.out).toBe(0);
+      expect(same.out).toContain("кода в коммите нет — свод не спрашивается");
+      fs.writeFileSync(yamlAt, yaml.replace("semi: true", "semi: false"));
+      git("add", "--", ".prettierrc.yaml");
+      const other = tool("gate");
+      expect(other.code, other.out).toBe(1);
+      expect(other.out).toContain("    .prettierrc.yaml");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

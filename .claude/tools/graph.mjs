@@ -26,6 +26,8 @@ import { builtinModules, createRequire } from "node:module";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  HELD_BY_DEBT_ROW,
+  HELD_BY_WAITING_SEED,
   localiseRecipe,
   recipeStepFromSeed,
   gitHookBypass,
@@ -287,8 +289,15 @@ const openFindings = () => {
  * код не трогает. Сверка, не позвавшая его, держала живой проект красным до
  * правки кода. Выведено: третья посадка в живой проект — имя класса без
  * объявления в листе. */
-const heldOpen = (name, found) =>
-  Math.min(found, openFindings().get(name) ?? 0);
+const heldOpen = (name, found) => {
+  if (!HELD_BY_DEBT_ROW.includes(name))
+    throw new Error("сверка не в списке держимых пунктом долга: " + name);
+  HELD_FOUND.set(name, found);
+  return Math.min(found, openFindings().get(name) ?? 0);
+};
+/** Держимые сверки этого прогона с числом их находок: пункт, назвавший
+ * несколько, называет «Пункт долга держит названную сверку». */
+const HELD_FOUND = new Map();
 /** Имена, названные ЛЮБОЙ строкой реестра — открытой либо закрытой.
  *
  * Нужно там, где спрашивается запись ПРОШЛОГО: базовая линия — замер на
@@ -1181,6 +1190,23 @@ if (mode === "types" || mode === "lint") {
         setup +
         "): звено кода не проверяло, и долгом это не гасится. Чинится настройка",
     );
+    // Файл кода вне области конфига, который читает линт с типами: тесты
+    // вне корня исходников, сквозные проверки. Починка одна, и её называют:
+    // без неё сессия видела «чинится настройка» и не знала, какая. Выведено:
+    // четвёртая посадка в живой проект — `e2e/` рядом с `src/`.
+    const outside = [
+      ...new Set(
+        [...plain.matchAll(/not found in any of the provided project\(s\):\s*(\S+)/g)].map(
+          (m) => m[1],
+        ),
+      ),
+    ];
+    if (outside.length > 0)
+      console.log(
+        "  вне области конфига компилятора, который читает линт с типами: " +
+          outside.join(", ") +
+          " — дописать их папки в его `include`",
+      );
     process.exit(1);
   }
   if (run.status !== 0 && found === 0) {
@@ -1377,6 +1403,7 @@ const recipeVars = (fresh) => {
     "{решения}": "docs/adr",
     "{настройки}": "src/shared/config",
     "{документы настроек}": "docs/config",
+    "{план перехода}": ".context/15-transition.md",
   };
   if (fresh) return seat;
   const repo = norm(path.join(BASE, ".."));
@@ -1412,6 +1439,7 @@ const recipeVars = (fresh) => {
       "docs",
       "{документы настроек}",
     ),
+    "{план перехода}": fieldDir("transition", "file", "{план перехода}"),
   };
 };
 /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые
@@ -1721,21 +1749,32 @@ const seededBase = () => {
 /** Вся проза ПОЛКИ парами «короткий адрес — полный путь»: доктрина,
  * инструкция посадки, справочник инструмента, памятки. Читают её чаще
  * всего остального, а в корпус текстовых сверок она входила не везде. */
+/** Своё проекта внутри папки обвязки — адреса от неё, файлом либо папкой:
+ * то, что карта посадки объявляет проектным (разрешения, команды, агенты), и
+ * свои скиллы проекта из поля `skills.own` его настройки. Обвязкой оно не
+ * является: его не называет ни один её файл, правилам её прозы оно не
+ * подчиняется, и снимок его не увозит. Список один на всех читателей: пока
+ * каждый понимал его по-своему, раскладка полки пропускала только файлы
+ * верхнего уровня, а сборка снимка — и папки. Выведено: третья и четвёртая
+ * посадки в живой проект — команда и скилл проекта. */
+const shelfProjectOwn = () => {
+  const mapAt = shelfAt("seat/map.json");
+  return [
+    ...((mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+      .projectOwnedInsideHarness ?? []),
+    ...(CONFIG.skills?.own ?? []).map((name) => "skills/" + name),
+  ];
+};
+const ownInShelf = (rel, own) =>
+  own.some((one) => rel === one || rel.startsWith(one + "/"));
 const shelfProse = () => {
   if (SHELF === null) return [];
-  // Своё проекта в папке обвязки — разрешения, команды, агенты — обвязкой
-  // не является: его не называет ни один её файл, и правилам её прозы оно
-  // не подчиняется. Выведено: третья посадка в живой проект — команда
-  // проекта краснела сверкой «Проза полки названа».
-  const mapAt = shelfAt("seat/map.json");
-  const own = new Set(
-    (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
-      .projectOwnedInsideHarness ?? [],
-  );
+  const own = shelfProjectOwn();
   const out = [];
   (function walk(dir) {
     for (const e of readdirSync(dir)) {
-      if (dir === norm(SHELF) && own.has(e)) continue;
+      if (ownInShelf(norm(path.relative(SHELF, path.join(dir, e))), own))
+        continue;
       const full = norm(path.join(dir, e));
       if (statSync(full).isDirectory()) {
         walk(full);
@@ -2784,6 +2823,17 @@ const seedOfPath = () => {
   return out;
 };
 
+/** Семена конфига форматтера — по пометке карты `inManifest: "prettier"`. */
+const formatterSeeds = () => {
+  const mapAt = shelfAt("seat/map.json");
+  if (mapAt === null || !existsSync(mapAt)) return new Set();
+  return new Set(
+    (readJson(mapAt, {}).copy ?? [])
+      .filter((e) => e.inManifest === "prettier")
+      .map((e) => e.from),
+  );
+};
+
 /** Строка о семенах среди находок: файл лёг семенем, а полка несёт другую его
  * редакцию. После обновления обвязки семя прежней редакции судится как свой
  * код проекта, и находки по файлу, которого проект не писал, читались как его
@@ -2889,6 +2939,33 @@ const formatOnly = async (before, after, abs) => {
     return pretty === flat(after);
   } catch {
     return false;
+  }
+};
+/** Конфиг форматтера равен своему семени ПО СМЫСЛУ: оба, прочитанные самим
+ * форматтером, дают одни настройки. Семя лежит `.prettierrc.json`, а проект
+ * держит конфиг под своим именем и в своём формате — `.prettierrc.yaml`, — и
+ * слитый с семенем целиком, он байтами с ним не совпадает. Выведено:
+ * четвёртая посадка в живой проект — ворота требовали серию у коммита
+ * формата, и серия собирала в него всю посадку. */
+const formatterSameAsSeed = async (name, body, seedAt) => {
+  const p = await prettierHere();
+  if (p === null || typeof p.resolveConfig !== "function") return false;
+  const box = mkdtempSync(path.join(systemTemp(), "seed-config-"));
+  try {
+    const mine = path.join(box, path.basename(name));
+    writeFileSync(mine, body);
+    const probe = path.join(box, "probe.ts");
+    const read = (config) =>
+      p.resolveConfig(probe, { config, editorconfig: false });
+    const [own, seed] = [await read(mine), await read(seedAt)];
+    if (own === null || seed === null) return false;
+    const sorted = (o) =>
+      JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+    return sorted(own) === sorted(seed);
+  } catch {
+    return false;
+  } finally {
+    rmSync(box, { recursive: true, force: true });
   }
 };
 /** Правленые файлы без тех, чья правка — одно приведение формата. Прежнее
@@ -3727,6 +3804,35 @@ const TEST_DIRS = (CONFIG.testDirs ?? []).map((one) =>
 );
 const isTest = (f) =>
   isTestPath(f) || TEST_DIRS.some((d) => f.startsWith(d + "/"));
+/** Папки тестов ДРУГОГО раннера — сквозных проверок в браузере: их собирает
+ * не раннер обвязки, и его область сбора о них не спрашивают. Опознаются по
+ * конфигу раннера в корне репозитория: `testDir` у Playwright, `specPattern`
+ * либо `cypress/e2e` у Cypress. Папка не названа — Playwright ищет от корня,
+ * и тогда не исключается ничего. Выведено: четвёртая посадка в живой
+ * проект — `e2e/` под Playwright сверка требовала собрать раннером тестов. */
+const otherRunnerDirs = () => {
+  const out = [];
+  const read = (name) => {
+    const at = path.join(REPO_AT, name);
+    return existsSync(at) ? readFileSync(at, "utf8") : null;
+  };
+  for (const ext of ["ts", "js", "mjs", "cjs", "mts", "cts"]) {
+    const pw = read("playwright.config." + ext);
+    const dir = pw === null ? null : /\btestDir:\s*["'`]([^"'`]+)["'`]/.exec(pw);
+    if (dir !== null) out.push(norm(path.join(REPO_AT, dir[1])));
+    const cy = read("cypress.config." + ext);
+    if (cy !== null) {
+      const spec = /\bspecPattern:\s*["'`]([^"'`*{]+)/.exec(cy);
+      out.push(
+        norm(path.join(REPO_AT, spec === null ? "cypress/e2e" : spec[1])).replace(
+          /\/+$/,
+          "",
+        ),
+      );
+    }
+  }
+  return out;
+};
 
 /** Формы состояния, которые строка модели называет одним кодом: их узнаёт
  * всякий читающий. Прочие формы строка называет словом. */
@@ -5233,21 +5339,20 @@ const heldByOpenSteps = () => {
   );
 };
 
-/** Сверки содержимого правил проекта, которые держит НЕСЛИТОЕ семя правил:
- * у проекта свой файл правил, семя легло рядом `.seat`-ом, и сливает его фаза
- * 2. Пока флаг посадки стоит, их находки — её работа, а не поломка. Выведено:
- * третья посадка в живой проект — свой `CLAUDE.md` проекта, и фаза 1
- * кончалась красной на таблице проверок, которую нёс отложенный файл. */
-const HELD_BY_RULES_SEAT = [
-  "Названное доктриной исполнимо",
-  "Правила проекта не спорят с реестром решений",
-];
-const heldByRulesSeat = () =>
-  (CONFIG.rulesManifest?.rules ?? []).some((r) =>
-    existsSync(path.join(BASE, r + ".seat")),
-  )
-    ? HELD_BY_RULES_SEAT
-    : [];
+/** Сверки, которые держит неслитое семя их файла (`HELD_BY_WAITING_SEED`):
+ * адрес файла — из карты посадки по ключу-семени. */
+const heldByWaitingSeeds = () => {
+  const mapAt = shelfAt("seat/map.json");
+  const entries =
+    mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).copy ?? []) : [];
+  return Object.entries(HELD_BY_WAITING_SEED).flatMap(([from, checks]) =>
+    entries.some(
+      (e) => e.from === from && existsSync(path.join(REPO_AT, e.to + ".seat")),
+    )
+      ? checks
+      : [],
+  );
+};
 
 /** Баннер перехода. Печатается ПЕРВОЙ строкой каждого прогона и своим
  * режимом — из него же его зовёт хук среды при правке файлов проекта.
@@ -5824,6 +5929,7 @@ const CHECK_SECTIONS = [
   "Хуки проекта исполняются в этой сессии",
   "Объявленный долг назван планом перехода",
   "Объявленный долг не больше фактического",
+  "Пункт долга держит названную сверку",
   "План перехода не потерялся",
   "Форма отчёта посадки без слов обвязки",
   "Вопросы записаны по форме",
@@ -6573,6 +6679,9 @@ if (mode === "falsify") {
     const idleByDesign = (r) => {
       if (stepIdle(r)) return true;
       if (r.whenNull !== undefined && CONFIG[r.whenNull] != null) return true;
+      // `whenSet` — ветка про ЗАДАННОЕ поле: рецепт правит то, на что оно
+      // указывает.
+      if (r.whenSet !== undefined && CONFIG[r.whenSet] == null) return true;
       if (r.whenScript !== undefined && scriptsNow()[r.whenScript] == null)
         return true;
       if ((r.whenLink ?? []).some((name) => !linkLives(name))) return true;
@@ -6989,7 +7098,7 @@ if (mode === "handoff") {
   // Прежде здесь стоял отбор по форме строки. Он угадывал и промахивался в обе
   // стороны молча: "Read(src/**)" — путь, но общий, а "./scripts/release.sh" —
   // и путь, и скрипт проекта сразу.
-  const skip = new Set(seatMap.projectOwnedInsideHarness ?? []);
+  const skipOwn = shelfProjectOwn();
 
   const copied = [];
   const left = [];
@@ -6999,7 +7108,7 @@ if (mode === "handoff") {
       if (OUT_OF_TREE.has(e)) continue;
       const src = path.join(from, e);
       const rel = path.relative(SHELF, src).split(path.sep).join("/");
-      if (skip.has(rel)) {
+      if (ownInShelf(rel, skipOwn)) {
         left.push(rel);
         continue;
       }
@@ -12688,6 +12797,35 @@ const storeFacts = () => {
     const t = raw.trim();
     const lit = /^["'`]([^"'`]+)["'`]$/.exec(t);
     if (lit !== null) return lit[1];
+    // Член объекта-константы ключей — `KEYS.workouts`: значение поля в
+    // объявлении объекта, в том же файле либо у файла, который его отдаёт.
+    // Выведено: четвёртая посадка в живой проект — владелец писал
+    // `KEYS.workouts`, второй узел снимал ту же запись строкой.
+    const member = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(t);
+    if (member !== null) {
+      const field = (body) => {
+        const obj = new RegExp(
+          "\\b(?:const|let|var)\\s+" +
+            member[1] +
+            "\\s*(?::[^=]+)?=\\s*\\{([^}]*)\\}",
+        ).exec(body);
+        const hit =
+          obj === null
+            ? null
+            : new RegExp(
+                "(?:^|[\\s,{])[\"']?" + member[2] + "[\"']?\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]",
+              ).exec(obj[1]);
+        return hit === null ? null : hit[1];
+      };
+      const here = field(text);
+      if (here !== null) return here;
+      for (const g of files)
+        if (!isTest(g) && (ownExportsOf.get(g) ?? new Set()).has(member[1])) {
+          const there = field(readFileSync(g, "utf8"));
+          if (there !== null) return there;
+        }
+      return t;
+    }
     if (!/^[A-Za-z_$][\w$]*$/.test(t)) return t;
     const here = new RegExp(
       "\\b(?:const|let|var)\\s+" +
@@ -12701,7 +12839,8 @@ const storeFacts = () => {
   const named = (key, raw) => {
     const id = raw.trim();
     if (!STORE_FACTS.names.has(key)) STORE_FACTS.names.set(key, new Set());
-    if (/^[A-Za-z_$][\w$]*$/.test(id)) STORE_FACTS.names.get(key).add(id);
+    if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?$/.test(id))
+      STORE_FACTS.names.get(key).add(id);
     return key;
   };
   const note = (map, key, f, line) => {
@@ -17845,7 +17984,9 @@ if (mode === "gate") {
         if (
           seedAt !== null &&
           existsSync(seedAt) &&
-          sameAsSeed(body, readFileSync(seedAt, "utf8"))
+          (sameAsSeed(body, readFileSync(seedAt, "utf8")) ||
+            (formatterSeeds().has(seeds.get(one)) &&
+              (await formatterSameAsSeed(one, body, seedAt))))
         )
           continue;
         let head = null;
@@ -20187,7 +20328,7 @@ if (mode === "verify") {
   // короткий вывод — разойтись им нечем.
   function softNow() {
     return new Set([
-      ...(seatingIsUp() ? [...SOFT_WHILE_SEATING, ...heldByRulesSeat()] : []),
+      ...(seatingIsUp() ? [...SOFT_WHILE_SEATING, ...heldByWaitingSeeds()] : []),
       ...heldByOpenSteps(),
     ]);
   }
@@ -20831,7 +20972,7 @@ if (mode === "verify") {
       );
       console.log("  прогон не роняют сверки, чей предмет доделывает фаза 2.");
       console.log("  Найденное они печатают целиком — это и есть её работа:");
-      for (const one of [...SOFT_WHILE_SEATING, ...heldByRulesSeat()])
+      for (const one of [...SOFT_WHILE_SEATING, ...heldByWaitingSeeds()])
         console.log("  «" + one + "»");
       console.log(
         "  Снять флаг — отдельное действие, и делает его фаза 2, а не",
@@ -21190,7 +21331,7 @@ if (mode === "verify") {
       for (const f of onDisk)
         if (!declared.has(f))
           starDrift.push(
-            `звёздная бочка не объявлена: ${f} — здесь выключен анализ мёртвых экспортов`,
+            `звёздная бочка не объявлена: ${f} — здесь выключен анализ мёртвых экспортов. Вписать файл в CONFIG.starBarrels либо перечислить реэкспорт поимённо`,
           );
       for (const f of declared)
         if (!onDisk.has(f)) starDrift.push(`объявлена, но звёздочки нет: ${f}`);
@@ -23259,7 +23400,14 @@ if (mode === "verify") {
       // зовут, и признак, делающий его вызываемым по `/`. Сверялись папка и
       // таблица, а шапка — нет: `name`, разошедшийся с папкой, проходил зелёным в
       // обеих копиях сразу, и объявление становилось ложным молча. Найдено пробой.
-      for (const name of onDisk) {
+      // Шапку своего скилла проекта решает проект: вызывать ли его по имени —
+      // его выбор, а не форма обвязки. Выведено: четвёртая посадка в живой
+      // проект — посадка дописала признак вызова в чужой скилл.
+      const ownSkills = new Set(CONFIG.skills.own ?? []);
+      for (const name of ownSkills)
+        if (!onDisk.includes(name))
+          skillDrift.push(`объявлен своим, а папки нет: ${name}`);
+      for (const name of onDisk.filter((one) => !ownSkills.has(one))) {
         const head = readFileSync(path.join(dir, name, "SKILL.md"), "utf8")
           .split(NEWLINE)
           .slice(0, 12);
@@ -23319,9 +23467,13 @@ if (mode === "verify") {
               if (!lines[i].trimStart().startsWith("|")) break;
               inMemo.add(lines[i].split("|")[1].trim().replace(/`/g, ""));
             }
+            // Свой скилл проекта памятке обвязки не принадлежит: строка о
+            // нём уехала бы с обвязкой в чужой проект.
             for (const name of onDisk)
-              if (!inMemo.has(name))
-                skillDrift.push(`нет строки в памятке: ${name}`);
+              if (!inMemo.has(name) && !ownSkills.has(name))
+                skillDrift.push(
+                  `нет строки в памятке: ${name} — свой скилл проекта объявляют полем \`skills.own\` настройки`,
+                );
             for (const name of inMemo)
               if (!onDisk.includes(name))
                 skillDrift.push(
@@ -24027,12 +24179,25 @@ if (mode === "verify") {
         // скорость петли»): разойдясь с `engines`, она ставит разработчику среду,
         // на которой числа базовой линии не снимались. Сравнивается по числу
         // названных в ней частей: «22» подходит к «>=22.23.2», «22.20» — нет.
-        const nvmAt = path.join(path.dirname(at), ".nvmrc");
+        // Файл версии ищут под каждым именем семени: проект держит ту же
+        // версию в `.node-version` либо `.tool-versions`. Выведено: четвёртая
+        // посадка в живой проект — `.node-version` сверка не читала вовсе.
+        const nvmMapAt = shelfAt("seat/map.json");
+        const nvmEntry = (
+          nvmMapAt !== null && existsSync(nvmMapAt) ? (readJson(nvmMapAt, {}).copy ?? []) : []
+        ).find((e) => e.to === ".nvmrc");
+        const nvmName =
+          [".nvmrc", ...(nvmEntry?.alsoKnownAs ?? [])].find((n) =>
+            existsSync(path.join(path.dirname(at), n)),
+          ) ?? ".nvmrc";
+        const nvmAt = path.join(path.dirname(at), nvmName);
         const nvmLine = existsSync(nvmAt)
           ? (readFileSync(nvmAt, "utf8")
               .split(NEWLINE)
               .map((l) => l.trim())
-              .find((l) => l !== "" && !l.startsWith("#")) ?? null)
+              .filter((l) => l !== "" && !l.startsWith("#"))
+              .map((l) => /^(?:nodejs|node)\s+(\S+)$/.exec(l)?.[1] ?? (nvmName === ".tool-versions" ? null : l))
+              .find((l) => l !== null) ?? null)
           : null;
         const nvmParts =
           nvmLine === null
@@ -24046,7 +24211,7 @@ if (mode === "verify") {
           nvmParts === null
             ? null
             : low !== null && nvmCmp(low) < 0
-              ? `.nvmrc называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
+              ? `${nvmName} называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
               : high !== null && nvmCmp(high) >= 0
                 ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
                 : null;
@@ -24072,7 +24237,7 @@ if (mode === "verify") {
           console.log(
             "    переносимость держится на памяти. Объявить `engines` в манифесте",
           );
-        console.log("  расхождений с .nvmrc: " + (nvmDrift === null ? 0 : 1));
+        console.log("  расхождений с " + nvmName + ": " + (nvmDrift === null ? 0 : 1));
         if (nvmDrift !== null) console.log("    " + nvmDrift);
         {
           checkHead("Версия среды (предупреждение, прогон не роняет)", {
@@ -24582,8 +24747,10 @@ if (mode === "verify") {
             );
             // Тест — по суффиксу имени, как его ищет раннер: подготовка прогона
             // лежит в папке тестов, но тестом не является.
+            const other = otherRunnerDirs();
             const lost = files
               .filter((f) => TEST_SUFFIX.test(f))
+              .filter((f) => !other.some((d) => f.startsWith(d + "/")))
               .filter(
                 (f) =>
                   !pathUnder(f + "\n" + dir) ||
@@ -24909,6 +25076,18 @@ if (mode === "verify") {
       scopePaths++;
       if (!existsSync(path.join(REPO, p)))
         goneScope.push(`область смоука: ${p}`);
+    }
+    // Команда смоука — тоже адрес: `tested` велит её прогнать, а семя несёт
+    // скрипт, которого у живого проекта может не быть.
+    const smokeScript = /\brun\s+(\S+)/.exec(CONFIG.smokeCommand ?? "")?.[1];
+    if ((CONFIG.smokeScope ?? []).length > 0 && smokeScript !== undefined) {
+      scopePaths++;
+      const scripts =
+        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {};
+      if (!Object.hasOwn(scripts, smokeScript))
+        goneScope.push(
+          `команда смоука: ${CONFIG.smokeCommand} — скрипта ${smokeScript} в манифесте нет`,
+        );
     }
     for (const { from, to } of CONFIG.forks ?? []) {
       scopePaths += 2;
@@ -25738,13 +25917,20 @@ if (mode === "verify") {
       }
     }
   });
+  // Перенести документ в `docs/` — правка папки узла, а посадка её не
+  // трогает: живой проект держит это пунктом долга перехода числом.
+  const docsOpen = checkStep(() =>
+    heldOpen("Документы компонента лежат в его `docs/`", looseDocs.length),
+  );
   checkStep(() => {
     checkHead("Документы компонента лежат в его `docs/`", () => ({
       n: componentDocs,
       unit: "документов внутри папок компонентов",
     }));
-    console.log("  документов мимо `docs/`: " + looseDocs.length);
-    for (const one of looseDocs)
+    console.log("  документов мимо `docs/`: " + (looseDocs.length - docsOpen));
+    if (docsOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + docsOpen);
+    for (const one of looseDocs.slice(docsOpen))
       console.log(
         "    " + one + ". Вся проза компонента внутри `docs/`, включая README",
       );
@@ -27775,18 +27961,14 @@ if (mode === "verify") {
   let shelfGitBlind = false;
   checkStep(() => {
     if (SHELF !== null) {
-      const mapAt = shelfAt("seat/map.json");
-      const own = new Set(
-        (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
-          .projectOwnedInsideHarness ?? [],
-      );
+      const own = shelfProjectOwn();
       const list = [];
       (function walkShelfFiles(dir) {
         for (const e of readdirSync(dir)) {
           if (OUT_OF_TREE.has(e)) continue;
           const full = path.join(dir, e);
           const inShelf = path.relative(SHELF, full).split(path.sep).join("/");
-          if (own.has(inShelf)) continue;
+          if (ownInShelf(inShelf, own)) continue;
           if (statSync(full).isDirectory()) walkShelfFiles(full);
           else
             list.push(path.relative(REPO_AT, full).split(path.sep).join("/"));
@@ -30104,9 +30286,18 @@ if (mode === "verify") {
       // одна полка, план перехода мог звать режим, которого у инструмента
       // нет, и прогон молчал. Замерено на собственном плане: последний шаг
       // звал `graph.mjs snapshot` — режим, которого не было никогда.
-      const baseProse = readdirSync(BASE)
-        .filter((e) => e.endsWith(".md"))
-        .map((e) => [e, path.join(BASE, e)]);
+      // Правила проекта велят запускать то же, что база, — таблицей команд, —
+      // и спрашиваются с тем же манифестом. Выведено: четвёртая посадка в
+      // живой проект — семя правил называло `npm run preview`, которого у
+      // проекта нет, и сверка правила не читала.
+      const baseProse = [
+        ...readdirSync(BASE)
+          .filter((e) => e.endsWith(".md"))
+          .map((e) => [e, path.join(BASE, e)]),
+        ...(CONFIG.rulesManifest?.rules ?? [])
+          .map((one) => [one, path.join(BASE, one)])
+          .filter(([, full]) => existsSync(full)),
+      ];
       // Проза ОБВЯЗКИ говорит семенными именами — она одна на все проекты, —
       // и спрашивается с манифестом семени. Проза БАЗЫ пишется про этот проект
       // и его же командами, и спрашивается с его манифестом. Прежде обе шли
@@ -30214,7 +30405,7 @@ if (mode === "verify") {
   checkStep(() => {
     checkHead("Названное доктриной исполнимо", () => ({
       n: runnableLooked,
-      unit: "файлов прозы обвязки и базы",
+      unit: "файлов прозы обвязки, базы и правил проекта",
     }));
     console.log("  требований без инструмента: " + unrunnable.length);
     for (const one of unrunnable) console.log("    " + one);
@@ -33696,6 +33887,65 @@ if (mode === "verify") {
         unprobed.length +
         "`, а пункта долга перехода, который держит режим `graph.mjs mutated`, нет. Завести пункт с этим числом и планом замера",
     );
+  });
+
+  // Пункт долга перехода, назвавший сверку, держит её находки — у сверок,
+  // которые это умеют. У остальных пункт ничего не держит, а сверка остаётся
+  // красной, и живой проект упирается в тупик, не зная, что дело не в нём:
+  // висячее имя класса и README в корне папки узла держали посадку красной
+  // до правки кода. Судится напечатанное, поэтому шаг стоит в хвосте.
+  // Выведено: третья и четвёртая посадки в живой проект.
+  const unheld = [];
+  let heldNamed = 0;
+  checkStep(() => {
+    const red = new Map();
+    let cur = null;
+    for (const line of SAID) {
+      const t = /^=== (.+) ===$/.exec(line);
+      if (t !== null) cur = t[1];
+      else if (cur !== null && /^ {4}\S/.test(line))
+        red.set(cur, (red.get(cur) ?? 0) + 1);
+    }
+    const soft = softNow();
+    // Держимая сверка — своим пунктом и своим числом. Одно число на две
+    // прощало каждой полное число, а сумма сверх него не говорила, у какой
+    // выросло: поломка одной ложилась находкой чужой сверки. Выведено:
+    // четвёртая посадка в живой проект — пункт «свои идиомы узла».
+    for (const row of transitionDebt()) {
+      const held = row.names.filter((name) => HELD_FOUND.has(name));
+      if (held.length > 1)
+        unheld.push(
+          "пункт " +
+            row.no +
+            " держит одним числом несколько сверок: " +
+            held.map((name) => "«" + name + "»").join(", ") +
+            " — по пункту на сверку, у каждого своё число",
+        );
+    }
+    for (const row of transitionDebt())
+      for (const name of row.names) {
+        if (!PRINTED.has(name)) continue;
+        // Сверку со своим храповиком держит поле долга, и сверх него она
+        // говорит сама.
+        if (Object.values(DEBT_GUARD).flat().includes(name)) continue;
+        heldNamed += 1;
+        if ((red.get(name) ?? 0) > 0 && !soft.has(name) && !name.includes(WARNING))
+          unheld.push(
+            "пункт " +
+              row.no +
+              " называет «" +
+              name +
+              "», а её находки он не держит: у сверки другая форма долга либо её нет вовсе — тогда это правка обвязки",
+          );
+      }
+  });
+  checkStep(() => {
+    checkHead("Пункт долга держит названную сверку", () => ({
+      n: heldNamed,
+      unit: "сверок, названных пунктами долга",
+    }));
+    console.log("  не держит: " + unheld.length);
+    for (const one of unheld) console.log("    " + one);
   });
 
   // Хвост прогона идёт вне шагов: он подводит их итог. Упавший шаг уже
