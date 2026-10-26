@@ -2433,6 +2433,21 @@ describe("факты по уровням без протокола", () => {
       const member = tool("levels").out;
       expect(member.match(/^ {2}писатель: /gm)).toHaveLength(1);
       expect(member).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
+      // Объект ключей в соседнем файле, который его отдаёт, — тот же ключ.
+      put("shared/keys/zzKeys.ts", 'export const ZZ_KEYS = { count: "zz.count" };\n');
+      put(
+        "components/ZzA/ZzA.tsx",
+        'import { ZZ_KEYS } from "../../shared/keys/zzKeys";\n\nexport function ZzA() {\n  return <button onClick={() => window.localStorage.setItem(ZZ_KEYS.count, "1")}>x</button>;\n}\n',
+      );
+      expect(tool("levels").out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
+      fs.rmSync(path.join(box, "src", "shared", "keys"), { recursive: true });
+      // Закомментированный вызов ниже первой строки файла писателем не считается.
+      put(
+        "components/ZzC/ZzC.tsx",
+        'export function ZzC() {\n  return null;\n}\n// window.localStorage.removeItem("zz.count");\n',
+      );
+      expect(tool("levels").out).not.toMatch(/писатель:[^\n]*ZzC/);
+      fs.rmSync(path.join(box, "src", "components", "ZzC"), { recursive: true });
       // Перечисление ключей и шаблонная строка с постоянной вставкой — тот
       // же ключ.
       put(
@@ -3301,6 +3316,9 @@ describe("долг перехода: список, держатель, отст�
       // Свой код уже есть: обоснования применимости — слово семени, и их
       // держит тот же шаг.
       expect(open).toContain("«Раздел планки объявлен по своему замеру»");
+      // Записи о документах, пришедших с живым проектом, держит тот же шаг.
+      expect(open).toContain("«Документы названы в указателе»");
+      expect(open).toContain("«Решения адресуемы»");
       const closed = brief();
       expect(closed).not.toContain("Пока шаг открыт, прогон не роняют");
       expect(heldOf(open) - heldOf(closed)).toBe(3);
@@ -3322,6 +3340,30 @@ describe("долг перехода: список, держатель, отст�
         "| 1 | непромеренное мутациями | `3` | `graph.mjs mutated` | мерить по правке | `3` файла |",
       ]);
       expect(said()).toBe("");
+      // Замер на прежнем содержимом — не замер: файл, правленый после него,
+      // непромерен снова.
+      fs.rmSync(path.join(box, ".context", "15-transition.md"));
+      withTransitionDebt(box, []);
+      const ledger = {};
+      (function walk(dir) {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) walk(full);
+          else if (/\.tsx?$/.test(e.name))
+            ledger[path.relative(box, full).split(path.sep).join("/")] = {
+              killed: 1,
+              alive: 0,
+              hash: createHash("sha1")
+                .update(fs.readFileSync(full, "utf8").split("\r\n").join("\n"))
+                .digest("hex")
+                .slice(0, 12),
+            };
+        }
+      })(path.join(box, "src"));
+      fs.writeFileSync(path.join(box, ".context", "mutation-ledger.json"), JSON.stringify(ledger));
+      expect(said()).toBe("");
+      fs.appendFileSync(path.join(box, "src", "app", "App.tsx"), "\n");
+      expect(said()).toContain("непромеренных файлов `1`");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5386,6 +5428,17 @@ describe("живой проект: своё в обвязке, тест вне �
         "zzOutside/zz.test.ts — тест, которого обвязка не видит",
       );
       fs.rmSync(outside, { recursive: true });
+      // Засеянный тест вне объявленного корня — тест обвязки: его называет её
+      // реестр. Свой тест рядом с ним назван.
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfgWas = fs.readFileSync(cfgAt, "utf8");
+      fs.writeFileSync(cfgAt, cfgWas.replace('  src: "../src",', '  src: "../src/components",'));
+      fs.writeFileSync(path.join(box, "src", "app", "tests", "zzOwn.test.ts"), "export const zz = 1;\n");
+      const unseen = (verifyIn(box).get("Покрытие тестов") ?? []).join("\n");
+      expect(unseen).toContain("src/app/tests/zzOwn.test.ts — тест, которого обвязка не видит");
+      expect(unseen).not.toContain("App.test.tsx — тест");
+      fs.writeFileSync(cfgAt, cfgWas);
+      fs.rmSync(path.join(box, "src", "app", "tests", "zzOwn.test.ts"));
       // Висячее имя класса держит пункт долга, назвавший сверку.
       const card = path.join(box, "src", "components", "ZzCard");
       fs.mkdirSync(card, { recursive: true });
@@ -5422,6 +5475,31 @@ describe("живой проект: своё в обвязке, тест вне �
         path.join(box, "docs", "FEATURES.md.seat"),
       );
       expect(banner()).toContain("«Гарантия держится тестом»");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("находка в правилах, ждущих слияния с семенем, прогон не роняет, а без семени роняет", () => {
+    const box = seatEmpty("soft-seed-");
+    try {
+      const run = () =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+          cwd: box,
+          encoding: "utf8",
+        });
+      const red = (r) =>
+        r.stdout
+          .split("\n")
+          .filter((line, i, all) => line.startsWith("    ") || (line.startsWith("=== ") && all[i + 1]?.startsWith("    ")))
+          .join("\n");
+      fs.appendFileSync(path.join(box, "CLAUDE.md"), "\n| Проба | `npm run zznope` |\n");
+      fs.copyFileSync(path.join(box, "CLAUDE.md"), path.join(box, "CLAUDE.md.seat"));
+      const soft = run();
+      expect(soft.stdout).toContain("npm run zznope — звена нет в манифесте проекта");
+      expect(soft.status, red(soft)).toBe(0);
+      fs.rmSync(path.join(box, "CLAUDE.md.seat"));
+      expect(run().status).not.toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5714,6 +5792,13 @@ describe("предмет под другим именем и форматом", 
       expect(twins()).toContain(
         "eslint.config.mjs и поле `eslintConfig` в package.json — один предмет, два места настройки",
       );
+      // Без семени пару даёт другое имя файла; одно поле без файла — не пара.
+      fs.renameSync(path.join(box, "eslint.config.mjs"), path.join(box, "eslint.config.js"));
+      expect(twins()).toContain(
+        "eslint.config.js и поле `eslintConfig` в package.json — один предмет, два места настройки",
+      );
+      fs.rmSync(path.join(box, "eslint.config.js"));
+      expect(twins()).not.toContain("eslintConfig");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5735,6 +5820,61 @@ describe("предмет под другим именем и форматом", 
       // Импорт React в файле `.ts` — интерфейс есть.
       put(box, "src/app/zzHook.ts", 'import { useState } from "react";\n\nexport const useZz = () => useState(0);\n');
       expect(said("Пакет платформы не второй ответ")).toBe("");
+      // Компонент без импорта React — новое преобразование JSX — тоже интерфейс.
+      fs.rmSync(path.join(box, "src", "app", "zzHook.ts"));
+      put(box, "src/app/ZzBadge.tsx", "export function ZzBadge() {\n  return <b>zz</b>;\n}\n");
+      expect(said("Пакет платформы не второй ответ")).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("скрипт каркаса, объявленный картой без скрипта в семени, назван", () => {
+    const box = seatEmpty("chain-data-");
+    try {
+      const said = () => (verifyIn(box).get("Цепочка проверок объявлена данными") ?? []).join("\n");
+      expect(said()).toBe("");
+      const mapAt = path.join(box, ".claude", "seat", "map.json");
+      const map = JSON.parse(fs.readFileSync(mapAt, "utf8"));
+      map.frameScripts = [...map.frameScripts, "zzframe"];
+      fs.writeFileSync(mapAt, JSON.stringify(map, null, 2) + "\n");
+      expect(said()).toContain("zzframe — скрипт каркаса объявлен, а в семени его нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("версия зависимости диапазоном названа, точная и одноранговая — нет", () => {
+    const box = seatEmpty("pins-");
+    try {
+      const said = () => (verifyIn(box).get("Версии зависимостей закреплены") ?? []).join("\n");
+      expect(said()).toBe("");
+      const at = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(at, "utf8"));
+      pkg.devDependencies.prettier = "^" + pkg.devDependencies.prettier;
+      pkg.peerDependencies = { react: ">=18" };
+      fs.writeFileSync(at, JSON.stringify(pkg, null, 2) + "\n");
+      const loose = said();
+      expect(loose).toContain("prettier@^");
+      expect(loose).toContain("в devDependencies — диапазон");
+      expect(loose).not.toContain("react@>=18");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("пакет условного семени звено требует, только пока семя лежит", () => {
+    const box = seatEmpty("unlaid-seed-");
+    try {
+      const tools = () =>
+        (verifyIn(box).get("Инструменты звеньев на месте (предупреждение, прогон не роняет)") ?? []).join("\n");
+      const at = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(at, "utf8"));
+      delete pkg.devDependencies["@testing-library/jest-dom"];
+      fs.writeFileSync(at, JSON.stringify(pkg, null, 2) + "\n");
+      expect(tools()).toContain("не объявлены: @testing-library/jest-dom");
+      fs.rmSync(path.join(box, "src", "tests", "setup.ts"));
+      expect(tools()).not.toContain("@testing-library/jest-dom");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5788,7 +5928,10 @@ describe("своё проекта в смешанной папке обвязк�
     const out = fs.mkdtempSync(path.join(os.tmpdir(), "own-rules-snap-"));
     fs.rmSync(out, { recursive: true, force: true });
     try {
-      fs.writeFileSync(path.join(box, ".claude", "rules", "zz-team.md"), "# Team\n\nReviews by two people.\n");
+      fs.writeFileSync(
+        path.join(box, ".claude", "rules", "zz-team.md"),
+        "# Team\n\nReviews by two people, see `loop.md`, раздел «Нет такого раздела».\n",
+      );
       const said = (name) => (verifyIn(box).get(name) ?? []).join("\n");
       expect(said("Доктрина названа в порядке чтения")).toContain(
         "не назван в списке правил: zz-team.md. Назвать; файл правил проекта — объявить списком `rulesManifest.rules` настройки",
@@ -5801,6 +5944,8 @@ describe("своё проекта в смешанной папке обвязк�
       );
       expect(said("Доктрина названа в порядке чтения")).toBe("");
       expect(said("Доктрина в бюджете")).toBe("");
+      // Свой файл правил судят как правила проекта, а не второй раз как прозу обвязки.
+      expect(said("Ссылки на разделы").match(/zz-team\.md: «Нет такого раздела»/g)).toHaveLength(1);
       const r = spawnSync(
         process.execPath,
         [path.join(box, ".claude", "tools", "graph.mjs"), "handoff", out],

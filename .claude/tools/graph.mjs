@@ -29,6 +29,7 @@ import {
   HELD_BY_DEBT_ROW,
   HELD_BY_WAITING_SEED,
   localiseRecipe,
+  recipeIdleByDesign,
   recipeStepFromSeed,
   gitHookBypass,
   pageReadByShell,
@@ -6809,57 +6810,19 @@ if (mode === "falsify") {
       if (r.unlessStepOpen !== undefined) return open;
       return r.whenStepOpen !== undefined ? !open : steps === null || open;
     };
-    const idleByDesign = (r) => {
-      if (stepIdle(r)) return true;
-      if (r.whenNull !== undefined && CONFIG[r.whenNull] != null) return true;
-      // `whenSet` — ветка про ЗАДАННОЕ поле: рецепт правит то, на что оно
-      // указывает.
-      if (r.whenSet !== undefined && CONFIG[r.whenSet] == null) return true;
-      if (r.whenScript !== undefined && scriptsNow()[r.whenScript] == null)
-        return true;
-      if ((r.whenLink ?? []).some((name) => !linkLives(name))) return true;
-      // `whenSeedOn` и `whenSeedOff` — условие семени с полем `onlyWith`:
-      // рецепт правит то, что есть только при положенном семени, либо кладёт
-      // семя туда, где его условие не выполнено. Выведено: шестая посадка в
-      // живой проект — раннер с `globals: true`.
-      const seedEntry = (to) => seatCopy.find((one) => one.to === to) ?? {};
-      if (r.whenSeedOn !== undefined && !seedConditionHolds(seedEntry(r.whenSeedOn)))
-        return true;
-      if (r.whenSeedOff !== undefined && seedConditionHolds(seedEntry(r.whenSeedOff)))
-        return true;
-      // `whenUi` — предмет рецепта есть только у проекта с интерфейсом;
-      // `whenFile` — файл, который сверка спрашивает, лежит под своим либо
-      // другим именем. Выведено: шестая посадка в живой проект — библиотека
-      // на `jest` с конфигом линта, отложенным шагом 6.
-      if (r.whenUi === true && !projectHasUi()) return true;
-      if (
-        r.whenFile !== undefined &&
-        !existsSync(path.join(tmp, otherName(r.whenFile)))
-      )
-        return true;
-      // `whenSectionOff` — раздел планки, который рецепт оживляет своим
-      // предметом: объявленный живым, он оживлён и без рецепта, и поломку
-      // принимает не он, а сверка нового файла. Выведено: третья посадка в
-      // живой проект — сетевой файл при живом разделе `K`.
-      if (
-        r.whenSectionOff !== undefined &&
-        qualityScopeDeclared()?.get(r.whenSectionOff)?.live === true
-      )
-        return true;
-      return (r.edits ?? [r]).some((step) => {
-        if (step.file === undefined) return false;
-        if (existsSync(path.join(tmp, step.file))) return false;
-        const e = seatCopy.find((one) => one.to === step.file);
-        if (e?.onlyWith != null && !seedConditionHolds(e)) return true;
-        // Каркас кладётся только в пустой проект: у живого его нет, и рецепт,
-        // правящий файл каркаса, ломать не может. Замерено на стенде-библиотеке.
-        if (e?.onlyWhenEmpty === true) return true;
-        // Семя отложено `.seat`-ом: шаг 6 убрал его, потому что пакеты не
-        // встают на версию проекта, — ломать нечего, пока его не сольют.
-        if (existsSync(path.join(tmp, step.file + ".seat"))) return true;
-        return e?.neededBy != null && !linkLives(e.neededBy);
+    const idleByDesign = (r) =>
+      recipeIdleByDesign(r, {
+        stepIdle,
+        config: CONFIG,
+        scripts: scriptsNow(),
+        linkLives,
+        seatCopy,
+        seedHolds: seedConditionHolds,
+        hasUi: projectHasUi,
+        exists: (rel) => existsSync(path.join(tmp, rel)),
+        otherName,
+        sectionLive: (letter) => qualityScopeDeclared()?.get(letter)?.live === true,
       });
-    };
 
     // Подстановка, которой у проекта нет (`{узлы}` без слоя компонентов),
     // осталась в рецепте словом: ломать ему нечего.

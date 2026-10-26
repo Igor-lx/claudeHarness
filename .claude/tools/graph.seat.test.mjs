@@ -467,6 +467,56 @@ describe("семя правил в живом проекте без строк �
     expect(withoutFrameRows(TABLE, ["preview"], [])).toBe(TABLE);
   });
 
+  it("строка таблицы с отступом и пробелами в хвосте — тоже строка; имя без команды и длиннее — нет", () => {
+    const rows = [
+      "  | Сервер | `npm run dev` |",
+      "| Сервер | `npm run dev` |   ",
+      "| Скрипт | `dev` |",
+      "| Отладка | `npm run devtools` |",
+    ].join("\n");
+    expect(withoutFrameRows(rows, ["dev"], [])).toBe(
+      ["| Скрипт | `dev` |", "| Отладка | `npm run devtools` |"].join("\n"),
+    );
+  });
+
+  it("механика фазы 1 не везёт своё проекта с полки и правит только прозу", () => {
+    const shelf = fs.mkdtempSync(path.join(os.tmpdir(), "own-shelf-"));
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "own-box-"));
+    try {
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(shelf, rel)), { recursive: true });
+        fs.writeFileSync(path.join(shelf, rel), text);
+      };
+      const row = "| Сервер | `npm run dev` |\n";
+      put(
+        "seat/map.json",
+        JSON.stringify({
+          projectOwnedInsideHarness: ["own.json", "agents"],
+          frameScripts: ["dev"],
+          copy: [
+            { from: "seat/rules.md", to: "RULES.md" },
+            { from: "seat/table.txt", to: "table.txt" },
+          ],
+        }),
+      );
+      put("seat/rules.md", row);
+      put("seat/table.txt", row);
+      put("own.json", "{}");
+      put("agents/review.md", "своё");
+      put("agents-kit/tool.md", "обвязка");
+      put("rules/loop.md", "обвязка");
+      layShelfLive(shelf, box);
+      const laid = (rel) => fs.existsSync(path.join(box, ".claude", rel));
+      expect([laid("own.json"), laid("agents/review.md")]).toEqual([false, false]);
+      expect([laid("agents-kit/tool.md"), laid("rules/loop.md")]).toEqual([true, true]);
+      expect(fs.readFileSync(path.join(box, "RULES.md"), "utf8")).toBe("");
+      expect(fs.readFileSync(path.join(box, "table.txt"), "utf8")).toBe(row);
+    } finally {
+      fs.rmSync(shelf, { recursive: true, force: true });
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   it("механика фазы 1 кладёт семя правил и его отложенную копию без таких строк", () => {
     const frame = JSON.parse(
       fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"),

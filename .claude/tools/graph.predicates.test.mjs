@@ -628,6 +628,109 @@ describe("рецепт под другим именем семени остаё�
     const r = vocabulary.localiseRecipe({ file: "src/App.tsx" }, projectName);
     expect(vocabulary.recipeStepFromSeed(r, seeded)).toBe(false);
   });
+
+  it("шаг без файла судится по папке, которую заводит", () => {
+    const asked = [];
+    vocabulary.recipeStepFromSeed({ mkdir: "src/zz" }, (at) => asked.push(at));
+    expect(asked).toEqual(["src/zz"]);
+  });
+});
+
+describe("словари модели свода без пустых записей", () => {
+  it("у каждого вида строки модели уровень из четырёх", () => {
+    const sorts = new Set([...vocabulary.BAR_SIGNALS, ...vocabulary.BAR_CUTS].map((row) => row.sort));
+    const levels = ["единица", "узел", "слой", "приложение"];
+    expect([...sorts].filter((sort) => !levels.includes(vocabulary.MODEL_LEVEL[sort]))).toEqual([]);
+  });
+
+  it("строка вопроса спрашивает хотя бы один критерий, критерий со сверками называет хотя бы одну", () => {
+    const empty = [...vocabulary.BAR_SIGNALS, ...vocabulary.BAR_CUTS].filter(
+      (row) => !Array.isArray(row.ids) || row.ids.length === 0,
+    );
+    expect(empty.map((row) => row.sort)).toEqual([]);
+    // Слова вопроса печатает свод: пустые спрашивают ни о чём.
+    const mute = vocabulary.BAR_SIGNALS.filter((row) => typeof row.words !== "string" || row.words.trim() === "");
+    expect(mute.map((row) => row.sort)).toEqual([]);
+    const noChecks = Object.entries(vocabulary.BAR_CHECKS).filter(
+      ([, checks]) => !Array.isArray(checks) || checks.length === 0 || checks.some((one) => one === ""),
+    );
+    expect(noChecks.map(([id]) => id)).toEqual([]);
+  });
+});
+
+describe("рецепт без предмета по своему условию не прогоняется", () => {
+  // Проект: поле `layers` задано, `isolationHeading` пусто, скрипт `lint` есть,
+  // звено `mutate` не живо, интерфейса нет, раздел `K` жив; лежат
+  // `eslint.config.mjs`, `vite.config.ts` и отложенное `stryker.config.json.seat`.
+  const at = (over = {}) => ({
+    stepIdle: () => false,
+    config: { layers: {}, isolationHeading: null },
+    scripts: { lint: "eslint ." },
+    linkLives: (name) => ["lint", "test"].includes(name),
+    seatCopy: [
+      { to: "vite.config.ts", onlyWith: "globals" },
+      { to: "src/test-setup.ts", onlyWith: "globals" },
+      { to: "index.html", onlyWhenEmpty: true },
+      { to: "stryker.config.json", neededBy: "mutate" },
+    ],
+    seedHolds: (e) => e.to !== "src/test-setup.ts",
+    hasUi: () => false,
+    // Как `path.join` в режиме: адрес не строкой — ошибка, а не «нет файла».
+    exists: (rel) => {
+      if (typeof rel !== "string") throw new TypeError("адрес не строкой");
+      return ["eslint.config.mjs", "vite.config.ts", "stryker.config.json.seat", "src/a.ts"].includes(rel);
+    },
+    otherName: (rel) => (rel === "eslint.config.js" ? "eslint.config.mjs" : rel),
+    sectionLive: (letter) => letter === "K",
+    ...over,
+  });
+  const idle = (r, over) => vocabulary.recipeIdleByDesign({ file: "src/a.ts", ...r }, at(over));
+
+  it("рецепт на лежащий файл без условий прогоняется; шаг, названный беспредметным, — нет", () => {
+    expect(idle({})).toBe(false);
+    expect(idle({}, { stepIdle: () => true })).toBe(true);
+  });
+
+  it("поле настройки: `whenNull` — пока пусто, `whenSet` — пока задано", () => {
+    expect([idle({ whenNull: "isolationHeading" }), idle({ whenNull: "layers" })]).toEqual([false, true]);
+    expect([idle({ whenSet: "layers" }), idle({ whenSet: "isolationHeading" })]).toEqual([false, true]);
+  });
+
+  it("скрипт и звено: без скрипта либо с неживым звеном предмета нет", () => {
+    expect([idle({ whenScript: "lint" }), idle({ whenScript: "e2e" })]).toEqual([false, true]);
+    expect([idle({ whenLink: ["lint"] }), idle({ whenLink: ["lint", "mutate"] })]).toEqual([false, true]);
+  });
+
+  it("условие семени: `whenSeedOn` — при выполненном, `whenSeedOff` — при невыполненном", () => {
+    expect([idle({ whenSeedOn: "vite.config.ts" }), idle({ whenSeedOn: "src/test-setup.ts" })]).toEqual([
+      false,
+      true,
+    ]);
+    expect([idle({ whenSeedOff: "src/test-setup.ts" }), idle({ whenSeedOff: "vite.config.ts" })]).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("интерфейс, файл под другим именем и живой раздел", () => {
+    expect([idle({ whenUi: true }), idle({ whenUi: true }, { hasUi: () => true })]).toEqual([true, false]);
+    expect([idle({ whenFile: "eslint.config.js" }), idle({ whenFile: ".eslintrc.json" })]).toEqual([false, true]);
+    expect([idle({ whenSectionOff: "T" }), idle({ whenSectionOff: "K" })]).toEqual([false, true]);
+  });
+
+  it("шаг в файл, которого нет: условное, каркасное, отложенное и неживое звено — без предмета", () => {
+    expect(idle({ file: "src/test-setup.ts" })).toBe(true);
+    expect(idle({ file: "index.html" })).toBe(true);
+    const lives = { linkLives: () => true };
+    expect(idle({ file: "stryker.config.json" }, lives)).toBe(true);
+    expect(idle({ file: "stryker.config.json" }, { exists: () => false })).toBe(true);
+    expect(idle({ file: "stryker.config.json" }, { ...lives, exists: () => false })).toBe(false);
+    expect(idle({ file: "src/b.ts" })).toBe(false);
+    // Файл лежит — предмет есть, каким бы ни было его семя.
+    expect(idle({ file: "index.html" }, { exists: (rel) => rel === "index.html" })).toBe(false);
+    expect(idle({ edits: [{ file: "src/a.ts" }, { file: "index.html" }] })).toBe(true);
+    expect(idle({ edits: [{ create: { path: "x" } }] })).toBe(false);
+  });
 });
 
 /**

@@ -6478,6 +6478,56 @@ export const recipeStepFromSeed = (step, fromSeed) =>
     step.seedFile ?? step.file ?? step.copyTo ?? step.create?.path ?? step.mkdir,
   );
 
+/** Рецепт фальсификации без предмета в этом проекте по своему условию: его
+ * не прогоняют, а называют беспредметным. Условия — поля рецепта `when*`, и
+ * шаг, чей файл в проекте не лежит, потому что его семя отложено, условно
+ * либо держит неживое звено. Проект режим отдаёт вторым доводом:
+ * `config`, `scripts`, `seatCopy` — данными, `linkLives`, `seedHolds`,
+ * `hasUi`, `exists` (адрес от корня песочницы), `otherName`, `sectionLive`,
+ * `stepIdle` — вопросами. */
+export const recipeIdleByDesign = (r, at) => {
+  if (at.stepIdle(r)) return true;
+  if (r.whenNull !== undefined && at.config[r.whenNull] != null) return true;
+  // `whenSet` — ветка про ЗАДАННОЕ поле: рецепт правит то, на что оно
+  // указывает.
+  if (r.whenSet !== undefined && at.config[r.whenSet] == null) return true;
+  if (r.whenScript !== undefined && at.scripts[r.whenScript] == null) return true;
+  if ((r.whenLink ?? []).some((name) => !at.linkLives(name))) return true;
+  // `whenSeedOn` и `whenSeedOff` — условие семени с полем `onlyWith`:
+  // рецепт правит то, что есть только при положенном семени, либо кладёт
+  // семя туда, где его условие не выполнено. Выведено: шестая посадка в
+  // живой проект — раннер с `globals: true`.
+  const seedEntry = (to) => at.seatCopy.find((one) => one.to === to) ?? {};
+  if (r.whenSeedOn !== undefined && !at.seedHolds(seedEntry(r.whenSeedOn)))
+    return true;
+  if (r.whenSeedOff !== undefined && at.seedHolds(seedEntry(r.whenSeedOff)))
+    return true;
+  // `whenUi` — предмет рецепта есть только у проекта с интерфейсом;
+  // `whenFile` — файл, который сверка спрашивает, лежит под своим либо
+  // другим именем. Выведено: шестая посадка в живой проект — библиотека
+  // на `jest` с конфигом линта, отложенным шагом 6.
+  if (r.whenUi === true && !at.hasUi()) return true;
+  if (r.whenFile !== undefined && !at.exists(at.otherName(r.whenFile))) return true;
+  // `whenSectionOff` — раздел планки, который рецепт оживляет своим
+  // предметом: объявленный живым, он оживлён и без рецепта, и поломку
+  // принимает не он, а сверка нового файла. Выведено: третья посадка в
+  // живой проект — сетевой файл при живом разделе `K`.
+  if (r.whenSectionOff !== undefined && at.sectionLive(r.whenSectionOff)) return true;
+  return (r.edits ?? [r]).some((step) => {
+    if (step.file === undefined) return false;
+    if (at.exists(step.file)) return false;
+    const e = at.seatCopy.find((one) => one.to === step.file);
+    if (e?.onlyWith != null && !at.seedHolds(e)) return true;
+    // Каркас кладётся только в пустой проект: у живого его нет, и рецепт,
+    // правящий файл каркаса, ломать не может. Замерено на стенде-библиотеке.
+    if (e?.onlyWhenEmpty === true) return true;
+    // Семя отложено `.seat`-ом: шаг 6 убрал его, потому что пакеты не
+    // встают на версию проекта, — ломать нечего, пока его не сольют.
+    if (at.exists(step.file + ".seat")) return true;
+    return e?.neededBy != null && !at.linkLives(e.neededBy);
+  });
+};
+
 /** Первый адрес рецепта фальсификации, выводящий из песочницы, — иначе
  * пустая строка.
  *
