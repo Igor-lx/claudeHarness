@@ -30265,10 +30265,15 @@ if (mode === "verify") {
             const inside = path.join(folder, one);
             if (statSync(inside).isDirectory()) continue;
             if (nodeFiles.has(one)) continue;
-            // Лист узла: назван, как папка, либо как файл узла.
-            const bare = bareName(one).toLowerCase();
+            // Лист узла: назван, как папка, либо как файл узла. Лист стилей
+            // кодом (`Узел.styles.ts`) — тот же главный лист на другом языке:
+            // решено разработчиком `2026-10-26`.
+            const sheetInCode = /\.styles\.[cm]?[jt]sx?$/.test(one);
+            const bare = (
+              sheetInCode ? one.replace(/\.styles\.[^.]+$/, "") : bareName(one)
+            ).toLowerCase();
             if (
-              isStylePath(norm(inside)) &&
+              (isStylePath(norm(inside)) || sheetInCode) &&
               (bare === name.toLowerCase() ||
                 [...nodeFiles].some((f) => bareName(f).toLowerCase() === bare))
             )

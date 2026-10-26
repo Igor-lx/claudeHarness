@@ -3434,6 +3434,21 @@ describe("файл узла держит только сам узел", () => {
       expect(litter).toContain("zzCount.ts, zzToggle.ts");
       expect(litter).not.toContain("ZzHead.module.css");
       fs.rmSync(head, { recursive: true });
+      // Лист стилей кодом с именем узла — главный лист, а истории
+      // и лист кодом чужого имени — нет.
+      const timer = path.join(box, "src", "components", "ZzTimer");
+      fs.mkdirSync(timer, { recursive: true });
+      fs.writeFileSync(path.join(timer, "ZzTimer.tsx"), "export function ZzTimer() {\n  return 1;\n}\n");
+      fs.writeFileSync(path.join(timer, "ZzTimer.styles.ts"), 'export const zzTimerRoot = "a";\n');
+      fs.writeFileSync(path.join(timer, "ZzTimer.stories.tsx"), "export const ZzDefault = {};\n");
+      const timerLitter = () =>
+        (verifyIn(box).get("В корне узла только сам узел") ?? []).join("\n");
+      expect(timerLitter()).not.toContain("ZzTimer");
+      fs.writeFileSync(path.join(timer, "zzOther.styles.ts"), 'export const zzOther = "b";\n');
+      expect(timerLitter()).toContain("ZzTimer.stories.tsx");
+      expect(timerLitter()).toContain("zzOther.styles.ts");
+      expect(timerLitter()).not.toContain("ZzTimer.styles.ts");
+      fs.rmSync(timer, { recursive: true });
       withTransitionDebt(box, [
         "| 1 | Объявления рядом с узлом | `1` | «В файле узла только сам узел» | перенести `zzExtra` в `src/components/ZzLone/constants/` | `1` объявление |",
       ]);
