@@ -120,7 +120,8 @@
       "section": "Применимость разделов планки",
       "file": ".context/01-facts.md",
       "find": "| M. Модель рендера фреймворка | да |",
-      "replace": "| M. Модель рендера фреймворка | нет |"
+      "replace": "| M. Модель рендера фреймворка | нет |",
+      "whenUi": true
     },
     {
       "section": "Скиллы проекта",
@@ -177,7 +178,7 @@
       "section": "Таблица базы не разорвана комментарием",
       "file": ".context/08-tests.md",
       "find": "| --- | --- |\n",
-      "replace": "| --- | --- |\n<!-- zz -->\n"
+      "replace": "| --- | --- |\n<!-- zz -->\n| `zz.test.ts` | zz |\n"
     },
     {
       "section": "Ссылки markdown",
@@ -295,7 +296,9 @@
     },
     {
       "section": "Строгость компилятора там, где проверяются типы",
-      "whenLink": ["typecheck"],
+      "whenLink": [
+        "typecheck"
+      ],
       "file": "{конфиг типов}",
       "find": "\"noUncheckedIndexedAccess\": true,",
       "replace": ""
@@ -316,9 +319,11 @@
     {
       "section": "Звену цепочки есть на чём работать",
       "file": "package.json",
-      "find": "    \"lint\": \"eslint .\",",
+      "find": "    \"lint\": \"{скрипт lint}\",",
       "replace": "    \"lint\": \"npm run lint --workspaces --if-present\",",
-      "own": true
+      "own": true,
+      "whenScript": "lint",
+      "whenFile": "eslint.config.mjs"
     },
     {
       "section": "Звену цепочки есть на чём работать",
@@ -351,10 +356,26 @@
     },
     {
       "section": "Пакет платформы не второй ответ",
-      "whenLink": ["typecheck", "test"],
+      "whenLink": [
+        "typecheck",
+        "test"
+      ],
       "file": ".claude/seat/map.json",
       "find": "\"alternatives\": {",
       "replace": "\"alternatives\": {\n      \"typescript\": [\"vitest\"],"
+    },
+    {
+      "section": "Пакет платформы не второй ответ",
+      "edits": [
+        {
+          "file": "src/app/App.tsx",
+          "rename": "App.tsx.zz"
+        },
+        {
+          "file": "src/app/main.tsx",
+          "rename": "main.tsx.zz"
+        }
+      ]
     },
     {
       "section": "Отложенное семя положено, когда предмет появился",
@@ -404,10 +425,22 @@
     },
     {
       "section": "Семя с условием не лежит без условия",
-      "whenLink": ["test"],
+      "whenLink": [
+        "test"
+      ],
       "file": "vite.config.ts",
       "find": "    globals: false,",
-      "replace": "    globals: true,"
+      "replace": "    globals: true,",
+      "whenSeedOn": "src/tests/setup.ts"
+    },
+    {
+      "section": "Семя с условием не лежит без условия",
+      "whenLink": [
+        "test"
+      ],
+      "whenSeedOff": "src/tests/setup.ts",
+      "file": ".claude/seat/templates/src/tests/setup.ts",
+      "copyTo": "src/tests/setup.ts"
     },
     {
       "section": "Отложенное семя слито",
@@ -505,7 +538,9 @@
             "text": "export const zzBarForged = 1;"
           }
         },
-        { "forgeBar": true }
+        {
+          "forgeBar": true
+        }
       ]
     },
     {
@@ -681,7 +716,14 @@
       "file": ".context/graph.config.mjs",
       "find": "  isolationHeading: null,",
       "replace": "  isolationHeading: \"Раздела с таким именем нет\",",
-      "own": true
+      "whenNull": "isolationHeading"
+    },
+    {
+      "section": "Правила изоляции",
+      "whenSet": "isolationHeading",
+      "file": ".context/graph.config.mjs",
+      "find": "  isolationHeading: \"{заголовок изоляции}\",",
+      "replace": "  isolationHeading: \"Раздела с таким именем нет\","
     },
     {
       "section": "Пометки CONSTRAINT",
@@ -763,8 +805,8 @@
         },
         {
           "file": ".context/graph.config.mjs",
-          "find": "    rules: [\"../CLAUDE.md\"],",
-          "replace": "    rules: [\"../CLAUDE.md\", \"../src/CLAUDE.md\"],"
+          "find": "    rules: [",
+          "replace": "    rules: [\"../src/CLAUDE.md\", "
         }
       ]
     },
@@ -780,8 +822,8 @@
         },
         {
           "file": ".context/graph.config.mjs",
-          "find": "    rules: [\"../CLAUDE.md\"],",
-          "replace": "    rules: [\"../CLAUDE.md\", \"../src/CLAUDE.md\"],"
+          "find": "    rules: [",
+          "replace": "    rules: [\"../src/CLAUDE.md\", "
         }
       ]
     },
@@ -1003,8 +1045,8 @@
     {
       "section": "Версии установленного (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
-      "find": "  verifiedVersions: {",
-      "replace": "  verifiedVersions: {\n    \"@vitejs/plugin-react\": \"0.0.1\","
+      "find": "    prettier: \"3.9.10\",",
+      "replace": "    prettier: \"999.0.0\","
     },
     {
       "section": "Состав бочки в записи карты",
@@ -1636,21 +1678,27 @@
     },
     {
       "section": "Настройка сборки знает про тесты",
-      "whenLink": ["typecheck", "test"],
+      "whenLink": [
+        "typecheck",
+        "test"
+      ],
       "file": "vite.config.ts",
       "find": "from \"vitest/config\"",
       "replace": "from \"vite\""
     },
     {
       "section": "Настройка сборки знает про тесты",
-      "whenLink": ["test"],
+      "whenLink": [
+        "test"
+      ],
       "file": "vite.config.ts",
       "find": "    setupFiles: [\"./src/tests/setup.ts\"],",
-      "replace": ""
+      "replace": "",
+      "whenSeedOn": "src/tests/setup.ts"
     },
     {
       "section": "Привезённый код виден компилятору",
-      "file": "tsconfig.json",
+      "file": "{конфиг типов}",
       "find": "\"src\"",
       "replace": "\"каталога-такого-нет\""
     },
@@ -1673,6 +1721,14 @@
       "section": "Настройка проекта знает все поля семени",
       "file": ".context/graph.config.mjs",
       "find": "  isolationHeading: null,",
+      "replace": "",
+      "whenNull": "isolationHeading"
+    },
+    {
+      "section": "Настройка проекта знает все поля семени",
+      "whenSet": "isolationHeading",
+      "file": ".context/graph.config.mjs",
+      "find": "  isolationHeading: \"{заголовок изоляции}\",\n",
       "replace": ""
     },
     {

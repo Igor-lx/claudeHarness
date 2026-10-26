@@ -6449,6 +6449,7 @@ export const HELD_BY_DEBT_ROW = [
   "В корне узла только сам узел",
   "В файле узла только сам узел",
   "Документы компонента лежат в его `docs/`",
+  "Отложенное семя слито",
 ];
 
 /** Рецепт под этот проект: адрес каждого шага заменён именем, под которым
@@ -7216,4 +7217,54 @@ export const crossCandidatesOf = (own, { rows, live, kin = new Map() }) => {
       for (const id of one.ids) if (id !== own && live.has(id)) out.add(id);
   }
   return [...out].sort();
+};
+
+/** Ключ хранилища, который собирает функция ключа на вызове со строкой:
+ * `keyFor("books")` при `function keyFor(c) { return PREFIX + ":" + c; }`.
+ * Тело — одна строка возврата из литералов, констант файла `body` и
+ * параметра, сложением либо шаблонной строкой; иное — `null`. Выведено:
+ * шестая посадка в живой проект — второй писатель ключа прятался за вызовом. */
+export const keyFromCall = (body, name, arg) => {
+  const id = name.replace(/\$/g, "\\$");
+  const head =
+    "\\s*\\(\\s*([A-Za-z_$][\\w$]*)\\s*(?::[^)]*)?\\)\\s*(?::[^{=]+)?";
+  const block = "\\{\\s*return\\s+([^;\\n]+)\\s*;?\\s*\\}";
+  const shapes = [
+    new RegExp("\\bfunction\\s+" + id + head + block),
+    new RegExp(
+      "\\b(?:const|let|var)\\s+" + id + "\\s*(?::[^=]+)?=" + head + "=>\\s*" + block,
+    ),
+    new RegExp(
+      "\\b(?:const|let|var)\\s+" + id + "\\s*(?::[^=]+)?=" + head + "=>\\s*([^;\\n{][^;\\n]*)",
+    ),
+  ];
+  const hit = shapes.map((re) => re.exec(body)).find((m) => m !== null);
+  if (hit === undefined) return null;
+  const [, param, expr] = hit;
+  const valueOf = (word) => {
+    const w = word.trim();
+    const lit = /^["']([^"']*)["']$/.exec(w);
+    if (lit !== null) return lit[1];
+    if (w === param) return arg;
+    if (!/^[A-Za-z_$][\w$]*$/.test(w)) return null;
+    const named = new RegExp(
+      "\\b(?:const|let|var)\\s+" +
+        w.replace(/\$/g, "\\$") +
+        "\\s*(?::[^=]+)?=\\s*[\"'`]([^\"'`$]*)[\"'`]",
+    ).exec(body);
+    return named === null ? null : named[1];
+  };
+  const e = expr.trim();
+  const tpl = /^`([^`]*)`$/.exec(e);
+  if (tpl !== null) {
+    let whole = true;
+    const out = tpl[1].replace(/\$\{([^}]*)\}/g, (_, inner) => {
+      const v = valueOf(inner);
+      if (v === null) whole = false;
+      return v ?? "";
+    });
+    return whole ? out : null;
+  }
+  const parts = e.split("+").map(valueOf);
+  return parts.every((p) => p !== null) ? parts.join("") : null;
 };

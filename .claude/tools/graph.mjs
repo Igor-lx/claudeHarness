@@ -120,6 +120,7 @@ import {
   TEST_SUFFIX,
   commentRunsOf,
   firstCellOf,
+  keyFromCall,
   namesAddress,
   printedIsRed,
   verifyBriefOf,
@@ -1393,6 +1394,10 @@ const ROOT = (() => {
  * куда смотрит сверка этого проекта. При пустом поле рецепт не исполняется:
  * режим относит его к беспредметным. Умолчание — форма поля, названная в
  * семени настройки.
+ * `{заголовок изоляции}` — поле `isolationHeading`, `{скрипт lint}` — тело
+ * скрипта `lint` манифеста так, как оно записано в файле: рецепт ветки про
+ * заданное поле и рецепт скрипта звена ломают то, что держит этот проект.
+ * Выведено: шестая посадка в живой проект.
  * `fresh` — ответ свежей посадки, по которой рецепт сверяется статически. */
 const recipeVars = (fresh) => {
   const seat = {
@@ -1404,9 +1409,14 @@ const recipeVars = (fresh) => {
     "{настройки}": "src/shared/config",
     "{документы настроек}": "docs/config",
     "{план перехода}": ".context/15-transition.md",
+    "{заголовок изоляции}": "",
+    "{скрипт lint}": "eslint .",
   };
   if (fresh) return seat;
   const repo = norm(path.join(BASE, ".."));
+  // `componentsAt: []` — компонентов у проекта нет, и `{узлы}` не задан:
+  // рецепт, правящий узел, беспредметен. Выведено: шестая посадка в живой
+  // проект — режим падал стеком на пустом списке.
   const layer = (CONFIG.componentsAt ?? ["components"])[0];
   const fromRepo = (at) => path.relative(repo, at).split(path.sep).join("/");
   // Звёздную бочку сверка состава не разбирает — рецепт на ней промолчал бы.
@@ -1425,7 +1435,9 @@ const recipeVars = (fresh) => {
       ? seat[name]
       : fromRepo(path.join(BASE, CONFIG[field][key]));
   return {
-    "{узлы}": fromRepo(path.join(ROOT, layer)),
+    ...(layer === undefined
+      ? {}
+      : { "{узлы}": fromRepo(path.join(ROOT, layer)) }),
     "{исходники}": fromRepo(SRC_ROOTS[0]),
     "{файл кода}": single[0] ?? seat["{файл кода}"],
     "{конфиг типов}": (() => {
@@ -1440,6 +1452,10 @@ const recipeVars = (fresh) => {
       "{документы настроек}",
     ),
     "{план перехода}": fieldDir("transition", "file", "{план перехода}"),
+    "{заголовок изоляции}": CONFIG.isolationHeading ?? "",
+    "{скрипт lint}": JSON.stringify(
+      readJson(path.join(repo, "package.json"), {}).scripts?.lint ?? "",
+    ).slice(1, -1),
   };
 };
 /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые
@@ -1800,10 +1816,20 @@ const shelfProjectOwn = () => {
           .filter((name) => !mine.includes(name))
           .map((name) => dir + "/" + name);
   });
+  // Свой файл правил проекта в папке правил обвязки: его объявляет список
+  // правил проекта. Выведено: шестая посадка в живой проект — файл правил
+  // команды числился доктриной.
+  const ownRules =
+    SHELF === null
+      ? []
+      : (CONFIG.rulesManifest?.rules ?? [])
+          .map((one) => norm(path.relative(SHELF, path.join(BASE, one))))
+          .filter((one) => !one.startsWith("..") && !path.isAbsolute(one));
   return [
     ...(map.projectOwnedInsideHarness ?? []),
     ...mixed,
     ...(CONFIG.skills?.own ?? []).map((name) => "skills/" + name),
+    ...ownRules,
   ];
 };
 const ownInShelf = (rel, own) =>
@@ -3810,6 +3836,17 @@ const SEEDS_REFORMATTED = await (async () => {
   return out;
 })();
 
+/** Есть ли у проекта интерфейс: свой файл `.tsx` либо `.jsx` или импорт
+ * React в коде. Проекту без него не нужны ни пакеты интерфейса, ни помощник
+ * карт классов. Выведено: шестая посадка в живой проект — библиотека
+ * расчётов на `jest`. */
+const projectHasUi = () =>
+  files.some(
+    (f) =>
+      !isTest(f) &&
+      (/\.[jt]sx$/.test(f) ||
+        /\bfrom\s+["']react(?:\/[\w-]+)?["']/.test(readFileSync(f, "utf8"))),
+  );
 /** Словарь условий `onlyWith` из карты посадки: условие → выполнено ли оно у
  * проекта. Семя с условием кладётся только при его предмете; объяснение
  * словаря — в самой карте, полем `_onlyWith`. */
@@ -3822,11 +3859,13 @@ const SEED_CONDITIONS = new Map([
         (f) => !untouchedSeed(f, REPO_AT, seeds),
       );
       // Проект, который стилизует ИНАЧЕ, узнаётся по листам без модулей.
-      // Листов нет вовсе — стилизации ещё нет, и умолчание в силе.
+      // Листов нет вовсе — стилизации ещё нет, и умолчание в силе, если
+      // интерфейс у проекта есть: библиотеке без него стилизовать нечего.
       return (
         own.length === 0 ||
-        styleFiles.length === 0 ||
-        styleFiles.some((f) => /\.module\.[a-z]+$/.test(f))
+        (projectHasUi() &&
+          (styleFiles.length === 0 ||
+            styleFiles.some((f) => /\.module\.[a-z]+$/.test(f))))
       );
     },
   ],
@@ -5408,13 +5447,18 @@ const transitionOpen = () => {
 
 /** Сверки знания, которые открытый шаг перехода держит, пока называет их
  * ёлочками в графе «Чем проверяется»: их находки — работа этого шага, а не
- * поломка. Список закрыт: шаг не держит ничего, кроме записей о живом коде,
- * которые пишет одно чтение. Прежде сверка базы краснела до конца перехода,
- * и ворота не пускали ни коммит посадки, ни уменьшение долга — замерено
- * переходом эмулированного проекта. */
+ * поломка. Список закрыт: шаг не держит ничего, кроме записей о живом
+ * проекте, которые пишет одно чтение, — о его коде и о документах, пришедших
+ * с ним. Прежде сверка базы краснела до конца перехода, и ворота не пускали
+ * ни коммит посадки, ни уменьшение долга — замерено переходом эмулированного
+ * проекта; указатель документов, ссылки на решения и обоснования
+ * применимости краснели так же — шестой посадкой в живой проект. */
 const HELD_BY_STEP = [
   "Запись о пустоте не пережила появление кода",
   "Файл базы о живом коде назвал его адрес",
+  "Документы названы в указателе",
+  "Решения адресуемы",
+  "Раздел планки объявлен по своему замеру",
 ];
 const heldByOpenSteps = () => {
   const steps = transitionOpen() ?? [];
@@ -6226,6 +6270,8 @@ const RECIPE_NEEDS = {
   "Архитектурный проход перехода запечатан": "transition",
   // Окна свежести нет — исполнение хуков не сверяется, и ломать нечего.
   "Хуки проекта исполняются в этой сессии": "guardTraceAgeS",
+  // Мутационного прогона нет — непромеренного нет: проект со своим раннером.
+  "Непромеренное названо долгом перехода": "mutationConfig",
 };
 
 /** Сверки, чей предмет песочница не воспроизводит НИ В ОДНОМ проекте, — с
@@ -6772,6 +6818,25 @@ if (mode === "falsify") {
       if (r.whenScript !== undefined && scriptsNow()[r.whenScript] == null)
         return true;
       if ((r.whenLink ?? []).some((name) => !linkLives(name))) return true;
+      // `whenSeedOn` и `whenSeedOff` — условие семени с полем `onlyWith`:
+      // рецепт правит то, что есть только при положенном семени, либо кладёт
+      // семя туда, где его условие не выполнено. Выведено: шестая посадка в
+      // живой проект — раннер с `globals: true`.
+      const seedEntry = (to) => seatCopy.find((one) => one.to === to) ?? {};
+      if (r.whenSeedOn !== undefined && !seedConditionHolds(seedEntry(r.whenSeedOn)))
+        return true;
+      if (r.whenSeedOff !== undefined && seedConditionHolds(seedEntry(r.whenSeedOff)))
+        return true;
+      // `whenUi` — предмет рецепта есть только у проекта с интерфейсом;
+      // `whenFile` — файл, который сверка спрашивает, лежит под своим либо
+      // другим именем. Выведено: шестая посадка в живой проект — библиотека
+      // на `jest` с конфигом линта, отложенным шагом 6.
+      if (r.whenUi === true && !projectHasUi()) return true;
+      if (
+        r.whenFile !== undefined &&
+        !existsSync(path.join(tmp, otherName(r.whenFile)))
+      )
+        return true;
       // `whenSectionOff` — раздел планки, который рецепт оживляет своим
       // предметом: объявленный живым, он оживлён и без рецепта, и поломку
       // принимает не он, а сверка нового файла. Выведено: третья посадка в
@@ -6789,13 +6854,22 @@ if (mode === "falsify") {
         // Каркас кладётся только в пустой проект: у живого его нет, и рецепт,
         // правящий файл каркаса, ломать не может. Замерено на стенде-библиотеке.
         if (e?.onlyWhenEmpty === true) return true;
+        // Семя отложено `.seat`-ом: шаг 6 убрал его, потому что пакеты не
+        // встают на версию проекта, — ломать нечего, пока его не сольют.
+        if (existsSync(path.join(tmp, step.file + ".seat"))) return true;
         return e?.neededBy != null && !linkLives(e.neededBy);
       });
     };
 
+    // Подстановка, которой у проекта нет (`{узлы}` без слоя компонентов),
+    // осталась в рецепте словом: ломать ему нечего.
+    const unresolved = (r) =>
+      Object.keys(recipeVars(true)).some((name) =>
+        JSON.stringify(r).includes(name),
+      );
     for (const r0 of recipes) {
       const r = localise(r0);
-      if (idleByDesign(r)) {
+      if (unresolved(r) || idleByDesign(r)) {
         idle.push(r.section + " — предмета в этом проекте нет");
         continue;
       }
@@ -12944,6 +13018,27 @@ const storeFacts = () => {
           const there = field(readFileSync(g, "utf8"));
           if (there !== null) return there;
         }
+      return t;
+    }
+    // Вызов функции ключа со строкой — `keyFor("books")`: тело функции одной
+    // строкой возврата собирает ключ из литералов, констант её файла и
+    // параметра. Выведено: шестая посадка в живой проект — второй писатель
+    // того же ключа строкой прятался за вызовом.
+    // Образец писателя режет довод на первой скобке: вызов приходит без
+    // закрывающей.
+    const call = /^([A-Za-z_$][\w$]*)\(\s*["'`]([^"'`$]*)["'`]\s*\)?$/.exec(t);
+    if (call !== null) {
+      for (const body of [
+        text,
+        ...files
+          .filter(
+            (g) => !isTest(g) && (ownExportsOf.get(g) ?? new Set()).has(call[1]),
+          )
+          .map((g) => readFileSync(g, "utf8")),
+      ]) {
+        const key = keyFromCall(body, call[1], call[2]);
+        if (key !== null) return key;
+      }
       return t;
     }
     if (!/^[A-Za-z_$][\w$]*$/.test(t)) return t;
@@ -21435,10 +21530,16 @@ if (mode === "verify") {
       for (const f of own) {
         for (const dep of importsOf.get(f) ?? [])
           if (!own.has(dep) && !allowed.has(dep))
-            brokenIso.push(`${rel(f)} → ${rel(dep)}`);
+            brokenIso.push({ from: f, to: dep, text: `${rel(f)} → ${rel(dep)}` });
       }
     }
   });
+  // Ребро старого кода держит та же запись, что у направления: пункт долга
+  // либо решение, назвавшие оба конца. Выведено: шестая посадка в живой
+  // проект — изоляция краснела на старом ребре без пути к зелёному.
+  const heldIso = checkStep(() =>
+    brokenIso.filter((e) => heldBy([e.from, e.to]) !== null),
+  );
   // 7b. звёздные бочки — только объявленные.
   const starDrift = [];
   let starLooked = 0;
@@ -21579,9 +21680,17 @@ if (mode === "verify") {
       n: isolation.length,
       unit: "слоёв изоляции",
     }));
-    console.log(`  нарушено: ${brokenIso.length}`);
+    const open = brokenIso.filter((e) => !heldIso.includes(e));
+    console.log(`  нарушено: ${open.length}`);
+    if (heldIso.length)
+      console.log(
+        "  держится записью долга или решения: " +
+          heldIso
+            .map((e) => e.text + " (" + heldBy([e.from, e.to]) + ")")
+            .join("; "),
+      );
     if (isoMissed !== null) console.log("    " + isoMissed);
-    for (const b of brokenIso) console.log("    " + b);
+    for (const b of open) console.log("    " + b.text);
   });
 
   // 7c. правило про несуществующий предмет.
@@ -25959,7 +26068,7 @@ if (mode === "verify") {
       // на всех, иначе «осмотрено 0» у каждой неотличимо от здоровья.
       if (seen.size === 0 && ownLayout && CONFIG.componentsAt == null)
         readmeBlind =
-          "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — не смотрят никуда «У компонента есть README», «Документы компонента лежат в его `docs/`», «В корне узла только сам узел», «В файле узла только сам узел». Объявить папку компонентов проекта";
+          "раскладка своя, а слой компонентов не объявлен полем `componentsAt` — не смотрят никуда «У компонента есть README», «Документы компонента лежат в его `docs/`», «В корне узла только сам узел», «В файле узла только сам узел». Объявить папку компонентов проекта; компонентов у проекта нет — `componentsAt: []`";
     }
   });
   // 13m. Язык внутри корня исходников.
@@ -26586,17 +26695,23 @@ if (mode === "verify") {
         // Плоский обход брал и памятку для человека, и требовал назвать её в
         // порядке чтения — то есть открывать каждой сессией описание папки.
         const doctrineDir = shelfAt("rules");
+        const own = shelfProjectOwn();
         const doctrine =
           doctrineDir !== null && existsSync(doctrineDir)
-            ? readdirSync(doctrineDir).filter((n) => n.endsWith(".md"))
+            ? readdirSync(doctrineDir).filter(
+                (n) => n.endsWith(".md") && !ownInShelf("rules/" + n, own),
+              )
             : [];
         doctrineListed =
           list === null ? 0 : doctrine.filter((n) => list.includes(n)).length;
+        // Файл правил проекта в папке доктрины — не доктрина, если объявлен.
+        const ownHint =
+          ". Назвать; файл правил проекта — объявить списком `rulesManifest.rules` настройки";
         for (const name of doctrine) {
           if (list !== null && !list.includes(name))
-            doctrineDrift.push(`не назван в списке правил: ${name}`);
+            doctrineDrift.push(`не назван в списке правил: ${name}` + ownHint);
           if (order !== null && !order.includes(name))
-            doctrineDrift.push(`не назван в порядке чтения: ${name}`);
+            doctrineDrift.push(`не назван в порядке чтения: ${name}` + ownHint);
         }
         // Опись обходит полку ВГЛУБЬ: справочник инструмента лежит подпапкой, и
         // плоская опись объявляла его отсутствующим — то есть сверка краснела на
@@ -26934,7 +27049,10 @@ if (mode === "verify") {
         doctrineSaid = "доктрины нет: полка не заявлена";
       else {
         const fact = { always: 0, paths: 0 };
-        for (const e of readdirSync(rulesAt).filter((n) => n.endsWith(".md"))) {
+        const own = shelfProjectOwn();
+        for (const e of readdirSync(rulesAt).filter(
+          (n) => n.endsWith(".md") && !ownInShelf("rules/" + n, own),
+        )) {
           const text = readFileSync(path.join(rulesAt, e), "utf8")
             .split(String.fromCharCode(13) + NEWLINE)
             .join(NEWLINE);
@@ -29227,6 +29345,13 @@ if (mode === "verify") {
         for (const r0 of readJson(recipesAt, {}).recipes ?? []) {
           const r = recipeSubst(r0, freshVars);
           if (idleInSeat(r.section)) continue;
+          // Ветка про заданное поле в свежей посадке места не имеет: семя
+          // настройки держит поле пустым.
+          if (
+            r.whenSet !== undefined &&
+            seedConfig.includes(NEWLINE + "  " + r.whenSet + ": null,")
+          )
+            continue;
           for (const step of r.edits ?? [r]) {
             // Шаг без адреса заводит свой предмет сам: файл или папку.
             if (step.file === undefined) continue;
@@ -30472,8 +30597,13 @@ if (mode === "verify") {
       const shelfSide = new Set(shelfProse().map(([, full]) => full));
       // Скрипт каркаса без скрипта у проекта — строка семени правил, которую
       // фаза 1 не сняла: находка называет, кто её снимает.
-      const frameScripts = new Set(
-        readJson(shelfAt("seat/map.json") ?? "", {}).frameScripts ?? [],
+      const seatMapNow = readJson(shelfAt("seat/map.json") ?? "", {});
+      const frameScripts = new Set(seatMapNow.frameScripts ?? []);
+      // Звено цепочки, которого у проекта нет, — строка, которую фаза 1 не
+      // сняла после слияния манифеста. Выведено: шестая посадка в живой
+      // проект — проекту на jest семя правил назвало покрытие и мутации.
+      const chainNames = new Set(
+        (seatMapNow.chainScripts ?? []).map((e) => e.name),
       );
       for (const [where, full] of [...shelfProse(), ...baseProse]) {
         runnableLooked += 1;
@@ -30488,7 +30618,9 @@ if (mode === "verify") {
               "npm run " + m[1],
               !fromShelf && frameScripts.has(m[1])
                 ? "скрипт каркаса, у проекта его нет: строку снимает фаза 1 (`seat/seat.md`, шаг 1)"
-                : "звена нет в " + whose,
+                : !fromShelf && chainNames.has(m[1])
+                  ? "звена у проекта нет, слияние его не дописало: строку снимает фаза 1 (`seat/seat.md`, шаг 1-бис)"
+                  : "звена нет в " + whose,
               where,
             );
         for (const m of flat.matchAll(NPX))
@@ -30562,7 +30694,7 @@ if (mode === "verify") {
           .some((body) => /graph\.mjs mutated/.test(body));
         if (said && CONFIG.mutationConfig == null)
           unrunnable.push(
-            "правила проекта называют `graph.mjs mutated`, а мутационного прогона у проекта нет: снять строку таблицы и слова о команде",
+            "правила проекта называют `graph.mjs mutated`, а мутационного прогона у проекта нет: снять строку таблицы и слова о команде — фаза 1 (`seat/seat.md`, шаг 1-бис)",
           );
         if (!said && CONFIG.mutationConfig != null)
           unrunnable.push(
@@ -31393,23 +31525,31 @@ if (mode === "verify") {
         const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
         for (const e of seatMap.copy ?? []) {
           if (!Array.isArray(e.alsoKnownAs) || !e.alsoKnownAs.length) continue;
-          if (!existsSync(path.join(REPO, e.to))) continue;
-          for (const other of e.alsoKnownAs)
-            if (existsSync(path.join(REPO, other)))
-              twinConfigs.push(
-                e.to + " и " + other + " — один предмет, два файла настройки",
-              );
+          // Места сравнивают между собой, а не с одним семенем: `.tool-versions`
+          // рядом с `.node-version` — тот же спор без семени. Выведено: шестая
+          // посадка в живой проект — пара без семени прошла без признака.
+          const placed = [e.to, ...e.alsoKnownAs].filter((one) =>
+            existsSync(path.join(REPO, one)),
+          );
+          for (const other of placed.slice(1))
+            twinConfigs.push(
+              placed[0] + " и " + other + " — один предмет, два файла настройки",
+            );
           // Поле манифеста — то же другое имя: prettier читает настройку и из
           // `package.json`.
           const manifestAt = path.join(REPO, "package.json");
-          if (e.inManifest !== undefined && existsSync(manifestAt))
-            if (Object.hasOwn(readJson(manifestAt, {}), e.inManifest))
-              twinConfigs.push(
-                e.to +
-                  " и поле `" +
-                  e.inManifest +
-                  "` в package.json — один предмет, два места настройки",
-              );
+          if (
+            placed.length > 0 &&
+            e.inManifest !== undefined &&
+            existsSync(manifestAt) &&
+            Object.hasOwn(readJson(manifestAt, {}), e.inManifest)
+          )
+            twinConfigs.push(
+              placed[0] +
+                " и поле `" +
+                e.inManifest +
+                "` в package.json — один предмет, два места настройки",
+            );
         }
         // Затеняющий файл — другой случай: сборка в одном, тесты в другом, и
         // пара у проекта законна. Дефект одно — нетронутое семя рядом с ним:
@@ -32162,6 +32302,19 @@ if (mode === "verify") {
         ...Object.keys(manifest.dependencies ?? {}),
         ...Object.keys(manifest.devDependencies ?? {}),
       ]);
+      // Пакет интерфейса у проекта без интерфейса — та же ошибка слияния:
+      // дописан по имени, а предмета у проекта нет.
+      const ui =
+        mapAt !== null && existsSync(mapAt)
+          ? (readJson(mapAt, {}).platformPackages?.ui ?? [])
+          : [];
+      alternativesDeclared += ui.length;
+      if (!projectHasUi())
+        for (const one of ui.filter((n) => held.has(n)))
+          secondAnswers.push(
+            one +
+              " — пакет интерфейса, а интерфейса у проекта нет: ни файла `.tsx` либо `.jsx`, ни импорта React. Снять: проекту без интерфейса слияние его не дописывает (`seat/seat.md`, шаг 1-бис)",
+          );
       for (const [one, others] of Object.entries(alternatives)) {
         alternativesDeclared += 1;
         if (!held.has(one)) continue;
@@ -32179,7 +32332,7 @@ if (mode === "verify") {
   checkStep(() => {
     checkHead("Пакет платформы не второй ответ", () => ({
       n: alternativesDeclared,
-      unit: "пакетов платформы с объявленной заменой",
+      unit: "пакетов платформы с заменой либо предметом",
     }));
     console.log("  вторых ответов: " + secondAnswers.length);
     for (const d of secondAnswers) console.log("    " + d);
@@ -32665,8 +32818,14 @@ if (mode === "verify") {
       n: seatWalked,
       unit: "файлов проекта под суффикс отложенного",
     }));
-    console.log("  не слито: " + unmerged.length);
-    for (const u of unmerged)
+    // Семя, которое шаг 6 отложил, потому что его пакеты не встают на версию
+    // проекта, держит пункт долга перехода. Выведено: шестая посадка в живой
+    // проект — конфиг линта на ESLint `8`.
+    const unmergedOpen = heldOpen("Отложенное семя слито", unmerged.length);
+    console.log("  не слито: " + (unmerged.length - unmergedOpen));
+    if (unmergedOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + unmergedOpen);
+    for (const u of unmerged.slice(unmergedOpen))
       console.log(
         "    " + u + " — перенести нужное в проектный файл и удалить это",
       );

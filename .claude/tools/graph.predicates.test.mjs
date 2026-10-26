@@ -826,6 +826,33 @@ describe("кандидаты перекрёстной сверки", () => {
  * пяти, и посадка не знала, чем держать три другие. Выведено: четвёртая
  * посадка в живой проект.
  */
+/**
+ * Ключ хранилища из вызова функции ключа. Выведено: шестая посадка в живой
+ * проект — `keyFor("books")` и строка `"reading-log:books"` читались двумя
+ * ключами.
+ */
+describe("ключ из вызова функции ключа", () => {
+  const PREFIX = 'const PREFIX = "app";\n';
+  it.each([
+    ["функция со сложением", PREFIX + 'export function keyFor(c: string): string {\n  return PREFIX + ":" + c;\n}\n', "app:books"],
+    ["стрелка с шаблонной строкой", PREFIX + "export const keyFor = (c: string) => `${PREFIX}/${c}`;\n", "app/books"],
+    ["стрелка с телом", 'const keyFor = (c) => {\n  return "k-" + c;\n};\n', "k-books"],
+    ["возврат без точки с запятой", 'function keyFor(c) { return "k" + c }\n', "kbooks"],
+    ["литерал в одинарных кавычках", "function keyFor(c) { return 'k.' + c; }\n", "k.books"],
+  ])("%s", (_, body, key) => {
+    expect(vocabulary.keyFromCall(body, "keyFor", "books")).toBe(key);
+  });
+  it.each([
+    ["вызов метода в теле", "function keyFor(c) { return c.toUpperCase(); }\n"],
+    ["неизвестное имя в шаблоне", "function keyFor(c) { return `${c}:${OTHER}`; }\n"],
+    ["неизвестное имя в сложении", "function keyFor(c) { return OTHER + c; }\n"],
+    ["константа не строкой", "const N = 4;\nfunction keyFor(c) { return N + c; }\n"],
+    ["другая функция", "function other(c) { return c; }\n"],
+  ])("%s — ключа нет", (_, body) => {
+    expect(vocabulary.keyFromCall(body, "keyFor", "books")).toBeNull();
+  });
+});
+
 describe("сверки, держимые пунктом долга, названы везде одним списком", () => {
   const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
   const read = (rel) => fs.readFileSync(path.join(TOOL_DIR, rel), "utf8");

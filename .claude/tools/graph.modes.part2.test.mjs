@@ -2450,6 +2450,26 @@ describe("факты по уровням без протокола", () => {
         'import { create } from "zustand";\nimport { persist } from "zustand/middleware";\n\nexport const useZz = create()(persist(() => ({ n: 0 }), { name: "zz.count" }));\n',
       );
       expect(tool("levels").out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
+      // Ключ из вызова функции ключа, объявленной в соседнем файле, — тот же
+      // ключ, что строкой.
+      put(
+        "shared/keys/zzKeyFor.ts",
+        'const ZZ_PREFIX = "zz";\n\nexport function zzKeyFor(part: string): string {\n  return ZZ_PREFIX + "." + part;\n}\n',
+      );
+      put(
+        "components/ZzA/ZzA.tsx",
+        'import { zzKeyFor } from "../../shared/keys/zzKeyFor";\n\nexport function ZzA() {\n  return <button onClick={() => window.localStorage.setItem(zzKeyFor("count"), "1")}>x</button>;\n}\n',
+      );
+      fs.writeFileSync(
+        stateAt,
+        fs.readFileSync(stateAt, "utf8").replace("| ключ `ZZ_KEYS.count` |", "| ключ `zz.count` |"),
+      );
+      expect(tool("levels").out).toMatch(/писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx/);
+      put(
+        "components/ZzA/ZzA.tsx",
+        'import { create } from "zustand";\nimport { persist } from "zustand/middleware";\n\nexport const useZz = create()(persist(() => ({ n: 0 }), { name: "zz.count" }));\n',
+      );
+      fs.rmSync(path.join(box, "src", "shared", "keys"), { recursive: true });
       if (!hadState) fs.rmSync(stateAt);
       // Перехода нет — факт без записи роняет и прогон сверки базы.
       expect(loose()).toMatch(/писатель: хранилище «zz\.count»/);
@@ -3278,9 +3298,12 @@ describe("долг перехода: список, держатель, отст�
           .filter((l) => !l.startsWith("| 2 | Записи о живом коде"))
           .join("\n"),
       );
+      // Свой код уже есть: обоснования применимости — слово семени, и их
+      // держит тот же шаг.
+      expect(open).toContain("«Раздел планки объявлен по своему замеру»");
       const closed = brief();
       expect(closed).not.toContain("Пока шаг открыт, прогон не роняют");
-      expect(heldOf(open) - heldOf(closed)).toBe(2);
+      expect(heldOf(open) - heldOf(closed)).toBe(3);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3873,6 +3896,12 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(verifyIn(box).get("Правила изоляции")).toEqual([
         "shared/zzi/tests/zzi.test.ts → shared/zzo/zzo.ts",
       ]);
+      // Ребро старого кода держит пункт долга, назвавший оба конца, — как у
+      // направления.
+      withTransitionDebt(box, [
+        "| 1 | ребро против изоляции | `1` | «Правила изоляции» | `src/shared/zzi/tests/zzi.test.ts` не брать `src/shared/zzo/zzo.ts` | `1` ребро |",
+      ]);
+      expect(verifyIn(box).get("Правила изоляции")).toBeUndefined();
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5589,6 +5618,12 @@ describe("команды правил проекта исполнимы", () => 
       expect(said()).toContain(
         "npm run preview — скрипт каркаса, у проекта его нет: строку снимает фаза 1 (`seat/seat.md`, шаг 1) (../CLAUDE.md)",
       );
+      // Звено, которое слияние не дописало, — тоже строка фазы 1.
+      delete manifest.scripts["test:coverage"];
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest, null, 2) + "\n");
+      expect(said()).toContain(
+        "npm run test:coverage — звена у проекта нет, слияние его не дописало: строку снимает фаза 1 (`seat/seat.md`, шаг 1-бис) (../CLAUDE.md)",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5662,6 +5697,49 @@ describe("предмет под другим именем и форматом", 
     }
   }, 180000);
 
+  it("два других имени одного предмета без семени — тоже пара, поле `eslintConfig` — место настройки линта", () => {
+    const box = seatEmpty("twin-no-seed-");
+    try {
+      const twins = () =>
+        (verifyIn(box).get("Один предмет — один файл настройки") ?? []).join("\n");
+      fs.renameSync(path.join(box, ".nvmrc"), path.join(box, ".tool-versions"));
+      expect(twins()).not.toContain(".tool-versions");
+      put(box, ".node-version", "22.23.2\n");
+      expect(twins()).toContain(".node-version и .tool-versions — один предмет, два файла настройки");
+      fs.rmSync(path.join(box, ".node-version"));
+      const at = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(at, "utf8"));
+      pkg.eslintConfig = { root: true };
+      fs.writeFileSync(at, JSON.stringify(pkg, null, 2) + "\n");
+      expect(twins()).toContain(
+        "eslint.config.mjs и поле `eslintConfig` в package.json — один предмет, два места настройки",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("проекту без интерфейса пакеты интерфейса и помощник карт классов не положены", () => {
+    const box = seatEmpty("no-ui-");
+    try {
+      const said = (name) => (verifyIn(box).get(name) ?? []).join("\n");
+      expect(said("Пакет платформы не второй ответ")).toBe("");
+      // Каркас интерфейса снят, а React в манифесте и помощник листов — остались.
+      for (const one of ["main.tsx", "App.tsx", path.join("tests", "App.test.tsx")])
+        fs.rmSync(path.join(box, "src", "app", one));
+      put(box, "src/app/zzScale.ts", "export const zzScale = (n: number): number => n * 2;\n");
+      const platform = said("Пакет платформы не второй ответ");
+      for (const one of ["react", "react-dom", "vite", "@vitejs/plugin-react", "@types/react", "@types/react-dom"])
+        expect(platform).toContain(one + " — пакет интерфейса, а интерфейса у проекта нет");
+      expect(said("Семя с условием не лежит без условия")).toContain("mergeStyleMaps");
+      // Импорт React в файле `.ts` — интерфейс есть.
+      put(box, "src/app/zzHook.ts", 'import { useState } from "react";\n\nexport const useZz = () => useState(0);\n');
+      expect(said("Пакет платформы не второй ответ")).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("конфиг мутаций модулем читается как модуль: не порча и не заглушка", () => {
     const box = seatEmpty("stryker-module-");
     try {
@@ -5699,6 +5777,38 @@ describe("своё проекта в смешанной папке обвязк�
       expect(r.stdout).toContain("исключено: .claude/hooks/zz-own.sh — файл проекта, не обвязки");
       expect(fs.existsSync(path.join(out, ".claude", "hooks", "zz-own.sh"))).toBe(false);
       expect(fs.existsSync(path.join(out, ".claude", "hooks", "git"))).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(out, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("свой файл правил проекта в папке доктрины, объявленный списком правил, — не доктрина", () => {
+    const box = seatEmpty("own-rules-");
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "own-rules-snap-"));
+    fs.rmSync(out, { recursive: true, force: true });
+    try {
+      fs.writeFileSync(path.join(box, ".claude", "rules", "zz-team.md"), "# Team\n\nReviews by two people.\n");
+      const said = (name) => (verifyIn(box).get(name) ?? []).join("\n");
+      expect(said("Доктрина названа в порядке чтения")).toContain(
+        "не назван в списке правил: zz-team.md. Назвать; файл правил проекта — объявить списком `rulesManifest.rules` настройки",
+      );
+      expect(said("Доктрина в бюджете")).toContain("больше бюджета");
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfg,
+        fs.readFileSync(cfg, "utf8").replace('    rules: ["../CLAUDE.md"],', '    rules: ["../CLAUDE.md", "../.claude/rules/zz-team.md"],'),
+      );
+      expect(said("Доктрина названа в порядке чтения")).toBe("");
+      expect(said("Доктрина в бюджете")).toBe("");
+      const r = spawnSync(
+        process.execPath,
+        [path.join(box, ".claude", "tools", "graph.mjs"), "handoff", out],
+        { cwd: box, encoding: "utf8" },
+      );
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(fs.existsSync(path.join(out, ".claude", "rules", "zz-team.md"))).toBe(false);
+      expect(fs.existsSync(path.join(out, ".claude", "rules", "entry.md"))).toBe(true);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
       fs.rmSync(out, { recursive: true, force: true });
