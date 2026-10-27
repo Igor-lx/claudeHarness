@@ -1205,11 +1205,22 @@ if (mode === "types" || mode === "lint") {
         ),
       ),
     ];
+    // Образец, а не имя папки: папку с точкой компилятор по имени не берёт.
+    // Выведено восьмой посадкой — `.storybook/` при `include: [".storybook"]`.
+    const globs = [
+      ...new Set(
+        outside.map((f) => {
+          const dir = path.posix.dirname(f.split(path.sep).join("/"));
+          return dir === "." ? f : dir + "/**/*";
+        }),
+      ),
+    ];
     if (outside.length > 0)
       console.log(
         "  вне области конфига компилятора, который читает линт с типами: " +
           outside.join(", ") +
-          " — дописать их папки в его `include`",
+          " — дописать в его `include` образцы: " +
+          globs.map((g) => "`" + g + "`").join(", "),
       );
     process.exit(1);
   }
@@ -1398,6 +1409,8 @@ const ROOT = (() => {
  * куда смотрит сверка этого проекта. При пустом поле рецепт не исполняется:
  * режим относит его к беспредметным. Умолчание — форма поля, названная в
  * семени настройки.
+ * `{тест вне раскладки}` — пробный тест вне `tests/`, не покрытый образцом
+ * `testsOutside`.
  * `{менеджер}` — менеджер пакетов проекта: связку, зовущую `npm run` у
  * проекта на `pnpm`, сверки не читают. `{папка кода}` — папка `{файл кода}`:
  * папка с кодом, а не корень `src`, которого у проекта может не быть.
@@ -1422,6 +1435,7 @@ const recipeVars = (fresh) => {
     "{скрипт lint}": "eslint .",
     "{менеджер}": "npm",
     "{папка кода}": "app",
+    "{тест вне раскладки}": "src/zzProbe.test.tsx",
   };
   if (fresh) return seat;
   const repo = norm(path.join(BASE, ".."));
@@ -1480,6 +1494,21 @@ const recipeVars = (fresh) => {
       readJson(path.join(repo, "package.json"), {}).scripts?.lint ?? "",
     ).slice(1, -1),
     "{менеджер}": PACKAGE_MANAGER,
+    // Пробный тест вне `tests/`, которого не покрывает образец
+    // `testsOutside`: под образцом его законно держит решение, и своя сверка
+    // молчит. Выведено восьмой посадкой — тесты рядом с кодом.
+    "{тест вне раскладки}": (() => {
+      const src = fromRepo(SRC_ROOTS[0]);
+      const held = (CONFIG.testsOutside ?? []).map((one) =>
+        one.includes("*")
+          ? globMatcher([one], REPO_AT)
+          : (at) => (one.endsWith("/") ? at.startsWith(one) : at === one),
+      );
+      const tries = ["zzProbe.test.tsx", "zzProbe.spec.ts", "zzProbe.test.mjs"].map(
+        (name) => src + "/" + name,
+      );
+      return tries.find((at) => !held.some((hit) => hit(at))) ?? tries[0];
+    })(),
     "{папка кода}":
       single[0] === undefined ? seat["{папка кода}"] : path.posix.dirname(single[0]),
   };
@@ -4170,6 +4199,7 @@ const rel = (f) =>
  * `tsconfigRead`.
  *
  * Берутся по тому, что звено зовёт: `-p` и `--project` — названный файл,
+ * `-b` и `--build` — конфиги словами после ключа,
  * иначе конфиг корня вызова; конфиг-решение со ссылками — его ссылки;
  * делегирование пакетам — те же вызовы в каждом пакете. Спрашивают его
  * сверка строгости и рецепт её фальсификации: рецепт, ломавший конфиг
@@ -4215,10 +4245,16 @@ const typeCheckConfigs = () => {
   }
   // Опции читает компилятор проекта — с `extends` из пакета и цепочкой, как
   // при проверке типов; адрес из `-p` бывает и папкой: `tsc -p .`.
+  // `tsc -b` принимает конфиги словами после ключа: строгое решение
+  // живого проекта зовут именно так. Выведено восьмой посадкой.
   const configs = new Set();
   for (const [dir, body] of calls) {
     const p = /(?:^|\s)(?:-p|--project)\s+(\S+)/.exec(body);
-    configs.add(tsconfigAt(path.resolve(dir, p?.[1] ?? ".")));
+    const built = /(?:^|\s)(?:-b|--build)((?:\s+[^-\s&|]\S*)*)/.exec(body);
+    const named =
+      p !== null ? [p[1]] : (built?.[1].trim().split(/\s+/).filter(Boolean) ?? []);
+    for (const one of named.length ? named : ["."])
+      configs.add(tsconfigAt(path.resolve(dir, one)));
   }
   return [...configs].flatMap((at) => compilerParts(tsconfigRead(at, REPO_AT)));
 };
@@ -25209,6 +25245,14 @@ if (mode === "verify") {
               .map(([k]) => k);
             for (const got of typeCheckConfigs()) {
               strictLooked += 1;
+              // Строгая копия поверх файла-решения наследует его `files: []`:
+              // строгость на месте, а звено не видит ни одного файла и
+              // пропускает посаженную ошибку кодом 0. Выведено восьмой посадкой.
+              if (files.length > 0 && !files.some((f) => compilerSees(got, f)))
+                strictGap.push(
+                  path.relative(REPO, got.at).split(path.sep).join("/") +
+                    " — звено типов проверяет по нему ноль файлов: у файла-решения строгость ложится копией каждой ссылки (`seat/seat.md`, шаг 1-бис)",
+                );
               const lax = want.filter((k) => got.options[k] !== true);
               if (lax.length)
                 strictGap.push(

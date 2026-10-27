@@ -1931,8 +1931,24 @@ describe("ошибка настройки звена долгом не гаси�
       );
       expect(outside.status).toBe(1);
       expect(outside.out).toContain(
-        "вне области конфига компилятора, который читает линт с типами: e2e/home.spec.ts — дописать их папки в его `include`",
+        "вне области конфига компилятора, который читает линт с типами: e2e/home.spec.ts — дописать в его `include` образцы: `e2e/**/*`",
       );
+      // Папку с точкой компилятор по имени не берёт — только образцом.
+      // Выведено восьмой посадкой: `.storybook/` при `include: [".storybook"]`.
+      const hidden = run(
+        "lint",
+        [
+          "/p/.storybook/main.ts",
+          '  0:0  error  Parsing error: "parserOptions.project" has been provided for @typescript-eslint/parser.',
+          "The file was not found in any of the provided project(s): .storybook/main.ts",
+          "/p/main.ts",
+          '  0:0  error  Parsing error: "parserOptions.project" has been provided for @typescript-eslint/parser.',
+          "The file was not found in any of the provided project(s): main.ts",
+          "✖ 2 problems (2 errors, 0 warnings)",
+        ],
+        1,
+      );
+      expect(hidden.out).toContain("образцы: `.storybook/**/*`, `main.ts`");
       // Правило, которому нужна опция компилятора, без неё не проверяет
       // ничего: линт читал нестрогий конфиг, и находка — его настройка.
       const option = run(

@@ -5233,6 +5233,76 @@ describe("конфиг компилятора, названный папкой",
 });
 
 /**
+ * Раскладка `create vite`: конфиг корня — файл-решение со ссылками, и
+ * строгость живому проекту ложится строгими копиями ссылок под своим
+ * решением, которое звено зовёт `tsc -b <решение>`. Путь после `-b` сверка
+ * не читала и судила ссылки решения корня — проектные, без строгости.
+ * Выведено восьмой посадкой.
+ */
+describe("решение, названное после `tsc -b`", () => {
+  it("строгие копии ссылок под своим решением — чисто, ссылка на нестрогий конфиг — названа", () => {
+    const box = seatEmpty("tsc-build-");
+    try {
+      const at = (rel) => path.join(box, rel);
+      const json = (rel, value) =>
+        fs.writeFileSync(at(rel), JSON.stringify(value, null, 2) + "\n");
+      const seed = JSON.parse(fs.readFileSync(at("tsconfig.json"), "utf8"));
+      const loose = { ...seed.compilerOptions, strict: false, noUncheckedIndexedAccess: false };
+      json("tsconfig.app.json", { compilerOptions: loose, include: seed.include });
+      json("tsconfig.json", { files: [], references: [{ path: "./tsconfig.app.json" }] });
+      json("tsconfig.app.strict.json", {
+        extends: "./tsconfig.app.json",
+        compilerOptions: { strict: true, noUncheckedIndexedAccess: true },
+      });
+      json("tsconfig.strict.json", {
+        files: [],
+        references: [{ path: "./tsconfig.app.strict.json" }],
+      });
+      const pkg = JSON.parse(fs.readFileSync(at("package.json"), "utf8"));
+      pkg.scripts.typecheck = "tsc -b tsconfig.strict.json";
+      fs.writeFileSync(at("package.json"), JSON.stringify(pkg, null, 2) + "\n");
+      const said = () =>
+        (verifyIn(box).get("Строгость компилятора там, где проверяются типы") ?? []).join("\n");
+      expect(said()).toBe("");
+      json("tsconfig.strict.json", {
+        files: [],
+        references: [{ path: "./tsconfig.app.json" }],
+      });
+      expect(said()).toContain("tsconfig.app.json — звено типов проверяет по нему");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("строгая копия поверх самого решения названа: она наследует `files: []` и не видит ни одного файла", () => {
+    const box = seatEmpty("tsc-empty-");
+    try {
+      const at = (rel) => path.join(box, rel);
+      const json = (rel, value) =>
+        fs.writeFileSync(at(rel), JSON.stringify(value, null, 2) + "\n");
+      const seed = JSON.parse(fs.readFileSync(at("tsconfig.json"), "utf8"));
+      json("tsconfig.app.json", { compilerOptions: seed.compilerOptions, include: seed.include });
+      json("tsconfig.json", { files: [], references: [{ path: "./tsconfig.app.json" }] });
+      json("tsconfig.strict.json", {
+        extends: "./tsconfig.json",
+        compilerOptions: seed.compilerOptions,
+      });
+      const pkg = JSON.parse(fs.readFileSync(at("package.json"), "utf8"));
+      pkg.scripts.typecheck = "tsc -p tsconfig.strict.json --noEmit";
+      fs.writeFileSync(at("package.json"), JSON.stringify(pkg, null, 2) + "\n");
+      const said = () =>
+        (verifyIn(box).get("Строгость компилятора там, где проверяются типы") ?? []).join("\n");
+      expect(said()).toContain("tsconfig.strict.json — звено типов проверяет по нему ноль файлов");
+      pkg.scripts.typecheck = "tsc -p tsconfig.app.json --noEmit";
+      fs.writeFileSync(at("package.json"), JSON.stringify(pkg, null, 2) + "\n");
+      expect(said()).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
+/**
  * Область сбора тестов называет тесты проекта. Семя пишет её от корня `src`,
  * и в проекте с другим корнем оно ложилось целиком: раннер не находил ни
  * одного теста, а сверка отвечала «расхождений: 0». Найдено посадкой по инструкции

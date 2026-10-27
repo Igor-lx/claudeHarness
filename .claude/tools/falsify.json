@@ -546,7 +546,7 @@
     {
       "section": "Тесты лежат в `tests/`",
       "create": {
-        "path": "{исходники}/zzProbe.test.tsx",
+        "path": "{тест вне раскладки}",
         "text": "export const zzProbe = 1;"
       }
     },

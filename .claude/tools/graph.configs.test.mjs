@@ -323,6 +323,25 @@ describe("служебные папки инструмента — в каждо
   });
 });
 
+describe("область конфига компилятора без компилятора", () => {
+  // Запасной разбор не наследовал `files` и `include` через `extends`: строгая
+  // копия поверх файла-решения читалась видящей всё. Выведено восьмой посадкой.
+  it("область наследуется через `extends` и считается от папки, где записана", () => {
+    const box = fs.mkdtempSync(path.join(without, "area-"));
+    fs.mkdirSync(path.join(box, "base"));
+    fs.writeFileSync(path.join(box, "base", "tsconfig.json"), '{ "include": ["src"] }');
+    fs.writeFileSync(path.join(box, "tsconfig.solution.json"), '{ "files": [], "references": [] }');
+    fs.writeFileSync(path.join(box, "tsconfig.json"), '{ "extends": "./base/tsconfig.json" }');
+    fs.writeFileSync(path.join(box, "tsconfig.strict.json"), '{ "extends": "./tsconfig.solution.json" }');
+    fs.writeFileSync(path.join(box, "tsconfig.own.json"), '{ "extends": "./base/tsconfig.json", "include": ["lib"] }');
+    const read = (name) => tsconfigRead(path.join(box, name), box);
+    expect(read("tsconfig.json").via).toBe(BY_TEXT);
+    expect(read("tsconfig.json").raw.include).toEqual(["base/src"]);
+    expect(read("tsconfig.strict.json").raw.files).toEqual([]);
+    expect(read("tsconfig.own.json").raw.include).toEqual(["lib"]);
+  });
+});
+
 describe("блокировки менеджеров — в семени исключений форматтера", () => {
   // Форматтер разбирает блокировку `pnpm` как YAML и краснел на ней в
   // проекте на `pnpm`: семя называло одну блокировку `npm`.

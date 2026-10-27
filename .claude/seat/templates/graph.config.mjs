@@ -650,6 +650,17 @@ export const CONFIG = {
     "eslint-plugin-jsx-a11y-x": "0.2.0",
     "eslint-plugin-sonarjs": "4.2.2",
     "@stryker-mutator/core": "10.0.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript-eslint": "8.72.0",
+    "eslint-config-prettier": "10.1.8",
+    "@eslint/js": "10.0.1",
+    globals: "17.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.7",
+    "@testing-library/jest-dom": "7.0.1",
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "@vitest/coverage-v8": "4.1.11",
   },
   /** Звенья обязательной цепочки проверок: чем каждое исполняется и есть ли для
    * него шаблон настройки на полке.

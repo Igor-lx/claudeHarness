@@ -359,15 +359,17 @@ not pick versions yourself:
 | --- | --- |
 | runtime | Node.js 22.23.2, npm 11.21.1 |
 | language and build | TypeScript 6.0.3, Vite 8.3.5 |
-| UI | React 19.3.1, React DOM 19.3.1, Sass (sass-embedded) 1.106.1 |
-| tests | Vitest 4.1.11, jsdom 30.1.3, Testing Library React 16.3.3, Stryker 10.0.0 |
-| lint and format | ESLint 10.13.0, @eslint-react 5.28.7, jsx-a11y-x 0.2.0, SonarJS 4.2.2, Prettier 3.9.10 |
+| UI | React 19.3.1, React DOM 19.3.1, React types 19.3.0, Sass (sass-embedded) 1.106.1 |
+| tests | Vitest 4.1.11 with coverage-v8 4.1.11, jsdom 30.1.3, Testing Library React 16.3.3, jest-dom 7.0.1, Stryker 10.0.0 with its Vitest runner 10.0.0 |
+| lint and format | ESLint 10.13.0, @eslint/js 10.0.1, typescript-eslint 8.72.0, React Hooks plugin 7.1.1, React Refresh plugin 0.5.7, @eslint-react 5.28.7, jsx-a11y-x 0.2.0, SonarJS 4.2.2, eslint-config-prettier 10.1.8, globals 17.13.0, Prettier 3.9.10 |
 
 On a machine without Node.js, or with Node.js or npm below the set, seating
 installs the verified ones before its first change. In a live project no
 package is upgraded: seating adds only what is
 missing, and packages below the set are named by the run - a notice, not a
-failure; whether to upgrade is your call.
+failure; whether to upgrade is your call. One exception: a lint plugin whose
+rule set the seeded lint config takes by name, a major version behind the
+set, is raised to it with a notice - the rule set comes with the harness.
 
 **Other stacks.** The graph, the knowledge base, the quality bar and most
 checks work on any TypeScript or JavaScript code; the templates and the

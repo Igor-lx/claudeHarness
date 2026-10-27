@@ -1542,6 +1542,24 @@ describe("семена версии среды — по проверенной �
   });
 });
 
+describe("пакеты звеньев — в проверенной связке", () => {
+  // Семя конфига линта написано под старшие версии своих плагинов: плагин
+  // хуков `5` из шаблона `create vite` ронял линт до разбора, а сверка версий
+  // его не называла — в связке его не было. Выведено восьмой посадкой.
+  it("каждый пакет поля `toolchain` объявлен в `verifiedVersions` той же версией, что в семени манифеста", async () => {
+    const seeds = path.join(TOOL_DIR, "..", "seat", "templates");
+    const { CONFIG } = await import(path.join(seeds, "graph.config.mjs"));
+    const manifest = JSON.parse(fs.readFileSync(path.join(seeds, "package.json"), "utf8"));
+    const seedVersion = (name) => manifest.devDependencies?.[name] ?? manifest.dependencies?.[name];
+    const wrong = [];
+    for (const link of CONFIG.toolchain)
+      for (const name of link.packages)
+        if (CONFIG.verifiedVersions[name] !== seedVersion(name))
+          wrong.push(name + ": связка " + CONFIG.verifiedVersions[name] + ", семя " + seedVersion(name));
+    expect(wrong).toEqual([]);
+  });
+});
+
 describe("ссылка на раздел разрешается в названном файле", () => {
   it("переименованный раздел не находится ни в обосновании, ни в длинном заголовке с тем же началом", () => {
     const box = seatEmpty("razdel-");

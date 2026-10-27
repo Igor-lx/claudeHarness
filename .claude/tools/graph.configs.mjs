@@ -125,15 +125,27 @@ const tsconfigText = (at, seen = new Set()) => {
   const raw = parseJsonc(readFileSync(at, "utf8"));
   if (raw === null) return null;
   let options = {};
+  // Область — `files`, `include`, `exclude` — наследуется, как у компилятора,
+  // и считается от папки того конфига, где записана: строгая копия поверх
+  // файла-решения видит его `files: []`. Выведено восьмой посадкой.
+  const area = {};
   for (const ext of [raw.extends ?? []].flat()) {
     if (!String(ext).startsWith(".")) continue;
     let to = path.resolve(path.dirname(at), ext);
     if (!existsSync(to) && existsSync(to + ".json")) to += ".json";
-    options = {
-      ...options,
-      ...(tsconfigText(tsconfigAt(to), seen)?.options ?? {}),
-    };
+    const parent = tsconfigText(tsconfigAt(to), seen);
+    options = { ...options, ...(parent?.options ?? {}) };
+    for (const key of ["files", "include", "exclude"])
+      if (Array.isArray(parent?.raw?.[key]))
+        area[key] = parent.raw[key].map((one) =>
+          path
+            .relative(path.dirname(at), path.resolve(path.dirname(parent.at), one))
+            .split(path.sep)
+            .join("/"),
+        );
   }
+  for (const key of ["files", "include", "exclude"])
+    if (raw[key] === undefined && area[key] !== undefined) raw[key] = area[key];
   const own = { ...(raw.compilerOptions ?? {}) };
   if (typeof own.baseUrl === "string")
     own.baseUrl = path.resolve(path.dirname(at), own.baseUrl);
