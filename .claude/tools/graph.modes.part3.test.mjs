@@ -824,7 +824,7 @@ describe("конец жизни сохранённого и запись о со
         "| ключ `zz-count` в `localStorage` | `src/shared/zzStore/zzStore.ts` | `zzSave` | никто | до вызова очистки |",
       ]);
       expect((verifyIn(box).get("Запись о состоянии не спорит с кодом") ?? []).join("\n")).toContain(
-        "ключ `zz-count`: код пишет его в `app/zzClear.ts`, а запись этот файл не называет ни владельцем, ни писателем",
+        ".context/04-state.md:6 — ключ `zz-count` (пишет `app/zzClear.ts`, `shared/zzStore/zzStore.ts`): код пишет его в `app/zzClear.ts`, а запись этот файл не называет ни владельцем, ни писателем",
       );
       state([
         "| ключ `zz-count` в `localStorage` | `src/shared/zzStore/zzStore.ts` | `zzSave`; `zzClear` в `src/app/zzClear.ts` | никто | до вызова очистки |",
@@ -897,6 +897,31 @@ describe("конец жизни сохранённого и запись о со
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(
         /\| хранение \| `shared\/zzStore\/zz(?:Store|Drop)\.ts:2` \| хранилище «zz-count»: пишут shared\/zzStore\/zzDrop\.ts, shared\/zzStore\/zzStore\.ts; снимает по ключу — shared\/zzStore\/zzDrop\.ts \| новое \|  \|/,
       );
+
+      // Запись о ключе с пустым «Время жизни»: сверка-держатель ставит K6
+      // «нашлось» по адресу записи, как линт по адресу строки кода.
+      put(
+        ".context/04-state.md",
+        STATE_HEAD +
+          "| ключ `zz-count` в `localStorage` | `src/shared/zzStore/zzStore.ts` | `src/shared/zzStore/zzDrop.ts` | никто |  |\n",
+      );
+      fs.rmSync(protoAt);
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /\| K6 \| — \| [^|]+ \| нашлось \| \.context\/04-state\.md:5 \| сверка «Запись о состоянии не спорит с кодом»: [^|]*графа «Время жизни» пуста/,
+      );
+      // «Нашлось» о коде без места записи находку сверки не закрывает.
+      const k6 = (pick) => {
+        fs.rmSync(protoAt);
+        tool("bar");
+        fillBar(protoAt, { release: "не нужно: проба", pick: { K6: pick } });
+        return tool("bar");
+      };
+      const hole = "нашла `.context/04-state.md:5`, а находка его не называет";
+      expect(k6("нашлось | shared/zzStore/zzStore.ts:2 | ключ без конца жизни | вопрос")).toContain(hole);
+      expect(
+        k6("нашлось | shared/zzStore/zzStore.ts:2 | ключ без конца жизни; ещё мест: `.context/04-state.md:5` | вопрос"),
+      ).not.toContain(hole);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

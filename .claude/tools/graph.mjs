@@ -12879,7 +12879,7 @@ const stateRecords = () => {
   const at = entry === undefined ? null : path.join(REPO_AT, entry.to);
   if (at === null || !existsSync(at)) return STATE_ROWS;
   let head = null;
-  for (const line of readFileSync(at, "utf8").split(LF)) {
+  for (const [i, line] of readFileSync(at, "utf8").split(LF).entries()) {
     if (!line.startsWith("|")) {
       head = null;
       continue;
@@ -12905,6 +12905,7 @@ const stateRecords = () => {
       life: cell("время"),
       line,
       at: entry.to,
+      no: i + 1,
     });
   }
   return STATE_ROWS;
@@ -15187,6 +15188,11 @@ const barCheckRowOf = ({ checks, c, scope }) => {
   return null;
 };
 
+/** Место находки сверки — первый адрес `путь:строка` в её строке, иначе
+ * `null`: по нему машина ставит исход, и его обязан назвать ответ. */
+const barCheckSpotOf = (line) =>
+  /(?:^|[\s`])((?:\.?[\w@-]+\/)*[\w@.-]+\.\w+:\d+)/.exec(line ?? "")?.[1] ?? null;
+
 /** Срез, который режет без суждения и без записи решения: строка модели с
  * его пометкой — «нашлось» с её адресом. Срез, законный при записи решения,
  * только на новом либо только на изменении, машина не ставит: о нём судит
@@ -15254,7 +15260,7 @@ const barMachineRowOf = (args) => {
 
 const BAR_MACHINE_TAIL = "; формы вне держателя — на чтении";
 
-const barMachineVerdictOf = ({ lint, checks, c, files, model, asked }) => {
+const barMachineVerdictOf = ({ lint, checks, c, files, model, asked, disputed }) => {
   const lintSays =
     BAR_LINT[c.id] === undefined
       ? undefined
@@ -15262,6 +15268,18 @@ const barMachineVerdictOf = ({ lint, checks, c, files, model, asked }) => {
   if (lintSays?.outcome === "нашлось") return { ...lintSays, by: "линт" };
   const cut = barCutRowOf(c, model);
   if (cut !== null) return cut;
+  // Красная сверка-держатель с адресом в строке находки — «нашлось» там, как
+  // у линта: прежде она только запрещала «чисто», и «нашлось» о другом месте
+  // проходило, а её находка в протокол не вставала. Выведено: проба планки
+  // `2026-10-26` — пустое «Время жизни» записи о ключе темы.
+  const spot = barCheckSpotOf(disputed?.line);
+  if (spot !== null)
+    return {
+      outcome: "нашлось",
+      addr: spot,
+      what: ("сверка «" + disputed.name + "»: " + disputed.line).split("|").join("/"),
+      by: "сверка",
+    };
   if (asked || lintSays === null) return null;
   const names = BAR_CHECKS[c.id];
   if (names === undefined)
@@ -16050,6 +16068,25 @@ const barHolesOf = ({
           " «" +
           (one.outcome === "нашлось" ? one.fate : one.outcome) +
           "»",
+      );
+    // «Нашлось» о другом месте находку сверки не закрывает: её место —
+    // адресом либо в «ещё мест». Выведено: проба планки `2026-10-26` —
+    // машина поставила адрес записи, а сессия переписала его на код.
+    const checkSpot = checked === null ? null : barCheckSpotOf(checked.line);
+    if (
+      checkSpot !== null &&
+      one.outcome === "нашлось" &&
+      ![one.addr, ...barMorePlacesOf(one.what).split(",")].some(
+        (place) => place.trim() !== "" && place.includes(checkSpot),
+      )
+    )
+      holes.push(
+        who +
+          ": сверка «" +
+          checked.name +
+          "» нашла `" +
+          checkSpot +
+          "`, а находка его не называет — адресом либо в «ещё мест:»",
       );
     const known = debtNaming(c, subject);
     if (
@@ -18521,6 +18558,7 @@ if (mode === "bar") {
           files: lintFiles,
           model,
           asked: barAskedOf(c, model),
+          disputed: checkRow(c, s),
         });
   const machineMade = expected
     .filter(({ c, subject: one }) => !c.slogan && noneOf(c, one) === "")
@@ -19303,7 +19341,7 @@ if (mode === "bar-fill") {
       key = "часть " + head;
       fill = fillOf(BAR_FILL_FORMS.part);
     }
-    if (key !== null && fill !== null) rows.set(key, { at, cells, fill });
+    if (key !== null && fill !== null) rows.set(key, { at, cells, fill, section });
   });
   const faults = [];
   const seen = new Set();
@@ -19433,6 +19471,31 @@ if (mode === "bar-fill") {
           key +
           "» " +
           row.fill.length,
+      );
+      continue;
+    }
+    // У «чисто» и «нет предмета» адреса нет: основание, написанное второй
+    // клеткой, ложилось в графу адреса, а «что» оставалась пустой, и отказ
+    // `bar` называл недостающую опору, а не причину. Выведено: проба планки
+    // `2026-10-26`.
+    if (
+      row.section === "## Исходы" &&
+      ["чисто", "нет предмета"].includes(given[0]) &&
+      given.length > 1 &&
+      !["—", "=", ""].includes(given[1])
+    ) {
+      faults.push(
+        "строка " +
+          n +
+          ": у исхода «" +
+          given[0] +
+          "» адрес — `—`, а в клетке адреса «" +
+          given[1] +
+          "»; основание пишут третьей клеткой: `" +
+          key +
+          " | " +
+          given[0] +
+          " | — | основание`",
       );
       continue;
     }
@@ -31260,7 +31323,20 @@ if (mode === "verify") {
       );
       if (own.length === 0) continue;
       stateKeys += 1;
-      const at = own[0].at + " — ключ `" + literal + "`";
+      // Адрес записи и её писатели: находку свод относит к предмету по
+      // файлу писателя, а исход ставит по адресу записи.
+      const at =
+        own[0].at +
+        ":" +
+        own[0].no +
+        " — ключ `" +
+        literal +
+        "` (пишет " +
+        [...byFile.keys()]
+          .sort(barByRel)
+          .map((f) => "`" + rel(f) + "`")
+          .join(", ") +
+        ")";
       for (const f of [...byFile.keys()].sort(barByRel))
         if (!own.some((r) => namesFileIn(r.owner + " " + r.writers, f)))
           stateLies.push(
