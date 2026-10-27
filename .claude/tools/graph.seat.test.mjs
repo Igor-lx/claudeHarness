@@ -15,6 +15,8 @@ import {
   tiersFrom,
   withoutFrameRows,
   sandboxPackages,
+  stackApply,
+  stackSurveyOf,
 } from "./graph.seat.mjs";
 
 // Посадка на месте одной командой: полка лежит в `.claude` папки, режим
@@ -281,6 +283,170 @@ describe("посадка на месте: чистые помощники", () =
   });
 });
 
+describe("осмотр окружения проекта по осям карты посадки", () => {
+  const AXES = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8")).stackAxes;
+  const SEED = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "package.json"), "utf8"));
+  const OURS = { ...SEED.dependencies, ...SEED.devDependencies };
+  const PLATFORM = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8")).platformPackages;
+  const survey = (manifest, files, withTools = []) =>
+    stackSurveyOf({
+      manifest,
+      files,
+      axes: AXES,
+      verified: OURS,
+      withTools,
+      ui: PLATFORM.ui,
+      alternatives: PLATFORM.alternatives,
+    });
+  const planOf = (s) => Object.fromEntries(s.plan.map((p) => [p.name, p]));
+
+  it("пустая папка — «пусто», плана нет: посадка ставит всё сама", () => {
+    const s = survey(null, []);
+    expect(s.verdict).toBe("пусто");
+    expect(s.plan).toEqual([]);
+    expect(survey(null, ["README.md"]).verdict).toBe("пусто");
+  });
+
+  it("наше окружение без звеньев и ниже связки — «наше, неполное», план поднимает до точных версий связки", () => {
+    const s = survey(
+      {
+        dependencies: { react: "^19.1.0", "react-dom": "^19.1.0", zod: "^4.1.12" },
+        devDependencies: { typescript: "~5.8.3", vite: "^7.0.4", "@vitejs/plugin-react": "^4.6.0" },
+      },
+      ["src/main.tsx", "src/app/app.module.scss", "vite.config.ts"],
+    );
+    expect(s.verdict).toBe("наше, неполное");
+    expect(s.foreign).toEqual([]);
+    const plan = planOf(s);
+    expect(plan.typescript).toEqual({ name: "typescript", from: "~5.8.3", to: OURS.typescript, section: "devDependencies" });
+    expect(plan.react).toEqual({ name: "react", from: "^19.1.0", to: OURS.react, section: "dependencies" });
+    expect(plan["@vitejs/plugin-react"].to).toBe(OURS["@vitejs/plugin-react"]);
+    for (const absent of ["vitest", "eslint", "prettier", "@stryker-mutator/core", "sass-embedded"])
+      expect(plan[absent], absent).toMatchObject({ from: null, to: OURS[absent], section: "devDependencies" });
+    expect(plan.zod).toBeUndefined();
+  });
+
+  it("версия выше связки опускается до неё, точная версия связки в план не идёт, полная связка — «наше»", () => {
+    const above = survey({ devDependencies: { ...OURS, typescript: "7.0.2" } }, ["src/main.tsx", "a.scss"]);
+    expect(above.plan).toEqual([
+      { name: "typescript", from: "7.0.2", to: OURS.typescript, section: "devDependencies" },
+    ]);
+    const exact = survey({ dependencies: SEED.dependencies, devDependencies: SEED.devDependencies }, ["src/main.tsx"]);
+    expect(exact.plan).toEqual([]);
+    expect(exact.verdict).toBe("наше");
+  });
+
+  it("объявленная замена пакета платформы — наше: плагин на SWC не тянет обычный", () => {
+    const swc = survey({ devDependencies: { "@vitejs/plugin-react-swc": "^4.0.0", vite: OURS.vite } }, ["src/main.tsx"]);
+    expect(planOf(swc)["@vitejs/plugin-react"]).toBeUndefined();
+    expect(swc.rows.find((r) => r.axis === "сборщик").note).toContain("@vitejs/plugin-react-swc — объявленная замена");
+  });
+
+  it("листов стилей нет — sass не ставится; объявленная замена sass — наше", () => {
+    expect(planOf(survey({ devDependencies: { typescript: "6.0.3" } }, ["src/main.tsx"]))["sass-embedded"]).toBeUndefined();
+    const withSass = survey({ devDependencies: { sass: "^1.80.0" } }, ["src/main.tsx", "src/a.scss"]);
+    expect(planOf(withSass)["sass-embedded"]).toBeUndefined();
+    expect(withSass.rows.find((r) => r.axis === "листы стилей").state).toBe("наше");
+  });
+
+  it("без интерфейса фреймворк и сборщик без предмета; одноранговый react не ставится", () => {
+    const lib = survey({ devDependencies: { typescript: "6.0.3" } }, ["src/index.ts"]);
+    expect(planOf(lib).react).toBeUndefined();
+    expect(planOf(lib).vite).toBeUndefined();
+    expect(lib.rows.find((r) => r.axis === "фреймворк").state).toBe("без предмета");
+    const peer = survey({ peerDependencies: { react: "^19.0.0" } }, ["src/index.tsx"]);
+    expect(planOf(peer).react).toBeUndefined();
+    expect(planOf(peer)["@types/react"].from).toBeNull();
+  });
+
+  it("Vue и yarn — «чужое» по двум осям, посадка не встаёт; ось-инструмент заменяется своей по слову", () => {
+    const s = survey({ dependencies: { vue: "^3.5.0" }, devDependencies: { oxlint: "^1.0.0" } }, [
+      "src/App.vue",
+      "src/main.ts",
+      "yarn.lock",
+    ]);
+    expect(s.verdict).toBe("чужое");
+    expect(s.foreign.map((f) => f.axis).sort()).toEqual(["линтер", "менеджер пакетов", "фреймворк"].sort());
+    expect(s.foreign.find((f) => f.axis === "линтер").tool).toBe("lint");
+    expect(s.foreign.find((f) => f.axis === "фреймворк").tool).toBeNull();
+    expect(planOf(s).eslint).toBeUndefined();
+    // Vue is an interface: the bundler is ours, React and its helpers are not.
+    const vue = planOf(s);
+    expect(vue.vite.to).toBe(OURS.vite);
+    for (const react of ["react", "@types/react", "@vitejs/plugin-react", "@testing-library/react"])
+      expect(vue[react], react).toBeUndefined();
+    const chosen = survey({ devDependencies: { oxlint: "^1.0.0", typescript: "6.0.3" } }, ["src/index.ts"], ["линтер"]);
+    expect(chosen.foreign).toEqual([]);
+    expect(chosen.scripts).toEqual(["lint"]);
+    expect(planOf(chosen).eslint.to).toBe(OURS.eslint);
+    expect(survey({}, ["src/index.js"]).foreign.map((f) => f.axis)).toEqual(["язык"]);
+  });
+
+  it("план ложится в манифест точными версиями, скрипт звена — семенной, прежний рядом; упала установка — всё как было", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-apply-"));
+    try {
+      const manifest = {
+        scripts: { lint: "oxlint ." },
+        devDependencies: { react: "^19.1.0", typescript: "~5.8.3" },
+      };
+      const text = JSON.stringify(manifest, null, 2) + "\n";
+      fs.writeFileSync(path.join(dest, "package.json"), text);
+      fs.writeFileSync(path.join(dest, "package-lock.json"), "{\"lock\":1}\n");
+      const s = {
+        plan: [
+          { name: "typescript", from: "~5.8.3", to: "6.0.3", section: "devDependencies" },
+          { name: "react", from: "^19.1.0", to: "19.3.1", section: "dependencies" },
+        ],
+        scripts: ["lint"],
+      };
+      const calls = [];
+      const ok = stackApply(dest, s, { lint: "eslint ." }, (cmd, args, opts) => {
+        calls.push([cmd, args[0], opts.cwd]);
+        return { status: 0, stdout: "", stderr: "" };
+      });
+      expect(ok).toEqual({ ok: true });
+      expect(calls).toEqual([["npm", "install", dest]]);
+      const after = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
+      expect(after.dependencies).toEqual({ react: "19.3.1" });
+      expect(after.devDependencies).toEqual({ typescript: "6.0.3" });
+      expect(after.scripts).toEqual({ lint: "eslint .", "lint:own": "oxlint ." });
+
+      fs.writeFileSync(path.join(dest, "package.json"), text);
+      const failed = stackApply(dest, s, { lint: "eslint ." }, () => {
+        fs.writeFileSync(path.join(dest, "package-lock.json"), "broken");
+        return { status: 1, stdout: "", stderr: "npm error ERESOLVE\nconflict" };
+      });
+      expect(failed).toEqual({ ok: false, tail: ["npm error ERESOLVE", "conflict"] });
+      expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(text);
+      expect(fs.readFileSync(path.join(dest, "package-lock.json"), "utf8")).toBe("{\"lock\":1}\n");
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
+  it("проект на yarn ставится командой yarn, и откат возвращает его блокировку", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-yarn-"));
+    try {
+      const text = JSON.stringify({ devDependencies: { typescript: "~5.8.3" } }, null, 2) + "\n";
+      fs.writeFileSync(path.join(dest, "package.json"), text);
+      fs.writeFileSync(path.join(dest, "yarn.lock"), "# yarn lockfile v1\n");
+      const s = { plan: [{ name: "typescript", from: "~5.8.3", to: "6.0.3", section: "devDependencies" }], scripts: [] };
+      const calls = [];
+      const failed = stackApply(dest, s, {}, (cmd, args) => {
+        calls.push([cmd, ...args]);
+        fs.writeFileSync(path.join(dest, "yarn.lock"), "broken");
+        return { status: 1, stdout: "", stderr: "error" };
+      });
+      expect(calls).toEqual([["yarn", "install"]]);
+      expect(failed.ok).toBe(false);
+      expect(fs.readFileSync(path.join(dest, "yarn.lock"), "utf8")).toBe("# yarn lockfile v1\n");
+      expect(fs.existsSync(path.join(dest, "package-lock.json"))).toBe(false);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("посадка на месте одной командой", () => {
   it("пустая папка: фаза 1 целиком, испытание звеньев, базовая линия, два коммита; второй вызов — уже сделано", () => {
     // Пробел в пути: папка «My Projects» — обычное место проекта на чужой машине.
@@ -296,9 +462,11 @@ describe("посадка на месте одной командой", () => {
       expect(facts).toMatch(/\| `mutate` \| зелено, убито `[1-9]\d*` из `\d+`/);
       expect(facts).not.toContain("<замер>");
       expect(gitIn(dest, "log", "--format=%s").split("\n")).toEqual([
-        "barSince, seriesSince",
-        "seat",
+        "chore: record the seating base of the bar and the series",
+        "chore: seat the harness",
       ]);
+      expect(gitIn(dest, "log", "--format=%an")).not.toContain("seat");
+      expect(run.stdout).not.toContain("git не знает, кто вы");
       expect(gitIn(dest, "config", "core.hooksPath")).toBe(".claude/hooks/git");
       expect(gitIn(dest, "status", "--porcelain")).toBe("");
       expect(fs.existsSync(path.join(dest, ".git", "claude-seat"))).toBe(false);
@@ -307,6 +475,35 @@ describe("посадка на месте одной командой", () => {
       expect(again.stdout).toContain("=== Посадка уже сделана ===");
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("git без имени пользователя: посадка коммитит от имени seat и говорит об этом в отчёте", () => {
+    // Свежая машина: git стоит, а имени нет, и первый свой коммит человека
+    // упал бы «Please tell me who you are». Выведено посадкой с голой машины.
+    const dest = boxWithShelf("seat-noname-");
+    const none = path.join(dest, "..", path.basename(dest) + ".gitconfig");
+    try {
+      fs.writeFileSync(none, "");
+      const run = spawnSync(
+        process.execPath,
+        [path.join(dest, ".claude", "tools", "graph.mjs"), "seat", dest, "--packages", ROOT],
+        {
+          cwd: dest,
+          encoding: "utf8",
+          env: { ...process.env, GIT_CONFIG_GLOBAL: none, GIT_CONFIG_NOSYSTEM: "1" },
+        },
+      );
+      expect(run.status, run.stdout + run.stderr).toBe(0);
+      expect(gitIn(dest, "log", "--format=%an <%ae>").split("\n")).toEqual([
+        "seat <seat@local>",
+        "seat <seat@local>",
+      ]);
+      expect(run.stdout).toContain("git не знает, кто вы");
+      expect(run.stdout).toContain('git config --global user.name "Имя"');
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.rmSync(none, { force: true });
     }
   }, 300000);
 

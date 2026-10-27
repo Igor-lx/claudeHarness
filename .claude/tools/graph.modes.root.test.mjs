@@ -197,6 +197,10 @@ describe("снимок обвязки собирается", () => {
       expect(out).toContain("СНИМОК СОБРАН");
       expect(out).toContain("сверка базы — код 0");
       const memo = fs.readFileSync(path.join(box, "ЧИТАТЬ-ПЕРВЫМ.md"), "utf8");
+      // Среду ставит загрузчик: памятка не велит человеку проверять версии
+      // самому. Выведено посадкой с голой машины.
+      expect(memo).toContain("Ничего ставить заранее не нужно");
+      expect(memo).not.toContain("node --version");
       const named = [...memo.matchAll(/`(\.claude\/[^`]+)`/g)].map((m) => m[1]);
       expect(named.length).toBeGreaterThan(0);
       for (const one of named)

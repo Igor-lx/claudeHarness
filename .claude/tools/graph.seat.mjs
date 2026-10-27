@@ -197,6 +197,186 @@ export const lintBlockersOf = (manifest, declared) => {
   return out;
 };
 
+/** Файлы проекта для осмотра окружения: адреса от корня, без зависимостей,
+ * истории, обвязки и сборки. Глубина ограничена: осмотру нужен род кода, а
+ * не опись. */
+export const projectFilesOf = (root, depth = 6) => {
+  const skip = new Set(["node_modules", ".git", ".claude", "dist", "build", "coverage", ".next"]);
+  const out = [];
+  const walk = (dir, left) => {
+    let kids = [];
+    try {
+      kids = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of kids) {
+      if (skip.has(e.name)) continue;
+      const at = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (left > 0) walk(at, left - 1);
+      } else out.push(path.relative(root, at).split(path.sep).join("/"));
+    }
+  };
+  walk(root, depth);
+  return out;
+};
+
+/** Осмотр окружения живого проекта по осям карты посадки (`stackAxes`):
+ * ось наша, наша не той версии, без предмета либо чужая. Вердикт —
+ * `пусто`, `наше`, `наше, неполное` либо `чужое`; план — пакеты, которые
+ * ставятся точной версией проверенной связки, вверх и вниз: на них обвязка
+ * проверена, и их же ставит посадка в пустую папку. Оси-инструменты из
+ * `withTools` ставятся своими и при чужом инструменте проекта — по слову
+ * разработчика. Решено разработчиком `2026-10-27`. */
+export const stackSurveyOf = ({
+  manifest,
+  files,
+  axes,
+  verified,
+  withTools = [],
+  ui = [],
+  alternatives = {},
+}) => {
+  const ext = (re) => files.filter((f) => re.test(f) && !/\.d\.ts$/.test(f));
+  const tsFiles = ext(/\.(?:ts|tsx|mts|cts)$/);
+  const jsFiles = ext(/\.(?:js|jsx|mjs|cjs)$/).filter((f) => !/(?:^|\/)[^/]*\.config\.[cm]?js$/.test(f));
+  const code = [...tsFiles, ...jsFiles, ...ext(/\.(?:vue|svelte)$/)];
+  if (manifest === null && code.length === 0)
+    return { verdict: "пусто", rows: [], foreign: [], plan: [], scripts: [] };
+  const m = manifest ?? {};
+  const own = { ...(m.dependencies ?? {}), ...(m.devDependencies ?? {}) };
+  const peer = m.peerDependencies ?? {};
+  const has = (name) => own[name] !== undefined || peer[name] !== undefined;
+  const framework = axes.find((a) => a.axis === "фреймворк") ?? { ours: [] };
+  const foreignUi =
+    files.some((f) => /\.(?:vue|svelte)$/.test(f)) || (framework.foreignPackages ?? []).some(has);
+  const hasUi = files.some((f) => /\.(?:tsx|jsx)$/.test(f)) || has("react") || foreignUi;
+  // Пакеты нашего фреймворка не ставятся проекту без интерфейса и проекту
+  // на чужом фреймворке: React рядом с Vue — второй ответ на тот же вопрос.
+  const unwanted = new Set([
+    ...(hasUi ? [] : ui),
+    ...(foreignUi ? [...framework.ours, ...(framework.bound ?? [])] : []),
+    ...(hasUi ? [] : (framework.bound ?? [])),
+  ]);
+  const rows = [];
+  const foreign = [];
+  const plan = [];
+  for (const axis of axes) {
+    const strange = [
+      ...(axis.foreignPackages ?? []).filter(has),
+      ...(axis.foreignFiles ?? []).filter((f) => files.includes(f)),
+      ...(axis.foreignManagers ?? []).filter(
+        (one) => String(m.packageManager ?? "").split("@")[0] === one,
+      ),
+    ];
+    if (axis.axis === "фреймворк") {
+      if (files.some((f) => f.endsWith(".vue"))) strange.push("vue");
+      if (files.some((f) => f.endsWith(".svelte"))) strange.push("svelte");
+    }
+    if (axis.foreignWithoutTs && tsFiles.length === 0 && jsFiles.length > 0 && !has("typescript"))
+      strange.push("JavaScript без TypeScript");
+    const chosen = axis.tool !== undefined && withTools.includes(axis.axis);
+    if (strange.length > 0 && !chosen) {
+      const what = [...new Set(strange)].join(", ");
+      rows.push({ axis: axis.axis, state: "чужое", note: what });
+      foreign.push({ axis: axis.axis, what, tool: axis.tool ?? null });
+      continue;
+    }
+    if (axis.uiOnly && !hasUi) {
+      rows.push({ axis: axis.axis, state: "без предмета", note: "интерфейса нет" });
+      continue;
+    }
+    if (axis.onlyWithFiles !== undefined) {
+      const subject = files.some((f) => axis.onlyWithFiles.some((e) => f.endsWith("." + e)));
+      if (!subject && !axis.ours.some(has)) {
+        rows.push({ axis: axis.axis, state: "без предмета", note: "файлов нет" });
+        continue;
+      }
+    }
+    const moves = [];
+    const notes = [];
+    for (const name of axis.ours) {
+      const want = verified[name];
+      if (want === undefined || unwanted.has(name)) continue;
+      const alt = (alternatives[name] ?? []).find(has);
+      if (alt !== undefined) {
+        notes.push(alt + " — объявленная замена " + name);
+        continue;
+      }
+      const declared = own[name];
+      // Пакет одноранговый — его ставит потребитель, а не проект.
+      if (declared === undefined && peer[name] !== undefined) continue;
+      if (declared === want) continue;
+      const section =
+        m.dependencies?.[name] !== undefined || (declared === undefined && (name === "react" || name === "react-dom"))
+          ? "dependencies"
+          : "devDependencies";
+      plan.push({ name, from: declared ?? null, to: want, section });
+      moves.push(declared === undefined ? name + " — нет" : name + " " + declared + " → " + want);
+    }
+    rows.push(
+      moves.length === 0
+        ? { axis: axis.axis, state: "наше", note: [...notes, "версии связки"].join("; ") }
+        : { axis: axis.axis, state: "наше, не по связке", note: [...moves, ...notes].join("; ") },
+    );
+  }
+  const scripts = [];
+  for (const axis of axes)
+    if (axis.tool !== undefined && withTools.includes(axis.axis)) scripts.push(axis.tool);
+  return {
+    verdict: foreign.length > 0 ? "чужое" : plan.length > 0 ? "наше, неполное" : "наше",
+    rows,
+    foreign,
+    plan,
+    scripts,
+  };
+};
+
+/** План осмотра — в манифест и одной установкой. Упала установка —
+ * манифест и блокировка возвращаются как были, и ответ называет конец
+ * вывода. Скрипт звена оси, заменённой своей, ставится семенным, а прежний
+ * проектный остаётся рядом под именем `<звено>:own`. */
+export const stackApply = (root, survey, seedScripts, run = runTool) => {
+  const manifestAt = path.join(root, "package.json");
+  // Ставит менеджер, чью блокировку держит проект: чужая команда кладёт
+  // вторую блокировку рядом, и какая в силе, решает тот, кто ставит.
+  const [manager, lockName] = [
+    ["pnpm", "pnpm-lock.yaml"],
+    ["yarn", "yarn.lock"],
+    ["bun", "bun.lock"],
+    ["bun", "bun.lockb"],
+  ].find(([, lock]) => existsSync(path.join(root, lock))) ?? ["npm", "package-lock.json"];
+  const lockAt = path.join(root, lockName);
+  const before = readFileSync(manifestAt, "utf8");
+  const lockBefore = existsSync(lockAt) ? readFileSync(lockAt, "utf8") : null;
+  const m = JSON.parse(before);
+  for (const one of survey.plan) {
+    for (const section of ["dependencies", "devDependencies"])
+      if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
+    m[one.section] = { ...(m[one.section] ?? {}), [one.name]: one.to };
+    m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  }
+  for (const name of survey.scripts ?? []) {
+    const seed = seedScripts[name];
+    if (seed === undefined) continue;
+    m.scripts = m.scripts ?? {};
+    if (m.scripts[name] !== undefined && m.scripts[name] !== seed) m.scripts[name + ":own"] = m.scripts[name];
+    m.scripts[name] = seed;
+  }
+  writeFileSync(manifestAt, JSON.stringify(m, null, 2) + "\n");
+  const done = run(manager, manager === "npm" ? ["install", "--no-audit", "--no-fund", "--loglevel=error"] : ["install"], {
+    cwd: root,
+  });
+  if (done.status === 0) return { ok: true };
+  writeFileSync(manifestAt, before);
+  if (lockBefore !== null) writeFileSync(lockAt, lockBefore);
+  return {
+    ok: false,
+    tail: String(done.stdout + done.stderr).trim().split("\n").slice(-12),
+  };
+};
+
 /** Песочница прогона под номером, занятая атомарно: два запуска одного режима
  * в одну миллисекунду стирали друг другу папку посреди работы. Занятый номер
  * обходится, чужая папка не стирается. */
@@ -801,7 +981,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
   writeFileSync(marker, norm(shelf) + "\n");
   git("add", "-A");
-  git("commit", "-qm", "seat");
+  git("commit", "-qm", "chore: seat the harness");
   const base = git("rev-parse", "HEAD");
   const configAt = path.join(target, ".context", "graph.config.mjs");
   writeFileSync(
@@ -810,7 +990,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
       .replace(/^ {2}barSince: null,/m, '  barSince: "' + base + '",')
       .replace(/^ {2}seriesSince: null,/m, '  seriesSince: "' + base + '",'),
   );
-  git("commit", "-qam", "barSince, seriesSince");
+  git("commit", "-qam", "chore: record the seating base of the bar and the series");
   git("config", "core.hooksPath", ".claude/hooks/git");
   if (keep !== null) rmSync(keep, { recursive: true, force: true });
   const verify = runTool(process.execPath, [tool, "verify"], { cwd: target, env });
@@ -890,6 +1070,14 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
     "  - Скиллы /task, /probe, /bar-probe, /audit, /handoff эта сессия не увидит:",
     "    перечень собирается на старте. Нужен перезапуск в папке проекта.",
   );
+  // Свежая машина: git стоит, а имени нет. Посадка коммитит от имени seat,
+  // а первый свой коммит человека упал бы. Выведено посадкой с голой машины.
+  if (identity.length > 0)
+    say(
+      "  - git не знает, кто вы: коммиты посадки сделаны от имени seat <seat@local>.",
+      '    Своим коммитам нужно имя: git config --global user.name "Имя" и',
+      '    git config --global user.email "почта".',
+    );
   if (kind.kind === "шаблон")
     say(
       "  - Версии шаблона заменены проверенными: TypeScript — " +
@@ -1070,7 +1258,7 @@ export const runSeat = ({ toolDir, argv }) => {
     git("init", "-q");
     writeFileSync(marker, norm(shelf) + "\n");
     git("add", "-A");
-    git("commit", "-qm", "seat");
+    git("commit", "-qm", "chore: seat the harness");
     const base = git("rev-parse", "HEAD");
     const configAt = path.join(target, ".context", "graph.config.mjs");
     const config = readFileSync(configAt, "utf8");
@@ -1088,7 +1276,7 @@ export const runSeat = ({ toolDir, argv }) => {
         .replace(/^ {2}barSince: null,/m, '  barSince: "' + base + '",')
         .replace(/^ {2}seriesSince: null,/m, '  seriesSince: "' + base + '",'),
     );
-    git("commit", "-qam", "barSince, seriesSince");
+    git("commit", "-qam", "chore: record the seating base of the bar and the series");
     // Ворота ставятся последними: оба коммита посадки — её собственные, и
     // своду в них судить нечего.
     git("config", "core.hooksPath", ".claude/hooks/git");

@@ -160,6 +160,9 @@ import {
   ENV_BOOTSTRAP,
   layShelf,
   lintBlockersOf,
+  projectFilesOf,
+  stackApply,
+  stackSurveyOf,
   runSeat,
   sandboxManifests,
   sandboxPackages,
@@ -780,6 +783,91 @@ if (mode === "env") {
       );
     }
   }
+  // Осмотр окружения проекта по осям карты посадки: наше, наше неполное,
+  // чужое. План — точные версии связки, вверх и вниз; ставит его `--apply`
+  // по слову разработчика. Чужое не останавливает посадку, а называется.
+  // Решено разработчиком `2026-10-27`.
+  if (projectAt !== null && low.length === 0) {
+    const root = path.resolve(projectAt);
+    const mapAt = path.join(here, "..", "seat", "map.json");
+    const seatMap = existsSync(mapAt) ? readJson(mapAt, {}) : {};
+    const axes = seatMap.stackAxes ?? [];
+    const withArg = process.argv.find((a) => a.startsWith("--with="));
+    const withTools = withArg === undefined ? [] : withArg.slice(7).split(",").map((x) => x.trim());
+    // Версии — те, что посадка ставит в пустую папку: на них обвязка проверена.
+    const seedPkg = readJson(path.join(here, "..", "seat", "templates", "package.json"), {});
+    const survey = stackSurveyOf({
+      manifest: existsSync(path.join(root, "package.json"))
+        ? readJson(path.join(root, "package.json"), {})
+        : null,
+      files: projectFilesOf(root),
+      axes,
+      verified: { ...seedPkg.dependencies, ...seedPkg.devDependencies },
+      withTools,
+      ui: seatMap.platformPackages?.ui ?? [],
+      alternatives: seatMap.platformPackages?.alternatives ?? {},
+    });
+    console.log("=== Окружение проекта: " + survey.verdict + " ===");
+    for (const r of survey.rows)
+      console.log("  " + r.axis + " — " + r.state + (r.note ? ": " + r.note : ""));
+    if (survey.verdict === "пусто")
+      console.log("  Папка пуста: посадка ставит всё сама — `node .claude/tools/graph.mjs seat .`.");
+    if (survey.foreign.length > 0) {
+      console.log("=== Окружение чужое (предупреждение) ===");
+      console.log(
+        "  Обвязка рассчитана на своё окружение: npm, TypeScript, React, Vite, Vitest, ESLint, Prettier, Stryker.",
+      );
+      for (const f of survey.foreign) console.log("  " + f.axis + ": " + f.what);
+      console.log(
+        "  В настройку проекта: foreignAxes: " +
+          JSON.stringify(survey.foreign.map((f) => f.axis)) +
+          " — сверки чужих осей печатаются секцией «Чужое окружение — не проверено».",
+      );
+      console.log(
+        "  Посадка и переход не остановятся, но всё, что держится этими осями, не гарантировано:",
+      );
+      console.log("  звенья чужой оси не подгоняют: что не встало, называется в отчёте посадки.");
+      const tools = survey.foreign.filter((f) => f.tool !== null).map((f) => f.axis);
+      if (tools.length > 0)
+        console.log(
+          "  Поставить своё вместо чужого инструмента — по слову разработчика: `--apply --with=" +
+            tools.join(",") +
+            "`; прежний скрипт останется под именем `<звено>:own`.",
+        );
+    }
+    if (survey.plan.length > 0 && !process.argv.includes("--apply")) {
+      console.log("=== План: привести стек к проверенной связке ===");
+      for (const one of survey.plan)
+        console.log(
+          "  " + one.name + ": " + (one.from === null ? "нет" : one.from) + " → " + one.to,
+        );
+      console.log(
+        "  Поставить — одним вопросом разработчику, затем: node .claude/tools/graph.mjs env " +
+          projectAt +
+          " --apply" +
+          (withTools.length ? " --with=" + withTools.join(",") : ""),
+      );
+    }
+    if (process.argv.includes("--apply") && (survey.plan.length > 0 || survey.scripts.length > 0)) {
+      const done = stackApply(root, survey, seedPkg.scripts ?? {});
+      console.log("=== Стек приведён к связке: " + (done.ok ? "да" : "нет") + " ===");
+      if (!done.ok) {
+        console.log("  установка упала; манифест и блокировка возвращены как были:");
+        for (const line of done.tail) console.log("    " + line);
+        process.exit(1);
+      }
+      console.log("  пакетов: " + survey.plan.length + ", скриптов звеньев: " + survey.scripts.length);
+      const scripts = readJson(path.join(root, "package.json"), {}).scripts ?? {};
+      for (const name of ["build", "typecheck"]) {
+        if (scripts[name] === undefined) continue;
+        const run = runTool("npm", ["run", name], { cwd: root });
+        console.log("  npm run " + name + ": код " + run.status);
+        if (run.status !== 0)
+          for (const line of String(run.stdout + run.stderr).trim().split("\n").slice(-8))
+            console.log("    " + line);
+      }
+    }
+  }
   if (low.length === 0) {
     console.log("  годится: сажать можно");
     process.exit(0);
@@ -928,6 +1016,7 @@ const SCALAR = {
   foreignNames: "список",
   baselineSections: "список",
   starBarrels: "список",
+  foreignAxes: "список",
   smokeScope: "список",
   corpusOutside: "список",
   componentsAt: "список",
@@ -3902,6 +3991,10 @@ const projectHasUi = () =>
       (/\.[jt]sx$/.test(f) ||
         /\bfrom\s+["']react(?:\/[\w-]+)?["']/.test(readFileSync(f, "utf8"))),
   );
+/** Интерфейс на чужом фреймворке — файлы `.vue` и `.svelte`: пакеты
+ * сборщика ему нужны, а React-помощники — нет. Выведено девятой посадкой. */
+const projectHasForeignUi = () =>
+  projectFilesOf(REPO_AT).some((f) => /\.(?:vue|svelte)$/.test(f));
 /** Словарь условий `onlyWith` из карты посадки: условие → выполнено ли оно у
  * проекта. Семя с условием кладётся только при его предмете; объяснение
  * словаря — в самой карте, полем `_onlyWith`. */
@@ -5601,6 +5694,23 @@ const heldByWaitingSeeds = () => {
   );
 };
 
+/** Чужие оси окружения: проект объявил их полем `foreignAxes`, карта
+ * посадки связала с осью сверки (`stackAxes`, поле `checks`). Их находки
+ * прогон не роняет: обвязку под чужое окружение не подгоняют. Решено
+ * разработчиком `2026-10-27`. */
+const foreignAxesHeld = () => {
+  const foreign = CONFIG.foreignAxes ?? [];
+  if (foreign.length === 0) return [];
+  const mapAt = shelfAt("seat/map.json");
+  const axes =
+    mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
+  return foreign.map((name) => ({
+    axis: name,
+    known: axes.some((a) => a.axis === name),
+    checks: axes.find((a) => a.axis === name)?.checks ?? [],
+  }));
+};
+
 /** Баннер перехода. Печатается ПЕРВОЙ строкой каждого прогона и своим
  * режимом — из него же его зовёт хук среды при правке файлов проекта.
  *
@@ -6181,6 +6291,7 @@ const CHECK_SECTIONS = [
   "Форма отчёта посадки без слов обвязки",
   "Вопросы записаны по форме",
   "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
+  "Чужое окружение — не проверено (предупреждение, прогон не роняет)",
   "Шаги сверок исполнились",
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
@@ -7424,10 +7535,6 @@ if (mode === "handoff") {
       ? null
       : named.map(([n, v]) => n + " " + v).join(", ");
   })();
-  const envLine =
-    envNeeds === null
-      ? "Версии среды объявлены настройкой обвязки, полем проверенной связки."
-      : "**Не ниже проверенной связки: " + envNeeds + ".**";
   writeFileSync(
     path.join(root, "ЧИТАТЬ-ПЕРВЫМ.md"),
     [
@@ -7440,11 +7547,11 @@ if (mode === "handoff") {
       "",
       "## Что нужно на машине",
       "",
-      envLine,
-      "",
-      "Ниже этого установка пакетов падает собственной ошибкой менеджера, где",
-      "про версию нет ни слова, и посадка встаёт на ровном месте. Проверить:",
-      "`node --version`, `npm --version`.",
+      "Ничего ставить заранее не нужно. Проверенная связка среды — " +
+        (envNeeds ?? "в настройке обвязки") +
+        ": нет Node.js, git или они ниже связки — ассистент поставит их сам,",
+      "без прав администратора, загрузчиком `.claude/seat/bootstrap.sh`, и",
+      "скажет одной строкой, что и куда ставит и как откатить.",
       "",
       "## Что сделать",
       "",
@@ -20689,8 +20796,28 @@ if (mode === "verify") {
     return new Set([
       ...(seatingIsUp() ? [...SOFT_WHILE_SEATING, ...heldByWaitingSeeds()] : []),
       ...heldByOpenSteps(),
+      ...foreignAxesHeld().flatMap((one) => one.checks),
     ]);
   }
+  checkStep(() => {
+    checkHead("Чужое окружение — не проверено (предупреждение, прогон не роняет)", () => ({
+      n: foreignAxesHeld().length,
+      unit: "осей окружения, объявленных чужими",
+    }));
+    const held = foreignAxesHeld();
+    console.log("  не проверено: " + held.length);
+    for (const one of held)
+      console.log(
+        one.known
+          ? "    " +
+              one.axis +
+              " — чужое окружение: держимое этой осью не гарантировано" +
+              (one.checks.length > 0
+                ? "; находки сверок " + one.checks.map((c) => "«" + c + "»").join(", ") + " прогон не роняет"
+                : "")
+          : "    " + one.axis + " — такой оси в карте посадки нет (`seat/map.json`, поле `stackAxes`)",
+      );
+  });
   const printedRed = () => printedIsRed(SAID, WARNING, softNow());
   const MAP = CONFIG.map;
   const TESTS = CONFIG.tests;
@@ -25230,6 +25357,13 @@ if (mode === "verify") {
           // конфига: всё включённое в нём, что строже умолчания.
           const strictGap = [];
           let strictLooked = 0;
+          const rootTs = readdirSync(REPO, { withFileTypes: true })
+            .filter((e) => e.isFile() && /\.(?:[cm]?ts|tsx)$/.test(e.name) && !e.name.endsWith(".d.ts"))
+            .map((e) => path.join(REPO, e.name));
+          const compilerSeesAny = (got) =>
+            got.fileNames != null
+              ? got.fileNames.length > 0
+              : [...files, ...rootTs].some((f) => compilerSees(got, f));
           if (linkHasSubject("typecheck")) {
             const seedTs = shelfAt("seat/templates/tsconfig.json");
             const seedOpts =
@@ -25248,7 +25382,9 @@ if (mode === "verify") {
               // Строгая копия поверх файла-решения наследует его `files: []`:
               // строгость на месте, а звено не видит ни одного файла и
               // пропускает посаженную ошибку кодом 0. Выведено восьмой посадкой.
-              if (files.length > 0 && !files.some((f) => compilerSees(got, f)))
+              // Ссылка на одни корневые конфиги — `tsconfig.node.json` —
+              // видит их, и она не слепа: выведено девятой посадкой.
+              if (files.length > 0 && !compilerSeesAny(got))
                 strictGap.push(
                   path.relative(REPO, got.at).split(path.sep).join("/") +
                     " — звено типов проверяет по нему ноль файлов: у файла-решения строгость ложится копией каждой ссылки (`seat/seat.md`, шаг 1-бис)",
@@ -32506,11 +32642,11 @@ if (mode === "verify") {
           ? (readJson(mapAt, {}).platformPackages?.ui ?? [])
           : [];
       alternativesDeclared += ui.length;
-      if (!projectHasUi())
+      if (!projectHasUi() && !projectHasForeignUi())
         for (const one of ui.filter((n) => held.has(n)))
           secondAnswers.push(
             one +
-              " — пакет интерфейса, а интерфейса у проекта нет: ни файла `.tsx` либо `.jsx`, ни импорта React. Снять: проекту без интерфейса слияние его не дописывает (`seat/seat.md`, шаг 1-бис)",
+              " — пакет интерфейса, а интерфейса у проекта нет: ни файла `.tsx`, `.jsx`, `.vue` либо `.svelte`, ни импорта React. Снять: проекту без интерфейса слияние его не дописывает (`seat/seat.md`, шаг 1-бис)",
           );
       for (const [one, others] of Object.entries(alternatives)) {
         alternativesDeclared += 1;

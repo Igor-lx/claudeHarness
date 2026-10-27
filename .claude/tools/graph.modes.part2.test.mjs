@@ -5296,6 +5296,19 @@ describe("решение, названное после `tsc -b`", () => {
       pkg.scripts.typecheck = "tsc -p tsconfig.app.json --noEmit";
       fs.writeFileSync(at("package.json"), JSON.stringify(pkg, null, 2) + "\n");
       expect(said()).toBe("");
+      // A reference that holds only the root bundler config sees a file: not blind.
+      json("tsconfig.node.json", { compilerOptions: seed.compilerOptions, include: ["vite.config.ts"] });
+      json("tsconfig.node.strict.json", { extends: "./tsconfig.node.json" });
+      json("tsconfig.app.strict.json", { extends: "./tsconfig.app.json" });
+      json("tsconfig.strict.json", {
+        files: [],
+        references: [{ path: "./tsconfig.app.strict.json" }, { path: "./tsconfig.node.strict.json" }],
+      });
+      pkg.scripts.typecheck = "tsc -b tsconfig.strict.json";
+      fs.writeFileSync(at("package.json"), JSON.stringify(pkg, null, 2) + "\n");
+      expect(said()).toBe("");
+      json("tsconfig.node.json", { compilerOptions: seed.compilerOptions, include: ["tools/*.ts"] });
+      expect(said()).toContain("tsconfig.node.strict.json — звено типов проверяет по нему ноль файлов");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -5945,6 +5958,10 @@ describe("предмет под другим именем и форматом", 
       fs.rmSync(path.join(box, "src", "app", "zzHook.ts"));
       put(box, "src/app/ZzBadge.tsx", "export function ZzBadge() {\n  return <b>zz</b>;\n}\n");
       expect(said("Пакет платформы не второй ответ")).toBe("");
+      // A Vue single-file component is an interface too: the bundler is needed.
+      fs.rmSync(path.join(box, "src", "app", "ZzBadge.tsx"));
+      put(box, "src/app/ZzBadge.vue", "<template><b>zz</b></template>\n");
+      expect(said("Пакет платформы не второй ответ")).toBe("");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -6078,6 +6095,49 @@ describe("своё проекта в смешанной папке обвязк�
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
       fs.rmSync(out, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/** Чужое окружение: оси, объявленные чужими полем `foreignAxes`, печатаются
+ * секцией-предупреждением, а сверки, которые карта посадки связала с осью,
+ * прогон не роняют. Решено разработчиком `2026-10-27`. */
+describe("чужое окружение — не проверено", () => {
+  it("ось названа секцией, сверка оси прогон не роняет, незнакомое имя оси названо", () => {
+    const box = seatEmpty("foreign-axes-");
+    try {
+      const head = "Чужое окружение — не проверено (предупреждение, прогон не роняет)";
+      const redCount = () => {
+        const out = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+          cwd: box,
+          encoding: "utf8",
+          // The brief output carries the count; the test setup asks for the full one.
+          env: { ...process.env, GRAPH_VERIFY_FULL: "" },
+        }).stdout;
+        const count = /с находками: (\d+)/.exec(out)?.[1];
+        expect(count, out).toBeDefined();
+        return Number(count);
+      };
+      expect(verifyIn(box).get(head)).toBeUndefined();
+      const mapAt = path.join(box, ".claude", "seat", "map.json");
+      const map = fs.readFileSync(mapAt, "utf8");
+      expect(map).toContain('"checks": ["Звену цепочки есть на чём работать"]');
+      fs.writeFileSync(mapAt, map.replace('"checks": ["Звену цепочки есть на чём работать"]', '"checks": ["Покрытие карты"]'));
+      fs.mkdirSync(path.join(box, "src", "shared", "zz"), { recursive: true });
+      fs.writeFileSync(path.join(box, "src", "shared", "zz", "zzOwn.ts"), "export const zzOwn = 2;\n");
+      const before = redCount();
+      const configAt = path.join(box, ".context", "graph.config.mjs");
+      const config = fs.readFileSync(configAt, "utf8");
+      expect(config).toContain("  foreignAxes: [],");
+      fs.writeFileSync(configAt, config.replace("  foreignAxes: [],", '  foreignAxes: ["фреймворк", "zzось"],'));
+      expect(redCount()).toBe(before - 1);
+      expect(verifyIn(box).get(head)).toEqual([
+        "фреймворк — чужое окружение: держимое этой осью не гарантировано; находки сверок «Покрытие карты» прогон не роняет",
+        "zzось — такой оси в карте посадки нет (`seat/map.json`, поле `stackAxes`)",
+      ]);
+      expect(verifyIn(box).get("Покрытие карты")?.join("\n")).toContain("zzOwn.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
 });
