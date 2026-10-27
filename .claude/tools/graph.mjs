@@ -3991,10 +3991,44 @@ const projectHasUi = () =>
       (/\.[jt]sx$/.test(f) ||
         /\bfrom\s+["']react(?:\/[\w-]+)?["']/.test(readFileSync(f, "utf8"))),
   );
-/** Интерфейс на чужом фреймворке — файлы `.vue` и `.svelte`: пакеты
- * сборщика ему нужны, а React-помощники — нет. Выведено девятой посадкой. */
-const projectHasForeignUi = () =>
-  projectFilesOf(REPO_AT).some((f) => /\.(?:vue|svelte)$/.test(f));
+/** Файлы кода, которых инструмент не читает: расширения — поле `codeFiles`
+ * оси фреймворка в карте посадки. База, граф и сверки о них молчат, и
+ * зелёный итог без их счёта выдавал бы непрочитанное за прочитанное.
+ * Выведено девятой посадкой — Vue-проект. */
+const unreadCodeFiles = (() => {
+  let memo = null;
+  return () => {
+    if (memo !== null) return memo;
+    const mapAt = shelfAt("seat/map.json");
+    const axes =
+      mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
+    const exts = axes.flatMap((a) => a.codeFiles ?? []);
+    memo = projectFilesOf(REPO_AT)
+      .filter((f) => exts.some((one) => f.endsWith("." + one)))
+      .sort();
+    return memo;
+  };
+})();
+/** Непрочитанное по расширениям: «.vue — 2: App.vue, …». */
+const unreadByKind = () => {
+  const groups = new Map();
+  for (const f of unreadCodeFiles()) {
+    const kind = f.slice(f.lastIndexOf("."));
+    groups.set(kind, [...(groups.get(kind) ?? []), f]);
+  }
+  return [...groups].map(
+    ([kind, list]) =>
+      kind +
+      " — " +
+      list.length +
+      ": " +
+      list.slice(0, 10).join(", ") +
+      (list.length > 10 ? " и ещё " + (list.length - 10) : ""),
+  );
+};
+/** Интерфейс на чужом фреймворке: пакеты сборщика ему нужны, а
+ * React-помощники — нет. */
+const projectHasForeignUi = () => unreadCodeFiles().length > 0;
 /** Словарь условий `onlyWith` из карты посадки: условие → выполнено ли оно у
  * проекта. Семя с условием кладётся только при его предмете; объяснение
  * словаря — в самой карте, полем `_onlyWith`. */
@@ -5790,6 +5824,14 @@ const printTransition = () => {
     console.log("  собрано, и в файле остаётся только долг перехода.");
     console.log("");
   }
+  if (unreadCodeFiles().length > 0) {
+    banner("ПЕРЕХОД НЕ ВИДИТ ЧАСТЬ КОДА");
+    console.log("  Обвязка не читает " + unreadCodeFiles().length + " файлов кода проекта:");
+    for (const line of unreadByKind()) console.log("  " + line);
+    console.log("  Переход их не описывает и не меряет: база, граф и сверки о них");
+    console.log("  молчат. Закрытый переход значит «прочитано всё, кроме них».");
+    console.log("");
+  }
   if (debt.length) {
     banner("ДОЛГ ПЕРЕХОДА");
     for (const row of debt) console.log("  " + debtLine(row));
@@ -6292,6 +6334,7 @@ const CHECK_SECTIONS = [
   "Вопросы записаны по форме",
   "Вопросы разработчику без ответа (предупреждение, прогон не роняет)",
   "Чужое окружение — не проверено (предупреждение, прогон не роняет)",
+  "Код, который обвязка не читает (предупреждение, прогон не роняет)",
   "Шаги сверок исполнились",
   "Каждая сверка называет свой корпус",
   "Файл, написанный обвязкой, читается",
@@ -18627,6 +18670,15 @@ if (mode === "bar") {
         ", правлено после печати: " +
         tally.правлен.length,
     );
+    // Протоколы судят только прочитанное: код чужого фреймворка в предметы не
+    // входит, и «чисто» приложения о нём не говорит.
+    if (unreadCodeFiles().length > 0)
+      console.log(
+        "  не прочитано обвязкой, протоколы о них молчат: " +
+          unreadCodeFiles().length +
+          " — " +
+          unreadByKind().join("; "),
+      );
     if (orphans.length)
       console.log("  снято протоколов о предметах, которых нет: " + orphans.join(", "));
     for (const { s, r } of tally.напечатан.slice(0, 20))
@@ -20817,6 +20869,15 @@ if (mode === "verify") {
                 : "")
           : "    " + one.axis + " — такой оси в карте посадки нет (`seat/map.json`, поле `stackAxes`)",
       );
+  });
+  checkStep(() => {
+    checkHead("Код, который обвязка не читает (предупреждение, прогон не роняет)", () => ({
+      n: unreadCodeFiles().length,
+      unit: "файлов кода чужого фреймворка",
+    }));
+    console.log("  не прочитано: " + unreadCodeFiles().length);
+    for (const line of unreadByKind())
+      console.log("    " + line + " — база, граф и сверки о них молчат");
   });
   const printedRed = () => printedIsRed(SAID, WARNING, softNow());
   const MAP = CONFIG.map;

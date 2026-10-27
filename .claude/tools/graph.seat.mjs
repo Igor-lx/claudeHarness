@@ -241,16 +241,16 @@ export const stackSurveyOf = ({
   const ext = (re) => files.filter((f) => re.test(f) && !/\.d\.ts$/.test(f));
   const tsFiles = ext(/\.(?:ts|tsx|mts|cts)$/);
   const jsFiles = ext(/\.(?:js|jsx|mjs|cjs)$/).filter((f) => !/(?:^|\/)[^/]*\.config\.[cm]?js$/.test(f));
-  const code = [...tsFiles, ...jsFiles, ...ext(/\.(?:vue|svelte)$/)];
+  const framework = axes.find((a) => a.axis === "фреймворк") ?? { ours: [] };
+  const isForeignCode = (f) => (framework.codeFiles ?? []).some((one) => f.endsWith("." + one));
+  const code = [...tsFiles, ...jsFiles, ...files.filter(isForeignCode)];
   if (manifest === null && code.length === 0)
     return { verdict: "пусто", rows: [], foreign: [], plan: [], scripts: [] };
   const m = manifest ?? {};
   const own = { ...(m.dependencies ?? {}), ...(m.devDependencies ?? {}) };
   const peer = m.peerDependencies ?? {};
   const has = (name) => own[name] !== undefined || peer[name] !== undefined;
-  const framework = axes.find((a) => a.axis === "фреймворк") ?? { ours: [] };
-  const foreignUi =
-    files.some((f) => /\.(?:vue|svelte)$/.test(f)) || (framework.foreignPackages ?? []).some(has);
+  const foreignUi = files.some(isForeignCode) || (framework.foreignPackages ?? []).some(has);
   const hasUi = files.some((f) => /\.(?:tsx|jsx)$/.test(f)) || has("react") || foreignUi;
   // Пакеты нашего фреймворка не ставятся проекту без интерфейса и проекту
   // на чужом фреймворке: React рядом с Vue — второй ответ на тот же вопрос.
@@ -270,10 +270,8 @@ export const stackSurveyOf = ({
         (one) => String(m.packageManager ?? "").split("@")[0] === one,
       ),
     ];
-    if (axis.axis === "фреймворк") {
-      if (files.some((f) => f.endsWith(".vue"))) strange.push("vue");
-      if (files.some((f) => f.endsWith(".svelte"))) strange.push("svelte");
-    }
+    for (const one of axis.codeFiles ?? [])
+      if (files.some((f) => f.endsWith("." + one))) strange.push(one);
     if (axis.foreignWithoutTs && tsFiles.length === 0 && jsFiles.length > 0 && !has("typescript"))
       strange.push("JavaScript без TypeScript");
     const chosen = axis.tool !== undefined && withTools.includes(axis.axis);

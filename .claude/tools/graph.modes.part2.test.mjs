@@ -6103,6 +6103,38 @@ describe("своё проекта в смешанной папке обвязк�
  * секцией-предупреждением, а сверки, которые карта посадки связала с осью,
  * прогон не роняют. Решено разработчиком `2026-10-27`. */
 describe("чужое окружение — не проверено", () => {
+  it("код чужого фреймворка назван непрочитанным: секцией прогона и баннером перехода", () => {
+    const box = seatEmpty("unread-code-");
+    try {
+      const head = "Код, который обвязка не читает (предупреждение, прогон не роняет)";
+      const run = () =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+          cwd: box,
+          encoding: "utf8",
+        }).stdout;
+      expect(verifyIn(box).get(head)).toBeUndefined();
+      fs.writeFileSync(path.join(box, "src", "app", "ZzBadge.vue"), "<template><b>zz</b></template>\n");
+      fs.mkdirSync(path.join(box, "src", "shared", "zz"), { recursive: true });
+      fs.writeFileSync(path.join(box, "src", "shared", "zz", "ZzDot.svelte"), "<b>zz</b>\n");
+      expect(verifyIn(box).get(head)).toEqual([
+        ".vue — 1: src/app/ZzBadge.vue — база, граф и сверки о них молчат",
+        ".svelte — 1: src/shared/zz/ZzDot.svelte — база, граф и сверки о них молчат",
+      ]);
+      expect(run()).not.toContain("ПЕРЕХОД НЕ ВИДИТ ЧАСТЬ КОДА");
+      withTransitionDebt(box, []);
+      const out = run();
+      expect(out).toContain("ПЕРЕХОД НЕ ВИДИТ ЧАСТЬ КОДА");
+      expect(out).toContain("Обвязка не читает 2 файлов кода проекта:");
+      const bar = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar", "--transition"], {
+        cwd: box,
+        encoding: "utf8",
+      }).stdout;
+      expect(bar).toContain("не прочитано обвязкой, протоколы о них молчат: 2 — .vue — 1: src/app/ZzBadge.vue; .svelte — 1");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("ось названа секцией, сверка оси прогон не роняет, незнакомое имя оси названо", () => {
     const box = seatEmpty("foreign-axes-");
     try {
