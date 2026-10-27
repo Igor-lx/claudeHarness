@@ -144,6 +144,8 @@ import {
   COMPILER_CONFIG,
   RUNNER_DEFAULT_INCLUDE,
   globMatcher,
+  jestCollects,
+  jestConfigLoad,
   lintOffWritten,
   parseJsonc,
   runnerConfigLoad,
@@ -1389,12 +1391,18 @@ const ROOT = (() => {
  * `main.tsx` запись о нём принимала сверка покрытия карты, а не своя.
  * `{конфиг типов}` — первый конфиг, по которому звено типов реально
  * проверяет код: в монорепозитории и в раскладке со ссылками это не конфиг
- * корня.
+ * корня; у строгого конфига, продолжающего проектный, — тот, где записана
+ * область.
  * `{решения}`, `{настройки}`, `{документы настроек}` — папки из полей `adr` и
  * `configDocs`: рецепт сверки, чей предмет задан полем, кладёт поломку туда,
  * куда смотрит сверка этого проекта. При пустом поле рецепт не исполняется:
  * режим относит его к беспредметным. Умолчание — форма поля, названная в
  * семени настройки.
+ * `{менеджер}` — менеджер пакетов проекта: связку, зовущую `npm run` у
+ * проекта на `pnpm`, сверки не читают. `{папка кода}` — папка `{файл кода}`:
+ * папка с кодом, а не корень `src`, которого у проекта может не быть.
+ * Выведено седьмой посадкой: монорепозиторий без `src/` в корне и приложение
+ * на `pnpm` — `18` рецептов ложились мимо деревьев, `2` мимо связки.
  * `{заголовок изоляции}` — поле `isolationHeading`, `{скрипт lint}` — тело
  * скрипта `lint` манифеста так, как оно записано в файле: рецепт ветки про
  * заданное поле и рецепт скрипта звена ломают то, что держит этот проект.
@@ -1412,6 +1420,8 @@ const recipeVars = (fresh) => {
     "{план перехода}": ".context/15-transition.md",
     "{заголовок изоляции}": "",
     "{скрипт lint}": "eslint .",
+    "{менеджер}": "npm",
+    "{папка кода}": "app",
   };
   if (fresh) return seat;
   const repo = norm(path.join(BASE, ".."));
@@ -1443,7 +1453,19 @@ const recipeVars = (fresh) => {
     "{файл кода}": single[0] ?? seat["{файл кода}"],
     "{конфиг типов}": (() => {
       const first = typeCheckConfigs()[0];
-      return first === undefined ? seat["{конфиг типов}"] : fromRepo(first.at);
+      if (first === undefined) return seat["{конфиг типов}"];
+      // Область пишет тот конфиг цепочки `extends`, где она названа:
+      // строгий конфиг звена её наследует и своей не несёт.
+      let at = first.at;
+      for (let hop = 0; hop < 8; hop++) {
+        const raw = parseJsonc(readFileSync(at, "utf8")) ?? {};
+        if (raw.include != null || raw.files != null) break;
+        if (typeof raw.extends !== "string") break;
+        const next = path.resolve(path.dirname(at), raw.extends);
+        if (!existsSync(next)) break;
+        at = next;
+      }
+      return fromRepo(at);
     })(),
     "{решения}": fieldDir("adr", "dir", "{решения}"),
     "{настройки}": fieldDir("configDocs", "dir", "{настройки}"),
@@ -1457,6 +1479,9 @@ const recipeVars = (fresh) => {
     "{скрипт lint}": JSON.stringify(
       readJson(path.join(repo, "package.json"), {}).scripts?.lint ?? "",
     ).slice(1, -1),
+    "{менеджер}": PACKAGE_MANAGER,
+    "{папка кода}":
+      single[0] === undefined ? seat["{папка кода}"] : path.posix.dirname(single[0]),
   };
 };
 /** Имя корневого скрипта, раздающего работу пакетам, чьи одноимённые
@@ -4271,6 +4296,58 @@ const ALIASES = compilerConfigs().flatMap((got) => {
     })),
   );
 });
+/** Пакеты рабочего пространства: имя из манифеста пакета → его папка и вход.
+ * Образцы папок — поле `workspaces` манифеста корня (список либо
+ * `{ packages }`) и `pnpm-workspace.yaml`; образец понимается точной папкой
+ * либо папкой со звёздочкой на конце. Импорт пакета по имени без этого —
+ * пакет со стороны: ребро между пакетами граф не видел, и вход библиотеки
+ * читался никем не взятым. Выведено седьмой посадкой в монорепозиторий. */
+const WORKSPACE_PACKAGES = (() => {
+  const root = readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {});
+  const declared = Array.isArray(root.workspaces)
+    ? root.workspaces
+    : (root.workspaces?.packages ?? []);
+  const pnpmAt = path.join(REPO_AT, "pnpm-workspace.yaml");
+  const pnpm = existsSync(pnpmAt)
+    ? [...readFileSync(pnpmAt, "utf8").matchAll(/^\s*-\s*["']?([^"'#\s]+)["']?\s*$/gm)].map((m) => m[1])
+    : [];
+  const dirs = [...declared, ...pnpm]
+    .filter((one) => typeof one === "string" && !one.startsWith("!"))
+    .flatMap((one) => {
+      const at = path.join(REPO_AT, one.replace(/\/\*$/, ""));
+      if (!one.endsWith("/*")) return [at];
+      try {
+        return readdirSync(at, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => path.join(at, e.name));
+      } catch {
+        return [];
+      }
+    });
+  // Вход пакета: строка `exports` для «.», иначе `module`, иначе `main`.
+  const entryOf = (pkg) => {
+    const dot = typeof pkg.exports === "string" ? pkg.exports : pkg.exports?.["."];
+    const first = (v) =>
+      typeof v === "string" ? v : v != null && typeof v === "object" ? Object.values(v).map(first).find(Boolean) : undefined;
+    return first(dot) ?? pkg.module ?? pkg.main ?? null;
+  };
+  return dirs.flatMap((dir) => {
+    const pkg = readJson(path.join(dir, "package.json"), null);
+    if (typeof pkg?.name !== "string") return [];
+    const entry = entryOf(pkg);
+    return [{ name: pkg.name, dir: norm(dir), entry: entry === null ? null : norm(path.resolve(dir, entry)) }];
+  });
+})();
+/** Адрес пакета рабочего пространства, который называет `spec`: вход пакета
+ * для голого имени, путь в его папке для имени с хвостом; чужой — `null`. */
+const workspaceBaseOf = (spec) => {
+  const hit = WORKSPACE_PACKAGES.find(
+    (one) => spec === one.name || spec.startsWith(one.name + "/"),
+  );
+  if (hit === undefined) return null;
+  if (spec === hit.name) return hit.entry ?? hit.dir;
+  return norm(path.join(hit.dir, spec.slice(hit.name.length + 1)));
+};
 /** Короткий адрес, которым разрешается `spec` из файла `fromFile`: самый
  * длинный подходящий из конфигов, видящих файл; файл не видит ни один
  * конфиг — из всех. Объявить можно и `~/`, и `~/shared/`, и тогда второй
@@ -4292,8 +4369,10 @@ const resolveAmong = (fromFile, spec, known) => {
     base = norm(path.resolve(path.dirname(fromFile), spec));
   } else {
     const hit = aliasOf(fromFile, spec);
-    if (hit === undefined) return null;
-    base = norm(path.join(hit.to, spec.slice(hit.head.length)));
+    if (hit === undefined) {
+      base = workspaceBaseOf(spec);
+      if (base === null) return null;
+    } else base = norm(path.join(hit.to, spec.slice(hit.head.length)));
   }
   // Расширения перечислены ВСЕ, а не только пара машинописных: проект на
   // обычном JavaScript пишет импорт без расширения так же, и его связи
@@ -23407,14 +23486,15 @@ if (mode === "verify") {
         // скобки выше по файлу не осталось. Стрелка сравнения, закрывающая
         // скобка разметки и цитата markdown под него не подходят: первая не
         // стоит в конце строки, вторая кончается `-->`, третья начинается с
-        // `>`, а не кончается ею.
+        // `>`, а не кончается ею. Стрелка функции `=>` в конце строки
+        // засеянного конфига — код: выведено седьмой посадкой.
         {
           const rows = body.split(NEWLINE);
           let opened = false;
           let orphan = 0;
           for (const l of rows) {
             if (/^\s*(?:\/\/|#|\*|<!--)?\s*</.test(l)) opened = true;
-            if (!/[^-\s]>\s*$/.test(l)) continue;
+            if (!/[^-=\s]>\s*$/.test(l)) continue;
             if (opened) {
               opened = false;
               continue;
@@ -25053,6 +25133,34 @@ if (mode === "verify") {
                   (lost.length - 5),
               );
           }
+          // Раннер jest: та же область сбора, из поля `jest` манифеста либо
+          // файла `jest.config.*`. Прежде сверка читала один vitest и на
+          // проекте с jest печатала «осмотрено ноль» при живой области.
+          // Выведено седьмой посадкой: поле `jest` с `testMatch`.
+          {
+            const jest = jestConfigLoad(
+              REPO_AT,
+              readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}),
+            );
+            if (jest !== null) {
+              viteSeen.add(jest.name);
+              if (jest.config === null)
+                viteDrift.push(jest.name + " — область сбора jest не прочитана: " + jest.broke);
+              else if (jest.config.projects == null) {
+                const collects = jestCollects(jest.config, path.dirname(jest.at), REPO_AT);
+                const other = otherRunnerDirs();
+                const lost = files
+                  .filter((f) => TEST_SUFFIX.test(f))
+                  .filter((f) => !other.some((d) => f.startsWith(d + "/")))
+                  .filter((f) => !collects(f))
+                  .map((f) => norm(path.relative(REPO_AT, f)));
+                for (const k of lost.slice(0, 5))
+                  viteDrift.push(jest.name + " — тест проекта " + k + " вне области сбора jest: раннер его не соберёт");
+                if (lost.length > 5)
+                  viteDrift.push(jest.name + " — и ещё тестов вне области сбора jest: " + (lost.length - 5));
+              }
+            }
+          }
           checkHead("Настройка сборки знает про тесты", {
             n: viteSeen.size + viteLooked,
             unit: "настроек сборки",
@@ -26413,6 +26521,8 @@ if (mode === "verify") {
           if (/[.]config[.][cm]?[jt]s$/.test(e.name)) continue;
           outsideLooked += 1;
           if (insideRoots(at)) continue;
+          // Папка тестов поля `testDirs` объявлена наравне с деревьями.
+          if (TEST_DIRS.some((d) => at.startsWith(d + "/"))) continue;
           if (skip.has(at)) continue;
           // Файл ОБВЯЗКИ называется особо. Она везёт свой код — общий
           // помощник и подготовку прогона — и кладёт его в `src/`; проект,
@@ -26489,11 +26599,15 @@ if (mode === "verify") {
       console.log(
         "    " +
           one +
-          ". Объявленные слои: app — корень композиции, " +
-          (CONFIG.componentsAt ?? ["components"])
-            .map((one) => one + "/<Имя>")
-            .join(", ") +
-          " — узел, shared/<область> — общее",
+          ". Объявленные слои: " +
+          [
+            "app — корень композиции",
+            // `[]` — компонентов у проекта нет: слоя узлов нет и в перечне.
+            ...[CONFIG.componentsAt ?? ["components"]]
+              .filter((at) => at.length > 0)
+              .map((at) => at.map((one) => one + "/<Имя>").join(", ") + " — узел"),
+            "shared/<область> — общее",
+          ].join(", "),
       );
     if (layoutStray.length)
       console.log(

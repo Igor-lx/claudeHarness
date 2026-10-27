@@ -3239,6 +3239,18 @@ describe("долг перехода: список, держатель, отст�
       const stray = () =>
         (verifyIn(box).get("Новый узел лежит по раскладке") ?? []).join("\n");
       expect(stray()).toContain("zzThing.ts");
+      expect(stray()).toContain("components/<Имя> — узел");
+      // Проект без компонентов: слоя узлов в перечне нет вовсе, а не пустое имя.
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfgWas = fs.readFileSync(cfgAt, "utf8");
+      fs.writeFileSync(
+        cfgAt,
+        cfgWas.replace("componentsAt: null,", "componentsAt: [],"),
+      );
+      expect(stray()).toContain(
+        "Объявленные слои: app — корень композиции, shared/<область> — общее",
+      );
+      fs.writeFileSync(cfgAt, cfgWas);
       withTransitionDebt(box, [
         "| 1 | Раскладка проекта своя: код в `src/zzOwn/` | `1` | «Новый узел лежит по раскладке» | перенести `src/zzOwn/zzThing.ts` в `src/shared/own/` | `1` файл |",
         "| 2 | Проба без держателя | `1` | когда-нибудь | ничего | `0` |",
@@ -3720,6 +3732,28 @@ describe("номер записи в заголовке не счёт", () => {
   }, 180000);
 });
 
+describe("область сбора jest спрошена наравне с vitest", () => {
+  it("тест вне `testMatch` поля `jest` манифеста назван, без поля — не спрошен", () => {
+    const box = seatEmpty("jest-area-");
+    try {
+      const said = () =>
+        (verifyIn(box).get("Настройка сборки знает про тесты") ?? []).join("\n");
+      expect(said()).not.toContain("jest");
+      const at = path.join(box, "package.json");
+      const was = JSON.parse(fs.readFileSync(at, "utf8"));
+      fs.writeFileSync(
+        at,
+        JSON.stringify({ ...was, jest: { testMatch: ["<rootDir>/zzNone/**/*.test.ts"] } }, null, 2) + "\n",
+      );
+      expect(said()).toContain(
+        "package.json → jest — тест проекта src/app/tests/App.test.tsx вне области сбора jest",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("засеянный файл, которого нет, назван", () => {
   it("свежая посадка молчит, конфиг линта под другим именем назван строкой seeded", () => {
     const box = seatEmpty("seeded-gone-");
@@ -3732,6 +3766,23 @@ describe("засеянный файл, которого нет, назван", (
         path.join(box, "eslint.config.js"),
       );
       expect(said()).toContain("../eslint.config.mjs: засеянного файла нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  it("стрелка в конце строки засеянного конфига — не оборванная подсказка, хвост подсказки — она", () => {
+    const box = seatEmpty("seeded-arrow-");
+    try {
+      const config = path.join(box, "eslint.config.mjs");
+      const said = () =>
+        (verifyIn(box).get("Шаблон правил заполнен") ?? []).join("\n");
+      fs.appendFileSync(config, "\nexport const twice = (n) =>\n  n * 2;\n");
+      expect(said()).not.toContain("../eslint.config.mjs: оборванных");
+      fs.appendFileSync(config, "// the tail of a hint>\n");
+      expect(said()).toContain(
+        "../eslint.config.mjs: оборванных подсказок заготовки: 1",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

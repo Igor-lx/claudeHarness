@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,8 @@ import {
   BY_TEXT,
   RUNNER_DEFAULT_INCLUDE,
   globMatcher,
+  jestCollects,
+  jestConfigLoad,
   lintOffWritten,
   parseJsonc,
   runnerConfigLoad,
@@ -320,6 +323,51 @@ describe("служебные папки инструмента — в каждо
   });
 });
 
+describe("блокировки менеджеров — в семени исключений форматтера", () => {
+  // Форматтер разбирает блокировку `pnpm` как YAML и краснел на ней в
+  // проекте на `pnpm`: семя называло одну блокировку `npm`.
+  it("форматтер с семенем проходит мимо блокировок, без семени краснеет на них", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-locks-"));
+    try {
+      fs.writeFileSync(path.join(box, "package-lock.json"), '{"a":1}');
+      fs.writeFileSync(path.join(box, "pnpm-lock.yaml"), "lockfileVersion:   '9.0'\n");
+      const prettier = path.join(SEAT, "node_modules", "prettier", "bin", "prettier.cjs");
+      const check = () =>
+        spawnSync(process.execPath, [prettier, "--check", "."], { cwd: box, encoding: "utf8" }).status;
+      expect(check()).toBe(1);
+      fs.copyFileSync(
+        path.join(TOOL_DIR_OF_TEST, "..", "seat", "templates", ".prettierignore"),
+        path.join(box, ".prettierignore"),
+      );
+      expect(check()).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("память компилятора — в семени игнорирования git", () => {
+  // Строгий конфиг звена типов продолжает проектный с `incremental` и пишет
+  // свою память рядом с ним: файл, которого посадка не заказывала.
+  it("git с семенем не видит `*.tsbuildinfo`, без семени — видит", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-buildinfo-"));
+    try {
+      spawnSync("git", ["init", "-q"], { cwd: box });
+      fs.writeFileSync(path.join(box, "tsconfig.strict.tsbuildinfo"), "{}");
+      const ignored = () =>
+        spawnSync("git", ["check-ignore", "-q", "tsconfig.strict.tsbuildinfo"], { cwd: box }).status === 0;
+      expect(ignored()).toBe(false);
+      fs.copyFileSync(
+        path.join(TOOL_DIR_OF_TEST, "..", "seat", "templates", ".gitignore"),
+        path.join(box, ".gitignore"),
+      );
+      expect(ignored()).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("выключения линта, написанные автором", () => {
   it("кавычки любые, ключ без кавычек, массив; ноль в опциях — не выключение", () => {
     const text = [
@@ -515,5 +563,46 @@ describe("действующий конфиг раннера", () => {
         .name,
     ).toBe("vitest.config.mts");
     expect(runnerEffective([])).toBeUndefined();
+  });
+});
+
+describe("область сбора раннера jest", () => {
+  it("поле манифеста, файл JSON и файл CommonJS читаются; нет ни одного — null", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-jest-"));
+    try {
+      expect(jestConfigLoad(box, {})).toBeNull();
+      const fromField = jestConfigLoad(box, { jest: { testMatch: ["<rootDir>/a/**/*.test.js"] } });
+      expect(fromField.name).toBe("package.json → jest");
+      expect(fromField.config.testMatch).toEqual(["<rootDir>/a/**/*.test.js"]);
+      fs.writeFileSync(path.join(box, "jest.config.json"), '{ "roots": ["<rootDir>/b"] }');
+      expect(jestConfigLoad(box, { jest: {} }).config.roots).toEqual(["<rootDir>/b"]);
+      fs.writeFileSync(path.join(box, "jest.config.js"), "module.exports = { roots: ['<rootDir>/c'] };\n");
+      expect(jestConfigLoad(box, {}).config.roots).toEqual(["<rootDir>/c"]);
+      fs.rmSync(path.join(box, "jest.config.js"));
+      fs.writeFileSync(path.join(box, "jest.config.cjs"), "module.exports = async () => ({});\n");
+      const fn = jestConfigLoad(box, {});
+      expect(fn.config).toBeNull();
+      expect(fn.broke).toContain("функция");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
+  it("корни, образцы, выражение и исключения решают так же, как раннер", () => {
+    const at = (rel) => path.join(without, rel);
+    const narrow = jestCollects({ testMatch: ["<rootDir>/packages/*/test/**/*.test.js"] }, without, withPackages);
+    expect(narrow(at("packages/core/test/a.test.js"))).toBe(true);
+    expect(narrow(at("packages/core/src/a.test.js"))).toBe(false);
+    const byDefault = jestCollects({}, without, withPackages);
+    expect(byDefault(at("lib/a.test.ts"))).toBe(true);
+    expect(byDefault(at("lib/__tests__/a.ts"))).toBe(true);
+    expect(byDefault(at("lib/a.ts"))).toBe(false);
+    expect(byDefault(at("node_modules/x/a.test.js"))).toBe(false);
+    const rooted = jestCollects({ roots: ["<rootDir>/src"] }, without, withPackages);
+    expect(rooted(at("src/a.test.ts"))).toBe(true);
+    expect(rooted(at("lib/a.test.ts"))).toBe(false);
+    const regex = jestCollects({ testRegex: "/spec/.*\\.js$" }, without, withPackages);
+    expect(regex(at("spec/a.js"))).toBe(true);
+    expect(regex(at("lib/a.test.js"))).toBe(false);
   });
 });

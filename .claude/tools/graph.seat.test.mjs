@@ -14,6 +14,7 @@ import {
   testCountsOf,
   tiersFrom,
   withoutFrameRows,
+  sandboxPackages,
 } from "./graph.seat.mjs";
 
 // Посадка на месте одной командой: полка лежит в `.claude` папки, режим
@@ -757,3 +758,29 @@ function verifiedOfSeed() {
     npm: /\bnpm: "([^"]+)"/.exec(block)[1],
   };
 }
+
+describe("пакеты песочницы под pnpm", () => {
+  // Пакеты `pnpm` лежат в скрытой `.pnpm`, а обёртки `.bin` зовут их путём
+  // от себя: без ссылки на неё в песочнице серии не запускался ни один
+  // инструмент. Выведено седьмой посадкой — приложение на `pnpm`.
+  it("хранилище `.pnpm` и `.bin` связаны, кэши раннеров — нет", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-pnpm-"));
+    try {
+      const from = path.join(box, "from", "node_modules");
+      const real = path.join(from, ".pnpm", "zz@1.0.0", "node_modules", "zz");
+      fs.mkdirSync(real, { recursive: true });
+      fs.writeFileSync(path.join(real, "package.json"), '{ "name": "zz" }');
+      fs.symlinkSync(path.relative(from, real), path.join(from, "zz"), "junction");
+      fs.mkdirSync(path.join(from, ".bin"));
+      fs.mkdirSync(path.join(from, ".vite"));
+      const to = path.join(box, "to", "node_modules");
+      sandboxPackages(from, to);
+      expect(fs.existsSync(path.join(to, ".pnpm", "zz@1.0.0", "node_modules", "zz", "package.json"))).toBe(true);
+      expect(fs.existsSync(path.join(to, "zz", "package.json"))).toBe(true);
+      expect(fs.existsSync(path.join(to, ".bin"))).toBe(true);
+      expect(fs.existsSync(path.join(to, ".vite"))).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});

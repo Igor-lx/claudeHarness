@@ -1590,6 +1590,46 @@ describe("ссылка на раздел разрешается в назван�
   }, 180000);
 });
 
+describe("пакет рабочего пространства по имени — в графе", () => {
+  it("импорт по имени пакета — ребро к его входу, в обеих формах объявления", () => {
+    const box = seatEmpty("workspace-");
+    try {
+      const pkgAt = path.join(box, "src", "zzPkgs", "zzCore");
+      fs.mkdirSync(path.join(pkgAt, "lib"), { recursive: true });
+      fs.writeFileSync(
+        path.join(pkgAt, "package.json"),
+        JSON.stringify({ name: "@zz/core", main: "lib/entry.ts" }) + "\n",
+      );
+      fs.writeFileSync(path.join(pkgAt, "lib", "entry.ts"), "export const zzCore = 1;\n");
+      fs.writeFileSync(path.join(pkgAt, "lib", "deep.ts"), "export const zzDeep = 1;\n");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzUse.ts"),
+        'import { zzCore } from "@zz/core";\nimport { zzDeep } from "@zz/core/lib/deep";\nexport const zzUse = zzCore + zzDeep;\n',
+      );
+      const users = (file) =>
+        sectionOf(
+          execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "brief", file], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          }),
+          "пользуются им",
+        );
+      expect(users("zzPkgs/zzCore/lib/entry.ts")).not.toContain("app/zzUse.ts");
+      const manifestAt = path.join(box, "package.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestAt, "utf8"));
+      fs.writeFileSync(manifestAt, JSON.stringify({ ...manifest, workspaces: ["src/zzPkgs/*"] }, null, 2) + "\n");
+      expect(users("zzPkgs/zzCore/lib/entry.ts")).toContain("app/zzUse.ts");
+      expect(users("zzPkgs/zzCore/lib/deep.ts")).toContain("app/zzUse.ts");
+      fs.writeFileSync(manifestAt, JSON.stringify(manifest, null, 2) + "\n");
+      fs.writeFileSync(path.join(box, "pnpm-workspace.yaml"), 'packages:\n  - "src/zzPkgs/*"\n');
+      expect(users("zzPkgs/zzCore/lib/entry.ts")).toContain("app/zzUse.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("модуль .mjs под корнем исходников — в графе", () => {
   it("экспорт модуля .mjs без потребителей назван мёртвым, импорт его — ребром", () => {
     const box = seatEmpty("mjs-");
@@ -1657,6 +1697,17 @@ describe("вид поля настройки — у чисел, строк и с
       const trees = run();
       expect(trees.out).not.toContain("НАСТРОЙКА ЗАДАНА НЕВЕРНО");
       expect(trees.out).toContain("zzSide/zzSide.ts — код вне объявленных деревьев");
+      // Папка тестов, объявленная полем `testDirs`, — тоже объявленное дерево.
+      fs.mkdirSync(path.join(box, "zzTest"), { recursive: true });
+      fs.writeFileSync(path.join(box, "zzTest", "zz.test.ts"), "export const zz = 1;\n");
+      const withTests = seed
+        .replace(/^( {2}src: )"\.\.\/src",$/m, '$1["../src", "../zzLib"],')
+        .replace(/^( {2}testDirs: )null,$/m, '$1["../zzTest"],');
+      expect(withTests).toContain('testDirs: ["../zzTest"]');
+      fs.writeFileSync(at, withTests);
+      const declared = run();
+      expect(declared.out).toContain("zzSide/zzSide.ts — код вне объявленных деревьев");
+      expect(declared.out).not.toContain("zzTest/zz.test.ts — код вне");
       fs.writeFileSync(at, seed.replace(/^( {2}src: )"\.\.\/src",$/m, '$1["../src", 3],'));
       const mixed = run();
       expect(mixed.code).toBe(2);

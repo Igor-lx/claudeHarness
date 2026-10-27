@@ -4,7 +4,7 @@
     {
       "section": "Покрытие карты",
       "create": {
-        "path": "src/zzProbe.ts",
+        "path": "{исходники}/zzProbe.ts",
         "text": "export const zzProbe = 1;"
       }
     },
@@ -13,20 +13,20 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzProbe.ts",
+            "path": "{исходники}/zzProbe.ts",
             "text": "export const zzProbe = 1;"
           }
         },
         {
           "file": ".context/00-map.md",
-          "append": "Упоминание `src/zzProbe.ts` в прозе описанием не является."
+          "append": "Упоминание `{исходники}/zzProbe.ts` в прозе описанием не является."
         }
       ]
     },
     {
       "section": "Покрытие тестов",
       "create": {
-        "path": "src/zzProbe.test.tsx",
+        "path": "{исходники}/zzProbe.test.tsx",
         "text": "export const zzProbe = 1;"
       }
     },
@@ -49,7 +49,7 @@
         {
           "file": ".context/00-map.md",
           "find": "# Карта исходников",
-          "replace": "# Карта исходников\n\nАдрес `src/zzNowhere.ts`."
+          "replace": "# Карта исходников\n\nАдрес `{исходники}/zzNowhere.ts`."
         },
         {
           "create": {
@@ -66,7 +66,7 @@
         {
           "file": ".context/00-map.md",
           "find": "# Карта исходников",
-          "replace": "# Карта исходников\n\nАдрес `src/zzNowhere.ts`."
+          "replace": "# Карта исходников\n\nАдрес `{исходники}/zzNowhere.ts`."
         },
         {
           "file": "{план перехода}",
@@ -95,7 +95,7 @@
     {
       "section": "Пометки решений",
       "create": {
-        "path": "src/zzProbe.ts",
+        "path": "{исходники}/zzProbe.ts",
         "text": "// Оставлено намеренно: проба сверки.\nexport const zzProbe = 1;"
       }
     },
@@ -343,14 +343,14 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzState.ts",
+            "path": "{исходники}/zzState.ts",
             "text": "export const zzState = () => useState(0);"
           }
         },
         {
           "file": ".context/00-map.md",
           "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
-          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzState.ts` | проба | нет | нет |"
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `{исходники}/zzState.ts` | проба | нет | нет |"
         }
       ]
     },
@@ -504,7 +504,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzProbe.ts",
+            "path": "{исходники}/zzProbe.ts",
             "text": "import { useState } from \"react\";\nexport const zzProbe = () => useState(0);"
           }
         },
@@ -518,14 +518,14 @@
     {
       "section": "Вопрос о планке задан на конечном виде правки",
       "create": {
-        "path": "src/zzProbe.ts",
+        "path": "{исходники}/zzProbe.ts",
         "text": "export const zzProbe = 1;"
       }
     },
     {
       "section": "Планка пройдена покритериально",
       "create": {
-        "path": "src/zzBarProbe.ts",
+        "path": "{исходники}/zzBarProbe.ts",
         "text": "export const zzBarProbe = 1;"
       }
     },
@@ -534,7 +534,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzBarForged.ts",
+            "path": "{исходники}/zzBarForged.ts",
             "text": "export const zzBarForged = 1;"
           }
         },
@@ -546,7 +546,7 @@
     {
       "section": "Тесты лежат в `tests/`",
       "create": {
-        "path": "src/zzProbe.test.tsx",
+        "path": "{исходники}/zzProbe.test.tsx",
         "text": "export const zzProbe = 1;"
       }
     },
@@ -581,7 +581,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -596,7 +596,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -616,7 +616,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -640,7 +640,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -679,7 +679,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -728,7 +728,7 @@
     {
       "section": "Пометки CONSTRAINT",
       "create": {
-        "path": "src/zzProbe.ts",
+        "path": "{исходники}/zzProbe.ts",
         "text": "// CONSTRAINT: форма не та\nexport const zzProbe = 1;"
       }
     },
@@ -851,19 +851,19 @@
       "section": "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
       "file": "package.json",
       "find": "\"check\": \"",
-      "replace": "\"check\": \"npm run unknown-link && "
+      "replace": "\"check\": \"{менеджер} run unknown-link && "
     },
     {
       "section": "Звёздные бочки",
       "create": {
-        "path": "src/zzProbe.ts",
+        "path": "{исходники}/zzProbe.ts",
         "text": "export * from \"./zzProbeSource\";\nexport const zzProbe = 1;"
       }
     },
     {
       "section": "Якоря на документацию в коде",
       "create": {
-        "path": "src/zzProbe.ts",
+        "path": "{исходники}/zzProbe.ts",
         "text": "// See docs/NOTHERE.md\nexport const zzProbe = 1;"
       }
     },
@@ -883,7 +883,7 @@
     {
       "section": "Точечные исключения линта",
       "create": {
-        "path": "src/zzDirective.ts",
+        "path": "{исходники}/zzDirective.ts",
         "text": "// eslint-disable-next-line no-console\nconsole.log(1);"
       }
     },
@@ -1033,7 +1033,7 @@
     {
       "section": "Объявленный состав папок и радиусы",
       "file": ".context/00-map.md",
-      "append": "Папка `src/` (999 файлов)."
+      "append": "Папка `{папка кода}/` (999 файлов)."
     },
     {
       "section": "Разрешения, нажитые по ходу работы (предупреждение, прогон не роняет)",
@@ -1086,14 +1086,14 @@
     {
       "section": "Имена классов из кода есть в листе стилей",
       "create": {
-        "path": "src/zzPlantStyles.tsx",
+        "path": "{исходники}/zzPlantStyles.tsx",
         "text": "import styles from \"./zzPlantStyles.module.scss\";\n\nexport const ZzPlant = () => styles.zzNoSuchClass;\n"
       }
     },
     {
       "section": "Отступление от схемы стилизации объявлено решением",
       "create": {
-        "path": "src/zzStray/zzStray.tsx",
+        "path": "{исходники}/zzStray/zzStray.tsx",
         "text": "export interface ZzStrayClassMap {\n  [key: string]: string | undefined;\n  root?: string;\n}\n\nexport const ZzStray = ({ className }: { className: ZzStrayClassMap }) =>\n  className.root;"
       }
     },
@@ -1124,7 +1124,7 @@
     {
       "section": "Комментарий не перерос в прозу",
       "create": {
-        "path": "src/zzPoem.ts",
+        "path": "{исходники}/zzPoem.ts",
         "text": "// This run of words is deliberately far longer than the ceiling the rules\n// name, so that the check has something real to catch when the recipe plants\n// it here, and it keeps going well past fifteen words by any count at all.\nexport const zzPoem = 1;"
       }
     },
@@ -1138,7 +1138,7 @@
     {
       "section": "Доля комментариев в файле",
       "create": {
-        "path": "src/zzChatty.ts",
+        "path": "{исходники}/zzChatty.ts",
         "text": "// one\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\n// two\nexport const zz0 = 0;\nexport const zz1 = 1;\nexport const zz2 = 2;\nexport const zz3 = 3;\nexport const zz4 = 4;\nexport const zz5 = 5;\nexport const zz6 = 6;\nexport const zz7 = 7;\nexport const zz8 = 8;\nexport const zz9 = 9;\nexport const zz10 = 10;\nexport const zz11 = 11;\nexport const zz12 = 12;\nexport const zz13 = 13;\nexport const zz14 = 14;\nexport const zz15 = 15;\nexport const zz16 = 16;\nexport const zz17 = 17;\nexport const zz18 = 18;\nexport const zz19 = 19;"
       }
     },
@@ -1181,14 +1181,14 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzStateful.ts",
+            "path": "{исходники}/zzStateful.ts",
             "text": "import { useState } from \"react\";\nexport const useZz = () => useState(0);"
           }
         },
         {
           "file": ".context/00-map.md",
           "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
-          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzStateful.ts` | посаженная поломка | `zz` | нет |"
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `{исходники}/zzStateful.ts` | посаженная поломка | `zz` | нет |"
         },
         {
           "create": {
@@ -1203,14 +1203,14 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.ts",
+            "path": "{исходники}/zzOwn.ts",
             "text": "export const zzOwn = 1;"
           }
         },
         {
           "file": ".context/00-map.md",
           "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
-          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzOwn.ts` | посаженная поломка | нет | нет |\n\n<!-- ПУСТО -->"
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `{исходники}/zzOwn.ts` | посаженная поломка | нет | нет |\n\n<!-- ПУСТО -->"
         }
       ]
     },
@@ -1219,14 +1219,14 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzStray.ts",
+            "path": "{исходники}/zzStray.ts",
             "text": "export const zzStray = 1;"
           }
         },
         {
           "file": ".context/00-map.md",
           "find": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |",
-          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `src/zzStray.ts` | посаженная поломка | нет | нет |"
+          "replace": "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `{исходники}/zzStray.ts` | посаженная поломка | нет | нет |"
         }
       ]
     },
@@ -1352,7 +1352,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzDead.module.scss",
+            "path": "{исходники}/zzDead.module.scss",
             "text": ".zzOrphanClass {\n  color: red;\n}"
           }
         }
@@ -1378,7 +1378,7 @@
       "section": "Пустой папки под корнем исходников нет",
       "edits": [
         {
-          "mkdir": "src/zzHollow"
+          "mkdir": "{исходники}/zzHollow"
         }
       ]
     },
@@ -1452,7 +1452,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -1474,7 +1474,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/zzOwn.tsx",
+            "path": "{исходники}/zzOwn.tsx",
             "text": "export const zzOwn = 1;"
           }
         },
@@ -1493,7 +1493,7 @@
         {
           "create": {
             "path": ".context/bar-protocol.md",
-            "text": "# Свод по планке — протокол текущей работы\n\n## Исходы\n\n| критерий | о чём | исход | адрес | что | судьба |\n| --- | --- | --- | --- | --- | --- |\n| ZZ9 | проба рецепта | нашлось | src/zzOwn.tsx:1 | проба | предложено |"
+            "text": "# Свод по планке — протокол текущей работы\n\n## Исходы\n\n| критерий | о чём | исход | адрес | что | судьба |\n| --- | --- | --- | --- | --- | --- |\n| ZZ9 | проба рецепта | нашлось | {исходники}/zzOwn.tsx:1 | проба | предложено |"
           }
         }
       ]
@@ -1674,7 +1674,7 @@
       "section": "Связка проверок зовёт живые звенья",
       "file": "package.json",
       "find": "\"check\": \"",
-      "replace": "\"check\": \"npm run типов-нет && "
+      "replace": "\"check\": \"{менеджер} run типов-нет && "
     },
     {
       "section": "Настройка сборки знает про тесты",
@@ -1761,7 +1761,7 @@
       "edits": [
         {
           "create": {
-            "path": "src/shared/zzNet/zzNet.ts",
+            "path": "{исходники}/shared/zzNet/zzNet.ts",
             "text": "import axios from \"axios\";\n\nexport const zzNet = (id: string) => axios.get(\"/zz/\" + id);\n"
           }
         }

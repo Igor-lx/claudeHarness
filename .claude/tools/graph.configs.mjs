@@ -9,7 +9,7 @@
 // ответ называет, каким путём получен.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
+import { Module, createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compilerAt } from "./graph.parse.mjs";
@@ -358,4 +358,78 @@ export const globMatcher = (globs, repoRoot) => {
   const match = (f) => inside(f) && !outside(f);
   match.via = via;
   return match;
+};
+
+/** Файлы настройки раннера jest в порядке, в каком их ищет сам раннер. */
+const JEST_FILES = [
+  "jest.config.js",
+  "jest.config.ts",
+  "jest.config.mjs",
+  "jest.config.cjs",
+  "jest.config.cts",
+  "jest.config.mts",
+  "jest.config.json",
+];
+/** Модуль настройки на TypeScript: переводит компилятор проекта. */
+const tsModuleOf = (at, repoRoot) => {
+  const ts = createRequire(path.join(repoRoot, "package.json"))("typescript");
+  const out = ts.transpileModule(readFileSync(at, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true },
+  }).outputText;
+  const m = new Module(at);
+  m.filename = at;
+  m.paths = Module._nodeModulePaths(path.dirname(at));
+  m._compile(out, at);
+  return m.exports;
+};
+/** Настройка раннера jest: `{ name, at, config, broke? }` либо `null` — нет
+ * ни файла `jest.config.*`, ни поля `jest` манифеста. Функция вместо
+ * объекта и сбой загрузки — `config: null`, `broke` называет почему. */
+export const jestConfigLoad = (repoRoot, manifest) => {
+  for (const name of JEST_FILES) {
+    const at = path.join(repoRoot, name);
+    if (!existsSync(at)) continue;
+    try {
+      const got = name.endsWith(".json")
+        ? parseJsonc(readFileSync(at, "utf8"))
+        : /\.[cm]?ts$/.test(name)
+          ? tsModuleOf(at, repoRoot)
+          : createRequire(at)(at);
+      const config = got?.default ?? got;
+      if (typeof config === "function")
+        return { name, at, config: null, broke: "настройка — функция, область не вычислить без запуска" };
+      return { name, at, config };
+    } catch (error) {
+      return { name, at, config: null, broke: String(error?.message ?? error).split("\n")[0] };
+    }
+  }
+  if (manifest?.jest != null && typeof manifest.jest === "object")
+    return { name: "package.json → jest", at: path.join(repoRoot, "package.json"), config: manifest.jest };
+  return null;
+};
+
+/** Умолчание `testMatch` раннера jest. */
+const JEST_DEFAULT_MATCH = ["**/__tests__/**/*.?([mc])[jt]s?(x)", "**/?(*.)+(spec|test).?([mc])[jt]s?(x)"];
+/** Соберёт ли jest файл по абсолютному адресу: корни `roots`, образцы
+ * `testMatch` либо выражение `testRegex`, исключения
+ * `testPathIgnorePatterns` — с подстановкой `<rootDir>`, как у раннера. */
+export const jestCollects = (config, configDir, repoRoot) => {
+  const rootDir = path.resolve(configDir, config.rootDir ?? ".");
+  const posix = (p) => p.split(path.sep).join("/");
+  const sub = (s) => s.replaceAll("<rootDir>", posix(rootDir));
+  const roots = (config.roots ?? ["<rootDir>"]).map((r) => path.resolve(sub(r)));
+  const ignore = (config.testPathIgnorePatterns ?? ["/node_modules/"]).map((r) => new RegExp(sub(r)));
+  const regex = config.testRegex == null ? null : [config.testRegex].flat().map((r) => new RegExp(r));
+  const globs = (config.testMatch ?? JEST_DEFAULT_MATCH).map((g) => {
+    const full = sub(g);
+    return full.startsWith(posix(rootDir) + "/") ? full.slice(posix(rootDir).length + 1) : full;
+  });
+  const match = globMatcher(globs, repoRoot);
+  return (abs) => {
+    const at = posix(abs);
+    if (!roots.some((r) => at.startsWith(posix(r) + "/"))) return false;
+    if (ignore.some((r) => r.test(at))) return false;
+    if (regex !== null) return regex.some((r) => r.test(at));
+    return match(posix(path.relative(rootDir, abs)));
+  };
 };

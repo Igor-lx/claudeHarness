@@ -2,6 +2,7 @@
 node_modules
 dist
 coverage
+*.tsbuildinfo
 reports
 .stryker-tmp
 .проба-сверок
