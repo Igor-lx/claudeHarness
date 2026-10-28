@@ -15,6 +15,7 @@ import {
   tiersFrom,
   withoutFrameRows,
   sandboxPackages,
+  projectFilesOf,
   stackApply,
   stackSurveyOf,
 } from "./graph.seat.mjs";
@@ -382,6 +383,131 @@ describe("осмотр окружения проекта по осям карт�
     expect(survey({}, ["src/index.js"]).foreign.map((f) => f.axis)).toEqual(["язык"]);
   });
 
+  it("строки осей называют состояние и что не так — словами, которые печатает `env`", () => {
+    const s = survey(
+      { dependencies: { react: "^19.1.0" }, devDependencies: { typescript: OURS.typescript } },
+      ["src/main.tsx", "src/app.module.scss"],
+    );
+    const row = (axis) => s.rows.find((r) => r.axis === axis);
+    expect(row("язык")).toEqual({ axis: "язык", state: "наше", note: "версии связки" });
+    expect(row("фреймворк")).toEqual({
+      axis: "фреймворк",
+      state: "наше, не по связке",
+      note:
+        "react ^19.1.0 → " + OURS.react + "; react-dom — нет; @types/react — нет; @types/react-dom — нет",
+    });
+    expect(planOf(s)["react-dom"]).toMatchObject({ section: "dependencies", from: null });
+    expect(planOf(s)["@types/react"]).toMatchObject({ section: "devDependencies" });
+    const lib = survey({ devDependencies: { typescript: OURS.typescript } }, ["src/index.ts"]);
+    expect(lib.rows.find((r) => r.axis === "сборщик")).toEqual({
+      axis: "сборщик",
+      state: "без предмета",
+      note: "интерфейса нет",
+    });
+    expect(lib.rows.find((r) => r.axis === "листы стилей")).toEqual({
+      axis: "листы стилей",
+      state: "без предмета",
+      note: "файлов нет",
+    });
+    // Объявленный пакет стилей без листов — предмет есть: версия приводится.
+    const declared = survey({ devDependencies: { "sass-embedded": "^1.80.0" } }, ["src/index.ts"]);
+    expect(planOf(declared)["sass-embedded"].to).toBe(OURS["sass-embedded"]);
+  });
+
+  it("менеджер — по полю `packageManager` и по блокировке; язык — JS без TS, без конфигов и объявлений типов", () => {
+    const pnpm = survey({ packageManager: "pnpm@10.28.0" }, ["src/a.ts"]);
+    expect(pnpm.foreign).toEqual([{ axis: "менеджер пакетов", what: "pnpm", tool: null }]);
+    expect(survey({ packageManager: "npm@11.21.1" }, ["src/a.ts"]).foreign).toEqual([]);
+    expect(survey({}, ["src/a.ts", "pnpm-lock.yaml"]).foreign[0].what).toBe("pnpm-lock.yaml");
+    // Конфиг на JS и объявление типов кодом проекта не считаются.
+    expect(survey({}, ["vite.config.js", "src/a.ts"]).foreign).toEqual([]);
+    expect(survey({}, ["src/env.d.ts", "src/a.js"]).foreign.map((f) => f.axis)).toEqual(["язык"]);
+    expect(survey({ devDependencies: { typescript: "6.0.3" } }, ["src/a.js"]).foreign).toEqual([]);
+    expect(survey(null, ["vite.config.js"]).verdict).toBe("пусто");
+    expect(survey(null, ["src/a.js"]).verdict).toBe("чужое");
+    // Слово «замени своим» действует только на оси-инструменты.
+    const vue = survey({ dependencies: { vue: "^3.5.0" } }, ["src/App.vue"], ["фреймворк"]);
+    expect(vue.foreign.map((f) => f.axis)).toEqual(["фреймворк"]);
+    expect(vue.scripts).toEqual([]);
+    expect(vue.foreign[0].what).toBe("vue");
+  });
+
+  it("краевые формы осмотра: что делает код кодом, интерфейс интерфейсом и секцию секцией", () => {
+    // Пустой манифест — не пустая папка; ответ «пусто» — целиком пустой.
+    expect(survey({}, []).verdict).not.toBe("пусто");
+    expect(survey(null, [])).toEqual({ verdict: "пусто", rows: [], foreign: [], plan: [], scripts: [] });
+    expect(survey({}, ["src/a.ts"]).rows.map((r) => r.axis)).toEqual(AXES.map((a) => a.axis));
+    // Конфиг на JS кодом не считается в любом из трёх видов.
+    for (const config of ["vite.config.js", "vite.config.mjs", "vite.config.cjs"])
+      expect(survey({}, [config]).foreign, config).toEqual([]);
+    expect(survey({}, ["src/a.ts", "src/b.js"]).foreign).toEqual([]);
+    expect(survey({}, ["src/a.js"]).foreign).toEqual([{ axis: "язык", what: "JavaScript без TypeScript", tool: null }]);
+    // Код чужого фреймворка — по расширению, без пакета; одноранговый пакет — тоже признак.
+    const svelte = survey({}, ["src/App.svelte", "src/main.ts"]);
+    expect(svelte.foreign).toEqual([{ axis: "фреймворк", what: "svelte", tool: null }]);
+    expect(planOf(svelte).react).toBeUndefined();
+    expect(planOf(svelte).vite.to).toBe(OURS.vite);
+    expect(survey({ peerDependencies: { vue: "^3.5.0" } }, ["src/index.ts"]).foreign[0].axis).toBe("фреймворк");
+    expect(survey({ packageManager: "yarn@1.22.22" }, ["src/a.ts", "yarn.lock"]).foreign[0].what).toBe("yarn.lock, yarn");
+    // Интерфейс — по `.tsx` среди прочих файлов; без интерфейса React-помощники тестов не ставятся.
+    expect(planOf(survey({}, ["src/a.tsx", "src/b.ts"])).vite.to).toBe(OURS.vite);
+    expect(planOf(survey({}, ["src/index.ts"]))["@testing-library/react"]).toBeUndefined();
+    expect(planOf(survey({}, ["src/main.tsx"])).react.section).toBe("dependencies");
+    expect(planOf(survey({ devDependencies: { react: "^19.1.0" } }, ["src/main.tsx"])).react.section).toBe("devDependencies");
+    expect(
+      planOf(survey({ peerDependencies: { react: "^19.0.0" }, devDependencies: { react: "^19.1.0" } }, ["src/a.tsx"]))
+        .react,
+    ).toEqual({ name: "react", from: "^19.1.0", to: OURS.react, section: "devDependencies" });
+    // Листы стилей узнаются по расширению с точкой, а замена называется рядом с версиями.
+    expect(planOf(survey({}, ["src/a.ts", "src/xscss"]))["sass-embedded"]).toBeUndefined();
+    const withSass = survey({ devDependencies: { sass: "^1.80.0" } }, ["src/a.ts", "src/a.scss"]);
+    expect(withSass.rows.find((r) => r.axis === "листы стилей").note).toBe(
+      "sass — объявленная замена sass-embedded; версии связки",
+    );
+    // Расширение читается целиком: `.json` не JavaScript, `.tsbuildinfo` не TypeScript, `notvue` не Vue.
+    expect(survey({}, ["src/data.json"]).foreign).toEqual([]);
+    expect(survey({}, ["src/a.js", "x.tsbuildinfo"]).foreign.map((f) => f.axis)).toEqual(["язык"]);
+    expect(survey({}, ["src/notvue", "src/a.ts"]).foreign).toEqual([]);
+    expect(planOf(survey({}, ["src/notvue", "src/a.ts"])).vite).toBeUndefined();
+    expect(planOf(survey({}, ["src/a.tsx.snap", "src/b.ts"])).vite).toBeUndefined();
+    expect(planOf(survey({ dependencies: { vue: "^3.5.0" } }, ["src/main.ts"])).vite.to).toBe(OURS.vite);
+    // Пакет чужого фреймворка без его файлов — тоже чужой интерфейс; React в зависимостях без `.tsx` — наш.
+    expect(planOf(survey({ dependencies: { vue: "^3.5.0" } }, ["src/main.ts"])).react).toBeUndefined();
+    expect(planOf(survey({ dependencies: { react: "^19.1.0" } }, ["src/hooks.ts"])).vite.to).toBe(OURS.vite);
+    expect(survey({ dependencies: { vue: "^3.5.0" } }, ["src/main.ts"]).rows.find((r) => r.axis === "фреймворк")).toEqual(
+      { axis: "фреймворк", state: "чужое", note: "vue" },
+    );
+    // Без умолчаний вызов не падает: ни инструментов, ни платформы.
+    expect(stackSurveyOf({ manifest: {}, files: ["src/a.ts"], axes: AXES, verified: OURS }).scripts).toEqual([]);
+  });
+
+  it("файлы проекта для осмотра: без зависимостей, истории, обвязки и сборки, с пределом глубины", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-files-"));
+    try {
+      const put = (rel) => {
+        fs.mkdirSync(path.dirname(path.join(dest, rel)), { recursive: true });
+        fs.writeFileSync(path.join(dest, rel), "x\n");
+      };
+      for (const rel of [
+        "node_modules/x/index.js",
+        ".git/HEAD",
+        ".claude/tools/graph.mjs",
+        "dist/a.js",
+        "build/b.js",
+        "coverage/c.js",
+        ".next/d.js",
+        "src/a/b.ts",
+        "package.json",
+      ])
+        put(rel);
+      expect(projectFilesOf(dest).sort()).toEqual(["package.json", "src/a/b.ts"]);
+      expect(projectFilesOf(dest, 1)).toEqual(["package.json"]);
+      expect(projectFilesOf(path.join(dest, "нет-такой"))).toEqual([]);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
   it("план ложится в манифест точными версиями, скрипт звена — семенной, прежний рядом; упала установка — всё как было", () => {
     const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-apply-"));
     try {
@@ -419,6 +545,62 @@ describe("осмотр окружения проекта по осям карт�
       expect(failed).toEqual({ ok: false, tail: ["npm error ERESOLVE", "conflict"] });
       expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(text);
       expect(fs.readFileSync(path.join(dest, "package-lock.json"), "utf8")).toBe("{\"lock\":1}\n");
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
+  it("установка зовёт менеджера по его блокировке; без блокировки откат её не заводит; ключи секции по порядку", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-lock-"));
+    try {
+      const manifest = {
+        scripts: { lint: "eslint .", test: "vitest" },
+        dependencies: { zod: "^4.0.0" },
+        devDependencies: { zeta: "1.0.0", react: "^19.1.0" },
+      };
+      const text = JSON.stringify(manifest, null, 2) + "\n";
+      const s = {
+        plan: [
+          { name: "react", from: "^19.1.0", to: "19.3.1", section: "dependencies" },
+          { name: "alpha", from: null, to: "2.0.0", section: "dependencies" },
+        ],
+        scripts: ["lint", "test", "mutate"],
+      };
+      const seen = [];
+      const ok = (cmd, args) => {
+        seen.push([cmd, ...args].join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      };
+      fs.writeFileSync(path.join(dest, "package.json"), text);
+      expect(stackApply(dest, s, { lint: "eslint .", test: "vitest run" }, ok)).toEqual({ ok: true });
+      const after = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
+      expect(Object.keys(after.dependencies)).toEqual(["alpha", "react", "zod"]);
+      expect(after.devDependencies).toEqual({ zeta: "1.0.0" });
+      expect(after.scripts).toEqual({ lint: "eslint .", test: "vitest run", "test:own": "vitest" });
+      for (const [lock, cmd] of [
+        ["pnpm-lock.yaml", "pnpm install"],
+        ["bun.lock", "bun install"],
+        ["bun.lockb", "bun install"],
+      ]) {
+        fs.writeFileSync(path.join(dest, "package.json"), text);
+        fs.writeFileSync(path.join(dest, lock), "lock\n");
+        stackApply(dest, { plan: [], scripts: [] }, {}, ok);
+        fs.rmSync(path.join(dest, lock));
+        expect(seen.at(-1)).toBe(cmd);
+      }
+      expect(seen[0]).toBe("npm install --no-audit --no-fund --loglevel=error");
+      fs.writeFileSync(path.join(dest, "package.json"), text);
+      const long = Array.from({ length: 14 }, (_, i) => "line " + i).join("\n");
+      const failed = stackApply(dest, s, {}, () => ({ status: 1, stdout: "  " + long, stderr: "\n" }));
+      expect(failed.tail).toEqual(Array.from({ length: 12 }, (_, i) => "line " + (i + 2)));
+      expect(fs.existsSync(path.join(dest, "package-lock.json"))).toBe(false);
+      expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(text);
+      // Пакет уходит из обычных зависимостей в зависимости разработки; секции может не быть вовсе.
+      fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify({ dependencies: { vite: "^7.0.0" } }) + "\n");
+      stackApply(dest, { plan: [{ name: "vite", from: "^7.0.0", to: "8.3.5", section: "devDependencies" }], scripts: [] }, {}, ok);
+      const raw = fs.readFileSync(path.join(dest, "package.json"), "utf8");
+      expect(raw.endsWith("}\n")).toBe(true);
+      expect(JSON.parse(raw)).toEqual({ dependencies: {}, devDependencies: { vite: "8.3.5" } });
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
     }

@@ -355,7 +355,7 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
     m[one.section] = { ...(m[one.section] ?? {}), [one.name]: one.to };
     m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
   }
-  for (const name of survey.scripts ?? []) {
+  for (const name of survey.scripts) {
     const seed = seedScripts[name];
     if (seed === undefined) continue;
     m.scripts = m.scripts ?? {};
