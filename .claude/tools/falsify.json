@@ -313,9 +313,9 @@
       "whenLink": [
         "typecheck"
       ],
-      "file": "{конфиг типов}",
-      "find": "\"noUncheckedIndexedAccess\": true,",
-      "replace": ""
+      "file": "{строгий конфиг типов}",
+      "find": "\"noUncheckedIndexedAccess\": true",
+      "replace": "\"noUncheckedIndexedAccess\": false"
     },
     {
       "section": "Перечень папок полки полный",

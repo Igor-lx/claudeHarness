@@ -5309,6 +5309,14 @@ describe("решение, названное после `tsc -b`", () => {
       expect(said()).toBe("");
       json("tsconfig.node.json", { compilerOptions: seed.compilerOptions, include: ["tools/*.ts"] });
       expect(said()).toContain("tsconfig.node.strict.json — звено типов проверяет по нему ноль файлов");
+      // Решение внутри решения — пакет монорепозитория со своим решением — разворачивается.
+      json("tsconfig.node.json", { compilerOptions: seed.compilerOptions, include: ["vite.config.ts"] });
+      json("tsconfig.inner.json", {
+        files: [],
+        references: [{ path: "./tsconfig.app.strict.json" }, { path: "./tsconfig.node.strict.json" }],
+      });
+      json("tsconfig.strict.json", { files: [], references: [{ path: "./tsconfig.inner.json" }] });
+      expect(said()).toBe("");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -6103,6 +6111,26 @@ describe("своё проекта в смешанной папке обвязк�
  * секцией-предупреждением, а сверки, которые карта посадки связала с осью,
  * прогон не роняют. Решено разработчиком `2026-10-27`. */
 describe("чужое окружение — не проверено", () => {
+  it("проекту на чужом фреймворке не требуют пакетов React и не кладут подготовку прогона под React", () => {
+    const box = seatEmpty("foreign-react-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      delete pkg.devDependencies["@testing-library/react"];
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const tools = () =>
+        (verifyIn(box).get("Инструменты звеньев на месте (предупреждение, прогон не роняет)") ?? []).join("\n");
+      const seeds = () => (verifyIn(box).get("Семя с условием не лежит без условия") ?? []).join("\n");
+      expect(tools()).toContain("@testing-library/react");
+      expect(seeds()).not.toContain("setup.ts");
+      fs.writeFileSync(path.join(box, "src", "app", "ZzBadge.vue"), "<template><b>zz</b></template>\n");
+      expect(tools()).not.toContain("@testing-library/react");
+      expect(seeds()).toContain("setup.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("код чужого фреймворка назван непрочитанным: секцией прогона и баннером перехода", () => {
     const box = seatEmpty("unread-code-");
     try {
@@ -6153,8 +6181,8 @@ describe("чужое окружение — не проверено", () => {
       expect(verifyIn(box).get(head)).toBeUndefined();
       const mapAt = path.join(box, ".claude", "seat", "map.json");
       const map = fs.readFileSync(mapAt, "utf8");
-      expect(map).toContain('"checks": ["Звену цепочки есть на чём работать"]');
-      fs.writeFileSync(mapAt, map.replace('"checks": ["Звену цепочки есть на чём работать"]', '"checks": ["Покрытие карты"]'));
+      expect(map).toContain('"checks": ["Звену цепочки есть на чём работать", "Правила про существующее"]');
+      fs.writeFileSync(mapAt, map.replace('"checks": ["Звену цепочки есть на чём работать", "Правила про существующее"]', '"checks": ["Покрытие карты"]'));
       fs.mkdirSync(path.join(box, "src", "shared", "zz"), { recursive: true });
       fs.writeFileSync(path.join(box, "src", "shared", "zz", "zzOwn.ts"), "export const zzOwn = 2;\n");
       const before = redCount();
@@ -6168,6 +6196,66 @@ describe("чужое окружение — не проверено", () => {
         "zzось — такой оси в карте посадки нет (`seat/map.json`, поле `stackAxes`)",
       ]);
       expect(verifyIn(box).get("Покрытие карты")?.join("\n")).toContain("zzOwn.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/** Монорепозиторий: пакеты рабочих пространств держат свои версии, и сверки
+ * версий спрашивают их манифесты и их установленные копии, а не один корень.
+ * Выведено десятой посадкой. */
+describe("версии пакетов рабочих пространств", () => {
+  it("диапазон в манифесте пакета назван, ссылка на соседний пакет — нет; своя копия ниже связки названа", () => {
+    const box = seatEmpty("ws-versions-");
+    try {
+      const write = (rel, value) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), JSON.stringify(value, null, 2) + "\n");
+      };
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.workspaces = ["packages/*"];
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      write("packages/x/package.json", { name: "@zz/x", dependencies: { "left-pad": "^1.3.0", "@zz/y": "*" } });
+      write("packages/y/package.json", { name: "@zz/y", devDependencies: { "is-odd": "workspace:*" } });
+      write("packages/x/node_modules/vitest/package.json", { name: "vitest", version: "1.0.0" });
+      const found = verifyIn(box);
+      const pins = (found.get("Версии зависимостей закреплены") ?? []).join("\n");
+      expect(pins).toContain("left-pad@^1.3.0 в dependencies — packages/x/package.json");
+      expect(pins).not.toContain("@zz/y");
+      expect(pins).not.toContain("is-odd");
+      expect((found.get("Версии установленного (предупреждение, прогон не роняет)") ?? []).join("\n")).toContain(
+        "vitest 1.0.0 в packages/x — НИЖЕ проверенной связки",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
+/** Долг описания держит шаг знания — строка таблицы шагов, а не любое
+ * упоминание сверки в файле перехода: семя несёт её имя примером в таблице
+ * формы записи. Выведено десятой посадкой. */
+describe("долг описания и шаг плана перехода", () => {
+  it("пример формы записи шагом не считается; строка шага — считается", () => {
+    const box = seatEmpty("debt-step-");
+    try {
+      withTransitionDebt(box, []);
+      const plan = path.join(box, ".context", "15-transition.md");
+      expect(fs.readFileSync(plan, "utf8")).toContain("`«Покрытие карты»`");
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const had = fs.readFileSync(cfg, "utf8");
+      const withDebt = had.replace(/(\n {2}debt: \{[\s\S]*?\n {4})map: null,/, "$1map: 1,");
+      expect(withDebt).not.toBe(had);
+      fs.writeFileSync(cfg, withDebt);
+      const said = () => (verifyIn(box).get("Объявленный долг назван планом перехода") ?? []).join("\n");
+      expect(said()).toContain("map — шага, закрывающего «Покрытие карты»");
+      const text = fs.readFileSync(plan, "utf8");
+      const head = "| № | Шаг | Объём | Чем проверяется |\n| --- | --- | --- | --- |\n";
+      expect(text).toContain(head);
+      fs.writeFileSync(plan, text.replace(head, head + "| 9 | Карта кода: описать файлы | `1` файл | «Покрытие карты» |\n"));
+      expect(said()).not.toContain("map —");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

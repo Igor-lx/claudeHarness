@@ -160,8 +160,10 @@ import {
   ENV_BOOTSTRAP,
   layShelf,
   lintBlockersOf,
+  eslintBoundaryOf,
   projectFilesOf,
   stackApply,
+  workspaceManifestsOf,
   stackSurveyOf,
   runSeat,
   sandboxManifests,
@@ -765,7 +767,11 @@ if (mode === "env") {
   const projectAt = process.argv[3] ?? null;
   const manifestAt =
     projectAt === null ? null : path.join(path.resolve(projectAt), "package.json");
-  if (manifestAt !== null && existsSync(manifestAt)) {
+  // После `--apply` предупреждение печатается по манифесту, который
+  // установка оставила: прежний стек его уже не держит. Выведено десятой
+  // посадкой: строка о TypeScript новее связки стояла над «стек приведён».
+  const sayBlockers = () => {
+    if (manifestAt === null || !existsSync(manifestAt)) return;
     const blockers = lintBlockersOf(
       JSON.parse(readFileSync(manifestAt, "utf8")),
       declared,
@@ -782,7 +788,8 @@ if (mode === "env") {
         "  Это строка блока «ЗНАТЬ СРАЗУ» отчёта фазы 1; посадку не останавливает.",
       );
     }
-  }
+  };
+  if (!process.argv.includes("--apply")) sayBlockers();
   // Осмотр окружения проекта по осям карты посадки: наше, наше неполное,
   // чужое. План — точные версии связки, вверх и вниз; ставит его `--apply`
   // по слову разработчика. Чужое не останавливает посадку, а называется.
@@ -806,6 +813,7 @@ if (mode === "env") {
       withTools,
       ui: seatMap.platformPackages?.ui ?? [],
       alternatives: seatMap.platformPackages?.alternatives ?? {},
+      workspaces: workspaceManifestsOf(root),
     });
     console.log("=== Окружение проекта: " + survey.verdict + " ===");
     for (const r of survey.rows)
@@ -857,17 +865,20 @@ if (mode === "env") {
         process.exit(1);
       }
       console.log("  пакетов: " + survey.plan.length + ", скриптов звеньев: " + survey.scripts.length);
+      const boundary = eslintBoundaryOf(survey.plan, readdirSync(root));
+      if (boundary !== null) console.log("  " + boundary);
       const scripts = readJson(path.join(root, "package.json"), {}).scripts ?? {};
       for (const name of ["build", "typecheck"]) {
         if (scripts[name] === undefined) continue;
-        const run = runTool("npm", ["run", name], { cwd: root });
-        console.log("  npm run " + name + ": код " + run.status);
+        const run = runTool(done.manager, ["run", name], { cwd: root });
+        console.log("  " + done.manager + " run " + name + ": код " + run.status);
         if (run.status !== 0)
           for (const line of String(run.stdout + run.stderr).trim().split("\n").slice(-8))
             console.log("    " + line);
       }
     }
   }
+  if (process.argv.includes("--apply")) sayBlockers();
   if (low.length === 0) {
     console.log("  годится: сажать можно");
     process.exit(0);
@@ -1493,6 +1504,8 @@ const ROOT = (() => {
  * проверяет код: в монорепозитории и в раскладке со ссылками это не конфиг
  * корня; у строгого конфига, продолжающего проектный, — тот, где записана
  * область.
+ * `{строгий конфиг типов}` — сам конфиг, по которому звено проверяет типы:
+ * строгость записана в нём, а область — там, куда ведёт `{конфиг типов}`.
  * `{решения}`, `{настройки}`, `{документы настроек}` — папки из полей `adr` и
  * `configDocs`: рецепт сверки, чей предмет задан полем, кладёт поломку туда,
  * куда смотрит сверка этого проекта. При пустом поле рецепт не исполняется:
@@ -1516,6 +1529,7 @@ const recipeVars = (fresh) => {
     "{исходники}": "src",
     "{файл кода}": "app/main.tsx",
     "{конфиг типов}": COMPILER_CONFIG,
+    "{строгий конфиг типов}": COMPILER_CONFIG,
     "{решения}": "docs/adr",
     "{настройки}": "src/shared/config",
     "{документы настроек}": "docs/config",
@@ -1569,6 +1583,14 @@ const recipeVars = (fresh) => {
         at = next;
       }
       return fromRepo(at);
+    })(),
+    // Строгость пишет сам конфиг звена, а не тот, откуда он берёт область:
+    // строгая копия посадки несёт опции и продолжает проектный. Выведено
+    // десятой посадкой: рецепт строгости не находил места ни в одном живом
+    // проекте.
+    "{строгий конфиг типов}": (() => {
+      const first = typeCheckConfigs()[0];
+      return first === undefined ? seat["{строгий конфиг типов}"] : fromRepo(first.at);
     })(),
     "{решения}": fieldDir("adr", "dir", "{решения}"),
     "{настройки}": fieldDir("configDocs", "dir", "{настройки}"),
@@ -4053,7 +4075,9 @@ const SEED_CONDITIONS = new Map([
   ],
   [
     "runnerWithoutGlobals",
-    () => runnerEffective(runnerConfigsNow())?.test?.globals !== true,
+    // Подготовка прогона снимает отрисованное библиотекой тестов React: проекту
+    // на чужом фреймворке её не за чем класть. Выведено десятой посадкой.
+    () => runnerEffective(runnerConfigsNow())?.test?.globals !== true && !projectHasForeignUi(),
   ],
 ]);
 /** Выполнено ли у проекта условие семени. Семя без условия кладётся всегда;
@@ -4387,14 +4411,16 @@ const typeCheckConfigs = () => {
 };
 /** Конфиги, по которым компилятор проверяет код, из прочитанного: у
  * конфига-решения со ссылками — его ссылки, у прочих — он сам. */
-const compilerParts = (got) =>
-  got === null
-    ? []
-    : got.raw.compilerOptions == null && got.references.length
-      ? got.references
-          .map((to) => tsconfigRead(to, REPO_AT))
-          .filter((one) => one !== null)
-      : [got];
+const compilerParts = (got, seen = new Set()) => {
+  if (got === null || seen.has(got.at)) return [];
+  seen.add(got.at);
+  // Решение внутри решения — монорепозиторий, чей пакет собирает свои
+  // строгие копии своим решением, — разворачивается до конфигов с опциями,
+  // как это делает `tsc -b`. Выведено десятой посадкой.
+  return got.raw.compilerOptions == null && got.references.length
+    ? got.references.flatMap((to) => compilerParts(tsconfigRead(to, REPO_AT), seen))
+    : [got];
+};
 /** Конфиги компилятора проекта — один ответ для коротких адресов, строгости
  * и видимости привезённого кода: прежде каждый решал сам, и конфиг-решение
  * со ссылками оставлял короткие адреса пакетов неизвестными. По звену типов,
@@ -7116,8 +7142,15 @@ if (mode === "falsify") {
       // рецептом напоминания о переходе: правка хука ложилась, сверка отвечала
       // «перехода нет: напоминать не о чем», и прогон краснел на законном
       // устройстве проекта.
-      if (subjectless(r.section) || idleByNote(r.section)) {
+      if (subjectless(r.section)) {
         idle.push(r.section + " — предмета в этом проекте нет");
+        continue;
+      }
+      // Сверка молчит намеренно и говорит почему: «предмета нет» читалось
+      // неправдой, когда предмет есть, а держит его долг. Выведено десятой
+      // посадкой.
+      if (idleByNote(r.section)) {
+        idle.push(r.section + " — сверка молчит намеренно:" + IDLE_NOTES[r.section].replace(/^\s*/, " "));
         continue;
       }
       // Адрес выше корня песочницы указывает в рабочее дерево — такой рецепт
@@ -22622,6 +22655,22 @@ if (mode === "verify") {
       // сам по себе, вероятно, исправен, но связка как целое не мерена: ровно так
       // мутационное звено и перестало читать результаты тестов, когда их раннер
       // ушёл на мажор вперёд.
+      // Пакет рабочего пространства ставит свою копию, когда его версия не
+      // сходится с корневой: связка корня тогда о нём ничего не говорит.
+      for (const [name, want] of Object.entries(CONFIG.verifiedVersions))
+        for (const one of WORKSPACE_PACKAGES) {
+          if (name === "node" || name === "npm") continue;
+          const at = path.join(one.dir, "node_modules", name, "package.json");
+          if (!existsSync(at)) continue;
+          const have = JSON.parse(readFileSync(at, "utf8")).version;
+          const where = path.relative(REPO_AT, one.dir).split(path.sep).join("/");
+          if (versionCmp(have, want) < 0)
+            oldVersions.push(`${name} ${have} в ${where} — НИЖЕ проверенной связки (${want}): поведение неизвестно`);
+          else if (versionCmp(have, want) > 0)
+            oldVersions.push(
+              `${name} ${have} в ${where} — ВЫШЕ проверенной связки (${want}): сам по себе исправен, совместимость связки не мерена`,
+            );
+        }
       for (const [name, want] of Object.entries(CONFIG.verifiedVersions)) {
         const have = installed(name);
         if (have === null) {
@@ -24860,11 +24909,25 @@ if (mode === "verify") {
       if (CONFIG.manifest == null)
         return "манифест не объявлен: поле `manifest` настройки пусто";
       const pkg = readJson(path.join(BASE, CONFIG.manifest), {});
-      for (const part of ["dependencies", "devDependencies", "optionalDependencies"])
-        for (const [name, spec] of Object.entries(pkg[part] ?? {})) {
-          pinsLooked += 1;
-          if (!isPinnedSpec(spec)) pinsLoose.push(name + "@" + String(spec) + " в " + part);
-        }
+      // Пакеты рабочих пространств держат свои версии: корень один их не
+      // называет. Ссылка на соседний пакет — не версия со стороны. Выведено
+      // десятой посадкой.
+      const inside = new Set(WORKSPACE_PACKAGES.map((one) => one.name));
+      const manifests = [
+        { at: null, pkg },
+        ...WORKSPACE_PACKAGES.map((one) => ({
+          at: path.relative(REPO_AT, one.dir).split(path.sep).join("/") + "/package.json",
+          pkg: readJson(path.join(one.dir, "package.json"), {}),
+        })),
+      ];
+      for (const { at, pkg: one } of manifests)
+        for (const part of ["dependencies", "devDependencies", "optionalDependencies"])
+          for (const [name, spec] of Object.entries(one[part] ?? {})) {
+            if (inside.has(name) || String(spec).startsWith("workspace:")) continue;
+            pinsLooked += 1;
+            if (!isPinnedSpec(spec))
+              pinsLoose.push(name + "@" + String(spec) + " в " + part + (at === null ? "" : " — " + at));
+          }
       checkHead("Версии зависимостей закреплены", {
         n: pinsLooked,
         unit: "зависимостей манифеста",
@@ -24916,6 +24979,15 @@ if (mode === "verify") {
             .filter((e) => e.onlyWith != null && !existsSync(path.join(REPO_AT, e.to)))
             .flatMap((e) => e.packages ?? []),
         );
+        // Проекту на чужом фреймворке пакеты нашего не нужны: React и его
+        // помощники тестов рядом с Svelte — второй ответ на тот же вопрос.
+        // Выведено десятой посадкой.
+        const framework =
+          (mapAt === null || !existsSync(mapAt) ? [] : readJson(mapAt, {}).stackAxes ?? []).find(
+            (a) => a.axis === "фреймворк",
+          ) ?? {};
+        if (projectHasForeignUi())
+          for (const p of [...(framework.ours ?? []), ...(framework.bound ?? [])]) unlaid.add(p);
         for (const link of CONFIG.toolchain) {
           // Звено без предмета пробелом не является: его не дописывают намеренно.
           if (!linkHasSubject(link.script)) continue;
@@ -33695,8 +33767,13 @@ if (mode === "verify") {
         CONFIG.transition == null
           ? null
           : path.join(BASE, CONFIG.transition.file);
+      // Шаг — строка таблицы шагов, а не любое место файла: семя несёт
+      // имя сверки примером в таблице формы записи, и пример засчитывался
+      // шагом. Выведено десятой посадкой.
       const plan =
-        at !== null && existsSync(at) ? readFileSync(at, "utf8") : "";
+        at !== null && existsSync(at)
+          ? (transitionOpen() ?? []).map((st) => st.line).join("\n")
+          : "";
       for (const kind of debtDeclared) {
         const guards = DEBT_GUARD[kind];
         if (guards === undefined) continue;

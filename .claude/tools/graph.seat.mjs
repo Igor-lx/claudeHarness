@@ -201,7 +201,8 @@ export const lintBlockersOf = (manifest, declared) => {
  * истории, обвязки и сборки. Глубина ограничена: осмотру нужен род кода, а
  * не опись. */
 export const projectFilesOf = (root, depth = 6) => {
-  const skip = new Set(["node_modules", ".git", ".claude", "dist", "build", "coverage", ".next"]);
+  // Песочницы прогонов кладут копию дерева рядом: её код — не код проекта.
+  const skip = new Set(["node_modules", ".git", ".claude", "dist", "build", "coverage", ".next", ".stryker-tmp", ".проба-сверок"]);
   const out = [];
   const walk = (dir, left) => {
     let kids = [];
@@ -222,6 +223,67 @@ export const projectFilesOf = (root, depth = 6) => {
   return out;
 };
 
+/** План, поднимающий ESLint через границу плоского конфига (`9`), при старом
+ * конфиге в корне: ESLint его не читает, и линт проекта падает до разбора.
+ * Ответ — строка для вывода `env`, либо `null`. Выведено десятой посадкой. */
+export const eslintBoundaryOf = (plan, rootFiles) => {
+  const major = (v) => Number(/(\d+)/.exec(String(v ?? ""))?.[1] ?? NaN);
+  const raised = plan.find((one) => one.name === "eslint" && major(one.from) < 9 && major(one.to) >= 9);
+  const legacy = rootFiles.filter((f) => /^\.eslintrc(?:\.(?:js|cjs|json|ya?ml))?$/.test(f));
+  if (raised === undefined || legacy.length === 0) return null;
+  return (
+    "ESLint поднят " +
+    raised.from +
+    " → " +
+    raised.to +
+    ": старый конфиг " +
+    legacy.join(", ") +
+    " он не читает, и линт проекта падает до разбора. Шаг 1-бис кладёт конфиг семени действующим, старый снимает (`seat/seat.md`, шаг 1-бис)."
+  );
+};
+
+/** Манифесты пакетов рабочих пространств: образцы папок — поле `workspaces`
+ * манифеста корня (список либо `{ packages }`) и `pnpm-workspace.yaml`;
+ * образец — точная папка либо папка со звёздочкой на конце. В монорепозитории
+ * инструменты пакеты держат сами, и осмотр по одному корню видел их
+ * отсутствующими. Выведено десятой посадкой. */
+export const workspaceManifestsOf = (root) => {
+  let rootManifest = {};
+  try {
+    rootManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const declared = Array.isArray(rootManifest.workspaces)
+    ? rootManifest.workspaces
+    : (rootManifest.workspaces?.packages ?? []);
+  const pnpmAt = path.join(root, "pnpm-workspace.yaml");
+  const pnpm = existsSync(pnpmAt)
+    ? [...readFileSync(pnpmAt, "utf8").matchAll(/^\s*-\s*["']?([^"'#\s]+)["']?\s*$/gm)].map((m) => m[1])
+    : [];
+  const dirs = [...declared, ...pnpm]
+    .filter((one) => typeof one === "string" && !one.startsWith("!"))
+    .flatMap((one) => {
+      const at = one.replace(/\/\*$/, "");
+      if (!one.endsWith("/*")) return [at];
+      try {
+        return readdirSync(path.join(root, at), { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => at + "/" + e.name);
+      } catch {
+        return [];
+      }
+    });
+  return [...new Set(dirs)].sort().flatMap((dir) => {
+    try {
+      const at = dir + "/package.json";
+      return [{ at, manifest: JSON.parse(readFileSync(path.join(root, at), "utf8")) }];
+    } catch {
+      return [];
+    }
+  });
+};
+
 /** Осмотр окружения живого проекта по осям карты посадки (`stackAxes`):
  * ось наша, наша не той версии, без предмета либо чужая. Вердикт —
  * `пусто`, `наше`, `наше, неполное` либо `чужое`; план — пакеты, которые
@@ -237,6 +299,7 @@ export const stackSurveyOf = ({
   withTools = [],
   ui = [],
   alternatives = {},
+  workspaces = [],
 }) => {
   const ext = (re) => files.filter((f) => re.test(f) && !/\.d\.ts$/.test(f));
   const tsFiles = ext(/\.(?:ts|tsx|mts|cts)$/);
@@ -247,9 +310,11 @@ export const stackSurveyOf = ({
   if (manifest === null && code.length === 0)
     return { verdict: "пусто", rows: [], foreign: [], plan: [], scripts: [] };
   const m = manifest ?? {};
-  const own = { ...(m.dependencies ?? {}), ...(m.devDependencies ?? {}) };
-  const peer = m.peerDependencies ?? {};
-  const has = (name) => own[name] !== undefined || peer[name] !== undefined;
+  // Корень и пакеты рабочих пространств: пакет объявлен там, где его держат.
+  const places = [{ at: null, m }, ...workspaces.map((w) => ({ at: w.at, m: w.manifest ?? {} }))];
+  const ownIn = (p, name) => p.m.dependencies?.[name] ?? p.m.devDependencies?.[name];
+  const has = (name) =>
+    places.some((p) => ownIn(p, name) !== undefined || p.m.peerDependencies?.[name] !== undefined);
   const foreignUi = files.some(isForeignCode) || (framework.foreignPackages ?? []).some(has);
   const hasUi = files.some((f) => /\.(?:tsx|jsx)$/.test(f)) || has("react") || foreignUi;
   // Пакеты нашего фреймворка не ставятся проекту без интерфейса и проекту
@@ -288,7 +353,11 @@ export const stackSurveyOf = ({
     if (axis.onlyWithFiles !== undefined) {
       const subject = files.some((f) => axis.onlyWithFiles.some((e) => f.endsWith("." + e)));
       if (!subject && !axis.ours.some(has)) {
-        rows.push({ axis: axis.axis, state: "без предмета", note: "файлов нет" });
+        rows.push({
+          axis: axis.axis,
+          state: "без предмета",
+          note: "файлов " + axis.onlyWithFiles.map((e) => "`." + e + "`").join(" и ") + " нет",
+        });
         continue;
       }
     }
@@ -302,16 +371,24 @@ export const stackSurveyOf = ({
         notes.push(alt + " — объявленная замена " + name);
         continue;
       }
-      const declared = own[name];
-      // Пакет одноранговый — его ставит потребитель, а не проект.
-      if (declared === undefined && peer[name] !== undefined) continue;
-      if (declared === want) continue;
-      const section =
-        m.dependencies?.[name] !== undefined || (declared === undefined && (name === "react" || name === "react-dom"))
-          ? "dependencies"
-          : "devDependencies";
-      plan.push({ name, from: declared ?? null, to: want, section });
-      moves.push(declared === undefined ? name + " — нет" : name + " " + declared + " → " + want);
+      const holders = places.filter((p) => ownIn(p, name) !== undefined);
+      if (holders.length === 0) {
+        // Пакет одноранговый — его ставит потребитель, а не проект.
+        if (has(name)) continue;
+        const section = name === "react" || name === "react-dom" ? "dependencies" : "devDependencies";
+        plan.push({ name, from: null, to: want, section });
+        moves.push(name + " — нет");
+        continue;
+      }
+      for (const p of holders) {
+        const declared = ownIn(p, name);
+        if (declared === want) continue;
+        const section = p.m.dependencies?.[name] !== undefined ? "dependencies" : "devDependencies";
+        plan.push(p.at === null ? { name, from: declared, to: want, section } : { name, from: declared, to: want, section, at: p.at });
+        moves.push(
+          name + " " + declared + " → " + want + (p.at === null ? "" : " (" + path.posix.dirname(p.at) + ")"),
+        );
+      }
     }
     rows.push(
       moves.length === 0
@@ -336,7 +413,6 @@ export const stackSurveyOf = ({
  * вывода. Скрипт звена оси, заменённой своей, ставится семенным, а прежний
  * проектный остаётся рядом под именем `<звено>:own`. */
 export const stackApply = (root, survey, seedScripts, run = runTool) => {
-  const manifestAt = path.join(root, "package.json");
   // Ставит менеджер, чью блокировку держит проект: чужая команда кладёт
   // вторую блокировку рядом, и какая в силе, решает тот, кто ставит.
   const [manager, lockName] = [
@@ -346,15 +422,25 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
     ["bun", "bun.lockb"],
   ].find(([, lock]) => existsSync(path.join(root, lock))) ?? ["npm", "package-lock.json"];
   const lockAt = path.join(root, lockName);
-  const before = readFileSync(manifestAt, "utf8");
   const lockBefore = existsSync(lockAt) ? readFileSync(lockAt, "utf8") : null;
-  const m = JSON.parse(before);
+  // Манифест на каждое место плана: корень и пакеты рабочих пространств.
+  const files = new Map();
+  const manifestOf = (at) => {
+    if (!files.has(at)) {
+      const before = readFileSync(path.join(root, at), "utf8");
+      files.set(at, { before, m: JSON.parse(before) });
+    }
+    return files.get(at).m;
+  };
+  manifestOf("package.json");
   for (const one of survey.plan) {
+    const m = manifestOf(one.at ?? "package.json");
     for (const section of ["dependencies", "devDependencies"])
       if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
     m[one.section] = { ...(m[one.section] ?? {}), [one.name]: one.to };
     m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
   }
+  const m = manifestOf("package.json");
   for (const name of survey.scripts) {
     const seed = seedScripts[name];
     if (seed === undefined) continue;
@@ -362,15 +448,16 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
     if (m.scripts[name] !== undefined && m.scripts[name] !== seed) m.scripts[name + ":own"] = m.scripts[name];
     m.scripts[name] = seed;
   }
-  writeFileSync(manifestAt, JSON.stringify(m, null, 2) + "\n");
+  for (const [at, one] of files) writeFileSync(path.join(root, at), JSON.stringify(one.m, null, 2) + "\n");
   const done = run(manager, manager === "npm" ? ["install", "--no-audit", "--no-fund", "--loglevel=error"] : ["install"], {
     cwd: root,
   });
-  if (done.status === 0) return { ok: true };
-  writeFileSync(manifestAt, before);
+  if (done.status === 0) return { ok: true, manager };
+  for (const [at, one] of files) writeFileSync(path.join(root, at), one.before);
   if (lockBefore !== null) writeFileSync(lockAt, lockBefore);
   return {
     ok: false,
+    manager,
     tail: String(done.stdout + done.stderr).trim().split("\n").slice(-12),
   };
 };

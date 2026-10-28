@@ -376,7 +376,7 @@
       "axis": "фреймворк",
       "ours": ["react", "react-dom", "@types/react", "@types/react-dom"],
       "bound": ["@vitejs/plugin-react", "@testing-library/react"],
-      "checks": ["Звену цепочки есть на чём работать"],
+      "checks": ["Звену цепочки есть на чём работать", "Правила про существующее"],
       "codeFiles": ["vue", "svelte", "astro"],
       "foreignPackages": ["vue", "svelte", "@angular/core", "solid-js", "preact", "lit", "@builder.io/qwik"],
       "uiOnly": true

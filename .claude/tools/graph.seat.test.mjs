@@ -18,6 +18,8 @@ import {
   projectFilesOf,
   stackApply,
   stackSurveyOf,
+  workspaceManifestsOf,
+  eslintBoundaryOf,
 } from "./graph.seat.mjs";
 
 // Посадка на месте одной командой: полка лежит в `.claude` папки, режим
@@ -407,7 +409,7 @@ describe("осмотр окружения проекта по осям карт�
     expect(lib.rows.find((r) => r.axis === "листы стилей")).toEqual({
       axis: "листы стилей",
       state: "без предмета",
-      note: "файлов нет",
+      note: "файлов `.scss` и `.sass` нет",
     });
     // Объявленный пакет стилей без листов — предмет есть: версия приводится.
     const declared = survey({ devDependencies: { "sass-embedded": "^1.80.0" } }, ["src/index.ts"]);
@@ -496,6 +498,8 @@ describe("осмотр окружения проекта по осям карт�
         "build/b.js",
         "coverage/c.js",
         ".next/d.js",
+        ".stryker-tmp/sandbox-1/src/a.ts",
+        ".проба-сверок/1/src/a.ts",
         "src/a/b.ts",
         "package.json",
       ])
@@ -530,7 +534,7 @@ describe("осмотр окружения проекта по осям карт�
         calls.push([cmd, args[0], opts.cwd]);
         return { status: 0, stdout: "", stderr: "" };
       });
-      expect(ok).toEqual({ ok: true });
+      expect(ok).toEqual({ ok: true, manager: "npm" });
       expect(calls).toEqual([["npm", "install", dest]]);
       const after = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
       expect(after.dependencies).toEqual({ react: "19.3.1" });
@@ -542,7 +546,7 @@ describe("осмотр окружения проекта по осям карт�
         fs.writeFileSync(path.join(dest, "package-lock.json"), "broken");
         return { status: 1, stdout: "", stderr: "npm error ERESOLVE\nconflict" };
       });
-      expect(failed).toEqual({ ok: false, tail: ["npm error ERESOLVE", "conflict"] });
+      expect(failed).toEqual({ ok: false, manager: "npm", tail: ["npm error ERESOLVE", "conflict"] });
       expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(text);
       expect(fs.readFileSync(path.join(dest, "package-lock.json"), "utf8")).toBe("{\"lock\":1}\n");
     } finally {
@@ -572,7 +576,7 @@ describe("осмотр окружения проекта по осям карт�
         return { status: 0, stdout: "", stderr: "" };
       };
       fs.writeFileSync(path.join(dest, "package.json"), text);
-      expect(stackApply(dest, s, { lint: "eslint .", test: "vitest run" }, ok)).toEqual({ ok: true });
+      expect(stackApply(dest, s, { lint: "eslint .", test: "vitest run" }, ok)).toEqual({ ok: true, manager: "npm" });
       const after = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
       expect(Object.keys(after.dependencies)).toEqual(["alpha", "react", "zod"]);
       expect(after.devDependencies).toEqual({ zeta: "1.0.0" });
@@ -604,6 +608,85 @@ describe("осмотр окружения проекта по осям карт�
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
     }
+  });
+
+  it("монорепозиторий: пакеты рабочих пространств читаются, их версии приводятся там, где их держат", () => {
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-ws-"));
+    try {
+      const write = (rel, value) => {
+        fs.mkdirSync(path.dirname(path.join(dest, rel)), { recursive: true });
+        fs.writeFileSync(path.join(dest, rel), typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n");
+      };
+      write("package.json", { private: true, workspaces: ["packages/*", "tools/lint"] });
+      write("packages/app/package.json", {
+        dependencies: { react: "^19.1.0" },
+        devDependencies: { typescript: "~5.8.3", vite: "^7.0.4" },
+      });
+      write("packages/ui/package.json", { peerDependencies: { react: "^19.0.0" }, devDependencies: { vitest: "^3.2.4" } });
+      write("packages/empty/README.md", "no manifest\n");
+      write("tools/lint/package.json", { devDependencies: {} });
+      write("pnpm-workspace.yaml", "packages:\n  - 'extra/*'\n");
+      write("extra/one/package.json", { devDependencies: {} });
+      const ws = workspaceManifestsOf(dest);
+      expect(ws.map((w) => w.at)).toEqual([
+        "extra/one/package.json",
+        "packages/app/package.json",
+        "packages/ui/package.json",
+        "tools/lint/package.json",
+      ]);
+      expect(workspaceManifestsOf(path.join(dest, "нет-такой"))).toEqual([]);
+      const s = stackSurveyOf({
+        manifest: JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")),
+        files: ["packages/app/src/main.tsx", "packages/ui/src/index.ts"],
+        axes: AXES,
+        verified: OURS,
+        ui: PLATFORM.ui,
+        alternatives: PLATFORM.alternatives,
+        workspaces: ws,
+      });
+      const plan = planOf(s);
+      expect(plan.typescript).toEqual({
+        name: "typescript",
+        from: "~5.8.3",
+        to: OURS.typescript,
+        section: "devDependencies",
+        at: "packages/app/package.json",
+      });
+      expect(plan.vitest.at).toBe("packages/ui/package.json");
+      expect(plan.react).toMatchObject({ section: "dependencies", at: "packages/app/package.json" });
+      // Не объявленное нигде ставится в корень.
+      expect(plan.eslint).toEqual({ name: "eslint", from: null, to: OURS.eslint, section: "devDependencies" });
+      expect(s.rows.find((r) => r.axis === "язык").note).toBe("typescript ~5.8.3 → " + OURS.typescript + " (packages/app)");
+      const ok = () => ({ status: 0, stdout: "", stderr: "" });
+      expect(stackApply(dest, s, {}, ok)).toEqual({ ok: true, manager: "npm" });
+      const app = JSON.parse(fs.readFileSync(path.join(dest, "packages/app/package.json"), "utf8"));
+      expect(app.devDependencies).toEqual({ typescript: OURS.typescript, vite: OURS.vite });
+      expect(JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")).devDependencies.eslint).toBe(OURS.eslint);
+      // Упала установка — все тронутые манифесты возвращаются как были.
+      write("packages/app/package.json", { devDependencies: { typescript: "~5.8.3" } });
+      const appBefore = fs.readFileSync(path.join(dest, "packages/app/package.json"), "utf8");
+      const rootBefore = fs.readFileSync(path.join(dest, "package.json"), "utf8");
+      const failed = stackApply(dest, s, {}, () => ({ status: 1, stdout: "", stderr: "x" }));
+      expect(failed.ok).toBe(false);
+      expect(fs.readFileSync(path.join(dest, "packages/app/package.json"), "utf8")).toBe(appBefore);
+      expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(rootBefore);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
+  it("подъём ESLint через границу плоского конфига при старом конфиге назван; без старого либо в пределах мажора — нет", () => {
+    const up = [{ name: "eslint", from: "^8.57.1", to: "10.13.0", section: "devDependencies" }];
+    expect(eslintBoundaryOf(up, [".eslintrc.cjs", "package.json"])).toBe(
+      "ESLint поднят ^8.57.1 → 10.13.0: старый конфиг .eslintrc.cjs он не читает, и линт проекта падает до разбора. Шаг 1-бис кладёт конфиг семени действующим, старый снимает (`seat/seat.md`, шаг 1-бис).",
+    );
+    for (const legacy of [".eslintrc", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml", ".eslintrc.js"])
+      expect(eslintBoundaryOf(up, [legacy]), legacy).not.toBeNull();
+    expect(eslintBoundaryOf(up, ["eslint.config.js", ".eslintrc.cjs.bak"])).toBeNull();
+    expect(eslintBoundaryOf([{ ...up[0], from: "^9.30.0" }], [".eslintrc.cjs"])).toBeNull();
+    expect(eslintBoundaryOf([{ ...up[0], from: null }], [".eslintrc.cjs"])).toBeNull();
+    expect(eslintBoundaryOf([{ ...up[0], name: "prettier" }], [".eslintrc.cjs"])).toBeNull();
+    expect(eslintBoundaryOf([{ ...up[0], to: "8.57.1" }], [".eslintrc.cjs"])).toBeNull();
   });
 
   it("проект на yarn ставится командой yarn, и откат возвращает его блокировку", () => {
