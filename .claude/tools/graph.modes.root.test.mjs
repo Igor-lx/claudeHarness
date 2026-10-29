@@ -946,6 +946,9 @@ describe("стенд проб", () => {
       expect(section("Сверки, выключенные при живом предмете")).not.toContain(
         "seriesSince",
       );
+      expect(section("Сверки, выключенные при живом предмете")).not.toContain(
+        "findings.since",
+      );
       expect(section("Коммит с кодом накрыт сводом")).not.toContain(
         "не объявлено",
       );

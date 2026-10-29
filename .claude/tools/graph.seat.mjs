@@ -847,6 +847,20 @@ const trialLinks = (target, env) => {
 };
 
 /** Последние строки вывода — для отказа: причина обычно в конце. */
+/** Поля оснований, которые посадка ставит своим первым коммитом: ревизия
+ * сводов, серия и реестр находок. Строка реестра стоит внутри `findings` и
+ * потому с отступом в четыре пробела. */
+const SEATING_BASES = [
+  ["barSince", /^ {2}barSince: null,/m],
+  ["seriesSince", /^ {2}seriesSince: null,/m],
+  ["findings.since", /^ {4}since: null,/m],
+];
+const withSeatingBase = (config, base) =>
+  SEATING_BASES.reduce(
+    (text, [, line]) => text.replace(line, (found) => found.replace("null", JSON.stringify(base))),
+    config,
+  );
+
 const tailOf = (text, n = 6) =>
   text.trim() === ""
     ? ["  (вывода нет)"]
@@ -1069,13 +1083,8 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
   git("commit", "-qm", "chore: seat the harness");
   const base = git("rev-parse", "HEAD");
   const configAt = path.join(target, ".context", "graph.config.mjs");
-  writeFileSync(
-    configAt,
-    readFileSync(configAt, "utf8")
-      .replace(/^ {2}barSince: null,/m, '  barSince: "' + base + '",')
-      .replace(/^ {2}seriesSince: null,/m, '  seriesSince: "' + base + '",'),
-  );
-  git("commit", "-qam", "chore: record the seating base of the bar and the series");
+  writeFileSync(configAt, withSeatingBase(readFileSync(configAt, "utf8"), base));
+  git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
   git("config", "core.hooksPath", ".claude/hooks/git");
   if (keep !== null) rmSync(keep, { recursive: true, force: true });
   const verify = runTool(process.execPath, [tool, "verify"], { cwd: target, env });
@@ -1347,26 +1356,21 @@ export const runSeat = ({ toolDir, argv }) => {
     const base = git("rev-parse", "HEAD");
     const configAt = path.join(target, ".context", "graph.config.mjs");
     const config = readFileSync(configAt, "utf8");
-    // Основания ревизии сводов и серии — один коммит: история посадки
-    // начинается с него.
-    for (const field of ["barSince", "seriesSince"])
-      if (!new RegExp("^ {2}" + field + ": null,", "m").test(config))
+    // Основания ревизии сводов, серии и реестра находок — один коммит:
+    // история посадки начинается с него.
+    for (const [field, line] of SEATING_BASES)
+      if (!line.test(config))
         refuse(
           "В семени настройки нет строки `" + field + ": null,` — основание",
-          "ревизии ставить некуда: " + norm(configAt),
+          "ставить некуда: " + norm(configAt),
         );
-    writeFileSync(
-      configAt,
-      config
-        .replace(/^ {2}barSince: null,/m, '  barSince: "' + base + '",')
-        .replace(/^ {2}seriesSince: null,/m, '  seriesSince: "' + base + '",'),
-    );
-    git("commit", "-qam", "chore: record the seating base of the bar and the series");
+    writeFileSync(configAt, withSeatingBase(config, base));
+    git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
     // Ворота ставятся последними: оба коммита посадки — её собственные, и
     // своду в них судить нечего.
     git("config", "core.hooksPath", ".claude/hooks/git");
     made.push(
-      "git: основание ревизии сводов и серии " +
+      "git: основание ревизии сводов, серии и реестра находок " +
         base.slice(0, 7) +
         ", ворота перед коммитом стоят",
     );

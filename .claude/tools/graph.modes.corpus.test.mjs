@@ -62,6 +62,7 @@ const plant = (project) => {
       new RegExp("^ {2}" + field + ": .*,$", "m"),
       "  " + field + ": " + JSON.stringify(value) + ",",
     );
+  text = text.replace(/^ {4}since: .*,$/m, "    since: " + JSON.stringify(head) + ",");
   fs.writeFileSync(cfg, text);
   git(
     box,

@@ -727,12 +727,16 @@ describe("посадка на месте одной командой", () => {
       expect(facts).toMatch(/\| `mutate` \| зелено, убито `[1-9]\d*` из `\d+`/);
       expect(facts).not.toContain("<замер>");
       expect(gitIn(dest, "log", "--format=%s").split("\n")).toEqual([
-        "chore: record the seating base of the bar and the series",
+        "chore: record the seating bases of the bar, the series and the findings",
         "chore: seat the harness",
       ]);
       expect(gitIn(dest, "log", "--format=%an")).not.toContain("seat");
       expect(run.stdout).not.toContain("git не знает, кто вы");
       expect(gitIn(dest, "config", "core.hooksPath")).toBe(".claude/hooks/git");
+      const seated = fs.readFileSync(path.join(dest, ".context", "graph.config.mjs"), "utf8");
+      const base = gitIn(dest, "rev-list", "--max-parents=0", "HEAD").trim();
+      for (const line of [/^ {2}barSince: "(\w+)",/m, /^ {2}seriesSince: "(\w+)",/m, /^ {4}since: "(\w+)",/m])
+        expect(line.exec(seated)?.[1], String(line)).toBe(base);
       expect(gitIn(dest, "status", "--porcelain")).toBe("");
       expect(fs.existsSync(path.join(dest, ".git", "claude-seat"))).toBe(false);
       const again = seatHere(dest, "--packages", ROOT);

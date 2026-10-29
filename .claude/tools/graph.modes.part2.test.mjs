@@ -4535,7 +4535,28 @@ describe("находки мини-стенда: факты, долг, отлож
         "  seriesSince: null,",
         '  seriesSince: "' + git("rev-parse", "HEAD").trim() + '",',
       );
-      expect(disarmedOf().some((one) => one.includes("seriesSince"))).toBe(
+      // Основание реестра находок ставит тот же шаг: пустое при объявленном
+      // основании сводов — «Находки закрыты» не сверяет коммиты `fix:`.
+      const withSeries = disarmedOf();
+      expect(withSeries.some((one) => one.includes("seriesSince"))).toBe(false);
+      expect(withSeries).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/CONFIG\.findings\.since пуст/),
+        ]),
+      );
+      // Основание, которого в истории нет, реестр называет одной фразой.
+      edit(box, ".context/graph.config.mjs", "    since: null,", '    since: "0000000",');
+      const absent =
+        tool("verify").out.split("=== Находки закрыты ===")[1]?.split("\n===")[0] ?? "";
+      expect(absent).toContain("базового коммита 0000000 в истории этой копии нет");
+      expect(absent).not.toContain("базового коммита базового");
+      edit(
+        box,
+        ".context/graph.config.mjs",
+        '    since: "0000000",',
+        '    since: "' + git("rev-parse", "HEAD").trim() + '",',
+      );
+      expect(disarmedOf().some((one) => one.includes("findings.since"))).toBe(
         false,
       );
       // Состояние даёт модели строку с якорем на строку файла — ту, что
