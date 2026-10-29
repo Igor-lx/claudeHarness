@@ -3311,7 +3311,10 @@ export const SCOPE_LINE_KINDS = [
   ["Q", "секрет в окружении", /env\s*\.\s*\w*(?:SECRET|TOKEN|API_KEY|PASSWORD)/],
   ["Q", "переход по значению", NAV_BY_VALUE],
   ["Q", "адрес перехода", NAV_SOURCE],
-  ["T", "форматирование по региону", /\bIntl\.[A-Z]/],
+  // `toLocale…String` форматирует по региону зрителя тем же `Intl`: без него
+  // таймер на `toLocaleTimeString()` оставлял раздел неприменимым —
+  // выведено одиннадцатой посадкой.
+  ["T", "форматирование по региону", /\bIntl\.[A-Z]|\.toLocale(?:Date|Time)?String\s*\(/],
 ];
 /** Виды, которые считаются свидетелем только вдвоём в одном файле: переход
  * по значению — адрес снаружи, когда тот же файл читает адрес страницы. */
@@ -6217,6 +6220,10 @@ export const PREDICATE_CASES = [
   ["scopeKindsOfLine", "const raw = location.search;", "K/адрес;Q/адрес перехода"],
   ["scopeKindsOfLine", "const raw = location.hash;", "K/адрес;Q/адрес перехода"],
   ["scopeKindsOfLine", "const price = new Intl.NumberFormat(locale);", "T/форматирование по региону"],
+  ["scopeKindsOfLine", "const at = now.toLocaleTimeString();", "T/форматирование по региону"],
+  ["scopeKindsOfLine", "const day = date.toLocaleDateString(\"de\");", "T/форматирование по региону"],
+  ["scopeKindsOfLine", "const sum = total.toLocaleString();", "T/форматирование по региону"],
+  ["scopeKindsOfLine", "const toLocaleStringish = 1;", ""],
   ["scopeKindsOfModule", "react", ""],
   ["scopeKindsOfModule", "axios", "K/сеть"],
   ["scopeKindsOfModule", "ky", "K/сеть"],
