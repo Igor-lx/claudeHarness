@@ -4024,8 +4024,18 @@ const unreadByKind = () => {
   );
 };
 /** Интерфейс на чужом фреймворке: пакеты сборщика ему нужны, а
- * React-помощники — нет. */
-const projectHasForeignUi = () => unreadCodeFiles().length > 0;
+ * React-помощники — нет. Узнаётся по непрочитанным файлам и по пакету оси
+ * фреймворка (`foreignPackages`): Solid пишет `.tsx`, и по файлам его не
+ * отличить. Выведено одиннадцатой посадкой. */
+const projectHasForeignUi = () => {
+  if (unreadCodeFiles().length > 0) return true;
+  const mapAt = shelfAt("seat/map.json");
+  const framework = (mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : []).find(
+    (a) => a.axis === "фреймворк",
+  );
+  const declared = projectDeclared();
+  return (framework?.foreignPackages ?? []).some((one) => declared.has(one));
+};
 /** Словарь условий `onlyWith` из карты посадки: условие → выполнено ли оно у
  * проекта. Семя с условием кладётся только при его предмете; объяснение
  * словаря — в самой карте, полем `_onlyWith`. */

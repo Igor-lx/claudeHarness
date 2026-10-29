@@ -6290,6 +6290,26 @@ describe("версии пакетов рабочих пространств", ()
   }, 240000);
 });
 
+/** Чужой фреймворк узнают и по пакету оси, а не только по непрочитанным
+ * файлам: Solid пишет `.tsx`, и React-помощники ему не нужны. Выведено
+ * одиннадцатой посадкой. */
+describe("чужой фреймворк в файлах `.tsx`", () => {
+  it("пакет чужого фреймворка снимает с проекта помощник тестов React", () => {
+    const box = seatEmpty("foreign-tsx-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      delete pkg.devDependencies["@testing-library/react"];
+      pkg.dependencies = { ...(pkg.dependencies ?? {}), "solid-js": "1.9.9" };
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const said = (verifyIn(box).get("Инструменты звеньев на месте (предупреждение, прогон не роняет)") ?? []).join("\n");
+      expect(said).not.toContain("@testing-library/react");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 /** Долг описания держит шаг знания — строка таблицы шагов, а не любое
  * упоминание сверки в файле перехода: семя несёт её имя примером в таблице
  * формы записи. Выведено десятой посадкой. */
