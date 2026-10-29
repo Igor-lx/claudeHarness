@@ -6262,6 +6262,32 @@ describe("версии пакетов рабочих пространств", ()
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  // Выведено одиннадцатой посадкой: обе сверки читали один корень и
+  // советовали продублировать в нём пакеты из манифестов пакетов.
+  it("пакет, объявленный в пакете, звену объявлен; замена в пакете — второй ответ корню", () => {
+    const box = seatEmpty("ws-declared-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      const vitest = pkg.devDependencies.vitest;
+      delete pkg.devDependencies.vitest;
+      pkg.workspaces = ["packages/*"];
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      fs.mkdirSync(path.join(box, "packages", "x"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "packages", "x", "package.json"),
+        JSON.stringify({ name: "@zz/x", devDependencies: { vitest, sass: "1.80.0" } }, null, 2) + "\n",
+      );
+      const found = verifyIn(box);
+      expect((found.get("Инструменты звеньев на месте (предупреждение, прогон не роняет)") ?? []).join("\n")).not.toContain(
+        "vitest",
+      );
+      expect((found.get("Пакет платформы не второй ответ") ?? []).join("\n")).toContain("sass-embedded рядом с sass");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
 
 /** Долг описания держит шаг знания — строка таблицы шагов, а не любое

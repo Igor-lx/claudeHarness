@@ -4502,6 +4502,17 @@ const WORKSPACE_PACKAGES = (() => {
     return [{ name: pkg.name, dir: norm(dir), entry: entry === null ? null : norm(path.resolve(dir, entry)) }];
   });
 })();
+/** Имена пакетов, объявленных проектом: манифест корня и манифесты пакетов
+ * рабочих пространств. Сверка, читавшая один корень, звала поставить в корне
+ * то, что пакет держит сам, и не видела замены в пакете. Выведено
+ * одиннадцатой посадкой. */
+const projectDeclared = () =>
+  new Set(
+    [
+      readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}),
+      ...WORKSPACE_PACKAGES.map((one) => readJson(path.join(one.dir, "package.json"), {})),
+    ].flatMap((m) => [...Object.keys(m.dependencies ?? {}), ...Object.keys(m.devDependencies ?? {})]),
+  );
 /** Адрес пакета рабочего пространства, который называет `spec`: вход пакета
  * для голого имени, путь в его папке для имени с хвостом; чужой — `null`. */
 const workspaceBaseOf = (spec) => {
@@ -24948,10 +24959,7 @@ if (mode === "verify") {
           ? JSON.parse(readFileSync(at, "utf8"))
           : null;
         const scripts = pkg?.scripts ?? {};
-        const declared = new Set([
-          ...Object.keys(pkg?.dependencies ?? {}),
-          ...Object.keys(pkg?.devDependencies ?? {}),
-        ]);
+        const declared = projectDeclared();
         const gaps = [];
         const elsewhere = [];
         // Пакет семени с условием нужен, только пока семя лежит: без
@@ -32740,11 +32748,7 @@ if (mode === "verify") {
         mapAt !== null && existsSync(mapAt)
           ? (readJson(mapAt, {}).platformPackages?.alternatives ?? {})
           : {};
-      const manifest = readJson(path.join(REPO_AT, "package.json"), {});
-      const held = new Set([
-        ...Object.keys(manifest.dependencies ?? {}),
-        ...Object.keys(manifest.devDependencies ?? {}),
-      ]);
+      const held = projectDeclared();
       // Пакет интерфейса у проекта без интерфейса — та же ошибка слияния:
       // дописан по имени, а предмета у проекта нет.
       const ui =
