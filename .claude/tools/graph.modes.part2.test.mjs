@@ -6310,6 +6310,28 @@ describe("чужой фреймворк в файлах `.tsx`", () => {
   }, 240000);
 });
 
+/** Папка `tests/` слоя компонентов — тесты слоя, а не компонент: при
+ * компонентах-файлах она называлась компонентом без README. Выведено
+ * одиннадцатой посадкой. */
+describe("собственные папки слоя компонентов", () => {
+  it("`tests/` и `docs/` слоя не компоненты: ни README, ни состав узла с них не спрашивают", () => {
+    const box = seatEmpty("layer-own-");
+    try {
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      };
+      put("src/components/tests/layer.test.ts", 'import { expect, it } from "vitest";\n\nit("layer", () => {\n  expect(1).toBe(1);\n});\n');
+      put("src/components/docs/README.md", "# Components\n");
+      const found = verifyIn(box);
+      for (const section of ["У компонента есть README", "Документы компонента лежат в его `docs/`", "В корне узла только сам узел"])
+        expect((found.get(section) ?? []).join("\n"), section).not.toMatch(/components\/(?:tests|docs)\b/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 /** Долг описания держит шаг знания — строка таблицы шагов, а не любое
  * упоминание сверки в файле перехода: семя несёт её имя примером в таблице
  * формы записи. Выведено десятой посадкой. */

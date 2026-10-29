@@ -12778,6 +12778,20 @@ const barReadSection = (pages, carried, prose = (lines) => lines) =>
         "",
       ];
 
+/** Собственные папки слоя компонентов: тесты слоя и его документы. Это не
+ * компоненты — раскладка кладёт тесты в `tests/` своего слоя, — и спрашивать
+ * с них README и состав узла нельзя. Выведено одиннадцатой посадкой: при
+ * компонентах-файлах `components/tests/` называлась компонентом без README. */
+const LAYER_OWN_DIRS = new Set(["tests", "docs"]);
+/** Папка компонента, которой принадлежит адрес от корня исходников:
+ * «слой/имя» либо `null`. Один распознаватель на все сверки о компонентах. */
+const componentUnitOf = (r) => {
+  for (const layer of CONFIG.componentsAt ?? ["components"]) {
+    const m = new RegExp("^" + escapeRe(layer) + "/([^/]+)/").exec(r);
+    if (m !== null && !LAYER_OWN_DIRS.has(m[1])) return layer + "/" + m[1];
+  }
+  return null;
+};
 /** Внутренность чужой единицы переноса: файл в папке другого компонента, не
  * её вход. Единица переноса — папка под объявленным слоем компонентов
  * (`componentsAt`): её
@@ -12789,7 +12803,7 @@ const INDEX_FILE = new RegExp("^index\\.(?:" + CODE_EXTENSIONS.join("|") + ")$")
 const foreignInside = (from, to) => {
   for (const layer of CONFIG.componentsAt ?? ["components"]) {
     const m = new RegExp("^" + layer + "/([^/]+)/(.+)$").exec(rel(to));
-    if (m === null) continue;
+    if (m === null || LAYER_OWN_DIRS.has(m[1])) continue;
     const unit = layer + "/" + m[1] + "/";
     if (rel(from).startsWith(unit)) return false;
     if (INDEX_FILE.test(m[2])) return false;
@@ -12850,12 +12864,8 @@ const layerOf = (f) => {
  * под прочими слоями, иначе сам файл. */
 const unitOf = (f) => {
   const r = rel(f);
-  for (const layer of CONFIG.componentsAt ?? ["components"]) {
-    const m = new RegExp(
-      "^" + escapeRe(layer) + "/([^/]+)/",
-    ).exec(r);
-    if (m !== null) return layer + "/" + m[1];
-  }
+  const component = componentUnitOf(r);
+  if (component !== null) return component;
   const parts = r.split("/");
   return parts.length >= 3 ? parts.slice(0, 2).join("/") : r;
 };
@@ -20609,13 +20619,10 @@ if (mode === "tiers") {
   // Узел с самой большой областью: цена яруса называется по ВЕРХНЕЙ оценке,
   // иначе она обещает меньше, чем стоит.
   const nodes = new Map();
-  for (const layer of CONFIG.componentsAt ?? ["components"])
-    for (const f of [...files, ...styleFiles]) {
-      const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
-      if (m === null) continue;
-      const key = layer + "/" + m[1];
-      nodes.set(key, (nodes.get(key) ?? 0) + words(f));
-    }
+  for (const f of [...files, ...styleFiles]) {
+    const key = componentUnitOf(rel(f));
+    if (key !== null) nodes.set(key, (nodes.get(key) ?? 0) + words(f));
+  }
   let node = null;
   let nodeWords = 0;
   for (const [k, n] of nodes) if (n > nodeWords) [node, nodeWords] = [k, n];
@@ -26445,14 +26452,7 @@ if (mode === "verify") {
   let pullLooked = 0;
   checkStep(() => {
     {
-      const layers = CONFIG.componentsAt ?? ["components"];
-      const nodeOf = (f) => {
-        for (const layer of layers) {
-          const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
-          if (m !== null) return layer + "/" + m[1];
-        }
-        return null;
-      };
+      const nodeOf = (f) => componentUnitOf(rel(f));
       for (const [from, targets] of importsOf) {
         const here = nodeOf(from);
         if (here === null) continue;
@@ -26495,14 +26495,11 @@ if (mode === "verify") {
   let componentDirs = 0;
   checkStep(() => {
     {
-      const layers = CONFIG.componentsAt ?? ["components"];
       const seen = new Set();
-      for (const f of [...files, ...styleFiles])
-        for (const layer of layers) {
-          const m = new RegExp("^" + layer + "/([^/]+)/").exec(rel(f));
-          if (m === null) continue;
-          seen.add(layer + "/" + m[1]);
-        }
+      for (const f of [...files, ...styleFiles]) {
+        const unit = componentUnitOf(rel(f));
+        if (unit !== null) seen.add(unit);
+      }
       componentDirs = seen.size;
       for (const one of seen) {
         const at = norm(path.join(ROOT, one, "docs", "README.md"));
@@ -26615,6 +26612,8 @@ if (mode === "verify") {
       for (const f of docFiles) {
         const r = rel(f);
         if (!layers.some((l) => r.startsWith(l + "/"))) continue;
+        // Документ слоя в его `docs/` — не документ компонента.
+        if (componentUnitOf(r) === null) continue;
         componentDocs += 1;
         if (r.includes("/docs/")) continue;
         looseDocs.push(r);
@@ -30836,7 +30835,7 @@ if (mode === "verify") {
         if (!existsSync(root)) continue;
         for (const name of readdirSync(root)) {
           const folder = path.join(root, name);
-          if (!statSync(folder).isDirectory()) continue;
+          if (!statSync(folder).isDirectory() || LAYER_OWN_DIRS.has(name)) continue;
           nodeLooked += 1;
           const loose = [];
           const nodeFiles = nodeFilesIn(folder, name);
@@ -30908,7 +30907,7 @@ if (mode === "verify") {
         if (!existsSync(root)) continue;
         for (const name of readdirSync(root)) {
           const folder = path.join(root, name);
-          if (!statSync(folder).isDirectory()) continue;
+          if (!statSync(folder).isDirectory() || LAYER_OWN_DIRS.has(name)) continue;
           const nodeFiles = nodeFilesIn(folder, name);
           for (const one of readdirSync(folder)) {
             const at = path.join(folder, one);
