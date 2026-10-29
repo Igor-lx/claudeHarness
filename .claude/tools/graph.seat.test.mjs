@@ -993,6 +993,7 @@ describe("среда посадки называет, чего лишится ж
         expect(run.stdout).not.toContain("не встанет");
         expect(run.stdout).toMatch(/ESLint поднят \^8\.57\.0 → \d+\.\d+\.\d+: старый конфиг \.eslintrc\.cjs/);
         expect(run.stdout).toContain("npm run build: код 0");
+        expect(run.stdout).toContain("typecheck: скрипта нет — типы на новой связке не проверены");
         const after = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
         expect(after.devDependencies.typescript).toMatch(/^6\.\d+\.\d+$/);
       } finally {

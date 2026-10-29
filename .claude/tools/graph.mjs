@@ -871,7 +871,15 @@ if (mode === "env") {
       if (boundary !== null) console.log("  " + boundary);
       const scripts = readJson(path.join(root, "package.json"), {}).scripts ?? {};
       for (const name of ["build", "typecheck"]) {
-        if (scripts[name] === undefined) continue;
+        // Без скрипта типы на новой связке не проверил никто: это строка
+        // вывода, а не молчание. Проверит их звено типов шага 1-бис.
+        if (scripts[name] === undefined) {
+          if (name === "typecheck")
+            console.log(
+              "  typecheck: скрипта нет — типы на новой связке не проверены; их проверит звено типов, которое дописывает шаг 1-бис",
+            );
+          continue;
+        }
         const run = runTool(done.manager, ["run", name], { cwd: root });
         console.log("  " + done.manager + " run " + name + ": код " + run.status);
         if (run.status !== 0)
