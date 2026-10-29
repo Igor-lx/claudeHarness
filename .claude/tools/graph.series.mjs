@@ -27,6 +27,7 @@ import { applyParts } from "./graph.parts.mjs";
 import {
   claimSandbox,
   runTool,
+  saidBy,
   sandboxPackages,
   systemTemp,
 } from "./graph.seat.mjs";
@@ -185,7 +186,7 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
           "graph-series-" + t.part + ".log",
         );
         mkdirSync(path.dirname(log), { recursive: true });
-        writeFileSync(log, run.error ?? run.out);
+        writeFileSync(log, saidBy(run));
         out.push({ ...t, code, log });
         stopped = true;
         continue;

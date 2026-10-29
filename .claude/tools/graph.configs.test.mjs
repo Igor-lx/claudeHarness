@@ -20,7 +20,7 @@ import {
   tsconfigRead,
 } from "./graph.configs.mjs";
 import { compilerAt } from "./graph.parse.mjs";
-import { BAR_PAGES_DIR } from "./graph.predicates.mjs";
+import { BAR_PAGES_DIR, OUT_OF_TREE } from "./graph.predicates.mjs";
 
 // Папка внутри пакетов посадки видит её компилятор, сборщик и
 // сопоставитель, а git её не видит: тесты в корне посадки, идущие
@@ -270,37 +270,11 @@ describe("один читатель на конфиг проекта", () => {
 });
 
 describe("служебные папки инструмента — в каждом семени исключений", () => {
-  // Список служебных папок один — `OUT_OF_TREE` инструмента; семена
+  // Список служебных папок один — `OUT_OF_TREE` словаря; семена
   // исключений держат каждое свою копию, и `.prettierignore` разошёлся с
   // ним: форматтер проекта проверял песочницу фальсификации.
   it("`.gitignore`, `.prettierignore` и конфиг линта называют каждую", () => {
-    const ts = compilerAt(SEAT);
-    const source = fs.readFileSync(
-      path.join(TOOL_DIR_OF_TEST, "graph.mjs"),
-      "utf8",
-    );
-    const sf = ts.createSourceFile(
-      "graph.mjs",
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    let names = null;
-    // Папка, которую называет константа словаря, стоит в списке её именем.
-    const named = { BAR_PAGES_DIR };
-    const walk = (n) => {
-      if (
-        ts.isVariableDeclaration(n) &&
-        n.name.getText(sf) === "OUT_OF_TREE" &&
-        n.initializer !== undefined &&
-        ts.isNewExpression(n.initializer)
-      )
-        names = n.initializer.arguments[0].elements.map((e) =>
-          ts.isIdentifier(e) ? named[e.text] : e.text,
-        );
-      ts.forEachChild(n, walk);
-    };
-    walk(sf);
+    const names = [...OUT_OF_TREE];
     expect(names).toContain(".проба-сверок");
     expect(names).toContain(BAR_PAGES_DIR);
     // `.git` исключает сам git, а прочие инструменты его не обходят.

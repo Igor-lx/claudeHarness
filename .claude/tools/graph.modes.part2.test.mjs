@@ -4559,6 +4559,15 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(disarmedOf().some((one) => one.includes("findings.since"))).toBe(
         false,
       );
+      // Полный хеш основания — тот, что пишет посадка, — в истории находится;
+      // починка после него, не названная реестром, называется коротким.
+      git("commit", "--allow-empty", "-qm", "fix: zz unnamed");
+      const fixAt = git("rev-parse", "--short=7", "HEAD").trim();
+      const findings =
+        tool("verify").out.split("=== Находки закрыты ===")[1]?.split("\n===")[0] ?? "";
+      expect(findings).not.toContain("в истории этой копии нет");
+      expect(findings).toContain("коммит " + fixAt + " fix: zz unnamed — починка, не названная ни одной строкой");
+      git("reset", "-q", "--soft", "HEAD~1");
       // Состояние даёт модели строку с якорем на строку файла — ту, что
       // досье правки прежде советовало дописать цитатой.
       write(

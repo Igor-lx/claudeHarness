@@ -16,6 +16,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { OUT_OF_TREE } from "./graph.predicates.mjs";
+
 /** Временная папка системы, годная для записи, — либо ошибка, которая её
  * называет. Режимы, заводящие там песочницу, брали её каждый сам и при
  * негодной папке падали сырым стеком, а `handoff` оставлял непроверенный
@@ -89,6 +91,12 @@ export const runTool = (
           : null,
   };
 };
+
+/** Что команда сказала: причина, по которой она не запустилась, либо её
+ * вывод. Пересказ одного вывода печатал пустоту там, где менеджера пакетов
+ * на машине нет. Выведено пробой холодного контура: `env --apply` при
+ * блокировке `pnpm` без `pnpm`. */
+export const saidBy = (run) => run.error ?? run.out;
 
 /** Есть ли файл команды там, где его ищет `cmd.exe`: по пути, а голое имя —
  * в папке запуска и в `PATH`, с каждым расширением `PATHEXT`. */
@@ -201,8 +209,10 @@ export const lintBlockersOf = (manifest, declared) => {
  * истории, обвязки и сборки. Глубина ограничена: осмотру нужен род кода, а
  * не опись. */
 export const projectFilesOf = (root, depth = 6) => {
-  // Песочницы прогонов кладут копию дерева рядом: её код — не код проекта.
-  const skip = new Set(["node_modules", ".git", ".claude", "dist", "build", "coverage", ".next", ".stryker-tmp", ".проба-сверок"]);
+  // Папки вне дерева — один список инструмента: песочницы прогонов кладут
+  // копию дерева рядом, и её код — не код проекта. Сверх него — обвязка и
+  // вывод сборщиков, которых в дереве инструмента нет.
+  const skip = new Set([...OUT_OF_TREE, ".claude", "build", ".next"]);
   const out = [];
   const walk = (dir, left) => {
     let kids = [];
@@ -454,11 +464,13 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
   });
   if (done.status === 0) return { ok: true, manager };
   for (const [at, one] of files) writeFileSync(path.join(root, at), one.before);
+  // Блокировки до установки не было — упавшая могла её положить.
   if (lockBefore !== null) writeFileSync(lockAt, lockBefore);
+  else rmSync(lockAt, { force: true });
   return {
     ok: false,
     manager,
-    tail: String(done.stdout + done.stderr).trim().split("\n").slice(-12),
+    tail: saidBy(done).trim().split("\n").slice(-12),
   };
 };
 
@@ -816,7 +828,7 @@ const trialLinks = (target, env) => {
       out.push({
         name: t.name,
         caught: run.status !== 0 && uncolored(run.out).includes(t.mark),
-        said: run.out,
+        said: saidBy(run),
       });
     }
     if (scripts.mutate !== undefined) {
@@ -835,7 +847,7 @@ const trialLinks = (target, env) => {
       out.push({
         name: "mutate",
         caught: run.status === 0 && killed > 0,
-        said: run.out,
+        said: saidBy(run),
         killed,
         total: mutants.length,
       });
@@ -1012,7 +1024,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
     if (install.status !== 0)
       fail(
         "Пакеты не встали: установка `npx -y npm@11 install` упала:",
-        ...tailOf(install.error ?? install.out, 3),
+        ...tailOf(saidBy(install), 3),
         "Нужна сеть; после её появления команду зовут снова.",
       );
   }
@@ -1033,7 +1045,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
     if (manifest.scripts?.[name] === undefined) continue;
     const run = npmRun(name);
     if (run.status !== 0)
-      fail("Проверка красная на свежей посадке — " + name + ":", ...tailOf(run.out));
+      fail("Проверка красная на свежей посадке — " + name + ":", ...tailOf(saidBy(run)));
     const counts = name === "test" ? testCountsOf(run.out) : null;
     rows.push({
       name,
@@ -1334,7 +1346,7 @@ export const runSeat = ({ toolDir, argv }) => {
       );
       if (install.status !== 0) {
         rmSync(target, { recursive: true, force: true });
-        const said = (install.error ?? install.stderr + install.stdout)
+        const said = saidBy(install)
           .trim()
           .split("\n")
           .slice(-3);
