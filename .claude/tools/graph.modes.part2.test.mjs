@@ -6332,6 +6332,34 @@ describe("собственные папки слоя компонентов", ()
   }, 240000);
 });
 
+/** Линт со своей областью вне обвязки: исключать обвязку незачем, и сверка
+ * говорит, что молчит намеренно, — фальсификация не пишет её слепой.
+ * Выведено одиннадцатой посадкой: `eslint src`. */
+describe("линт, не доходящий до обвязки", () => {
+  it("сверка исключения обвязки молчит намеренно и называет почему", () => {
+    const box = seatEmpty("lint-area-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      pkg.scripts.lint = "eslint src";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const cfgAt = path.join(box, "eslint.config.mjs");
+      const cfg = fs.readFileSync(cfgAt, "utf8");
+      expect(cfg).toContain('      ".claude",');
+      fs.writeFileSync(cfgAt, cfg.replace('      ".claude",\n', ""));
+      const out = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+        cwd: box,
+        encoding: "utf8",
+      }).stdout;
+      const section = out.split("=== Заготовки обвязки не разбираются линтом проекта ===")[1]?.split("\n===")[0] ?? "";
+      expect(section).toContain("расхождений: 0");
+      expect(section).toContain("скрипт линта не доходит до папки обвязки: исключать её нечего");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
+
 /** Долг описания держит шаг знания — строка таблицы шагов, а не любое
  * упоминание сверки в файле перехода: семя несёт её имя примером в таблице
  * формы записи. Выведено десятой посадкой. */
