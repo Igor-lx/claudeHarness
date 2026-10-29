@@ -306,6 +306,44 @@ describe("осмотр окружения проекта по осям карт�
     });
   const planOf = (s) => Object.fromEntries(s.plan.map((p) => [p.name, p]));
 
+  it("предшественник пакета оси в корне и в пакете — план снимает его, установка удаляет из манифестов", () => {
+    // Выведено одиннадцатой посадкой: `@typescript-eslint/*` `7` держат пиром
+    // ESLint `8`, и `--apply` с ESLint `10` падал на конфликте.
+    const old = { eslint: "^8.57.0", "@typescript-eslint/parser": "^7.18.0", "@typescript-eslint/eslint-plugin": "^7.18.0" };
+    const app = { name: "app", devDependencies: { "@typescript-eslint/parser": "^7.18.0" } };
+    const s = stackSurveyOf({
+      manifest: { devDependencies: { ...OURS, ...old } },
+      files: ["src/main.tsx"],
+      axes: AXES,
+      verified: OURS,
+      ui: PLATFORM.ui,
+      alternatives: PLATFORM.alternatives,
+      workspaces: [{ at: "packages/app/package.json", manifest: app }],
+    });
+    const removed = s.plan.filter((one) => one.to === null);
+    expect(removed).toEqual([
+      { name: "@typescript-eslint/parser", from: "^7.18.0", to: null, section: "devDependencies" },
+      { name: "@typescript-eslint/parser", from: "^7.18.0", to: null, section: "devDependencies", at: "packages/app/package.json" },
+      { name: "@typescript-eslint/eslint-plugin", from: "^7.18.0", to: null, section: "devDependencies" },
+    ]);
+    expect(s.verdict).toBe("наше, неполное");
+    expect(s.rows.find((r) => r.axis === "линтер").note).toContain("@typescript-eslint/parser ^7.18.0 → снять");
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-predecessor-"));
+    try {
+      fs.mkdirSync(path.join(dest, "packages", "app"), { recursive: true });
+      fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify({ devDependencies: { ...OURS, ...old } }));
+      fs.writeFileSync(path.join(dest, "packages", "app", "package.json"), JSON.stringify(app));
+      expect(stackApply(dest, s, {}, () => ran(0, "", "")).ok).toBe(true);
+      const root = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")).devDependencies;
+      const pkg = JSON.parse(fs.readFileSync(path.join(dest, "packages", "app", "package.json"), "utf8")).devDependencies;
+      expect(Object.keys(root).filter((one) => one.startsWith("@typescript-eslint/"))).toEqual([]);
+      expect(root.eslint).toBe(OURS.eslint);
+      expect(pkg).toEqual({});
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
   it("пустая папка — «пусто», плана нет: посадка ставит всё сама", () => {
     const s = survey(null, []);
     expect(s.verdict).toBe("пусто");

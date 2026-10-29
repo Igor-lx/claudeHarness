@@ -849,7 +849,7 @@ if (mode === "env") {
       console.log("=== План: привести стек к проверенной связке ===");
       for (const one of survey.plan)
         console.log(
-          "  " + one.name + ": " + (one.from === null ? "нет" : one.from) + " → " + one.to,
+          "  " + one.name + ": " + (one.from === null ? "нет" : one.from) + " → " + (one.to ?? "снять"),
         );
       console.log(
         "  Поставить — одним вопросом разработчику, затем: node .claude/tools/graph.mjs env " +

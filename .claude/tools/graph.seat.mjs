@@ -400,6 +400,15 @@ export const stackSurveyOf = ({
         );
       }
     }
+    // Предшественник держит пиром прежнюю версию оси: установка связки на
+    // нём падает, и план его снимает.
+    for (const name of axis.predecessors ?? [])
+      for (const p of places.filter((one) => ownIn(one, name) !== undefined)) {
+        const section = p.m.dependencies?.[name] !== undefined ? "dependencies" : "devDependencies";
+        const from = ownIn(p, name);
+        plan.push(p.at === null ? { name, from, to: null, section } : { name, from, to: null, section, at: p.at });
+        moves.push(name + " " + from + " → снять" + (p.at === null ? "" : " (" + path.posix.dirname(p.at) + ")"));
+      }
     rows.push(
       moves.length === 0
         ? { axis: axis.axis, state: "наше", note: [...notes, "версии связки"].join("; ") }
@@ -447,6 +456,10 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
     const m = manifestOf(one.at ?? "package.json");
     for (const section of ["dependencies", "devDependencies"])
       if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
+    if (one.to === null) {
+      delete m[one.section][one.name];
+      continue;
+    }
     m[one.section] = { ...(m[one.section] ?? {}), [one.name]: one.to };
     m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
   }
