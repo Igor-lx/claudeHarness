@@ -48,6 +48,32 @@ const plant = (project) => {
   return box;
 };
 
+/** Файлы проекта с содержимым — снимок до посадки. */
+const snapshot = (box) => {
+  if (!fs.existsSync(path.join(box, ".git"))) return new Map();
+  return new Map(
+    git(box, "ls-files")
+      .split("\n")
+      .filter(Boolean)
+      .map((rel) => [rel, fs.readFileSync(path.join(box, rel))]),
+  );
+};
+const npm = (box, ...args) => {
+  const env = { ...process.env };
+  delete env.CLAUDE_CODE_CHILD_SESSION;
+  return spawnSync("npm", args, { cwd: box, encoding: "utf8", env });
+};
+/** Что посадка вправе сделать с файлом проекта: знакомому — дописать
+ * списки и манифест и положить свой конфиг рядом под проектным именем;
+ * чужому — дописать только исключения git. Прочее — байт в байт. */
+const OWN_CHANGED = { familiar: [".gitignore", ".gitattributes", ".prettierignore", "package.json"], foreign: [".gitignore"] };
+const besideName = (rel) =>
+  rel === "CLAUDE.md"
+    ? "CLAUDE.project.md"
+    : /^\.eslintrc/.test(rel)
+      ? rel.replace(/^\.eslintrc/, ".eslintrc.project")
+      : rel.replace(/\.(config|conf)\./, (m, word) => ".project." + word + ".");
+
 const tool = (box, ...args) => {
   const env = { ...process.env };
   delete env.CLAUDE_CODE_CHILD_SESSION;
@@ -77,6 +103,9 @@ describe("корпус посадок", () => {
         () => {
           const box = plant(project);
           try {
+            const before = snapshot(box);
+            const hooksBefore = before.size > 0 ? spawnSync("git", ["config", "core.hooksPath"], { cwd: box, encoding: "utf8" }).stdout.trim() : "";
+            const commitsBefore = before.size > 0 ? Number(git(box, "rev-list", "--count", "HEAD")) : 0;
             const seat = tool(
               box,
               "seat",
@@ -94,6 +123,49 @@ describe("корпус посадок", () => {
             for (const axis of project.foreignAxes ?? [])
               expect(named).toContain("    " + axis + " — чужое окружение");
             if (project.scenario === "foreign") expect(seat.stdout).toContain("перейти — новая пустая посадка");
+            // Посажено как задумано: всё закоммичено двумя коммитами поверх
+            // истории проекта, файлы проекта не тронуты сверх названного,
+            // ворота — по сценарию, песочниц не осталось, второй вызов
+            // говорит «уже сделана», не тронув ничего.
+            expect(git(box, "status", "--porcelain")).toBe("");
+            expect(Number(git(box, "rev-list", "--count", "HEAD"))).toBe(commitsBefore + 2);
+            // Пустой папке шаблон сборщика посадка снимает по устройству.
+            const allowed = OWN_CHANGED[project.scenario] ?? [];
+            const touched = [];
+            for (const [rel, bytes] of project.scenario === "empty" ? [] : before) {
+              const at = path.join(box, rel);
+              if (fs.existsSync(at) && fs.readFileSync(at).equals(bytes)) continue;
+              if (fs.existsSync(at) && allowed.includes(rel)) continue;
+              const beside = path.join(box, besideName(rel));
+              if (project.scenario === "familiar" && !fs.existsSync(at) && fs.existsSync(beside) && fs.readFileSync(beside).equals(bytes)) continue;
+              touched.push(rel);
+            }
+            expect(touched, "файлы проекта, тронутые посадкой").toEqual([]);
+            const hooks = spawnSync("git", ["config", "core.hooksPath"], { cwd: box, encoding: "utf8" }).stdout.trim();
+            expect(hooks).toBe(project.scenario === "foreign" ? hooksBefore : ".claude/hooks/git");
+            if (project.scenario === "foreign") expect(fs.existsSync(path.join(box, "node_modules"))).toBe(false);
+            for (const left of [".stryker-tmp", ".проба-сверок", "reports"]) expect(fs.existsSync(path.join(box, left)), left).toBe(false);
+            const head = git(box, "rev-parse", "HEAD");
+            const again = tool(box, "seat", ".");
+            expect(again.status, again.stdout).toBe(0);
+            expect(again.stdout).toContain("=== Посадка уже сделана ===");
+            expect(git(box, "rev-parse", "HEAD")).toBe(head);
+            expect(git(box, "status", "--porcelain")).toBe("");
+            // Звенья знакомого проекта зелены на долге, тесты проекта —
+            // зелены либо названы пунктом долга перехода; пустая папка
+            // проходит всю цепочку.
+            if (project.scenario === "familiar") {
+              for (const link of ["typecheck", "lint"]) expect(npm(box, "run", "-s", link).status, link).toBe(0);
+              const facts = fs.readFileSync(path.join(box, ".context", "01-facts.md"), "utf8");
+              if (npm(box, "test").status !== 0) {
+                expect(facts).toMatch(/\| `test` \| красно: падают файлов тестов `\d+`/);
+                expect(fs.readFileSync(path.join(box, ".context", "15-transition.md"), "utf8")).toContain("Тесты проекта красные");
+              } else expect(facts).toMatch(/\| `test` \| зелено/);
+            }
+            if (project.scenario === "empty") {
+              const chain = npm(box, "run", "-s", "check");
+              expect(chain.status, chain.stdout + chain.stderr).toBe(0);
+            }
             // Связи, которых сверка не печатает: куда ведёт импорт.
             for (const one of project.briefs ?? []) {
               const brief = tool(box, "brief", one.file);

@@ -849,7 +849,8 @@ const trialLinks = (target, env) => {
       recursive: true,
       filter: (src) => {
         const top = path.relative(target, src).split(path.sep)[0];
-        return top !== "node_modules" && top !== ".git";
+        // Секреты в песочницу не уезжают: проверкам они не нужны.
+        return top !== "node_modules" && top !== ".git" && !/^\.env(?:\..+)?$/.test(path.basename(src));
       },
     });
     sandboxPackages(path.join(target, "node_modules"), path.join(box, "node_modules"));

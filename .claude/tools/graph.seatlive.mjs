@@ -345,9 +345,17 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     renameSync(at(from), at(to));
     undo.push(() => renameSync(at(to), at(from)));
   };
+  // Установка меняет папку пакетов на месте, и откат вернуть её не может:
+  // отказ после неё так и говорит.
+  let reinstalled = false;
   const fail = (...why) => {
     for (const step of undo.reverse()) step();
-    refuse(...why, "Проект возвращён в прежний вид.");
+    refuse(
+      ...why,
+      reinstalled
+        ? "Файлы проекта возвращены как были; папку node_modules установка переставила по новому манифесту — вернуть её: npm ci."
+        : "Проект возвращён в прежний вид.",
+    );
   };
   const report = [];
   const files = projectFilesOf(target);
@@ -415,7 +423,9 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     if (e.notAtSeating !== undefined || e.onlyWhenEmpty === true || e.onlyWith !== undefined) continue;
     const seed = readFileSync(path.join(shelf, e.from), "utf8");
     if (LISTS.has(e.to)) {
-      if (e.to === ".prettierignore" && !familiar) continue;
+      // Чужому — только исключения git: песочницы инструмента не уходят в
+      // коммит. Концы строк и список форматтера — политика его репозитория.
+      if (!familiar && e.to !== ".gitignore") continue;
       write(e.to, mergedLines(read(e.to) ?? "", seed));
       continue;
     }
@@ -484,6 +494,7 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     } else {
       const lockWas = read("package-lock.json");
       undo.push(() => (lockWas === null ? rmSync(at("package-lock.json"), { force: true }) : writeFileSync(at("package-lock.json"), lockWas)));
+      reinstalled = true;
       const install = runTool("npx", ["-y", "npm@11", "install", "--no-audit", "--no-fund"], { cwd: target, env });
       if (install.status !== 0)
         fail("Пакеты не встали: установка `npx -y npm@11 install` упала:", ...tailOf(saidBy(install), 6));
@@ -662,12 +673,19 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   // 8. Коммиты, основания, ворота.
   const identity = asked(["config", "user.email"]) ? [] : ["-c", "user.name=seat", "-c", "user.email=seat@local"];
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
-  writeFileSync(path.join(target, ".git", SEAT_HERE_MARKER), norm(shelf) + "\n");
+  // Свои ворота проекта посадка не обходит: не пустили коммит — отказ, и
+  // проект как был.
   git("add", "-A");
-  git("commit", "-qm", "chore: seat the harness", "--no-verify");
+  try {
+    git("commit", "-qm", "chore: seat the harness");
+  } catch (e) {
+    asked(["reset", "-q"]);
+    fail("Коммит посадки не прошёл ворота проекта:", ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? ""), 8));
+  }
+  writeFileSync(path.join(target, ".git", SEAT_HERE_MARKER), norm(shelf) + "\n");
   const base = git("rev-parse", "HEAD");
   write(configRel, withSeatingBase(read(configRel), base));
-  git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings", "--no-verify");
+  git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
   if (familiar) git("config", "core.hooksPath", ".claude/hooks/git");
   const verify = runTool(process.execPath, [at(".claude/tools/graph.mjs"), "verify"], { cwd: target, env });
 
@@ -709,7 +727,8 @@ export const trialLiveLinks = (target, env, roots, files, scripts, mutate = true
       recursive: true,
       filter: (src) => {
         const top = path.relative(target, src).split(path.sep)[0];
-        return top !== "node_modules" && top !== ".git";
+        // Секреты проекта в песочницу не уезжают: проверкам они не нужны.
+        return top !== "node_modules" && top !== ".git" && !/^\.env(?:\..+)?$/.test(path.basename(src));
       },
     });
     sandboxPackages(path.join(target, "node_modules"), path.join(box, "node_modules"));
