@@ -994,27 +994,42 @@ describe("посадка на месте одной командой", () => {
     }
   }, 300000);
 
-  it("живой проект и своя история — отказ до единой правки, папка как была", () => {
-    const live = boxWithShelf("seat-live-");
-    const history = boxWithShelf("seat-history-");
+  it("живой проект: без git и с незакоммиченным — отказ; знакомому без согласия на стек — план, проект как был", () => {
+    const bare = boxWithShelf("seat-live-");
+    const dirty = boxWithShelf("seat-dirty-");
+    const asked = boxWithShelf("seat-plan-");
     try {
-      fs.mkdirSync(path.join(live, "src"));
-      fs.writeFileSync(path.join(live, "src", "main.ts"), "export const x = 1;\n");
-      const said = seatHere(live, "--packages", ROOT);
+      fs.mkdirSync(path.join(bare, "src"));
+      fs.writeFileSync(path.join(bare, "src", "main.ts"), "export const x = 1;\n");
+      const said = seatHere(bare, "--packages", ROOT);
       expect(said.status).toBe(1);
-      expect(said.stdout).toContain("Живой проект: сажать по инструкции");
-      expect(said.stdout).toContain("Кроме обвязки здесь лежит: src.");
-      expect(fs.readdirSync(live).sort()).toEqual([".claude", "src"]);
-      gitIn(history, "init", "-q");
-      gitIn(history, "commit", "-q", "--allow-empty", "-m", "one");
-      gitIn(history, "commit", "-q", "--allow-empty", "-m", "two");
-      const again = seatHere(history, "--packages", ROOT);
-      expect(again.status).toBe(1);
-      expect(again.stdout).toContain("У репозитория своя история — коммитов 2");
-      expect(fs.readdirSync(history).sort()).toEqual([".claude", ".git"]);
+      expect(said.stdout).toContain("Живой проект без репозитория git");
+      expect(fs.readdirSync(bare).sort()).toEqual([".claude", "src"]);
+      for (const box of [dirty, asked]) {
+        fs.mkdirSync(path.join(box, "src"));
+        fs.writeFileSync(path.join(box, "src", "main.ts"), "export const x = 1;\n");
+        fs.writeFileSync(
+          path.join(box, "package.json"),
+          JSON.stringify({ type: "module", devDependencies: { typescript: "~5.6.3", vitest: "^2.1.8" } }),
+        );
+        fs.renameSync(path.join(box, ".claude"), box + "-shelf");
+        gitIn(box, "init", "-q");
+        gitIn(box, "add", "-A");
+        gitIn(box, "commit", "-qm", "project");
+        fs.renameSync(box + "-shelf", path.join(box, ".claude"));
+      }
+      fs.writeFileSync(path.join(dirty, "src", "main.ts"), "export const x = 2;\n");
+      const busy = seatHere(dirty, "--packages", ROOT);
+      expect(busy.status).toBe(1);
+      expect(busy.stdout).toContain("Незакоммиченное в проекте");
+      const plan = seatHere(asked, "--packages", ROOT);
+      expect(plan.status).toBe(1);
+      expect(plan.stdout).toContain("=== Посадка ждёт слова: стек приводится к связке ===");
+      expect(plan.stdout).toContain("vitest: ^2.1.8 → ");
+      expect(plan.stdout).toContain("seat . --apply");
+      expect(gitIn(asked, "status", "--porcelain")).toBe("?? .claude/");
     } finally {
-      fs.rmSync(live, { recursive: true, force: true });
-      fs.rmSync(history, { recursive: true, force: true });
+      for (const box of [bare, dirty, asked]) fs.rmSync(box, { recursive: true, force: true });
     }
   });
 

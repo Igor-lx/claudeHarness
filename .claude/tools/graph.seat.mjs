@@ -712,7 +712,7 @@ export const sandboxPackages = (from, to) => {
   }
 };
 
-const norm = (p) => p.split(path.sep).join("/");
+export const norm = (p) => p.split(path.sep).join("/");
 
 /** Метка посадки в папке git: её ставит первый вызов `seat`. Только с ней
  * повторный вызов вправе стирать в `.claude/`, и по ней сверки описания полки
@@ -723,7 +723,7 @@ export const SEAT_MARKER = "claude-seat";
  * относятся. Нужна одному повторному вызову. */
 export const SEAT_HERE_MARKER = "claude-seat-here";
 
-const walkFiles = (root, rel = ".", out = []) => {
+export const walkFiles = (root, rel = ".", out = []) => {
   for (const e of readdirSync(path.join(root, rel), { withFileTypes: true })) {
     const r = path.join(rel, e.name);
     if (e.isDirectory()) walkFiles(root, r, out);
@@ -1019,13 +1019,13 @@ const SEATING_BASES = [
   ["seriesSince", /^ {2}seriesSince: null,/m],
   ["findings.since", /^ {4}since: null,/m],
 ];
-const withSeatingBase = (config, base) =>
+export const withSeatingBase = (config, base) =>
   SEATING_BASES.reduce(
     (text, [, line]) => text.replace(line, (found) => found.replace("null", JSON.stringify(base))),
     config,
   );
 
-const tailOf = (text, n = 6) =>
+export const tailOf = (text, n = 6) =>
   text.trim() === ""
     ? ["  (вывода нет)"]
     : text.trim().split("\n").slice(-n).map((l) => "  " + l);
@@ -1036,7 +1036,7 @@ const tailOf = (text, n = 6) =>
  * отчёт фазы 1 с вопросом фазы 2 (решение разработчика Р1, `2026-10-20`).
  * Отказ до первого коммита возвращает папку в прежний вид: повторный вызов
  * после починки идёт с начала. */
-const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
+const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, profileOf }) => {
   const say = (...lines) => {
     for (const one of lines) console.log(one);
   };
@@ -1065,25 +1065,22 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
   const commits = existsSync(gitDir)
     ? Number(asked(["rev-list", "--count", "HEAD"]) || 0)
     : 0;
-  if (commits > 1)
-    refuse(
-      "У репозитория своя история — коммитов " + commits + ": это живой проект.",
-      "Сажать по инструкции `.claude/seat/seat.md`.",
-    );
   const read = (rel) => {
     const at = path.join(target, rel);
     return existsSync(at) && statSync(at).isFile() ? readFileSync(at, "utf8") : null;
   };
   const entries = readdirSync(target).filter((e) => e !== ".claude" && e !== ".git");
   const kind = inPlaceKindOf(entries, read, commits);
+  // Живой проект — знакомый либо чужой: свой порядок, `graph.seatlive.mjs`.
   if (kind.kind === "живой")
-    refuse(
-      "Живой проект: сажать по инструкции `.claude/seat/seat.md`.",
-      "Кроме обвязки здесь лежит: " +
-        kind.extra.slice(0, 6).join(", ") +
-        (kind.extra.length > 6 ? ", …" : "") +
-        ".",
-    );
+    live({
+      shelf,
+      target,
+      env,
+      packagesFrom,
+      apply,
+      profile: profileOf({ root: target, shelf, commits, withTools }),
+    });
   const declared = verifiedOf(
     readFileSync(path.join(shelf, "seat", "templates", "graph.config.mjs"), "utf8"),
   );
@@ -1243,10 +1240,12 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
     asked(["config", "user.email"]) === "" ? ["-c", "user.name=seat", "-c", "user.email=seat@local"] : [];
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
   writeFileSync(marker, norm(shelf) + "\n");
+  const configAt = path.join(target, ".context", "graph.config.mjs");
+  // Сценарий посадки — ответ одной команды на всю обвязку (`graph.profile.mjs`).
+  writeFileSync(configAt, readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "empty",'));
   git("add", "-A");
   git("commit", "-qm", "chore: seat the harness");
   const base = git("rev-parse", "HEAD");
-  const configAt = path.join(target, ".context", "graph.config.mjs");
   writeFileSync(configAt, withSeatingBase(readFileSync(configAt, "utf8"), base));
   git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
   git("config", "core.hooksPath", ".claude/hooks/git");
@@ -1364,7 +1363,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom }) => {
  * из готовой копии: копия застыла бы прежней редакцией. Поверх посадки
  * ложатся данные — стенд проб либо магазин, — и они входят в первый коммит:
  * основание ревизии сводов стоит на нём, и правкой они не считаются. */
-export const runSeat = ({ toolDir, argv }) => {
+export const runSeat = ({ toolDir, argv, live, profileOf }) => {
   const shelf = path.join(toolDir, "..");
   const stand = argv[0] === "bar-probe";
   const flag = stand ? "--stand-build" : null;
@@ -1404,11 +1403,16 @@ export const runSeat = ({ toolDir, argv }) => {
     const env = { ...process.env };
     delete env.CLAUDE_CODE_CHILD_SESSION;
     const at = argv.indexOf("--packages");
+    const withAt = argv.find((one) => one.startsWith("--with="));
     runSeatHere({
       shelf,
       target,
       env,
       packagesFrom: at < 0 || argv[at + 1] === undefined ? null : path.resolve(argv[at + 1]),
+      apply: argv.includes("--apply"),
+      withTools: withAt === undefined ? [] : withAt.slice("--with=".length).split(","),
+      live,
+      profileOf,
     });
   }
   const busy = existsSync(target) && readdirSync(target).length > 0;

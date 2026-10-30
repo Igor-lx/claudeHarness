@@ -186,7 +186,8 @@ import {
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
-import { SCENARIO_NAMES, commitsIn, foreignOffer, scenarioOf } from "./graph.profile.mjs";
+import { SCENARIO_NAMES, commitsIn, foreignOffer, scenarioByShelf, scenarioOf } from "./graph.profile.mjs";
+import { runSeatLive } from "./graph.seatlive.mjs";
 // Страж протокола свода: окно модели предмета и вердикт чтению.
 import {
   modelWindowOf,
@@ -709,6 +710,8 @@ if (
   runSeat({
     toolDir: path.dirname(fileURLToPath(import.meta.url)),
     argv: process.argv.slice(2),
+    live: runSeatLive,
+    profileOf: scenarioByShelf,
   });
 
 // Расход сессии свода читает журнал и настройки проекта не знает, поэтому идёт
@@ -1155,6 +1158,18 @@ const debtList = (kind, items) => {
 /** Сколько НЕОПИСАННОГО насчитала каждая сверка на самом деле. Заполняется
  * по ходу прогона теми же сверками, что читают долг. */
 const DEBT_REAL = new Map();
+/** Факты живого проекта для команды посадки: живые разделы планки с
+ * предметом, файлы базы под найденный предмет, файлы кода и тесты вне
+ * раскладки, правила слоёв ни о чём. Те же сверки их считают, и команда
+ * берёт их файлом по переменной `GRAPH_SEAT_FACTS`, а не разбором вывода. */
+const SEAT_FACTS = { scopes: {}, subjects: [], strays: [], testsAway: [], emptyRules: [], unprobed: 0 };
+process.on("exit", () => {
+  if (mode === "verify" && process.env.GRAPH_SEAT_FACTS)
+    writeFileSync(
+      process.env.GRAPH_SEAT_FACTS,
+      JSON.stringify({ debt: Object.fromEntries(DEBT_REAL), ...SEAT_FACTS }, null, 2) + "\n",
+    );
+});
 
 if (CONFIG.debt != null) {
   const wrong = [];
@@ -1702,10 +1717,30 @@ const delegatedLink = (calls, scripts) => {
   }
   return null;
 };
+/** Скрипты, среди которых живёт звено. Проект, посаженный командой, держит
+ * звенья под именами семени — их пишет посадка; прочие скрипты проектные и
+ * звеном не считаются, что бы ни звали: `build: tsc -p .` — сборка
+ * библиотеки, а не второе звено типов. Без сценария — все: посадка по
+ * инструкции оставляла звено под проектным именем. Решено разработчиком
+ * `2026-10-30`. */
+const linkScripts = (scripts) => {
+  if (CONFIG.scenario == null) return scripts;
+  const mapAt = shelfAt("seat/map.json");
+  const names = new Set(
+    (mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).chainScripts ?? []) : []).map(
+      (e) => e.name,
+    ),
+  );
+  return Object.fromEntries(Object.entries(scripts).filter(([n]) => names.has(n)));
+};
 /** Звено зовётся в манифесте — прямо либо делегированием пакетам. */
-const linkCalled = (re, scripts) =>
-  Object.values(scripts).some((body) => re.test(body)) ||
-  delegatedLink((body) => re.test(body), scripts) !== null;
+const linkCalled = (re, all) => {
+  const scripts = linkScripts(all);
+  return (
+    Object.values(scripts).some((body) => re.test(body)) ||
+    delegatedLink((body) => re.test(body), scripts) !== null
+  );
+};
 /** Инструмент звена зовёт хоть одна команда скрипта — прямо либо
  * делегированием пакетам. Звеном такой скрипт может и не служить: сборка
  * `tsc -b && vite build` читает конфиг компилятора. */
@@ -4416,7 +4451,7 @@ const typeCheckConfigs = () => {
       : []
   ).find((e) => e.name === "typecheck");
   const manifestAt = path.join(BASE, CONFIG.manifest ?? "../package.json");
-  const rootScripts = readJson(manifestAt, {}).scripts ?? {};
+  const rootScripts = linkScripts(readJson(manifestAt, {}).scripts ?? {});
   const calls = [];
   if (link?.recognise != null) {
     const re = new RegExp(link.recognise);
@@ -20972,6 +21007,12 @@ if (mode === "verify") {
   const SOFT_WHILE_SEATING = checkStep(() => [
     "Шаблон правил заполнен",
     "Отложенное семя слито",
+    // Раскладку живого проекта правила называют ответом фазы 2: посадка
+    // его код не читает. Решено разработчиком `2026-10-30`.
+    "Правила проекта не спорят с реестром решений",
+    // Концы строк кода, написанного до посадки, приводит фаза 2 отдельным
+    // коммитом, как и формат: посадка код проекта не трогает.
+    "Концы строк рабочего дерева сходятся с объявленными",
   ]);
   // Смягчённое одним множеством: его судит код возврата и его же считает
   // короткий вывод — разойтись им нечем.
@@ -21043,7 +21084,7 @@ if (mode === "verify") {
     const patterns = linkPatterns(one, chain);
     const re = patterns[0];
     for (const pattern of patterns) {
-      const hit = Object.entries(scripts).find(([, body]) =>
+      const hit = Object.entries(linkScripts(scripts)).find(([, body]) =>
         pattern.test(body),
       );
       if (hit !== undefined) return hit[0];
@@ -22196,13 +22237,17 @@ if (mode === "verify") {
       ...rules.map((r) => ["правила направления", r]),
       ...isolation.map((r) => ["правила изоляции", r]),
     ]) {
-      if (!resolves(rule.layer))
+      if (!resolves(rule.layer)) {
         emptyRules.push(`${what}: слоя нет на диске — ${rule.layer}`);
+        SEAT_FACTS.emptyRules.push(rule.layer);
+      }
       for (const q of [...(rule.banned ?? []), ...(rule.only ?? [])])
-        if (!resolves(q))
+        if (!resolves(q)) {
           emptyRules.push(
             `${what}: ${rule.layer} → адреса нет на диске — ${q}`,
           );
+          SEAT_FACTS.emptyRules.push(rule.layer);
+        }
     }
   });
   // 7d. заявленная таблица найдена и не пуста.
@@ -24791,6 +24836,7 @@ if (mode === "verify") {
             }
             if (d.why === "") scopeDrift.push(`неприменим без причины: ${id}`);
             const seen = witnessOf(id);
+            if (seen !== undefined) SEAT_FACTS.scopes[id] = seen;
             if (seen !== undefined)
               scopeDrift.push(
                 `объявлен неприменимым, а предмет на диске есть: ${id} — ${seen}`,
@@ -25389,7 +25435,9 @@ if (mode === "verify") {
               );
           }
           if (linkHasSubject("typecheck")) {
-            for (const cfg of runnerConfigs) {
+            // Спрашивается конфиг, который раннер читает: под конфигом
+            // раннера конфиг сборщика — основа его композиции, а не он сам.
+            for (const cfg of runnerConfigs.slice(0, 1)) {
               if (cfg.test == null) continue;
               if (cfg.text.includes("vitest/config")) continue;
               // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
@@ -26513,6 +26561,7 @@ if (mode === "verify") {
           )
             continue;
           layoutStray.push(r);
+          SEAT_FACTS.strays.push(norm(path.relative(REPO, f)).split(path.sep).join("/"));
         }
         if (layoutStray.length === 0) layoutSaid = "вне объявленных слоёв: 0";
       }
@@ -29672,6 +29721,9 @@ if (mode === "verify") {
       (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutsideHit(f),
     ),
   );
+  SEAT_FACTS.testsAway = (strayTests ?? []).map((f) =>
+    norm(path.relative(REPO, f)).split(path.sep).join("/"),
+  );
   // Исключение обязано стоять на РЕШЕНИИ: поле снимает красное, а причину
   // снять не может. Настройка говорила «обязан иметь запись в реестре
   // решений», а спрашивала это одна лишь её строка: адрес, вписанный без
@@ -31362,6 +31414,7 @@ if (mode === "verify") {
           if (isTest(f)) continue;
           for (const one of owedFor(f)) {
             if (one.why === "нет файла") {
+              if (!SEAT_FACTS.subjects.includes(one.to)) SEAT_FACTS.subjects.push(one.to);
               gaps.add(
                 one.to +
                   " — предмет в коде есть, а файла базы нет: " +
@@ -32440,7 +32493,7 @@ if (mode === "verify") {
         const at = path.join(BASE, CONFIG.manifest);
         const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
         if (existsSync(at) && Array.isArray(declared)) {
-          const scripts = JSON.parse(readFileSync(at, "utf8")).scripts ?? {};
+          const scripts = linkScripts(JSON.parse(readFileSync(at, "utf8")).scripts ?? {});
           for (const e of declared) {
             if (e.recognise == null) continue;
             const re = new RegExp(e.recognise);
@@ -32915,8 +32968,20 @@ if (mode === "verify") {
           ? (readJson(mapAt, {}).platformPackages?.ui ?? [])
           : [];
       alternativesDeclared += ui.length;
+      // Пакет, чьё орудие зовёт свой скрипт проекта, работает и без
+      // интерфейса: библиотека, собираемая `vite build`. Скрипт с телом
+      // семени — заготовка, а не выбор проекта. Выведено корпусом посадок.
+      const seedScripts = readJson(shelfAt("seat/templates/package.json") ?? "", {}).scripts ?? {};
+      const scriptBodies = Object.entries(
+        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {},
+      )
+        .filter(([name, body]) => seedScripts[name] !== body)
+        .map(([, body]) => body)
+        .join("\n");
+      const calledByScript = (name) =>
+        new RegExp("(?:^|[\\s/&|;])" + name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&") + "(?:\\s|$)", "m").test(scriptBodies);
       if (!projectHasUi() && !projectHasForeignUi())
-        for (const one of ui.filter((n) => held.has(n)))
+        for (const one of ui.filter((n) => held.has(n) && !calledByScript(n)))
           secondAnswers.push(
             one +
               " — пакет интерфейса, а интерфейса у проекта нет: ни файла `.tsx`, `.jsx`, `.vue` либо `.svelte`, ни импорта React. Снять: проекту без интерфейса слияние его не дописывает (`seat/seat.md`, шаг 1-бис)",
@@ -33851,9 +33916,10 @@ if (mode === "verify") {
         ? (readJson(mapAt, {}).chainScripts ?? [])
         : []
     ).find((e) => e.name === canonical);
-    const scripts =
+    const scripts = linkScripts(
       readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {})
-        .scripts ?? {};
+        .scripts ?? {},
+    );
     const re = link?.recognise == null ? null : new RegExp(link.recognise);
     return [
       canonical,
@@ -34816,6 +34882,7 @@ if (mode === "verify") {
           ledger[key(f)] === undefined ||
           ledger[key(f)].hash !== contentStamp(f),
       );
+    SEAT_FACTS.unprobed = unprobed.length;
     if (unprobed.length > 0)
       unprobedHeld = transitionDebt().some((row) =>
         /`[^`]*\bmutated\b[^`]*`/.test(row.holds),
