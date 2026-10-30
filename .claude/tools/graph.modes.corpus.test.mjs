@@ -104,7 +104,19 @@ const findingsOf = (out, box, head) => {
 };
 
 describe("корпус чужих проектов", () => {
-  for (const project of CORPUS.projects)
+  // Сценарий посадки назван у каждого проекта: по нему корпус проверяет
+  // посадку. Решено разработчиком `2026-10-30`.
+  it("у каждого проекта назван сценарий посадки", () => {
+    const wrong = CORPUS.projects
+      .filter((p) => !["empty", "familiar", "foreign"].includes(p.scenario))
+      .map((p) => p.name);
+    expect(wrong).toEqual([]);
+  });
+  // Пустую папку сажает команда `seat`, и её держат тесты посадки на месте:
+  // сличать находки раскладки полки поверх пустоты нечему.
+  // Проект без эталона ждёт проверки свойств сценария (этап 3 плана трёх
+  // сценариев в `todo.md`): записывать эталоном его нынешний шум нельзя.
+  for (const project of CORPUS.projects.filter((p) => p.scenario !== "empty" && p.expect !== null))
     it(
       project.name + " — " + project.axis,
       () => {
