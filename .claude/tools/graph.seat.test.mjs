@@ -15,7 +15,9 @@ import {
   tiersFrom,
   withoutFrameRows,
   sandboxPackages,
+  peerConflictsOf,
   projectFilesOf,
+  rangeAllows,
   stackApply,
   stackSurveyOf,
   workspaceManifestsOf,
@@ -746,6 +748,101 @@ describe("осмотр окружения проекта по осям карт�
     }
   });
 
+  it("диапазон пира пускает версию плана по правилам semver; непонятный диапазон — не ответ", () => {
+    const yes = [
+      ["^8.56.0 || ^9.0.0", "9.39.1"],
+      [">=8.40", "10.13.0"],
+      [">= 4.8.4 < 6.1", "6.0.3"],
+      ["^0.2.0", "0.2.9"],
+      ["~5.5", "5.5.4"],
+      ["8.x || 9.x || 10.x", "10.13.0"],
+      ["1.2 - 2.3", "2.3.9"],
+      ["*", "1.0.0"],
+      ["", "1.0.0"],
+      ["<=9", "9.9.9"],
+      [">9.0.0-alpha", "9.0.1"],
+      ["=6.0.3", "6.0.3"],
+    ];
+    for (const [range, version] of yes) expect(rangeAllows(range, version), range).toBe(true);
+    const no = [
+      ["^8.56.0", "10.13.0"],
+      ["^0.2.0", "0.3.0"],
+      ["^0.0.3", "0.0.4"],
+      ["~5.5.0", "5.6.0"],
+      [">=4.8.4 <5.6.0", "6.0.3"],
+      ["8.x", "9.0.0"],
+      ["1.2 - 2.3", "2.4.0"],
+      [">9", "9.9.9"],
+      ["<9", "9.0.0"],
+      ["6.0.2", "6.0.3"],
+    ];
+    for (const [range, version] of no) expect(rangeAllows(range, version), range).toBe(false);
+    for (const range of ["workspace:*", "npm:eslint@8", "github:a/b", "latest-ish"])
+      expect(rangeAllows(range, "1.0.0"), range).toBeNull();
+  });
+
+  it("держатель, чей пир не пускает версию плана либо снимаемый пакет, назван до установки", () => {
+    // Выведено одиннадцатой посадкой: держатель вне `predecessors` называл
+    // только хвост упавшей `npm install`, когда манифест уже был переписан.
+    const plan = [
+      { name: "eslint", from: "^8.57.0", to: "10.13.0", section: "devDependencies" },
+      { name: "typescript", from: "~5.4.5", to: "6.0.3", section: "devDependencies", at: "packages/app/package.json" },
+      { name: "@typescript-eslint/parser", from: "^7.18.0", to: null, section: "devDependencies" },
+      { name: "prettier", from: "^3.0.0", to: "3.9.10", section: "devDependencies" },
+    ];
+    const installed = {
+      "eslint-plugin-import": { version: "2.29.1", peerDependencies: { eslint: "^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8" } },
+      "eslint-plugin-ok": { version: "1.0.0", peerDependencies: { eslint: ">=9" } },
+      "eslint-import-resolver-typescript": {
+        version: "3.6.1",
+        peerDependencies: { "@typescript-eslint/parser": "*", "eslint-plugin-import": "*" },
+      },
+      "eslint-plugin-optional": {
+        version: "1.0.0",
+        peerDependencies: { "@typescript-eslint/parser": "^7", eslint: "workspace:*" },
+        peerDependenciesMeta: { "@typescript-eslint/parser": { optional: true } },
+      },
+      "ts-thing": { version: "1.0.0", peerDependencies: { typescript: ">=4.8 <5.6" } },
+    };
+    const read = (name) => installed[name] ?? null;
+    const out = peerConflictsOf({
+      plan,
+      places: [
+        {
+          at: null,
+          m: {
+            devDependencies: {
+              eslint: "^8.57.0",
+              "@typescript-eslint/parser": "^7.18.0",
+              "eslint-plugin-import": "^2.29.1",
+              "eslint-plugin-ok": "^1.0.0",
+              "eslint-import-resolver-typescript": "^3.6.1",
+              "eslint-plugin-optional": "^1.0.0",
+              "eslint-plugin-absent": "^1.0.0",
+              prettier: "^3.0.0",
+            },
+          },
+        },
+        { at: "packages/app/package.json", m: { dependencies: { "ts-thing": "^1.0.0" }, devDependencies: { typescript: "~5.4.5" } } },
+      ],
+      installed: read,
+    });
+    expect(out.conflicts).toEqual([
+      { holder: "eslint-import-resolver-typescript", version: "3.6.1", at: null, peer: "@typescript-eslint/parser", range: "*", to: null },
+      { holder: "eslint-plugin-import", version: "2.29.1", at: null, peer: "eslint", range: "^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8", to: "10.13.0" },
+      { holder: "ts-thing", version: "1.0.0", at: "packages/app/package.json", peer: "typescript", range: ">=4.8 <5.6", to: "6.0.3" },
+    ]);
+    // Не установлен — пиры не прочитаны, и это названо, а не пропущено.
+    expect(out.unread).toEqual([
+      { name: "eslint-plugin-absent", at: null, why: "не установлен" },
+      { name: "eslint-plugin-optional", at: null, why: "диапазон пира eslint «workspace:*» не разобран" },
+    ]);
+    expect(peerConflictsOf({ plan: [], places: [{ at: null, m: { dependencies: { a: "1" } } }], installed: () => null })).toEqual({
+      conflicts: [],
+      unread: [],
+    });
+  });
+
   it("подъём ESLint через границу плоского конфига при старом конфиге назван; без старого либо в пределах мажора — нет", () => {
     const up = [{ name: "eslint", from: "^8.57.1", to: "10.13.0", section: "devDependencies" }];
     expect(eslintBoundaryOf(up, [".eslintrc.cjs", "package.json"])).toBe(
@@ -996,6 +1093,51 @@ describe("среда посадки называет, чего лишится ж
         expect(run.stdout).toContain("typecheck: скрипта нет — типы на новой связке не проверены");
         const after = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
         expect(after.devDependencies.typescript).toMatch(/^6\.\d+\.\d+$/);
+      } finally {
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.rmSync(bin, { recursive: true, force: true });
+      }
+    },
+    120000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "держатель с пиром на прежней версии назван в плане, и `--apply` отказывает до установки, не тронув манифест",
+    () => {
+      const dest = fs.mkdtempSync(path.join(os.tmpdir(), "env-peers-"));
+      const bin = fs.mkdtempSync(path.join(os.tmpdir(), "env-peers-bin-"));
+      try {
+        const text = JSON.stringify({ devDependencies: { eslint: "^8.57.0", "eslint-plugin-import": "^2.29.1" } }) + "\n";
+        fs.writeFileSync(path.join(dest, "package.json"), text);
+        fs.writeFileSync(path.join(dest, "package-lock.json"), "{}\n");
+        fs.mkdirSync(path.join(dest, "node_modules", "eslint-plugin-import"), { recursive: true });
+        fs.writeFileSync(
+          path.join(dest, "node_modules", "eslint-plugin-import", "package.json"),
+          JSON.stringify({ name: "eslint-plugin-import", version: "2.29.1", peerDependencies: { eslint: "^7.2.0 || ^8" } }),
+        );
+        const called = path.join(bin, "called");
+        fs.writeFileSync(
+          path.join(bin, "npm"),
+          '#!/bin/sh\ncase "$1" in install) touch ' + JSON.stringify(called) + '; exit 0;; esac\nPATH="$REAL_PATH" exec npm "$@"\n',
+          { mode: 0o755 },
+        );
+        const env = { ...process.env, REAL_PATH: process.env.PATH, PATH: bin + path.delimiter + process.env.PATH };
+        const look = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", dest], { cwd: ROOT, encoding: "utf8", env });
+        expect(look.stdout).toContain("=== Пиры не пустят план: установка упадёт ===");
+        expect(look.stdout).toMatch(/eslint-plugin-import 2\.29\.1: пир eslint \^7\.2\.0 \|\| \^8 — план ставит \d+\.\d+\.\d+/);
+        expect(look.stdout).toContain("Вопрос разработчику до `--apply`");
+        expect(look.stdout).not.toContain("пиры не прочитаны");
+        const run = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", dest, "--apply"], { cwd: ROOT, encoding: "utf8", env });
+        expect(run.status, run.stdout).toBe(1);
+        expect(run.stdout).toContain("=== Стек приведён к связке: нет ===");
+        expect(run.stdout).toContain("установка не начата");
+        expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(text);
+        expect(fs.existsSync(called)).toBe(false);
+        // Пакеты не установлены — пиры не прочитаны, и это сказано строкой.
+        fs.rmSync(path.join(dest, "node_modules"), { recursive: true });
+        const bare = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", dest], { cwd: ROOT, encoding: "utf8", env });
+        expect(bare.stdout).not.toContain("Пиры не пустят план");
+        expect(bare.stdout).toContain("пиры не прочитаны у 1 пакетов проекта: не установлены");
       } finally {
         fs.rmSync(dest, { recursive: true, force: true });
         fs.rmSync(bin, { recursive: true, force: true });

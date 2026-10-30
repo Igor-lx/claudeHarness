@@ -131,6 +131,61 @@ export const versionCmp = (a, b, depth = 3) => {
   return 0;
 };
 
+/** Пускает ли диапазон semver точную версию: `true`, `false` либо `null`,
+ * когда диапазон не разобран — протокол, адрес, тег. Хвост `-pre` у обеих
+ * сторон отбрасывается: план ставит выпуски. */
+export const rangeAllows = (range, version) => {
+  const v = String(version).replace(/^v/, "").split(/[-+]/)[0].split(".").map(Number);
+  const cmp = (a) => versionCmp(v.join("."), a.join("."));
+  const bound = (op, parts) => {
+    const [M, m, p] = parts;
+    const at = [M ?? 0, m ?? 0, p ?? 0];
+    const full = p !== undefined;
+    if (M === undefined) return () => true;
+    // Частичная версия — диапазон до следующей части: `1.2` — это `1.2.x`.
+    const next = m === undefined ? [M + 1, 0, 0] : [M, m + 1, 0];
+    switch (op) {
+      case ">=":
+        return () => cmp(at) >= 0;
+      case ">":
+        return full ? () => cmp(at) > 0 : () => cmp(next) >= 0;
+      case "<":
+        return () => cmp(at) < 0;
+      case "<=":
+        return full ? () => cmp(at) <= 0 : () => cmp(next) < 0;
+      case "~":
+        return () => cmp(at) >= 0 && cmp(next) < 0;
+      case "^": {
+        const top =
+          M > 0 || m === undefined ? [M + 1, 0, 0] : m > 0 || p === undefined ? [0, m + 1, 0] : [0, 0, p + 1];
+        return () => cmp(at) >= 0 && cmp(top) < 0;
+      }
+      default:
+        return full ? () => cmp(at) === 0 : () => cmp(at) >= 0 && cmp(next) < 0;
+    }
+  };
+  const PART = String.raw`(\d+|[xX*])`;
+  const ONE = new RegExp(String.raw`^(\^|~>?|>=|<=|>|<|=)?v?${PART}(?:\.${PART})?(?:\.${PART})?(?:-[\w.-]+)?(?:\+[\w.-]+)?$`);
+  const partsOf = (m) => m.slice(2, 5).map((x) => (x === undefined || /[xX*]/.test(x) ? undefined : Number(x)));
+  const setAllows = (text) => {
+    const hyphen = /^(\S+)\s+-\s+(\S+)$/.exec(text);
+    const words = hyphen
+      ? [">=" + hyphen[1], "<=" + hyphen[2]]
+      : text.replace(/(>=|<=|>|<|=|\^|~>?)\s+/g, "$1").split(/\s+/).filter(Boolean);
+    const tests = [];
+    for (const word of words) {
+      const m = ONE.exec(word);
+      if (m === null) return null;
+      tests.push(bound((m[1] ?? "").replace("~>", "~"), partsOf(m)));
+    }
+    return tests.every((t) => t());
+  };
+  const sets = String(range).trim().split("||").map((one) => one.trim());
+  const said = sets.map((one) => (one === "" || one === "*" ? true : setAllows(one)));
+  if (said.includes(true)) return true;
+  return said.includes(null) ? null : false;
+};
+
 /** Проверенная связка из текста семени настройки: имя → версия. Читается
  * внутри своего блока, а не до конца файла. */
 export const verifiedOf = (text) => {
@@ -425,6 +480,46 @@ export const stackSurveyOf = ({
     plan,
     scripts,
   };
+};
+
+/** Держатели, чей пир не пустит план: установленный пакет проекта, которого
+ * план не трогает, держит пиром пакет плана в диапазоне, не пускающем новую
+ * версию, либо обязательным пиром — снимаемый. `installed(имя, место)` —
+ * манифест установленного пакета либо `null`. Пакет, чьих пиров не прочесть,
+ * идёт в `unread`. Выведено одиннадцатой посадкой: держатель вне
+ * `predecessors` называл только хвост упавшей установки. */
+export const peerConflictsOf = ({ plan, places, installed }) => {
+  const conflicts = [];
+  const unread = [];
+  if (plan.length === 0) return { conflicts, unread };
+  const planned = (name, at) =>
+    plan.find((one) => one.name === name && (one.at ?? null) === at) ??
+    plan.find((one) => one.name === name && one.at === undefined);
+  for (const place of places) {
+    const own = { ...place.m.dependencies, ...place.m.devDependencies };
+    for (const holder of Object.keys(own).sort()) {
+      // Пакет, который план меняет либо снимает, — не держатель: его пиры уходят с ним.
+      if (planned(holder, place.at) !== undefined) continue;
+      const manifest = installed(holder, place.at);
+      if (manifest === null) {
+        unread.push({ name: holder, at: place.at, why: "не установлен" });
+        continue;
+      }
+      for (const [peer, range] of Object.entries(manifest.peerDependencies ?? {})) {
+        const move = planned(peer, place.at);
+        if (move === undefined) continue;
+        const optional = manifest.peerDependenciesMeta?.[peer]?.optional === true;
+        const said = move.to === null ? optional : rangeAllows(range, move.to);
+        if (said === null) {
+          unread.push({ name: holder, at: place.at, why: "диапазон пира " + peer + " «" + range + "» не разобран" });
+          continue;
+        }
+        if (!said)
+          conflicts.push({ holder, version: manifest.version ?? null, at: place.at, peer, range, to: move.to });
+      }
+    }
+  }
+  return { conflicts, unread };
 };
 
 /** План осмотра — в манифест и одной установкой. Упала установка —

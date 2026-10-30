@@ -162,6 +162,7 @@ import {
   layShelf,
   lintBlockersOf,
   eslintBoundaryOf,
+  peerConflictsOf,
   projectFilesOf,
   stackApply,
   workspaceManifestsOf,
@@ -805,18 +806,54 @@ if (mode === "env") {
     const withTools = withArg === undefined ? [] : withArg.slice(7).split(",").map((x) => x.trim());
     // Версии — те, что посадка ставит в пустую папку: на них обвязка проверена.
     const seedPkg = readJson(path.join(here, "..", "seat", "templates", "package.json"), {});
+    const manifest = existsSync(path.join(root, "package.json"))
+      ? readJson(path.join(root, "package.json"), {})
+      : null;
+    const workspaces = workspaceManifestsOf(root);
     const survey = stackSurveyOf({
-      manifest: existsSync(path.join(root, "package.json"))
-        ? readJson(path.join(root, "package.json"), {})
-        : null,
+      manifest,
       files: projectFilesOf(root),
       axes,
       verified: { ...seedPkg.dependencies, ...seedPkg.devDependencies },
       withTools,
       ui: seatMap.platformPackages?.ui ?? [],
       alternatives: seatMap.platformPackages?.alternatives ?? {},
-      workspaces: workspaceManifestsOf(root),
+      workspaces,
     });
+    // Пакет пакета рабочего пространства лежит у него либо поднят в корень.
+    const installedOf = (name, at) => {
+      for (const dir of at === null ? [root] : [path.join(root, path.dirname(at)), root]) {
+        const one = path.join(dir, "node_modules", name, "package.json");
+        if (existsSync(one)) return readJson(one, null);
+      }
+      return null;
+    };
+    const peers = peerConflictsOf({
+      plan: survey.plan,
+      places: [{ at: null, m: manifest ?? {} }, ...workspaces.map((w) => ({ at: w.at, m: w.manifest ?? {} }))],
+      installed: installedOf,
+    });
+    const sayPeers = () => {
+      const where = (at) => (at === null ? "" : " (" + path.posix.dirname(at) + ")");
+      if (peers.conflicts.length > 0) {
+        console.log("=== Пиры не пустят план: установка упадёт ===");
+        for (const c of peers.conflicts)
+          console.log(
+            "  " + c.holder + (c.version === null ? "" : " " + c.version) + where(c.at) +
+              ": пир " + c.peer + " " + c.range + " — план " + (c.to === null ? "снимает " + c.peer : "ставит " + c.to),
+          );
+        console.log(
+          "  Вопрос разработчику до `--apply`: снять строку держателя из манифеста либо поднять её до версии, чей пир пускает связку, — либо сажать на стеке проекта. Держатель, которого пакет связки заменил, вписывают в `predecessors` его оси (`seat/seat.md`, раздел «Шаг 0-бис»).",
+        );
+      }
+      const absent = peers.unread.filter((u) => u.why === "не установлен");
+      if (absent.length > 0)
+        console.log(
+          "  пиры не прочитаны у " + absent.length + " пакетов проекта: не установлены — конфликт с ними назовёт только упавшая установка; поставить зависимости проекта и повторить осмотр",
+        );
+      for (const u of peers.unread.filter((one) => one.why !== "не установлен"))
+        console.log("  пиры не прочитаны: " + u.name + where(u.at) + " — " + u.why);
+    };
     console.log("=== Окружение проекта: " + survey.verdict + " ===");
     for (const r of survey.rows)
       console.log("  " + r.axis + " — " + r.state + (r.note ? ": " + r.note : ""));
@@ -858,7 +895,13 @@ if (mode === "env") {
           (withTools.length ? " --with=" + withTools.join(",") : ""),
       );
     }
+    sayPeers();
     if (process.argv.includes("--apply") && (survey.plan.length > 0 || survey.scripts.length > 0)) {
+      if (peers.conflicts.length > 0) {
+        console.log("=== Стек приведён к связке: нет ===");
+        console.log("  установка не начата: держатели выше не пустят план; манифест и блокировка не тронуты");
+        process.exit(1);
+      }
       const done = stackApply(root, survey, seedPkg.scripts ?? {});
       console.log("=== Стек приведён к связке: " + (done.ok ? "да" : "нет") + " ===");
       if (!done.ok) {
