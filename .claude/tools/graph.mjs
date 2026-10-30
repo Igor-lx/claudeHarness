@@ -1074,6 +1074,7 @@ const SCALAR = {
   foreignNames: "список",
   baselineSections: "список",
   starBarrels: "список",
+  scenario: "строка",
   foreignAxes: "список",
   smokeScope: "список",
   corpusOutside: "список",
@@ -1856,7 +1857,10 @@ let runnerConfigsMemo = null;
 const runnerConfigsLoad = async () => {
   if (runnerConfigsMemo === null) {
     const out = [];
-    for (const name of runnerConfigNames()) {
+    // Чужой проект: конфиг сборщика тянет чужой фреймворк, и загрузка
+    // печатала его ошибки в поток ошибок. Выведено замером корпуса.
+    const names = CONFIG.scenario === "foreign" ? [] : runnerConfigNames();
+    for (const name of names) {
       const got = await runnerConfigLoad(path.join(REPO_AT, name), REPO_AT);
       if (got !== null) out.push({ name, ...got });
     }
@@ -5813,21 +5817,15 @@ const heldByWaitingSeeds = () => {
   );
 };
 
-/** Чужие оси окружения: проект объявил их полем `foreignAxes`, карта
- * посадки связала с осью сверки (`stackAxes`, поле `checks`). Их находки
- * прогон не роняет: обвязку под чужое окружение не подгоняют. Решено
- * разработчиком `2026-10-27`. */
-const foreignAxesHeld = () => {
+/** Чужие оси окружения: их пишет команда посадки полем `foreignAxes`. Ось,
+ * которой нет в карте посадки, названа: её прочли бы как нашу. */
+const foreignAxesNamed = () => {
   const foreign = CONFIG.foreignAxes ?? [];
   if (foreign.length === 0) return [];
   const mapAt = shelfAt("seat/map.json");
   const axes =
     mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
-  return foreign.map((name) => ({
-    axis: name,
-    known: axes.some((a) => a.axis === name),
-    checks: axes.find((a) => a.axis === name)?.checks ?? [],
-  }));
+  return foreign.map((name) => ({ axis: name, known: axes.some((a) => a.axis === name) }));
 };
 
 /** Баннер перехода. Печатается ПЕРВОЙ строкой каждого прогона и своим
@@ -6452,6 +6450,29 @@ const banner = (title) => {
   console.log("──────────────────────────────────────────────");
 };
 
+/** Сверки, которые в этом проекте не исполняются вовсе, по сценарию его
+ * посадки: самопроверки обвязки (`shelfOnly` карты посадки) — везде, кроме
+ * мастерской; сверки формы стека (`foreignOff`) — в чужом проекте. Их код
+ * идёт, а вывод не печатается: секция «Чужое окружение — не проверено»
+ * называет заглушённое в чужом проекте. Решено разработчиком `2026-10-30`. */
+const SHELF_HOME = CONFIG.scenario == null;
+const FOREIGN = CONFIG.scenario === "foreign";
+const SCENARIO_LISTS = (() => {
+  const mapAt = shelfAt("seat/map.json");
+  const map = mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {};
+  return { shelfOnly: map.shelfOnly ?? [], foreignOff: map.foreignOff ?? [] };
+})();
+const MUTED = new Set([
+  ...(SHELF_HOME ? [] : SCENARIO_LISTS.shelfOnly),
+  ...(FOREIGN ? SCENARIO_LISTS.foreignOff : []),
+]);
+/** Имена перечней, которых нет среди сверок: опечатка глушила бы ничто. */
+const MUTED_UNKNOWN = [...SCENARIO_LISTS.shelfOnly, ...SCENARIO_LISTS.foreignOff].filter(
+  (name) => !CHECK_SECTIONS.includes(name),
+);
+/** Идёт заглушённая секция: подмена вывода сверки её строки не берёт. */
+let mutedNow = false;
+
 /** Сверки, назвавшие размер своего корпуса. Ключ — имя сверки. */
 const LOOKED = new Map();
 /** Сверки, напечатавшие заголовок в этом прогоне. */
@@ -6521,6 +6542,7 @@ const checkStep = (step) => {
   } finally {
     stepNow = 0;
     faultArmed = false;
+    mutedNow = false;
   }
 };
 
@@ -6537,6 +6559,7 @@ const checkStepAsync = async (step) => {
   } finally {
     stepNow = 0;
     faultArmed = false;
+    mutedNow = false;
   }
 };
 
@@ -6545,6 +6568,7 @@ const checkStepAsync = async (step) => {
 const checkHead = (title, looked) => {
   if (!CHECK_SECTIONS.includes(title))
     throw new Error("секция не объявлена в CHECK_SECTIONS: " + title);
+  mutedNow = MUTED.has(title);
   console.log("=== " + title + " ===");
   PRINTED.add(title);
   if (faultArmed) {
@@ -20922,6 +20946,7 @@ if (mode === "verify") {
         process.env.GRAPH_VERIFY_FULL === "1";
       const was = console.log;
       console.log = (...args) => {
+        if (mutedNow) return;
         SAID.push(args.join(" "));
         SAID_STEPS.push(stepNow);
         if (full) was(...args);
@@ -20954,26 +20979,28 @@ if (mode === "verify") {
     return new Set([
       ...(seatingIsUp() ? [...SOFT_WHILE_SEATING, ...heldByWaitingSeeds()] : []),
       ...heldByOpenSteps(),
-      ...foreignAxesHeld().flatMap((one) => one.checks),
     ]);
   }
   checkStep(() => {
+    const axes = foreignAxesNamed();
+    const off = FOREIGN ? SCENARIO_LISTS.foreignOff : [];
     checkHead("Чужое окружение — не проверено (предупреждение, прогон не роняет)", () => ({
-      n: foreignAxesHeld().length,
-      unit: "осей окружения, объявленных чужими",
+      n: axes.length,
+      unit: "осей окружения, чужих по осмотру посадки",
     }));
-    const held = foreignAxesHeld();
-    console.log("  не проверено: " + held.length);
-    for (const one of held)
+    console.log("  не проверено: " + (axes.length + off.length));
+    for (const one of axes)
       console.log(
         one.known
-          ? "    " +
-              one.axis +
-              " — чужое окружение: держимое этой осью не гарантировано" +
-              (one.checks.length > 0
-                ? "; находки сверок " + one.checks.map((c) => "«" + c + "»").join(", ") + " прогон не роняет"
-                : "")
+          ? "    " + one.axis + " — чужое окружение: держимое этой осью не гарантировано"
           : "    " + one.axis + " — такой оси в карте посадки нет (`seat/map.json`, поле `stackAxes`)",
+      );
+    for (const name of off)
+      console.log("    «" + name + "» — сверка формы стека: в чужом проекте не исполняется");
+    if (MUTED_UNKNOWN.length > 0)
+      throw new Error(
+        "перечни карты посадки `shelfOnly` и `foreignOff` называют несуществующие сверки: " +
+          MUTED_UNKNOWN.join("; "),
       );
   });
   checkStep(() => {

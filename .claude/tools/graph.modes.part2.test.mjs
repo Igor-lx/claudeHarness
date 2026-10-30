@@ -6137,9 +6137,9 @@ describe("своё проекта в смешанной папке обвязк�
   }, 240000);
 });
 
-/** Чужое окружение: оси, объявленные чужими полем `foreignAxes`, печатаются
- * секцией-предупреждением, а сверки, которые карта посадки связала с осью,
- * прогон не роняют. Решено разработчиком `2026-10-27`. */
+/** Сверки по сценарию посадки: самопроверки обвязки исполняются только в
+ * мастерской, сверки формы стека в чужом проекте не исполняются и названы
+ * секцией-предупреждением. Решено разработчиком `2026-10-30`. */
 describe("чужое окружение — не проверено", () => {
   it("проекту на чужом фреймворке не требуют пакетов React и не кладут подготовку прогона под React", () => {
     const box = seatEmpty("foreign-react-");
@@ -6193,39 +6193,62 @@ describe("чужое окружение — не проверено", () => {
     }
   }, 240000);
 
-  it("ось названа секцией, сверка оси прогон не роняет, незнакомое имя оси названо", () => {
+  it("самопроверка обвязки молчит в посаженном проекте; в чужом сверка формы стека заглушена и названа", () => {
     const box = seatEmpty("foreign-axes-");
     try {
       const head = "Чужое окружение — не проверено (предупреждение, прогон не роняет)";
-      const redCount = () => {
-        const out = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+      const selfCheck = "Форма отчёта посадки без слов обвязки";
+      const stackCheck = "Диапазон среды объявлен";
+      const run = () =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], {
           cwd: box,
           encoding: "utf8",
-          // The brief output carries the count; the test setup asks for the full one.
-          env: { ...process.env, GRAPH_VERIFY_FULL: "" },
         }).stdout;
-        const count = /с находками: (\d+)/.exec(out)?.[1];
-        expect(count, out).toBeDefined();
-        return Number(count);
-      };
+      const seatAt = path.join(box, ".claude", "seat", "seat.md");
+      const seat = fs.readFileSync(seatAt, "utf8");
+      expect(seat).toContain("ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.");
+      fs.writeFileSync(
+        seatAt,
+        seat.replace(
+          "ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.",
+          "ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.\n  Проба: каркас положен, манифест слит.",
+        ),
+      );
+      const pkgAt = path.join(box, "package.json");
+      fs.writeFileSync(pkgAt, fs.readFileSync(pkgAt, "utf8").replace('"engines": {', '"engines-was": {'));
+      expect(verifyIn(box).get(selfCheck)?.join("\n")).toContain("манифест");
+      expect(verifyIn(box).get(stackCheck)?.join("\n")).toContain("engines");
       expect(verifyIn(box).get(head)).toBeUndefined();
-      const mapAt = path.join(box, ".claude", "seat", "map.json");
-      const map = fs.readFileSync(mapAt, "utf8");
-      expect(map).toContain('"checks": ["Звену цепочки есть на чём работать", "Правила про существующее"]');
-      fs.writeFileSync(mapAt, map.replace('"checks": ["Звену цепочки есть на чём работать", "Правила про существующее"]', '"checks": ["Покрытие карты"]'));
-      fs.mkdirSync(path.join(box, "src", "shared", "zz"), { recursive: true });
-      fs.writeFileSync(path.join(box, "src", "shared", "zz", "zzOwn.ts"), "export const zzOwn = 2;\n");
-      const before = redCount();
       const configAt = path.join(box, ".context", "graph.config.mjs");
       const config = fs.readFileSync(configAt, "utf8");
+      expect(config).toContain("  scenario: null,");
       expect(config).toContain("  foreignAxes: [],");
-      fs.writeFileSync(configAt, config.replace("  foreignAxes: [],", '  foreignAxes: ["фреймворк", "zzось"],'));
-      expect(redCount()).toBe(before - 1);
-      expect(verifyIn(box).get(head)).toEqual([
-        "фреймворк — чужое окружение: держимое этой осью не гарантировано; находки сверок «Покрытие карты» прогон не роняет",
+      fs.writeFileSync(configAt, config.replace("  scenario: null,", '  scenario: "familiar",'));
+      const familiar = run();
+      expect(familiar).not.toContain("=== " + selfCheck + " ===");
+      expect(verifyIn(box).get(stackCheck)?.join("\n")).toContain("engines");
+      fs.writeFileSync(
+        configAt,
+        config
+          .replace("  scenario: null,", '  scenario: "foreign",')
+          .replace("  foreignAxes: [],", '  foreignAxes: ["фреймворк", "zzось"],'),
+      );
+      const foreign = run();
+      expect(foreign).not.toContain("=== " + stackCheck + " ===");
+      const named = verifyIn(box).get(head) ?? [];
+      expect(named.slice(0, 2)).toEqual([
+        "фреймворк — чужое окружение: держимое этой осью не гарантировано",
         "zzось — такой оси в карте посадки нет (`seat/map.json`, поле `stackAxes`)",
       ]);
-      expect(verifyIn(box).get("Покрытие карты")?.join("\n")).toContain("zzOwn.ts");
+      expect(named).toContain("«" + stackCheck + "» — сверка формы стека: в чужом проекте не исполняется");
+      expect(foreign).toContain("  упало исключением: 0");
+      const mapAt = path.join(box, ".claude", "seat", "map.json");
+      const map = fs.readFileSync(mapAt, "utf8");
+      expect(map).toContain('    "Мутационный прогон исполним",\n');
+      fs.writeFileSync(mapAt, map.replace('    "Мутационный прогон исполним",\n', '    "Мутационный прогон исполним",\n    "zzНетТакой",\n'));
+      const typo = run();
+      expect(typo).toContain("  упало исключением: 1");
+      expect(typo).toContain("называют несуществующие сверки: zzНетТакой");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
