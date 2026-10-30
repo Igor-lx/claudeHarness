@@ -12,6 +12,7 @@ import * as vocabulary from "./graph.predicates.mjs";
 const {
   PREDICATE_CASES,
   classifyRun,
+  cutFromSeed,
   idleReportOf,
   inComment,
   printedIsRed,
@@ -526,6 +527,23 @@ describe("printedIsRed", () => {
     expect(printedIsRed(["=== А ===", "  проверено: 3"], WARN, none)).toBe(
       false,
     );
+  });
+});
+
+describe("cutFromSeed", () => {
+  // Выведено одиннадцатой посадкой, проект E: файл базы, из которого сняли
+  // записи о каркасе по инструкции, получал совет заменить его редакцией полки.
+  const seed = "# Карта\n\n<!-- КАРКАС -->\n| `src/app/App.tsx` | каркас |\n<!-- /КАРКАС -->\n\nтекст\n";
+
+  it("только вырезано — да; концы строк и пустые строки не в счёт", () => {
+    expect(cutFromSeed("# Карта\n\nтекст\n", seed)).toBe(true);
+    expect(cutFromSeed("# Карта\r\nтекст\r\n", seed)).toBe(true);
+    expect(cutFromSeed(seed, seed)).toBe(true);
+  });
+
+  it("своя строка либо другой порядок — нет", () => {
+    expect(cutFromSeed("# Карта\n\nтекст прежней редакции\n", seed)).toBe(false);
+    expect(cutFromSeed("текст\n# Карта\n", seed)).toBe(false);
   });
 });
 

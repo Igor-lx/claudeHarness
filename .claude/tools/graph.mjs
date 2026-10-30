@@ -26,6 +26,7 @@ import { builtinModules, createRequire } from "node:module";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  cutFromSeed,
   idleReportOf,
   HELD_BY_DEBT_ROW,
   HELD_BY_WAITING_SEED,
@@ -3102,7 +3103,11 @@ const seedDriftNote = (findings) => {
     const at = from === undefined ? null : shelfAt(from);
     const own = path.join(repoRoot, file);
     if (at === null || !existsSync(at) || !existsSync(own)) continue;
-    if (!sameAsSeed(readFileSync(own, "utf8"), readFileSync(at, "utf8")))
+    const body = readFileSync(own, "utf8");
+    const seedBody = readFileSync(at, "utf8");
+    // Из семени только вырезано — снятие по инструкции, а не прежняя
+    // редакция: замена вернула бы снятое.
+    if (!sameAsSeed(body, seedBody) && !cutFromSeed(body, seedBody))
       hit.add(file + " ← " + from);
   }
   return hit.size === 0

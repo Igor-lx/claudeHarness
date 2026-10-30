@@ -6420,6 +6420,27 @@ export const sectionsOf = (out, newline) => {
   return found;
 };
 
+/** Файл, из которого против семени только вырезано: каждая его непустая
+ * строка стоит в семени, и в том же порядке. Прежней редакции семени в таком
+ * файле нет — его правили снятием, как велит инструкция о записях каркаса, и
+ * замена редакцией полки вернула бы снятое. Выведено одиннадцатой посадкой,
+ * проект E. */
+export const cutFromSeed = (body, seedBody) => {
+  const lines = (text) =>
+    text
+      .split(/\r?\n/)
+      .map((l) => l.trimEnd())
+      .filter((l) => l !== "");
+  const seed = lines(seedBody);
+  let at = 0;
+  for (const line of lines(body)) {
+    while (at < seed.length && seed[at] !== line) at += 1;
+    if (at === seed.length) return false;
+    at += 1;
+  }
+  return true;
+};
+
 /** Строки отчёта `falsify` о рецептах, которые не прогонялись: у сверки нет
  * предмета (`idle` — имена сверок) либо она в чистом прогоне сказала, почему
  * молчит (`quiet` — сверка и её строка из `IDLE_NOTES`). Это две причины, и
