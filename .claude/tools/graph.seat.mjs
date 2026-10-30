@@ -1155,6 +1155,8 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
   say(
     "ПОСАДКА НЕ ЗАВЕРШЕНА. Фаза 1 закончена.",
     "",
+    "СЦЕНАРИЙ: пустая папка",
+    "",
     "СДЕЛАНО",
     "  1. Рабочие правила и инструмент лежат в .claude/: файлов " + count(".claude") + ".",
     "  2. Заведены записи о проекте — файлов в .context/: " +

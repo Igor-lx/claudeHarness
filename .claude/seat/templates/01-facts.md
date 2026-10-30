@@ -48,6 +48,7 @@
 | `task` | `.claude/skills/task/SKILL.md` |
 | `probe` | `.claude/skills/probe/SKILL.md` |
 | `bar-probe` | `.claude/skills/bar-probe/SKILL.md` |
+| `seat` | `.claude/skills/seat/SKILL.md` |
 | `handoff` | `.claude/skills/handoff/SKILL.md` |
 | `audit` | `.claude/skills/audit/SKILL.md` |
 
