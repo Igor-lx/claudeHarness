@@ -709,7 +709,7 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     "ФАЗА 2 — ЗАВЕРШЕНИЕ ПОСАДКИ, ОЖИДАЕТ ОТВЕТА",
     "  1. Что это за проект. Ответ ПО СЛОТАМ, по фразе на каждый: что это; для кого и",
     "     зачем; чем НЕ является; что законно, хотя со стороны читается нарушением.",
-    "  Дальше переход: `.claude/seat/seat.md`, фаза 3.",
+    "  Дальше переход: `.claude/seat/transition.md`.",
   );
   if (verify.status !== 0)
     say("", "Записи о проекте красные — посадка сделана не до конца. Разобрать:", "  node .claude/tools/graph.mjs verify", ...tailOf(verify.out, 12));

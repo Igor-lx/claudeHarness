@@ -1041,11 +1041,11 @@ describe("сверки, держимые пунктом долга, назван
   const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
   const read = (rel) => fs.readFileSync(path.join(TOOL_DIR, rel), "utf8");
 
-  it("каждую сверку списка зовёт помощник, называет таблица фазы 3 и таблица сверок", () => {
+  it("каждую сверку списка зовёт помощник, называет таблица перехода и таблица сверок", () => {
     const tool = read("graph.mjs");
-    const seat = read("../seat/seat.md");
+    const transition = read("../seat/transition.md");
     const checks = read("checks.md");
-    const phase3 = seat.slice(seat.indexOf("### Что идёт в долг перехода"));
+    const phase3 = transition.slice(transition.indexOf("## Что идёт в долг перехода"));
     expect(vocabulary.HELD_BY_DEBT_ROW.length).toBeGreaterThan(0);
     for (const name of vocabulary.HELD_BY_DEBT_ROW) {
       expect(tool, name).toContain('heldOpen("' + name + '"');
