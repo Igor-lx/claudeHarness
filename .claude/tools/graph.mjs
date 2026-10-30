@@ -4117,11 +4117,30 @@ const SEED_CONDITIONS = new Map([
     () => runnerEffective(runnerConfigsNow())?.test?.globals !== true && !projectHasForeignUi(),
   ],
 ]);
+/** Корень рабочих пространств без своего кода: пакеты объявлены, а в `src/`
+ * корня нет ни одного файла, кроме нетронутых семян. Семенам `src/` здесь
+ * нечего обслуживать: пакеты их не берут, корневой раннер их не гоняет.
+ * Выведено десятой посадкой, решено разработчиком `2026-10-30`. */
+let bareRootSaid;
+const bareWorkspaceRoot = () => {
+  if (bareRootSaid !== undefined) return bareRootSaid;
+  const seeds = seedOfPath();
+  const own = (dir) =>
+    existsSync(dir) &&
+    readdirSync(dir, { withFileTypes: true }).some((e) =>
+      e.isDirectory()
+        ? own(path.join(dir, e.name))
+        : !untouchedSeed(path.join(dir, e.name), REPO_AT, seeds),
+    );
+  bareRootSaid = workspaceManifestsOf(REPO_AT).length > 0 && !own(path.join(REPO_AT, "src"));
+  return bareRootSaid;
+};
+const underBareRoot = (e) => e.to.startsWith("src/") && bareWorkspaceRoot();
 /** Выполнено ли у проекта условие семени. Семя без условия кладётся всегда;
  * условие не из словаря называет сверка «Семя с условием не лежит без
  * условия», а здесь оно читается выполненным — отказать молча нельзя. */
 const seedConditionHolds = (e) =>
-  e.onlyWith == null || (SEED_CONDITIONS.get(e.onlyWith)?.() ?? true);
+  !underBareRoot(e) && (e.onlyWith == null || (SEED_CONDITIONS.get(e.onlyWith)?.() ?? true));
 
 // Документы, лежащие ВНЕ исходников. Обход выше идёт по корню исходников, и
 // папка документации в корне репозитория не попадала в корпус ни одной
@@ -33444,9 +33463,9 @@ if (mode === "verify") {
         if (untouchedSeed(at, REPO_AT, seeds))
           idleSeeds.push(
             e.to +
-              " — лежит семенем, а условия «" +
-              e.onlyWith +
-              "» у проекта нет: снять вместе с записями базы о нём",
+              (underBareRoot(e)
+                ? " — лежит семенем в корне рабочих пространств без своего кода: снять вместе с записями базы о нём"
+                : " — лежит семенем, а условия «" + e.onlyWith + "» у проекта нет: снять вместе с записями базы о нём"),
           );
       }
     }

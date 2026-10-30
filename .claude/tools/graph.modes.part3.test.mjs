@@ -4001,6 +4001,29 @@ describe("вопросы обвязки — только на испытател
   }, 240000);
 });
 
+/** Семенам `src/` в корне рабочих пространств без своего кода нечего
+ * обслуживать: пакеты их не берут, корневой раннер не гоняет. Выведено
+ * десятой посадкой, решено разработчиком `2026-10-30`. */
+describe("семена src в корне монорепозитория без своего кода", () => {
+  it("корень пакетов без своего кода — семя названо снимаемым; без пакетов либо со своим кодом — нет", () => {
+    const box = seatEmpty("bare-root-");
+    try {
+      const said = () => (verifyIn(box).get("Семя с условием не лежит без условия") ?? []).join("\n");
+      const helper = "src/shared/styles/mergeStyleMaps.ts — лежит семенем в корне рабочих пространств без своего кода";
+      expect(said()).not.toContain("корне рабочих пространств");
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      fs.writeFileSync(pkgAt, JSON.stringify({ ...pkg, workspaces: ["packages/*"] }, null, 2) + "\n");
+      fs.mkdirSync(path.join(box, "packages", "app"), { recursive: true });
+      fs.writeFileSync(path.join(box, "packages", "app", "package.json"), '{ "name": "app" }\n');
+      expect(said()).toContain(helper);
+      fs.writeFileSync(path.join(box, "src", "own.ts"), "export const own = 1;\n");
+      expect(said()).not.toContain("корне рабочих пространств");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
 
 
 
