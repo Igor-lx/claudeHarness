@@ -604,6 +604,47 @@ export const claimSandbox = (
   }
 };
 
+/** Жив ли процесс: сигнал ноль ничего не шлёт, а только спрашивает.
+ * Чужой живой процесс отвечает отказом в праве — он тоже жив. */
+export const pidAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+
+/** Владелец песочницы — файл `<номер>.pid` рядом с ней: внутри лежит копия
+ * проекта, и лишний файл в её корне будил бы сверки. */
+export const ownSandbox = (at, pid = process.pid) => writeFileSync(at + ".pid", String(pid) + "\n");
+
+/** Песочницы, оставленные прерванными прогонами. Владелец мёртв — папка и
+ * файл владельца снимаются; владельца нет вовсе — песочница называется, а не
+ * снимается: её мог занять соседний прогон за миг до записи владельца.
+ * Выведено одиннадцатой посадкой, проект E: прогон, снятый лимитом времени,
+ * оставил песочницу в проекте. */
+export const sweepDeadSandboxes = (parent, alive = pidAlive) => {
+  const removed = [];
+  const ownerless = [];
+  if (!existsSync(parent)) return { removed, ownerless };
+  const names = readdirSync(parent);
+  for (const name of names) {
+    const at = path.join(parent, name);
+    if (name.endsWith(".pid")) {
+      const pid = Number(readFileSync(at, "utf8").trim());
+      if (Number.isInteger(pid) && pid > 0 && alive(pid)) continue;
+      const box = at.slice(0, -".pid".length);
+      rmSync(box, { recursive: true, force: true });
+      rmSync(at, { force: true });
+      removed.push(path.basename(box));
+      continue;
+    }
+    if (statSync(at).isDirectory() && !names.includes(name + ".pid")) ownerless.push(name);
+  }
+  return { removed, ownerless };
+};
+
 /** Манифесты установленных пакетов — и только они.
  *
  * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и

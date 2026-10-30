@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -3975,6 +3975,52 @@ describe("песочницу прогона занимают одним помо
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+/** Песочница `falsify` лежит в проекте, и прерванный прогон её оставлял.
+ * Выведено одиннадцатой посадкой, проект E: прогон, снятый лимитом времени. */
+describe("песочница прерванного прогона не остаётся в проекте", () => {
+  it("мёртвый владелец — снята; живой — нет; без владельца — названа, а не снята", async () => {
+    const { sweepDeadSandboxes, ownSandbox } = await import("./graph.seat.mjs");
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "sweep-"));
+    try {
+      for (const id of ["1", "2", "3"]) fs.mkdirSync(path.join(parent, id));
+      ownSandbox(path.join(parent, "1"), 101);
+      ownSandbox(path.join(parent, "2"), 202);
+      const got = sweepDeadSandboxes(parent, (pid) => pid === 202);
+      expect(got).toEqual({ removed: ["1"], ownerless: ["3"] });
+      expect(fs.readdirSync(parent).sort()).toEqual(["2", "2.pid", "3"]);
+      expect(sweepDeadSandboxes(path.join(parent, "нет"))).toEqual({ removed: [], ownerless: [] });
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("`falsify`, снятый сигналом, убирает свою песочницу", async () => {
+    const box = seatEmpty("falsify-signal-");
+    try {
+      const sandboxes = path.join(box, ".проба-сверок");
+      const child = spawn(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "falsify"], {
+        cwd: box,
+        stdio: "ignore",
+      });
+      const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
+      const started = Date.now();
+      const claimed = () =>
+        fs.existsSync(sandboxes) &&
+        fs.readdirSync(sandboxes, { withFileTypes: true }).some((e) => e.isDirectory());
+      while (!claimed()) {
+        if (Date.now() - started > 60000) throw new Error("песочница не заведена за минуту");
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      child.kill("SIGTERM");
+      const { code } = await exited;
+      expect(code).toBe(128 + 15);
+      expect(fs.existsSync(sandboxes)).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 /**

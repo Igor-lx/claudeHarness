@@ -174,6 +174,8 @@ import {
   sandboxManifests,
   sandboxPackages,
   claimSandbox,
+  ownSandbox,
+  sweepDeadSandboxes,
   runTool,
   saidBy,
   SEAT_MARKER,
@@ -6724,7 +6726,30 @@ if (mode === "falsify") {
   // Папка песочниц одна — её знают игнорирование и обход дерева, — а
   // песочница в ней своя у каждого прогона.
   const sandboxes = path.join(REPO_ROOT, ".проба-сверок");
+  const swept = sweepDeadSandboxes(sandboxes);
+  if (swept.removed.length > 0)
+    console.log("  сняты песочницы прерванных прогонов: " + swept.removed.join(", "));
+  for (const name of swept.ownerless)
+    console.log("  песочница без владельца: .проба-сверок/" + name + " — оставлена прогоном прежней редакции; снять руками, если прогона нет");
   const { at: tmp } = claimSandbox(sandboxes, "");
+  ownSandbox(tmp);
+  // Песочница лежит в проекте: прерванный прогон обязан её снять. Обработчик
+  // сигнала ждёт цикла событий, и цикл рецептов уступает ему ход каждым шагом.
+  const dropSandbox = () => {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp + ".pid", { force: true });
+    try {
+      rmdirSync(sandboxes);
+    } catch (e) {
+      if (e.code !== "ENOTEMPTY" && e.code !== "ENOENT") throw e;
+    }
+  };
+  const SIGNALS = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
+  const onSignal = (name) => {
+    dropSandbox();
+    process.exit(128 + SIGNALS[name]);
+  };
+  for (const name of Object.keys(SIGNALS)) process.once(name, onSignal);
 
   // Разбор вывода и разбор исхода живут в словаре области: это чистые
   // функции, и держит их набор тестов, а не одноразовая фальсификация.
@@ -7180,6 +7205,7 @@ if (mode === "falsify") {
         JSON.stringify(r).includes(name),
       );
     for (const r0 of recipes) {
+      await new Promise((resolve) => setImmediate(resolve));
       const r = localise(r0);
       if (unresolved(r) || idleByDesign(r)) {
         idle.push(r.section);
@@ -7318,12 +7344,8 @@ if (mode === "falsify") {
       } else writeFileSync(at, before);
     }
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
-    try {
-      rmdirSync(sandboxes);
-    } catch (e) {
-      if (e.code !== "ENOTEMPTY" && e.code !== "ENOENT") throw e;
-    }
+    for (const name of Object.keys(SIGNALS)) process.off(name, onSignal);
+    dropSandbox();
   }
 
   // Долг считается от ОБЪЯВЛЕННОГО списка сверок, а не от напечатанных секций.
