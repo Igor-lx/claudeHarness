@@ -14,6 +14,7 @@ const {
   classifyRun,
   cutFromSeed,
   idleReportOf,
+  recipeEditOf,
   inComment,
   printedIsRed,
   sectionsOf,
@@ -527,6 +528,34 @@ describe("printedIsRed", () => {
     expect(printedIsRed(["=== А ===", "  проверено: 3"], WARN, none)).toBe(
       false,
     );
+  });
+});
+
+describe("recipeEditOf", () => {
+  // Выведено одиннадцатой посадкой, проект F: конфиг сборщика под
+  // `singleQuote`, и рецепты, написанные по семени двойными, места не находили.
+  const step = { find: 'include: ["src/**/*.test.{ts,tsx}"],', replace: 'include: ["src/**/*.test.{ts,tsx}", ".claude/x"],' };
+
+  it("дословное место правится как есть", () => {
+    expect(recipeEditOf('a\n  include: ["src/**/*.test.{ts,tsx}"],\n', step)).toBe(
+      'a\n  include: ["src/**/*.test.{ts,tsx}", ".claude/x"],\n',
+    );
+  });
+
+  it("место в одинарных кавычках находится, и замена пишется теми же", () => {
+    expect(recipeEditOf("  include: ['src/**/*.test.{ts,tsx}'],\n", step)).toBe(
+      "  include: ['src/**/*.test.{ts,tsx}', '.claude/x'],\n",
+    );
+    expect(recipeEditOf("from 'vitest/config';", { find: 'from "vitest/config"', replace: 'from "vite"' })).toBe(
+      "from 'vite';",
+    );
+  });
+
+  it("места нет ни в каком написании — null; без кавычек второго поиска нет", () => {
+    expect(recipeEditOf("include: [`src`],", step)).toBeNull();
+    expect(recipeEditOf("| a |", { find: "| b |", replace: "| c |" })).toBeNull();
+    // Знак `$` в замене — текст, а не подстановка.
+    expect(recipeEditOf("x", { find: "x", replace: "$&$&" })).toBe("$&$&");
   });
 });
 

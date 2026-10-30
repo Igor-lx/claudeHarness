@@ -6420,6 +6420,19 @@ export const sectionsOf = (out, newline) => {
   return found;
 };
 
+/** Правка шага рецепта `find` → `replace` в тексте: новый текст либо `null`,
+ * когда места нет. Не нашлось дословно — ищется то же место с переставленными
+ * кавычками, и `replace` переставляется так же: форматтер проекта пишет
+ * строки одинарными, а рецепты написаны по семени двойными. Выведено
+ * одиннадцатой посадкой, проект F: рецепты настройки сборки не находили места
+ * в `vite.config.ts` под `singleQuote`. */
+export const recipeEditOf = (text, { find, replace }) => {
+  const swap = (one) => one.replace(/["']/g, (q) => (q === '"' ? "'" : '"'));
+  if (text.includes(find)) return text.replace(find, () => replace);
+  if (!/["']/.test(find) || !text.includes(swap(find))) return null;
+  return text.replace(swap(find), () => swap(replace));
+};
+
 /** Файл, из которого против семени только вырезано: каждая его непустая
  * строка стоит в семени, и в том же порядке. Прежней редакции семени в таком
  * файле нет — его правили снятием, как велит инструкция о записях каркаса, и

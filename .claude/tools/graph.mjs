@@ -28,6 +28,7 @@ import {
   classifyRun,
   cutFromSeed,
   idleReportOf,
+  recipeEditOf,
   HELD_BY_DEBT_ROW,
   HELD_BY_WAITING_SEED,
   localiseRecipe,
@@ -7092,13 +7093,13 @@ if (mode === "falsify") {
               step.file,
           );
         else {
-          const needle = step.find.split("\n").join(NEWLINE);
-          if (!was.includes(needle))
+          const edited = recipeEditOf(was, {
+            find: step.find.split("\n").join(NEWLINE),
+            replace: step.replace.split("\n").join(NEWLINE),
+          });
+          if (edited === null)
             return give("рецепт не находит своего места: " + step.file);
-          writeFileSync(
-            stepAt,
-            was.replace(needle, step.replace.split("\n").join(NEWLINE)),
-          );
+          writeFileSync(stepAt, edited);
         }
       }
       const after = readSections(runVerify(tmp));
@@ -7293,19 +7294,17 @@ if (mode === "falsify") {
         writeFileSync(path.join(tmp, r.rename), before);
         rmSync(at);
       } else {
-        if (!before.includes(r.find.split("\n").join(NEWLINE))) {
+        const edited = recipeEditOf(before, {
+          find: r.find.split("\n").join(NEWLINE),
+          replace: r.replace.split("\n").join(NEWLINE),
+        });
+        if (edited === null) {
           (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
             r.section + " — рецепт не находит своего места",
           );
           continue;
         }
-        writeFileSync(
-          at,
-          before.replace(
-            r.find.split("\n").join(NEWLINE),
-            r.replace.split("\n").join(NEWLINE),
-          ),
-        );
+        writeFileSync(at, edited);
       }
       record(r.section, readSections(runVerify(tmp)));
       if (r.copyTo !== undefined) {
