@@ -402,6 +402,9 @@ export const stackSurveyOf = ({
     ];
     for (const one of axis.codeFiles ?? [])
       if (files.some((f) => f.endsWith("." + one))) strange.push(one);
+    for (const dir of axis.foreignDirs ?? [])
+      if (files.some((f) => f.startsWith(dir + "/"))) strange.push(dir + "/");
+    if (axis.foreignWorkspaces === true && m.workspaces !== undefined) strange.push("рабочие пространства");
     if (axis.foreignWithoutTs && tsFiles.length === 0 && jsFiles.length > 0 && !has("typescript"))
       strange.push("JavaScript без TypeScript");
     const chosen = axis.tool !== undefined && withTools.includes(axis.axis);
@@ -466,7 +469,7 @@ export const stackSurveyOf = ({
       }
     rows.push(
       moves.length === 0
-        ? { axis: axis.axis, state: "наше", note: [...notes, "версии связки"].join("; ") }
+        ? { axis: axis.axis, state: "наше", note: [...notes, axis.oursNote ?? "версии связки"].join("; ") }
         : { axis: axis.axis, state: "наше, не по связке", note: [...moves, ...notes].join("; ") },
     );
   }

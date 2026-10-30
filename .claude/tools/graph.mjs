@@ -169,7 +169,6 @@ import {
   projectFilesOf,
   stackApply,
   workspaceManifestsOf,
-  stackSurveyOf,
   runSeat,
   sandboxManifests,
   sandboxPackages,
@@ -187,6 +186,7 @@ import {
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
+import { SCENARIO_NAMES, commitsIn, foreignOffer, scenarioOf } from "./graph.profile.mjs";
 // Страж протокола свода: окно модели предмета и вердикт чтению.
 import {
   modelWindowOf,
@@ -815,16 +815,21 @@ if (mode === "env") {
       ? readJson(path.join(root, "package.json"), {})
       : null;
     const workspaces = workspaceManifestsOf(root);
-    const survey = stackSurveyOf({
-      manifest,
-      files: projectFilesOf(root),
-      axes,
-      verified: { ...seedPkg.dependencies, ...seedPkg.devDependencies },
-      withTools,
-      ui: seatMap.platformPackages?.ui ?? [],
-      alternatives: seatMap.platformPackages?.alternatives ?? {},
-      workspaces,
-    });
+    const gitIn = (args) => {
+      try {
+        return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return "";
+      }
+    };
+    // Сценарий посадки — один ответ на обвязку: тот же спросит команда посадки.
+    const prof = scenarioOf({ root, map: seatMap, seed: seedPkg, commits: commitsIn(root, gitIn), withTools });
+    const survey = prof.survey ?? { verdict: "пусто", rows: [], foreign: [], plan: [], scripts: [] };
+    // Чужое не подгоняют: плана у чужого проекта нет.
+    if (prof.scenario !== "familiar") {
+      survey.plan = [];
+      survey.scripts = [];
+    }
     // Пакет пакета рабочего пространства лежит у него либо поднят в корень.
     const installedOf = (name, at) => {
       for (const dir of at === null ? [root] : [path.join(root, path.dirname(at)), root]) {
@@ -859,34 +864,13 @@ if (mode === "env") {
       for (const u of peers.unread.filter((one) => one.why !== "не установлен"))
         console.log("  пиры не прочитаны: " + u.name + where(u.at) + " — " + u.why);
     };
-    console.log("=== Окружение проекта: " + survey.verdict + " ===");
+    console.log("=== Сценарий посадки: " + SCENARIO_NAMES[prof.scenario] + " ===");
     for (const r of survey.rows)
       console.log("  " + r.axis + " — " + r.state + (r.note ? ": " + r.note : ""));
-    if (survey.verdict === "пусто")
+    if (prof.scenario === "empty")
       console.log("  Папка пуста: посадка ставит всё сама — `node .claude/tools/graph.mjs seat .`.");
-    if (survey.foreign.length > 0) {
-      console.log("=== Окружение чужое (предупреждение) ===");
-      console.log(
-        "  Обвязка рассчитана на своё окружение: npm, TypeScript, React, Vite, Vitest, ESLint, Prettier, Stryker.",
-      );
-      for (const f of survey.foreign) console.log("  " + f.axis + ": " + f.what);
-      console.log(
-        "  В настройку проекта: foreignAxes: " +
-          JSON.stringify(survey.foreign.map((f) => f.axis)) +
-          " — сверки чужих осей печатаются секцией «Чужое окружение — не проверено».",
-      );
-      console.log(
-        "  Посадка и переход не остановятся, но всё, что держится этими осями, не гарантировано:",
-      );
-      console.log("  звенья чужой оси не подгоняют: что не встало, называется в отчёте посадки.");
-      const tools = survey.foreign.filter((f) => f.tool !== null).map((f) => f.axis);
-      if (tools.length > 0)
-        console.log(
-          "  Поставить своё вместо чужого инструмента — по слову разработчика: `--apply --with=" +
-            tools.join(",") +
-            "`; прежний скрипт останется под именем `<звено>:own`.",
-        );
-    }
+    if (prof.scenario === "foreign")
+      for (const line of foreignOffer(prof.foreign)) console.log("  " + line);
     if (survey.plan.length > 0 && !process.argv.includes("--apply")) {
       console.log("=== План: привести стек к проверенной связке ===");
       for (const one of survey.plan)
@@ -901,6 +885,11 @@ if (mode === "env") {
       );
     }
     sayPeers();
+    if (process.argv.includes("--apply") && prof.scenario === "foreign") {
+      console.log("=== Стек приведён к связке: нет ===");
+      console.log("  чужой проект: обвязка его не подгоняет — пути выше");
+      process.exit(1);
+    }
     if (process.argv.includes("--apply") && (survey.plan.length > 0 || survey.scripts.length > 0)) {
       if (peers.conflicts.length > 0) {
         console.log("=== Стек приведён к связке: нет ===");
