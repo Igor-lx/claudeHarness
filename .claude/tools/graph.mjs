@@ -32388,9 +32388,18 @@ if (mode === "verify") {
   // одного инструмента — источник вопроса «какой из них прав», и отвечать на
   // него приходится по очереди.
   const chainTwins = [];
+  // Сборка пакета без поставки — голый `tsc --noEmit` — тот же вызов, что у
+  // звена типов, а проект вправе держать свою сборку. Исключение — запись
+  // решения, называющая скрипт и папку каждого пакета, куда корень его
+  // раздаёт. Решено разработчиком `2026-10-30` по десятой посадке.
+  let chainTwinsDecided = 0;
   checkStep(() => {
     {
       const mapAt = shelfAt("seat/map.json");
+      const decidedAt =
+        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
+      const decided =
+        decidedAt !== null && existsSync(decidedAt) ? readFileSync(decidedAt, "utf8") : "";
       if (mapAt !== null && existsSync(mapAt) && CONFIG.manifest != null) {
         const at = path.join(BASE, CONFIG.manifest);
         const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
@@ -32405,7 +32414,19 @@ if (mode === "verify") {
             // Делегирующий корневой скрипт — то же звено, и рядом со своим
             // вызовом инструмента в корне он близнец.
             const handed = delegatedLink((body) => re.test(body), scripts);
-            if (handed !== null && !hits.includes(handed)) hits.push(handed);
+            if (handed !== null && !hits.includes(handed)) {
+              const script = /\bnpm run ([\w:-]+)\s+(?:--workspaces|-ws)\b/.exec(scripts[handed])?.[1];
+              const packs = workspaceManifestsOf(REPO_AT)
+                .filter((w) => re.test(w.manifest.scripts?.[script] ?? ""))
+                .map((w) => path.posix.dirname(w.at));
+              const named =
+                hits.length === 1 &&
+                packs.length > 0 &&
+                decided.includes("`" + script + "`") &&
+                packs.every((dir) => decided.includes(dir));
+              if (named) chainTwinsDecided += 1;
+              else hits.push(handed);
+            }
             if (hits.length > 1)
               chainTwins.push(
                 e.name + " — одно звено под именами: " + hits.join(", "),
@@ -32420,8 +32441,16 @@ if (mode === "verify") {
       n: chainDeclared.length,
       unit: "звеньев цепочки",
     }));
-    console.log("  задвоенных звеньев: " + chainTwins.length);
+    console.log(
+      "  задвоенных звеньев: " +
+        chainTwins.length +
+        (chainTwinsDecided > 0 ? ", сборка пакета объявлена решением: " + chainTwinsDecided : ""),
+    );
     for (const g of chainTwins) console.log("    " + g);
+    if (chainTwins.length > 0)
+      console.log(
+        "  снять близнеца из манифеста; сборку пакета без поставки на том же вызове держат записью решения, называющей скрипт в обратных кавычках и папку пакета",
+      );
   });
   checkStep(() => {
     checkHead("Одноранговая зависимость не продублирована", () => ({

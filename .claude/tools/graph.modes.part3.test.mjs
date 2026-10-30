@@ -4025,6 +4025,46 @@ describe("семена src в корне монорепозитория без �
   }, 240000);
 });
 
+/** Сборка пакета без поставки — голый `tsc --noEmit` — тот же вызов, что у
+ * звена типов. Исключение — запись решения, называющая скрипт и пакет.
+ * Выведено десятой посадкой, решено разработчиком `2026-10-30`. */
+describe("сборка пакета на вызове звена типов", () => {
+  it("без записи решения — близнец; запись называет скрипт и пакет — исключение; близнец в корне — по-прежнему близнец", () => {
+    const box = seatEmpty("pkg-build-");
+    try {
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      const write = (scripts) =>
+        fs.writeFileSync(
+          pkgAt,
+          JSON.stringify({ ...pkg, workspaces: ["packages/*"], scripts: { ...pkg.scripts, ...scripts } }, null, 2) + "\n",
+        );
+      write({ build: "npm run build --workspaces" });
+      fs.mkdirSync(path.join(box, "packages", "core"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "packages", "core", "package.json"),
+        JSON.stringify({ name: "core", scripts: { build: "tsc --noEmit" } }) + "\n",
+      );
+      const out = () =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], {
+          cwd: box,
+          encoding: "utf8",
+        }).stdout;
+      const section = () => out().split("=== Звено цепочки не задвоено ===")[1]?.split("\n===")[0] ?? "";
+      expect(section()).toContain("typecheck — одно звено под именами: typecheck, build");
+      const decisions = path.join(box, ".context", "09-decisions.md");
+      fs.appendFileSync(
+        decisions,
+        "\nСборка пакета `packages/core` — скрипт `build` на `tsc --noEmit`: пакет отдаёт исходники, поставки нет.\n",
+      );
+      expect(section()).toContain("задвоенных звеньев: 0, сборка пакета объявлена решением: 1");
+      write({ build: "npm run build --workspaces", types: "tsc --noEmit" });
+      expect(section()).toContain("typecheck — одно звено под именами: typecheck, types");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
 
 
 /** Песочница `falsify` лежит в проекте, и прерванный прогон её оставлял.
