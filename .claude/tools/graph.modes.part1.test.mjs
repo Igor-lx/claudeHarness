@@ -1811,7 +1811,10 @@ describe("долг ошибок типов держит обёртка комп�
       ];
       const plain = "b.ts(1,1): error TS2322: x";
       expect(statusOf(printing([colored, plain]))).toBe(0);
-      expect(statusOf(printing([colored, plain, plain]))).toBe(1);
+      expect(statusOf(printing([colored, plain, "c.ts(2,1): error TS2322: x"]))).toBe(1);
+      // Та же ошибка из второй программы решения — `tsc -b` по пакету,
+      // взятому исходником, — одна ошибка, а не две.
+      expect(statusOf(printing([colored, plain, plain]))).toBe(0);
       expect(statusOf(printing([plain]))).toBe(1);
       // Долг погашен целиком: подсказка называет пустое поле так, как его
       // пишет семя, — иначе настройка расходится с семенем формой пустоты.
