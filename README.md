@@ -402,16 +402,22 @@ the harness's permissions, gates and hooks from the folder the session started
 in. Started a level above - run `/cd <project>` or restart the session in the
 project folder, otherwise they do not apply.
 
-**3. Say "seat the harness".** Following `.claude/seat/seat.md`, the assistant
-lays out the configs, the knowledge base, the gates and the checks, adds the
-missing check commands and packages to the manifest without touching any
-existing version, runs the check chain and reports in numbers. In an empty
-folder all of this is one command, `node .claude/tools/graph.mjs seat .`,
-which also plants a breakage in each link of the chain to show that it is
-caught; the assistant then asks what the project is and writes the answer
-into the project rules. An empty project gets a scaffold - a small app with
-a test, so the checks have something to work on from day one; a project with
-code gets no scaffold.
+**3. Say "seat the harness".** The assistant runs one command,
+`node .claude/tools/graph.mjs seat .`, and it picks one of three scenarios
+itself. An empty folder gets everything: configs, knowledge base, packages,
+gates and a scaffold - a small app with a test, so the checks have something
+to work on from day one. A familiar project - npm, one package, TypeScript,
+React or no UI, Vite, Vitest, ESLint, Prettier, Stryker, any versions - first
+gets its stack plan shown and changes nothing until you agree (`--apply`);
+then its versions are brought to the verified set and its own configs are
+composed with the harness ones, not rewritten. A foreign project - another
+package manager, a monorepo, its own git hook manager, another runner or
+framework - gets the rules and the knowledge base only, and the report says
+what the harness cannot see and offers two ways on: replace the foreign
+tools, or move the code into a fresh seating. In every scenario each check
+link is shown to catch a planted breakage, the project's code is not
+touched, and the assistant then asks what the project is and writes the
+answer into the project rules.
 Node.js or npm missing or below the verified set are installed before the
 first change; packages below the set are named by the run as a notice -
 whether to upgrade is your call.
@@ -486,7 +492,7 @@ it, each with its own question:
 closed a plan that checked it on real runs rather than by
 description: the full self-test suite passes on Linux and on Windows; every
 check that has its subject on the test stand catches its planted breakage;
-seating works in one command in an empty folder and by the instruction in a project like a fresh `create vite`
+seating works in one command in an empty folder and in a project like a fresh `create vite`
 template; the bar pass, measured by planting known defects into existing
 code, caught every plant - a group of twenty-four and the single re-runs of
 the misses; a forty-nine-probe run of the harness as a process found thirteen

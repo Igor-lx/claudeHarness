@@ -303,50 +303,8 @@ export const eslintBoundaryOf = (plan, rootFiles) => {
     raised.to +
     ": старый конфиг " +
     legacy.join(", ") +
-    " он не читает, и линт проекта падает до разбора. Шаг 1-бис кладёт конфиг семени действующим, старый снимает (`seat/seat.md`, шаг 1-бис)."
+    " он не читает: посадка кладёт конфиг обвязки действующим, а старый — рядом `.eslintrc.project*` (`seat/seat.md`, шаг 1-бис)."
   );
-};
-
-/** Манифесты пакетов рабочих пространств: образцы папок — поле `workspaces`
- * манифеста корня (список либо `{ packages }`) и `pnpm-workspace.yaml`;
- * образец — точная папка либо папка со звёздочкой на конце. В монорепозитории
- * инструменты пакеты держат сами, и осмотр по одному корню видел их
- * отсутствующими. Выведено десятой посадкой. */
-export const workspaceManifestsOf = (root) => {
-  let rootManifest = {};
-  try {
-    rootManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-  } catch {
-    return [];
-  }
-  const declared = Array.isArray(rootManifest.workspaces)
-    ? rootManifest.workspaces
-    : (rootManifest.workspaces?.packages ?? []);
-  const pnpmAt = path.join(root, "pnpm-workspace.yaml");
-  const pnpm = existsSync(pnpmAt)
-    ? [...readFileSync(pnpmAt, "utf8").matchAll(/^\s*-\s*["']?([^"'#\s]+)["']?\s*$/gm)].map((m) => m[1])
-    : [];
-  const dirs = [...declared, ...pnpm]
-    .filter((one) => typeof one === "string" && !one.startsWith("!"))
-    .flatMap((one) => {
-      const at = one.replace(/\/\*$/, "");
-      if (!one.endsWith("/*")) return [at];
-      try {
-        return readdirSync(path.join(root, at), { withFileTypes: true })
-          .filter((e) => e.isDirectory())
-          .map((e) => at + "/" + e.name);
-      } catch {
-        return [];
-      }
-    });
-  return [...new Set(dirs)].sort().flatMap((dir) => {
-    try {
-      const at = dir + "/package.json";
-      return [{ at, manifest: JSON.parse(readFileSync(path.join(root, at), "utf8")) }];
-    } catch {
-      return [];
-    }
-  });
 };
 
 /** Осмотр окружения живого проекта по осям карты посадки (`stackAxes`):
@@ -364,7 +322,6 @@ export const stackSurveyOf = ({
   withTools = [],
   ui = [],
   alternatives = {},
-  workspaces = [],
 }) => {
   const ext = (re) => files.filter((f) => re.test(f) && !/\.d\.ts$/.test(f));
   const tsFiles = ext(/\.(?:ts|tsx|mts|cts)$/);
@@ -375,8 +332,8 @@ export const stackSurveyOf = ({
   if (manifest === null && code.length === 0)
     return { verdict: "пусто", rows: [], foreign: [], plan: [], scripts: [] };
   const m = manifest ?? {};
-  // Корень и пакеты рабочих пространств: пакет объявлен там, где его держат.
-  const places = [{ at: null, m }, ...workspaces.map((w) => ({ at: w.at, m: w.manifest ?? {} }))];
+  // Монорепозиторий — чужой сценарий (ось «структура»): пакет объявлен корнем.
+  const places = [{ at: null, m }];
   const ownIn = (p, name) => p.m.dependencies?.[name] ?? p.m.devDependencies?.[name];
   const has = (name) =>
     places.some((p) => ownIn(p, name) !== undefined || p.m.peerDependencies?.[name] !== undefined);
@@ -452,10 +409,8 @@ export const stackSurveyOf = ({
         const declared = ownIn(p, name);
         if (declared === want) continue;
         const section = p.m.dependencies?.[name] !== undefined ? "dependencies" : "devDependencies";
-        plan.push(p.at === null ? { name, from: declared, to: want, section } : { name, from: declared, to: want, section, at: p.at });
-        moves.push(
-          name + " " + declared + " → " + want + (p.at === null ? "" : " (" + path.posix.dirname(p.at) + ")"),
-        );
+        plan.push({ name, from: declared, to: want, section });
+        moves.push(name + " " + declared + " → " + want);
       }
     }
     // Предшественник держит пиром прежнюю версию оси: установка связки на
@@ -464,8 +419,8 @@ export const stackSurveyOf = ({
       for (const p of places.filter((one) => ownIn(one, name) !== undefined)) {
         const section = p.m.dependencies?.[name] !== undefined ? "dependencies" : "devDependencies";
         const from = ownIn(p, name);
-        plan.push(p.at === null ? { name, from, to: null, section } : { name, from, to: null, section, at: p.at });
-        moves.push(name + " " + from + " → снять" + (p.at === null ? "" : " (" + path.posix.dirname(p.at) + ")"));
+        plan.push({ name, from, to: null, section });
+        moves.push(name + " " + from + " → снять");
       }
     rows.push(
       moves.length === 0
@@ -530,28 +485,14 @@ export const peerConflictsOf = ({ plan, places, installed }) => {
  * вывода. Скрипт звена оси, заменённой своей, ставится семенным, а прежний
  * проектный остаётся рядом под именем `<звено>:own`. */
 export const stackApply = (root, survey, seedScripts, run = runTool) => {
-  // Ставит менеджер, чью блокировку держит проект: чужая команда кладёт
-  // вторую блокировку рядом, и какая в силе, решает тот, кто ставит.
-  const [manager, lockName] = [
-    ["pnpm", "pnpm-lock.yaml"],
-    ["yarn", "yarn.lock"],
-    ["bun", "bun.lock"],
-    ["bun", "bun.lockb"],
-  ].find(([, lock]) => existsSync(path.join(root, lock))) ?? ["npm", "package-lock.json"];
-  const lockAt = path.join(root, lockName);
+  // Знакомый проект — на `npm` и одним пакетом: иное — чужой сценарий, и
+  // план ему не составляется.
+  const lockAt = path.join(root, "package-lock.json");
   const lockBefore = existsSync(lockAt) ? readFileSync(lockAt, "utf8") : null;
-  // Манифест на каждое место плана: корень и пакеты рабочих пространств.
-  const files = new Map();
-  const manifestOf = (at) => {
-    if (!files.has(at)) {
-      const before = readFileSync(path.join(root, at), "utf8");
-      files.set(at, { before, m: JSON.parse(before) });
-    }
-    return files.get(at).m;
-  };
-  manifestOf("package.json");
+  const manifestAt = path.join(root, "package.json");
+  const before = readFileSync(manifestAt, "utf8");
+  const m = JSON.parse(before);
   for (const one of survey.plan) {
-    const m = manifestOf(one.at ?? "package.json");
     for (const section of ["dependencies", "devDependencies"])
       if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
     if (one.to === null) {
@@ -561,7 +502,6 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
     m[one.section] = { ...(m[one.section] ?? {}), [one.name]: one.to };
     m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
   }
-  const m = manifestOf("package.json");
   for (const name of survey.scripts) {
     const seed = seedScripts[name];
     if (seed === undefined) continue;
@@ -569,18 +509,16 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
     if (m.scripts[name] !== undefined && m.scripts[name] !== seed) m.scripts[name + ":own"] = m.scripts[name];
     m.scripts[name] = seed;
   }
-  for (const [at, one] of files) writeFileSync(path.join(root, at), JSON.stringify(one.m, null, 2) + "\n");
-  const done = run(manager, manager === "npm" ? ["install", "--no-audit", "--no-fund", "--loglevel=error"] : ["install"], {
-    cwd: root,
-  });
-  if (done.status === 0) return { ok: true, manager };
-  for (const [at, one] of files) writeFileSync(path.join(root, at), one.before);
+  writeFileSync(manifestAt, JSON.stringify(m, null, 2) + "\n");
+  const done = run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: root });
+  if (done.status === 0) return { ok: true, manager: "npm" };
+  writeFileSync(manifestAt, before);
   // Блокировки до установки не было — упавшая могла её положить.
   if (lockBefore !== null) writeFileSync(lockAt, lockBefore);
   else rmSync(lockAt, { force: true });
   return {
     ok: false,
-    manager,
+    manager: "npm",
     tail: saidBy(done).trim().split("\n").slice(-12),
   };
 };
@@ -760,58 +698,6 @@ export const layShelf = (shelf, target) => {
     cpSync(from, path.join(target, one.to));
   }
   return files.length;
-};
-
-/** Механика фазы 1 в живой проект: обвязка с полки, папки посадки и
- * семена, кроме каркаса и отложенных; семя, столкнувшееся с файлом проекта,
- * ложится рядом с суффиксом `.seat` — сливает его фаза 2 (`seat/seat.md`,
- * шаг 1); семя прозы — без строк скриптов каркаса, которых у проекта нет.
- * Слияния, которые требуют суждения, — манифест, настройки среды, —
- * здесь не делаются. Зовёт её корпус чужих проектов: он сверяет, как
- * инструмент читает проект, устроенный не по умолчаниям обвязки. Отдаёт
- * отложенные в `.seat`. */
-export const layShelfLive = (shelf, target) => {
-  const map = JSON.parse(
-    readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
-  );
-  const files = shelfFiles(shelf, new Set(map.projectOwnedInsideHarness ?? []));
-  for (const d of map.dirs ?? [])
-    mkdirSync(path.join(target, d), { recursive: true });
-  for (const r of files)
-    cpSync(path.join(shelf, r), path.join(target, ".claude", r));
-  const manifestAt = path.join(target, "package.json");
-  const own = existsSync(manifestAt)
-    ? Object.keys(JSON.parse(readFileSync(manifestAt, "utf8")).scripts ?? {})
-    : [];
-  const deferred = [];
-  for (const one of map.copy ?? []) {
-    if (one.notAtSeating !== undefined || one.onlyWhenEmpty === true) continue;
-    const to = path.join(target, one.to);
-    const busy = existsSync(to);
-    const at = busy ? to + ".seat" : to;
-    cpSync(path.join(shelf, one.from), at);
-    if (at.endsWith(".md") || at.endsWith(".md.seat"))
-      writeFileSync(
-        at,
-        withoutFrameRows(readFileSync(at, "utf8"), map.frameScripts ?? [], own),
-      );
-    if (busy) deferred.push(one.to);
-  }
-  return deferred;
-};
-
-/** Текст семени без строк таблицы, чья команда — скрипт каркаса, которого у
- * проекта нет (`frameScripts` карты посадки, `seat/seat.md`, шаг 1). */
-export const withoutFrameRows = (text, frame, own) => {
-  const drop = frame.filter((one) => !own.includes(one));
-  return text
-    .split("\n")
-    .filter(
-      (line) =>
-        !line.trimStart().startsWith("|") ||
-        !drop.some((one) => line.includes("`npm run " + one + "`")),
-    )
-    .join("\n");
 };
 
 /** Имена, которые витрина хостинга кладёт в новый репозиторий: описание,

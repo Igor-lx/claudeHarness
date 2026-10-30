@@ -5,7 +5,6 @@ import {
   inPlaceKindOf,
   projectFilesOf,
   stackSurveyOf,
-  workspaceManifestsOf,
 } from "./graph.seat.mjs";
 
 /** Сценарий посадки проекта — один ответ на всю обвязку: осмотр стека,
@@ -62,7 +61,6 @@ export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => 
     withTools,
     ui: map.platformPackages?.ui ?? [],
     alternatives: map.platformPackages?.alternatives ?? {},
-    workspaces: workspaceManifestsOf(root),
   });
   const foreign =
     manifest === null
@@ -97,7 +95,7 @@ export const foreignOffer = (foreign, shelfCall = "node .claude/tools/graph.mjs"
   return [
     "Обвязка не подгоняет чужой проект и не исследует его чужие оси:",
     ...foreign.map((f) => "  " + f.axis + ": " + f.what),
-    "Всё, что держится этими осями, не проверяется и называется сверкой базы секцией «Чужое окружение — не проверено».",
+    "Всё, что держится этими осями, не проверяется; проверка записей о проекте называет это каждым прогоном.",
     "Два пути, решает разработчик:",
     restack
       ? "  переставить — заменить чужие инструменты своими: " +

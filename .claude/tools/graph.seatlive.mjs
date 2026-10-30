@@ -496,7 +496,7 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     m.scripts = merged.scripts;
     liveScripts = Object.keys(m.scripts);
     for (const one of merged.replaced)
-      report.push("Скрипт " + one.name + " заменён семенным: та же работа своим вызовом, было `" + one.was + "`.");
+      report.push("Скрипт " + one.name + " заменён скриптом обвязки: та же работа своим вызовом, было `" + one.was + "`.");
     const kept = Object.keys(m.scripts).filter((n) => n.endsWith(":own") && ownScripts[n] === undefined);
     if (kept.length > 0) report.push("Прежние скрипты проекта, делающие другую работу, лежат рядом: " + kept.join(", ") + ".");
     if (m.engines === undefined) m.engines = readJson(path.join(seedDir, "package.json")).engines;
@@ -754,7 +754,7 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
       const failed = Number(/Test Files\s+(\d+) failed/.exec(uncolored(test.out))?.[1] ?? 1);
       rows.push({ name: "test", result: "красно: падают файлов тестов `" + failed + "` — пункт долга перехода «test»", how: "npm test" });
       redTests = failed;
-      report.push("Тесты проекта красные на коде до посадки: падают файлов " + failed + "; пункт долга перехода их держит.");
+      report.push("Тесты проекта красные на коде до посадки: падают файлов " + failed + "; записаны в план перехода.");
     }
     if (redTests > 0)
       write(

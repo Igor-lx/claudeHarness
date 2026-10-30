@@ -168,7 +168,6 @@ import {
   peerConflictsOf,
   projectFilesOf,
   stackApply,
-  workspaceManifestsOf,
   runSeat,
   sandboxManifests,
   sandboxPackages,
@@ -817,7 +816,6 @@ if (mode === "env") {
     const manifest = existsSync(path.join(root, "package.json"))
       ? readJson(path.join(root, "package.json"), {})
       : null;
-    const workspaces = workspaceManifestsOf(root);
     const gitIn = (args) => {
       try {
         return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -833,17 +831,13 @@ if (mode === "env") {
       survey.plan = [];
       survey.scripts = [];
     }
-    // Пакет пакета рабочего пространства лежит у него либо поднят в корень.
-    const installedOf = (name, at) => {
-      for (const dir of at === null ? [root] : [path.join(root, path.dirname(at)), root]) {
-        const one = path.join(dir, "node_modules", name, "package.json");
-        if (existsSync(one)) return readJson(one, null);
-      }
-      return null;
+    const installedOf = (name) => {
+      const one = path.join(root, "node_modules", name, "package.json");
+      return existsSync(one) ? readJson(one, null) : null;
     };
     const peers = peerConflictsOf({
       plan: survey.plan,
-      places: [{ at: null, m: manifest ?? {} }, ...workspaces.map((w) => ({ at: w.at, m: w.manifest ?? {} }))],
+      places: [{ at: null, m: manifest ?? {} }],
       installed: installedOf,
     });
     const sayPeers = () => {
@@ -856,7 +850,7 @@ if (mode === "env") {
               ": пир " + c.peer + " " + c.range + " — план " + (c.to === null ? "снимает " + c.peer : "ставит " + c.to),
           );
         console.log(
-          "  Вопрос разработчику до `--apply`: снять строку держателя из манифеста либо поднять её до версии, чей пир пускает связку, — либо сажать на стеке проекта. Держатель, которого пакет связки заменил, вписывают в `predecessors` его оси (`seat/seat.md`, раздел «Шаг 0-бис»).",
+          "  Вопрос разработчику до `--apply`: снять строку держателя из манифеста либо поднять её до версии, чей пир пускает связку, — либо сажать на стеке проекта. Держатель, которого пакет связки заменил, вписывают в `predecessors` его оси (`seat/seat.md`, раздел «Шаг 0-бис. Сценарий и план стека»).",
         );
       }
       const absent = peers.unread.filter((u) => u.why === "не установлен");
@@ -916,12 +910,12 @@ if (mode === "env") {
         if (scripts[name] === undefined) {
           if (name === "typecheck")
             console.log(
-              "  typecheck: скрипта нет — типы на новой связке не проверены; их проверит звено типов, которое дописывает шаг 1-бис",
+              "  typecheck: скрипта нет — типы на новой связке не проверены; их проверит звено типов, которое пишет посадка (шаг 1-бис)",
             );
           continue;
         }
-        const run = runTool(done.manager, ["run", name], { cwd: root });
-        console.log("  " + done.manager + " run " + name + ": код " + run.status);
+        const run = runTool("npm", ["run", name], { cwd: root });
+        console.log("  npm run " + name + ": код " + run.status);
         if (run.status !== 0)
           for (const line of saidBy(run).trim().split("\n").slice(-8))
             console.log("    " + line);
@@ -4148,30 +4142,11 @@ const SEED_CONDITIONS = new Map([
     () => runnerEffective(runnerConfigsNow())?.test?.globals !== true && !projectHasForeignUi(),
   ],
 ]);
-/** Корень рабочих пространств без своего кода: пакеты объявлены, а в `src/`
- * корня нет ни одного файла, кроме нетронутых семян. Семенам `src/` здесь
- * нечего обслуживать: пакеты их не берут, корневой раннер их не гоняет.
- * Выведено десятой посадкой, решено разработчиком `2026-10-30`. */
-let bareRootSaid;
-const bareWorkspaceRoot = () => {
-  if (bareRootSaid !== undefined) return bareRootSaid;
-  const seeds = seedOfPath();
-  const own = (dir) =>
-    existsSync(dir) &&
-    readdirSync(dir, { withFileTypes: true }).some((e) =>
-      e.isDirectory()
-        ? own(path.join(dir, e.name))
-        : !untouchedSeed(path.join(dir, e.name), REPO_AT, seeds),
-    );
-  bareRootSaid = workspaceManifestsOf(REPO_AT).length > 0 && !own(path.join(REPO_AT, "src"));
-  return bareRootSaid;
-};
-const underBareRoot = (e) => e.to.startsWith("src/") && bareWorkspaceRoot();
 /** Выполнено ли у проекта условие семени. Семя без условия кладётся всегда;
  * условие не из словаря называет сверка «Семя с условием не лежит без
  * условия», а здесь оно читается выполненным — отказать молча нельзя. */
 const seedConditionHolds = (e) =>
-  !underBareRoot(e) && (e.onlyWith == null || (SEED_CONDITIONS.get(e.onlyWith)?.() ?? true));
+  e.onlyWith == null || (SEED_CONDITIONS.get(e.onlyWith)?.() ?? true);
 
 // Документы, лежащие ВНЕ исходников. Обход выше идёт по корню исходников, и
 // папка документации в корне репозитория не попадала в корпус ни одной
@@ -32477,18 +32452,9 @@ if (mode === "verify") {
   // одного инструмента — источник вопроса «какой из них прав», и отвечать на
   // него приходится по очереди.
   const chainTwins = [];
-  // Сборка пакета без поставки — голый `tsc --noEmit` — тот же вызов, что у
-  // звена типов, а проект вправе держать свою сборку. Исключение — запись
-  // решения, называющая скрипт и папку каждого пакета, куда корень его
-  // раздаёт. Решено разработчиком `2026-10-30` по десятой посадке.
-  let chainTwinsDecided = 0;
   checkStep(() => {
     {
       const mapAt = shelfAt("seat/map.json");
-      const decidedAt =
-        CONFIG.decisions == null ? null : path.join(BASE, CONFIG.decisions);
-      const decided =
-        decidedAt !== null && existsSync(decidedAt) ? readFileSync(decidedAt, "utf8") : "";
       if (mapAt !== null && existsSync(mapAt) && CONFIG.manifest != null) {
         const at = path.join(BASE, CONFIG.manifest);
         const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
@@ -32503,19 +32469,7 @@ if (mode === "verify") {
             // Делегирующий корневой скрипт — то же звено, и рядом со своим
             // вызовом инструмента в корне он близнец.
             const handed = delegatedLink((body) => re.test(body), scripts);
-            if (handed !== null && !hits.includes(handed)) {
-              const script = /\bnpm run ([\w:-]+)\s+(?:--workspaces|-ws)\b/.exec(scripts[handed])?.[1];
-              const packs = workspaceManifestsOf(REPO_AT)
-                .filter((w) => re.test(w.manifest.scripts?.[script] ?? ""))
-                .map((w) => path.posix.dirname(w.at));
-              const named =
-                hits.length === 1 &&
-                packs.length > 0 &&
-                decided.includes("`" + script + "`") &&
-                packs.every((dir) => decided.includes(dir));
-              if (named) chainTwinsDecided += 1;
-              else hits.push(handed);
-            }
+            if (handed !== null && !hits.includes(handed)) hits.push(handed);
             if (hits.length > 1)
               chainTwins.push(
                 e.name + " — одно звено под именами: " + hits.join(", "),
@@ -32530,15 +32484,11 @@ if (mode === "verify") {
       n: chainDeclared.length,
       unit: "звеньев цепочки",
     }));
-    console.log(
-      "  задвоенных звеньев: " +
-        chainTwins.length +
-        (chainTwinsDecided > 0 ? ", сборка пакета объявлена решением: " + chainTwinsDecided : ""),
-    );
+    console.log("  задвоенных звеньев: " + chainTwins.length);
     for (const g of chainTwins) console.log("    " + g);
     if (chainTwins.length > 0)
       console.log(
-        "  снять близнеца из манифеста; сборку пакета без поставки на том же вызове держат записью решения, называющей скрипт в обратных кавычках и папку пакета",
+        "  снять близнеца из манифеста: звено живёт под именем семени",
       );
   });
   checkStep(() => {
@@ -33595,10 +33545,7 @@ if (mode === "verify") {
         if (!existsSync(at) || seedConditionHolds(e)) continue;
         if (untouchedSeed(at, REPO_AT, seeds))
           idleSeeds.push(
-            e.to +
-              (underBareRoot(e)
-                ? " — лежит семенем в корне рабочих пространств без своего кода: снять вместе с записями базы о нём"
-                : " — лежит семенем, а условия «" + e.onlyWith + "» у проекта нет: снять вместе с записями базы о нём"),
+            e.to + " — лежит семенем, а условия «" + e.onlyWith + "» у проекта нет: снять вместе с записями базы о нём",
           );
       }
     }

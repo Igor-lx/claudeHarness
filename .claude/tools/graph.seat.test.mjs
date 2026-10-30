@@ -8,19 +8,16 @@ import {
   envLowOf,
   factsWithBaseline,
   inPlaceKindOf,
-  layShelfLive,
   lintBlockersOf,
   mergedLines,
   testCountsOf,
   tiersFrom,
-  withoutFrameRows,
   sandboxPackages,
   peerConflictsOf,
   projectFilesOf,
   rangeAllows,
   stackApply,
   stackSurveyOf,
-  workspaceManifestsOf,
   eslintBoundaryOf,
 } from "./graph.seat.mjs";
 import { OUT_OF_TREE } from "./graph.predicates.mjs";
@@ -308,11 +305,10 @@ describe("осмотр окружения проекта по осям карт�
     });
   const planOf = (s) => Object.fromEntries(s.plan.map((p) => [p.name, p]));
 
-  it("предшественник пакета оси в корне и в пакете — план снимает его, установка удаляет из манифестов", () => {
+  it("предшественник пакета оси — план снимает его, установка удаляет из манифеста", () => {
     // Выведено одиннадцатой посадкой: `@typescript-eslint/*` `7` держат пиром
     // ESLint `8`, и `--apply` с ESLint `10` падал на конфликте.
     const old = { eslint: "^8.57.0", "@typescript-eslint/parser": "^7.18.0", "@typescript-eslint/eslint-plugin": "^7.18.0" };
-    const app = { name: "app", devDependencies: { "@typescript-eslint/parser": "^7.18.0" } };
     const s = stackSurveyOf({
       manifest: { devDependencies: { ...OURS, ...old } },
       files: ["src/main.tsx"],
@@ -320,27 +316,21 @@ describe("осмотр окружения проекта по осям карт�
       verified: OURS,
       ui: PLATFORM.ui,
       alternatives: PLATFORM.alternatives,
-      workspaces: [{ at: "packages/app/package.json", manifest: app }],
     });
     const removed = s.plan.filter((one) => one.to === null);
     expect(removed).toEqual([
       { name: "@typescript-eslint/parser", from: "^7.18.0", to: null, section: "devDependencies" },
-      { name: "@typescript-eslint/parser", from: "^7.18.0", to: null, section: "devDependencies", at: "packages/app/package.json" },
       { name: "@typescript-eslint/eslint-plugin", from: "^7.18.0", to: null, section: "devDependencies" },
     ]);
     expect(s.verdict).toBe("наше, неполное");
     expect(s.rows.find((r) => r.axis === "линтер").note).toContain("@typescript-eslint/parser ^7.18.0 → снять");
     const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-predecessor-"));
     try {
-      fs.mkdirSync(path.join(dest, "packages", "app"), { recursive: true });
       fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify({ devDependencies: { ...OURS, ...old } }));
-      fs.writeFileSync(path.join(dest, "packages", "app", "package.json"), JSON.stringify(app));
       expect(stackApply(dest, s, {}, () => ran(0, "", "")).ok).toBe(true);
       const root = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")).devDependencies;
-      const pkg = JSON.parse(fs.readFileSync(path.join(dest, "packages", "app", "package.json"), "utf8")).devDependencies;
       expect(Object.keys(root).filter((one) => one.startsWith("@typescript-eslint/"))).toEqual([]);
       expect(root.eslint).toBe(OURS.eslint);
-      expect(pkg).toEqual({});
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
     }
@@ -604,26 +594,7 @@ describe("осмотр окружения проекта по осям карт�
     }
   });
 
-  it("менеджера блокировки на машине нет — манифест на месте, а причина названа, а не пустая строка", () => {
-    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-nomanager-"));
-    const before = process.env.PATH;
-    try {
-      const text = JSON.stringify({ name: "x", devDependencies: { typescript: "5.0.0" } }) + "\n";
-      fs.writeFileSync(path.join(dest, "package.json"), text);
-      fs.writeFileSync(path.join(dest, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
-      // Настоящий раннер, а не подставной: причину незапуска даёт только он.
-      process.env.PATH = path.join(dest, "нет-такой-папки");
-      const plan = [{ name: "typescript", from: "5.0.0", to: OURS.typescript, section: "devDependencies" }];
-      const failed = stackApply(dest, { plan, scripts: [] }, {});
-      expect(failed).toEqual({ ok: false, manager: "pnpm", tail: ["не запустилась: pnpm (ENOENT)"] });
-      expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(text);
-    } finally {
-      process.env.PATH = before;
-      fs.rmSync(dest, { recursive: true, force: true });
-    }
-  });
-
-  it("установка зовёт менеджера по его блокировке; без блокировки откат её не заводит; ключи секции по порядку", () => {
+  it("установка — `npm`; без блокировки откат её не заводит; ключи секции по порядку", () => {
     const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-lock-"));
     try {
       const manifest = {
@@ -650,17 +621,6 @@ describe("осмотр окружения проекта по осям карт�
       expect(Object.keys(after.dependencies)).toEqual(["alpha", "react", "zod"]);
       expect(after.devDependencies).toEqual({ zeta: "1.0.0" });
       expect(after.scripts).toEqual({ lint: "eslint .", test: "vitest run", "test:own": "vitest" });
-      for (const [lock, cmd] of [
-        ["pnpm-lock.yaml", "pnpm install"],
-        ["bun.lock", "bun install"],
-        ["bun.lockb", "bun install"],
-      ]) {
-        fs.writeFileSync(path.join(dest, "package.json"), text);
-        fs.writeFileSync(path.join(dest, lock), "lock\n");
-        stackApply(dest, { plan: [], scripts: [] }, {}, ok);
-        fs.rmSync(path.join(dest, lock));
-        expect(seen.at(-1)).toBe(cmd);
-      }
       expect(seen[0]).toBe("npm install --no-audit --no-fund --loglevel=error");
       fs.writeFileSync(path.join(dest, "package.json"), text);
       const long = Array.from({ length: 14 }, (_, i) => "line " + i).join("\n");
@@ -678,71 +638,6 @@ describe("осмотр окружения проекта по осям карт�
       const raw = fs.readFileSync(path.join(dest, "package.json"), "utf8");
       expect(raw.endsWith("}\n")).toBe(true);
       expect(JSON.parse(raw)).toEqual({ dependencies: {}, devDependencies: { vite: "8.3.5" } });
-    } finally {
-      fs.rmSync(dest, { recursive: true, force: true });
-    }
-  });
-
-  it("монорепозиторий: пакеты рабочих пространств читаются, их версии приводятся там, где их держат", () => {
-    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-ws-"));
-    try {
-      const write = (rel, value) => {
-        fs.mkdirSync(path.dirname(path.join(dest, rel)), { recursive: true });
-        fs.writeFileSync(path.join(dest, rel), typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n");
-      };
-      write("package.json", { private: true, workspaces: ["packages/*", "tools/lint"] });
-      write("packages/app/package.json", {
-        dependencies: { react: "^19.1.0" },
-        devDependencies: { typescript: "~5.8.3", vite: "^7.0.4" },
-      });
-      write("packages/ui/package.json", { peerDependencies: { react: "^19.0.0" }, devDependencies: { vitest: "^3.2.4" } });
-      write("packages/empty/README.md", "no manifest\n");
-      write("tools/lint/package.json", { devDependencies: {} });
-      write("pnpm-workspace.yaml", "packages:\n  - 'extra/*'\n");
-      write("extra/one/package.json", { devDependencies: {} });
-      const ws = workspaceManifestsOf(dest);
-      expect(ws.map((w) => w.at)).toEqual([
-        "extra/one/package.json",
-        "packages/app/package.json",
-        "packages/ui/package.json",
-        "tools/lint/package.json",
-      ]);
-      expect(workspaceManifestsOf(path.join(dest, "нет-такой"))).toEqual([]);
-      const s = stackSurveyOf({
-        manifest: JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")),
-        files: ["packages/app/src/main.tsx", "packages/ui/src/index.ts"],
-        axes: AXES,
-        verified: OURS,
-        ui: PLATFORM.ui,
-        alternatives: PLATFORM.alternatives,
-        workspaces: ws,
-      });
-      const plan = planOf(s);
-      expect(plan.typescript).toEqual({
-        name: "typescript",
-        from: "~5.8.3",
-        to: OURS.typescript,
-        section: "devDependencies",
-        at: "packages/app/package.json",
-      });
-      expect(plan.vitest.at).toBe("packages/ui/package.json");
-      expect(plan.react).toMatchObject({ section: "dependencies", at: "packages/app/package.json" });
-      // Не объявленное нигде ставится в корень.
-      expect(plan.eslint).toEqual({ name: "eslint", from: null, to: OURS.eslint, section: "devDependencies" });
-      expect(s.rows.find((r) => r.axis === "язык").note).toBe("typescript ~5.8.3 → " + OURS.typescript + " (packages/app)");
-      const ok = () => ran(0, "", "");
-      expect(stackApply(dest, s, {}, ok)).toEqual({ ok: true, manager: "npm" });
-      const app = JSON.parse(fs.readFileSync(path.join(dest, "packages/app/package.json"), "utf8"));
-      expect(app.devDependencies).toEqual({ typescript: OURS.typescript, vite: OURS.vite });
-      expect(JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")).devDependencies.eslint).toBe(OURS.eslint);
-      // Упала установка — все тронутые манифесты возвращаются как были.
-      write("packages/app/package.json", { devDependencies: { typescript: "~5.8.3" } });
-      const appBefore = fs.readFileSync(path.join(dest, "packages/app/package.json"), "utf8");
-      const rootBefore = fs.readFileSync(path.join(dest, "package.json"), "utf8");
-      const failed = stackApply(dest, s, {}, () => ran(1, "", "x"));
-      expect(failed.ok).toBe(false);
-      expect(fs.readFileSync(path.join(dest, "packages/app/package.json"), "utf8")).toBe(appBefore);
-      expect(fs.readFileSync(path.join(dest, "package.json"), "utf8")).toBe(rootBefore);
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
     }
@@ -846,7 +741,7 @@ describe("осмотр окружения проекта по осям карт�
   it("подъём ESLint через границу плоского конфига при старом конфиге назван; без старого либо в пределах мажора — нет", () => {
     const up = [{ name: "eslint", from: "^8.57.1", to: "10.13.0", section: "devDependencies" }];
     expect(eslintBoundaryOf(up, [".eslintrc.cjs", "package.json"])).toBe(
-      "ESLint поднят ^8.57.1 → 10.13.0: старый конфиг .eslintrc.cjs он не читает, и линт проекта падает до разбора. Шаг 1-бис кладёт конфиг семени действующим, старый снимает (`seat/seat.md`, шаг 1-бис).",
+      "ESLint поднят ^8.57.1 → 10.13.0: старый конфиг .eslintrc.cjs он не читает: посадка кладёт конфиг обвязки действующим, а старый — рядом `.eslintrc.project*` (`seat/seat.md`, шаг 1-бис).",
     );
     for (const legacy of [".eslintrc", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml", ".eslintrc.js"])
       expect(eslintBoundaryOf(up, [legacy]), legacy).not.toBeNull();
@@ -857,27 +752,6 @@ describe("осмотр окружения проекта по осям карт�
     expect(eslintBoundaryOf([{ ...up[0], to: "8.57.1" }], [".eslintrc.cjs"])).toBeNull();
   });
 
-  it("проект на yarn ставится командой yarn, и откат возвращает его блокировку", () => {
-    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-yarn-"));
-    try {
-      const text = JSON.stringify({ devDependencies: { typescript: "~5.8.3" } }, null, 2) + "\n";
-      fs.writeFileSync(path.join(dest, "package.json"), text);
-      fs.writeFileSync(path.join(dest, "yarn.lock"), "# yarn lockfile v1\n");
-      const s = { plan: [{ name: "typescript", from: "~5.8.3", to: "6.0.3", section: "devDependencies" }], scripts: [] };
-      const calls = [];
-      const failed = stackApply(dest, s, {}, (cmd, args) => {
-        calls.push([cmd, ...args]);
-        fs.writeFileSync(path.join(dest, "yarn.lock"), "broken");
-        return ran(1, "", "error");
-      });
-      expect(calls).toEqual([["yarn", "install"]]);
-      expect(failed.ok).toBe(false);
-      expect(fs.readFileSync(path.join(dest, "yarn.lock"), "utf8")).toBe("# yarn lockfile v1\n");
-      expect(fs.existsSync(path.join(dest, "package-lock.json"))).toBe(false);
-    } finally {
-      fs.rmSync(dest, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("посадка на месте одной командой", () => {
@@ -1172,113 +1046,6 @@ describe("семя разрешений держит то, что доктрин
     ).permissions.allow;
     for (const command of ["grep", "find", "cd", "npm", "npx", "node", "cp", "git"])
       expect(allow, command).toContain("Bash(" + command + " *)");
-  });
-});
-
-describe("семя правил в живом проекте без строк скриптов каркаса", () => {
-  // Решено разработчиком `2026-10-26`: строки `dev`, `build`, `preview`, которых у
-  // проекта нет, снимает фаза 1, а не сессия руками по красной сверке.
-  const TABLE = [
-    "| Проверка | Команда |",
-    "| --- | --- |",
-    "| Сервер разработки | `npm run dev` |",
-    "| Сборка | `npm run build` |",
-    "| Тесты | `npm test` |",
-    "Скрипт `npm run dev` в прозе остаётся.",
-  ].join("\n");
-
-  it("снимает строку таблицы, чьего скрипта каркаса у проекта нет, и только её", () => {
-    expect(withoutFrameRows(TABLE, ["dev", "build", "preview"], ["build", "test"])).toBe(
-      [
-        "| Проверка | Команда |",
-        "| --- | --- |",
-        "| Сборка | `npm run build` |",
-        "| Тесты | `npm test` |",
-        "Скрипт `npm run dev` в прозе остаётся.",
-      ].join("\n"),
-    );
-  });
-
-  it("скрипт не из списка каркаса не снимает, даже если у проекта его нет", () => {
-    expect(withoutFrameRows(TABLE, ["preview"], [])).toBe(TABLE);
-  });
-
-  it("строка таблицы с отступом и пробелами в хвосте — тоже строка; имя без команды и длиннее — нет", () => {
-    const rows = [
-      "  | Сервер | `npm run dev` |",
-      "| Сервер | `npm run dev` |   ",
-      "| Скрипт | `dev` |",
-      "| Отладка | `npm run devtools` |",
-    ].join("\n");
-    expect(withoutFrameRows(rows, ["dev"], [])).toBe(
-      ["| Скрипт | `dev` |", "| Отладка | `npm run devtools` |"].join("\n"),
-    );
-  });
-
-  it("механика фазы 1 не везёт своё проекта с полки и правит только прозу", () => {
-    const shelf = fs.mkdtempSync(path.join(os.tmpdir(), "own-shelf-"));
-    const box = fs.mkdtempSync(path.join(os.tmpdir(), "own-box-"));
-    try {
-      const put = (rel, text) => {
-        fs.mkdirSync(path.dirname(path.join(shelf, rel)), { recursive: true });
-        fs.writeFileSync(path.join(shelf, rel), text);
-      };
-      const row = "| Сервер | `npm run dev` |\n";
-      put(
-        "seat/map.json",
-        JSON.stringify({
-          projectOwnedInsideHarness: ["own.json", "agents"],
-          frameScripts: ["dev"],
-          copy: [
-            { from: "seat/rules.md", to: "RULES.md" },
-            { from: "seat/table.txt", to: "table.txt" },
-          ],
-        }),
-      );
-      put("seat/rules.md", row);
-      put("seat/table.txt", row);
-      put("own.json", "{}");
-      put("agents/review.md", "своё");
-      put("agents-kit/tool.md", "обвязка");
-      put("rules/loop.md", "обвязка");
-      layShelfLive(shelf, box);
-      const laid = (rel) => fs.existsSync(path.join(box, ".claude", rel));
-      expect([laid("own.json"), laid("agents/review.md")]).toEqual([false, false]);
-      expect([laid("agents-kit/tool.md"), laid("rules/loop.md")]).toEqual([true, true]);
-      expect(fs.readFileSync(path.join(box, "RULES.md"), "utf8")).toBe("");
-      expect(fs.readFileSync(path.join(box, "table.txt"), "utf8")).toBe(row);
-    } finally {
-      fs.rmSync(shelf, { recursive: true, force: true });
-      fs.rmSync(box, { recursive: true, force: true });
-    }
-  });
-
-  it("механика фазы 1 кладёт семя правил и его отложенную копию без таких строк", () => {
-    const frame = JSON.parse(
-      fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"),
-    ).frameScripts;
-    expect(frame).toEqual(["dev", "build", "preview"]);
-    for (const busy of [false, true]) {
-      const box = fs.mkdtempSync(path.join(os.tmpdir(), "frame-rows-"));
-      try {
-        fs.writeFileSync(
-          path.join(box, "package.json"),
-          JSON.stringify({ scripts: { build: "vite build", test: "vitest" } }),
-        );
-        if (busy) fs.writeFileSync(path.join(box, "CLAUDE.md"), "# свои правила\n");
-        layShelfLive(SHELF, box);
-        const laid = fs.readFileSync(
-          path.join(box, busy ? "CLAUDE.md.seat" : "CLAUDE.md"),
-          "utf8",
-        );
-        expect(laid).not.toContain("`npm run dev`");
-        expect(laid).not.toContain("`npm run preview`");
-        expect(laid).toContain("`npm run build`");
-        expect(laid).toContain("`npm run typecheck`");
-      } finally {
-        fs.rmSync(box, { recursive: true, force: true });
-      }
-    }
   });
 });
 
