@@ -21662,8 +21662,12 @@ if (mode === "verify") {
           : ""),
     );
     debtNote("map", missing.length);
-    for (const f of debtList("map", missing)) console.log("    " + rel(f));
+    const unmapped = debtList("map", missing);
+    for (const f of unmapped) console.log("    " + rel(f));
     for (const m of goneMapped) console.log("    " + m);
+    if (unmapped.length > 0)
+      console.log("  дописать каждому файлу строку в карту кода; файлы живого проекта до конца перехода держит долг `debt.map`");
+    if (goneMapped.length > 0) console.log("  снять из карты запись о файле, которого нет, либо поправить в ней адрес");
   });
 
   // 2. каждый тестовый файл назван в 08-tests.md — поимённо, папкой не зачесть
@@ -25565,6 +25569,7 @@ if (mode === "verify") {
             console.log(IDLE_NOTES["Привезённый код виден компилятору"]);
           console.log("  вне области компилятора: " + unseen.length);
           for (const one of unseen) console.log("    " + one);
+          if (unseen.length > 0) console.log("  дописать папку в `include` конфига, по которому звено типов проверяет код, либо снять семя вместе с записями базы о нём");
 
           // Строгость компилятора — там, где звено типов проверяет код.
           //
@@ -25628,6 +25633,7 @@ if (mode === "verify") {
           });
           console.log("  без строгости семени: " + strictGap.length);
           for (const one of strictGap) console.log("    " + one);
+          if (strictGap.length > 0) console.log("  включить недостающие опции в этом конфиге; ошибки типов, которые они откроют, держит долг `debt.types` с пунктом долга перехода");
           checkHead("Конфиг снятого звена служит живому", {
             n: CONFIG.toolchain.length,
             unit: "звеньев цепочки",
@@ -25636,6 +25642,7 @@ if (mode === "verify") {
             "  снятых конфигов, нужных живому звену: " + sharedConfigs.length,
           );
           for (const one of sharedConfigs) console.log("    " + one);
+          if (sharedConfigs.length > 0) console.log("  конфиг не снимать: его читает инструмент живого звена");
 
           // Конвейер — ТА ЖЕ СВЯЗКА, что скрипт проверок, только написанная
           // однажды и живущая отдельно. Описание сборки на сервере, которое
@@ -25745,6 +25752,7 @@ if (mode === "verify") {
           });
           console.log("  расхождений: " + chainBroken.length);
           for (const one of chainBroken) console.log("    " + one);
+          if (chainBroken.length > 0) console.log("  завести скрипт в манифесте либо снять его вызов из связки `check`");
           checkHead(
             "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
             {
@@ -27543,6 +27551,7 @@ if (mode === "verify") {
     }));
     console.log("  без раздела нормы: " + rationaleOrphans.length);
     for (const one of rationaleOrphans) console.log("    " + one);
+    if (rationaleOrphans.length > 0) console.log("  назвать раздел обоснования так же, как раздел нормы, либо перенести его текст под существующий заголовок");
   });
   checkStep(() => {
     checkHead("Доктрина названа в порядке чтения", () => ({
@@ -28301,6 +28310,7 @@ if (mode === "verify") {
     }));
     console.log(`  вне корпуса: ${corpusGap.length}`);
     for (const c of corpusGap) console.log("    " + c);
+    if (corpusGap.length > 0) console.log("  положить файл туда, где прозу читают сверки, — база, папка документации, README рядом с кодом — либо вписать его в поле `corpusOutside` настройки с причиной");
   });
 
   // 14a-3. Строка таблицы по ширине шапки.
@@ -28898,6 +28908,7 @@ if (mode === "verify") {
         : IDLE_NOTES["Перечень папок полки полный"],
     );
     for (const d of shelfListGap) console.log("    " + d);
+    if (shelfListGap.length > 0) console.log("  дописать недостающие папки в перечень либо свести перечень к ссылке на `.claude/README.md`");
   });
 
   // Тесты, которым решением разрешено лежать вне своей папки. Считается ЗДЕСЬ,
@@ -29731,6 +29742,7 @@ if (mode === "verify") {
     }));
     console.log(`  расхождений: ${toolchainDrift.length}`);
     for (const d of toolchainDrift) console.log("    " + d);
+    if (toolchainDrift.length > 0) console.log("  положить конфиг звена из семени обвязки либо снять звено вместе с его пакетами");
   });
 
   // 44. Таблица сверок доктрины описывает существующие сверки.
@@ -29943,6 +29955,7 @@ if (mode === "verify") {
     }));
     console.log("  не найдут места: " + recipeAdrift.length);
     for (const one of recipeAdrift) console.log("    " + one);
+    if (recipeAdrift.length > 0) console.log("  поправить шаг рецепта в `falsify.json` под текст семени либо семя под рецепт — одной правкой");
   });
 
   // 44b. Вопрос о планке задан на конечном виде правки.
@@ -31246,6 +31259,7 @@ if (mode === "verify") {
     }));
     console.log("  требований без инструмента: " + unrunnable.length);
     for (const one of unrunnable) console.log("    " + one);
+    if (unrunnable.length > 0) console.log("  добавить пакет в семя манифеста либо поправить текст, который его называет");
   });
   checkStep(() => {
     checkHead("Мутационный прогон исполним", () => ({
@@ -31361,6 +31375,7 @@ if (mode === "verify") {
     }));
     console.log("  предмет есть, файла нет: " + baseGap.length);
     for (const g of baseGap) console.log("    " + g);
+    if (baseGap.length > 0) console.log("  завести файл из его семени — карта посадки, поле `onSubject` — и описать в нём предмет");
   });
 
   // 45a. Каркас обвязки не лежит в живом проекте.
@@ -31862,6 +31877,7 @@ if (mode === "verify") {
     }));
     console.log("  расхождений: " + stateLies.length);
     for (const one of stateLies) console.log("    " + one);
+    if (stateLies.length > 0) console.log("  назвать файл в записи о состоянии владельцем либо писателем — либо убрать запись ключа из этого файла кода");
   });
   checkStep(() => {
     checkHead("Запись карты не спорит с кодом", () => ({
@@ -32229,6 +32245,7 @@ if (mode === "verify") {
     }));
     console.log("  предметов с двумя файлами: " + twinConfigs.length);
     for (const g of twinConfigs) console.log("    " + g);
+    if (twinConfigs.length > 0) console.log("  оставить один файл, второй снять");
   });
 
   // 45c. Одноранговая зависимость не продублирована.
@@ -32733,6 +32750,7 @@ if (mode === "verify") {
     }));
     console.log("  звеньев без опоры: " + idleConfig.length);
     for (const d of idleConfig) console.log("    " + d);
+    if (idleConfig.length > 0) console.log("  снять семя вместе с записями базы о нём либо вернуть в манифест скрипт, зовущий инструмент звена");
   });
   // 44-в. Каждый пакет семени манифеста принадлежит объявленному звену.
   //
@@ -33352,6 +33370,7 @@ if (mode === "verify") {
     }));
     console.log("  без объяснения: " + fieldMute.length);
     for (const one of fieldMute) console.log("    " + one);
+    if (fieldMute.length > 0) console.log("  написать над полем в семени настройки комментарий: что поле значит и какое значение принимает");
   });
   checkStep(() => {
     checkHead("Настройка семени не ссылается на непривезённое", () => ({
@@ -33366,6 +33385,7 @@ if (mode === "verify") {
           one +
           " — в проекте настройка будет указывать в пустоту, и звено сломается посадкой",
       );
+    if (seedRefs.length > 0) console.log("  вписать адрес в карту посадки (`seat/map.json`, поле `copy`) либо снять ссылку из семени");
   });
   checkStep(() => {
     // Корпус — семена с суффиксом: остальные формат проекта видит сам.

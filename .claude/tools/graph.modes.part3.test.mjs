@@ -4066,6 +4066,32 @@ describe("сборка пакета на вызове звена типов", ()
   }, 240000);
 });
 
+/** Находка сверки называет, что сделать: строка без действия заставляет
+ * сессию угадывать. Выведено четвёртой посадкой — поле `starBarrels`; класс
+ * пройден записью секций всех рецептов `falsify`. */
+describe("находка сверки называет действие", () => {
+  it("близнец конфига, семя звена без скрипта и файл без записи в карте — со строкой действия", () => {
+    const box = seatEmpty("action-line-");
+    try {
+      fs.copyFileSync(path.join(box, ".nvmrc"), path.join(box, ".node-version"));
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      delete pkg.scripts.mutate;
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      fs.writeFileSync(path.join(box, "src", "unmapped.ts"), "export const unmapped = 1;\n");
+      const out = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], {
+        cwd: box,
+        encoding: "utf8",
+      }).stdout;
+      const section = (name) => out.split("=== " + name + " ===")[1]?.split("\n===")[0] ?? "";
+      expect(section("Один предмет — один файл настройки")).toContain("  оставить один файл, второй снять");
+      expect(section("Звену цепочки есть на чём работать")).toContain("  снять семя вместе с записями базы о нём");
+      expect(section("Покрытие карты")).toContain("  дописать каждому файлу строку в карту кода");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+});
 
 /** Песочница `falsify` лежит в проекте, и прерванный прогон её оставлял.
  * Выведено одиннадцатой посадкой, проект E: прогон, снятый лимитом времени. */
