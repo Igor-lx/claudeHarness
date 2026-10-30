@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { parseJsonc } from "./graph.configs.mjs";
+import { composeLive } from "./graph.configs.mjs";
 import { SCENARIO_NAMES, foreignOffer } from "./graph.profile.mjs";
 import {
   SEAT_HERE_MARKER,
@@ -40,28 +40,13 @@ import {
  * отчёт называет, чего обвязка не видит, и два пути дальше. Код проекта
  * посадка не трогает ни в одном сценарии. */
 
-const STRICT_KEYS = /^(?:strict|no[A-Z]\w*|exactOptional\w*)$/;
 const CODE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-/** Конфиги, которые проект держит под именем семени, и куда их кладёт
- * композиция: раннер и линтер читают их из конфига обвязки. */
-const OWN_ESLINT = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.mts", "eslint.config.cts"];
-const OWN_VITEST = ["vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cts", "vitest.config.cjs"];
-const OWN_VITE = ["vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs", "vite.config.cts", "vite.config.cjs"];
-const OWN_PRETTIER = [".prettierrc", ".prettierrc.json", ".prettierrc.json5", ".prettierrc.yaml", ".prettierrc.yml", ".prettierrc.toml", ".prettierrc.js", ".prettierrc.mjs", ".prettierrc.cjs", "prettier.config.js", "prettier.config.mjs", "prettier.config.cjs", "prettier.config.ts"];
-const OWN_STRYKER = ["stryker.config.json", "stryker.conf.json", "stryker.config.js", "stryker.conf.js", "stryker.config.mjs", "stryker.conf.mjs", "stryker.config.cjs", "stryker.conf.cjs"];
-const OWN_NODE = [".nvmrc", ".node-version", ".tool-versions"];
 /** Списки строк: проектные строки остаются, недостающие строки семени
  * дописываются. */
 const LISTS = new Set([".gitignore", ".gitattributes", ".prettierignore"]);
 /** Скрипты звеньев, которые посадка пишет живому проекту. */
 const LIVE_SCRIPTS = ["typecheck", "lint", "format:check", "test", "test:coverage", "mutate", "check"];
-
-/** Имя, под которым конфиг проекта ложится рядом с конфигом обвязки:
- * `eslint.config.js` → `eslint.project.config.js`. Конфигом корня его
- * узнаёт тот же образец `*.config.*`, что и прочие: линт с типами их не
- * разбирает. */
-export const projectConfigName = (own) => own.replace(/\.(config|conf)\./, (m, word) => ".project." + word + ".");
 
 /** Текст базы без записей о том, чего в проекте нет: абзацы каркаса между
  * пометками `КАРКАС`, строки таблиц и записи решений, называющие адрес
@@ -253,96 +238,6 @@ export const debtPlanOf = (debt, { typecheck = "typecheck", lint = "lint" } = {}
   return { steps, items };
 };
 
-/** Конфиг линта обвязки для живого проекта: конфиг проекта подключён
- * первым, правила обвязки — поверх; линт с типами читает строгие конфиги
- * звена типов. */
-export const eslintLiveText = (seed, own, strictConfigs) => {
-  const lines = seed.split("\n");
-  const lastImport = lines.reduce((at, line, i) => (line.startsWith("import ") ? i : at), -1);
-  if (own !== null)
-    lines.splice(lastImport + 1, 0, 'import project from "./' + own + '";');
-  let text = lines.join("\n");
-  if (own !== null) {
-    const head = "export default tseslint.config(\n";
-    if (!text.includes(head)) throw new Error("в семени конфига линта нет `" + head.trim() + "`");
-    text =
-      text.replace(head, "const harness = tseslint.config(\n") +
-      [
-        "",
-        "// The project's config first, the harness on top; a plugin both load is the harness's.",
-        "const shared = Object.assign({}, ...harness.map((block) => block.plugins ?? {}));",
-        "export default [",
-        "  ...[project].flat().map((block) =>",
-        "    block.plugins === undefined",
-        "      ? block",
-        "      : {",
-        "          ...block,",
-        "          plugins: Object.fromEntries(",
-        "            Object.entries(block.plugins).map(([name, plugin]) => [name, shared[name] ?? plugin]),",
-        "          ),",
-        "        },",
-        "  ),",
-        "  ...harness,",
-        "];",
-        "",
-      ].join("\n");
-  }
-  if (!text.includes("projectService: true,")) throw new Error("в семени конфига линта нет `projectService: true`");
-  return text.replace(
-    "projectService: true,",
-    "project: [" + strictConfigs.map((one) => '"./' + one + '"').join(", ") + "],",
-  );
-};
-
-/** Конфиг раннера тестов: конфиг проекта под ним, сверху — исключения
- * обвязки. */
-export const vitestLiveText = (base) =>
-  [
-    "// The project's config with the harness exclusions on top.",
-    'import { configDefaults, defineConfig, mergeConfig } from "vitest/config";',
-    ...(base === null ? [] : ['import project from "./' + base + '";']),
-    "",
-    "export default defineConfig(async (env) =>",
-    "  mergeConfig(" + (base === null ? "{}" : 'typeof project === "function" ? await project(env) : project') + ", {",
-    "    test: {",
-    '      exclude: [...configDefaults.exclude, ".claude/**", ".stryker-tmp/**"],',
-    "      passWithNoTests: true,",
-    "    },",
-    "  }),",
-    ");",
-    "",
-  ].join("\n");
-
-/** Строгие копии конфигов компилятора: на конфиг — копия, продолжающая его
- * и несущая строгость семени; на решение со ссылками — копия каждой ссылки
- * и решение из копий (`seat/seat.md`, раздел о строгости). Отдаёт файлы и
- * вызов звена типов. */
-export const strictConfigsOf = (read, seedTsconfig) => {
-  const seed = parseJsonc(seedTsconfig) ?? {};
-  const strict = Object.fromEntries(
-    Object.entries(seed.compilerOptions ?? {}).filter(([k]) => STRICT_KEYS.test(k)),
-  );
-  const root = parseJsonc(read("tsconfig.json") ?? "{}") ?? {};
-  const files = {};
-  const copyOf = (name) => {
-    const own = parseJsonc(read(name) ?? "{}") ?? {};
-    const options = { ...strict, noEmit: true };
-    if (own.compilerOptions?.tsBuildInfoFile !== undefined)
-      options.tsBuildInfoFile = "./node_modules/.tmp/" + name.replace(/\.json$/, ".strict.tsbuildinfo");
-    return { extends: "./" + name, compilerOptions: options };
-  };
-  if (Array.isArray(root.references) && root.references.length > 0 && root.compilerOptions === undefined) {
-    const refs = root.references.map((r) => String(r.path).replace(/^\.\//, ""));
-    const names = refs.map((r) => (r.endsWith(".json") ? r : r + "/tsconfig.json"));
-    const copies = names.map((one) => one.replace(/\.json$/, ".strict.json"));
-    names.forEach((one, i) => (files[copies[i]] = copyOf(one)));
-    files["tsconfig.strict.json"] = { files: [], references: copies.map((one) => ({ path: "./" + one })) };
-    return { files, call: "tsc -b tsconfig.strict.json", lint: copies };
-  }
-  files["tsconfig.strict.json"] = copyOf("tsconfig.json");
-  return { files, call: "tsc -p tsconfig.strict.json", lint: ["tsconfig.strict.json"] };
-};
-
 /** Скрипты звеньев: имена и тела семени. Проектный скрипт того же имени,
  * делающий ту же работу своим вызовом, — образец звена его узнаёт, —
  * заменяется: рядом он был бы близнецом звена. Делающий другую работу
@@ -476,7 +371,15 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
       else m[one.section][one.name] = one.to;
       m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
     }
-    strict = strictConfigsOf(read, seedOf("tsconfig.json"));
+    const composed = composeLive({
+      exists: (rel) => existsSync(at(rel)),
+      read,
+      seed: seedOf,
+      map,
+      roots,
+      prettierInManifest: manifest?.prettier !== undefined,
+    });
+    strict = composed.strict;
     const seedScripts = readJson(path.join(seedDir, "package.json")).scripts;
     const bodies = Object.fromEntries(
       LIVE_SCRIPTS.filter((one) => seedScripts[one] !== undefined).map((one) => [
@@ -501,32 +404,9 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     if (kept.length > 0) report.push("Прежние скрипты проекта, делающие другую работу, лежат рядом: " + kept.join(", ") + ".");
     if (m.engines === undefined) m.engines = readJson(path.join(seedDir, "package.json")).engines;
     write("package.json", JSON.stringify(m, null, 2) + "\n");
-    for (const [name, json] of Object.entries(strict.files)) write(name, JSON.stringify(json, null, 2) + "\n");
-    const ownEslint = OWN_ESLINT.find((one) => existsSync(at(one))) ?? null;
-    if (ownEslint !== null) move(ownEslint, projectConfigName(ownEslint));
-    write("eslint.config.mjs", eslintLiveText(seedOf("eslint.config.mjs"), ownEslint === null ? null : projectConfigName(ownEslint), strict.lint));
-    const ownVitest = OWN_VITEST.find((one) => existsSync(at(one))) ?? null;
-    if (ownVitest !== null) move(ownVitest, projectConfigName(ownVitest));
-    const base = ownVitest !== null ? projectConfigName(ownVitest) : (OWN_VITE.find((one) => existsSync(at(one))) ?? null);
-    write("vitest.config.ts", vitestLiveText(base));
-    // Старый формат конфига линта ESLint 9 и новее не читает, а подключить
-    // его из плоского нечем: он ложится рядом, правила переносит переход.
-    const legacy = files.filter((f) => /^\.eslintrc(?:\.\w+)?$/.test(f));
-    for (const one of legacy) move(one, one.replace(/^\.eslintrc/, ".eslintrc.project"));
-    if (legacy.length > 0)
-      report.push(
-        "Старый конфиг линта лежит как " +
-          legacy.map((one) => one.replace(/^\.eslintrc/, ".eslintrc.project")).join(", ") +
-          ": ESLint 9 и новее его не читает, и его правила не действуют, пока их не перенесут в eslint.project.config.js.",
-      );
-    if (!OWN_PRETTIER.some((one) => existsSync(at(one))) && manifest?.prettier === undefined)
-      write(".prettierrc.json", seedOf(".prettierrc.json"));
-    const ownStryker = OWN_STRYKER.find((one) => existsSync(at(one))) ?? null;
-    if (ownStryker !== null) move(ownStryker, projectConfigName(ownStryker));
-    const stryker = JSON.parse(seedOf("stryker.config.json"));
-    stryker.mutate = roots.flatMap((r) => [r + "/**/*.ts", r + "/**/*.tsx", "!" + r + "/**/*.d.ts", "!" + r + "/**/*.test.*", "!" + r + "/**/*.spec.*", "!" + r + "/**/tests/**", "!" + r + "/**/__tests__/**"]);
-    write("stryker.config.json", JSON.stringify(stryker, null, 2) + "\n");
-    if (!OWN_NODE.some((one) => existsSync(at(one)))) write(".nvmrc", seedOf(".nvmrc"));
+    for (const [from, to] of composed.moves) move(from, to);
+    for (const [rel, text] of Object.entries(composed.files)) write(rel, text);
+    report.push(...composed.report);
   }
 
   // 2. Списки, правила, документы, база.

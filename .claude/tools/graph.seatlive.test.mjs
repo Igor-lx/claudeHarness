@@ -8,20 +8,22 @@ import {
   configField,
   configList,
   debtPlanOf,
-  eslintLiveText,
   factsWithScopes,
   liveBaseText,
-  projectConfigName,
   rulesWithOwnLayout,
   rulesWithout,
   scriptsLive,
   sourceRootsOf,
-  strictConfigsOf,
   tableRows,
   transitionWith,
-  vitestLiveText,
   withoutAbsentScripts,
 } from "./graph.seatlive.mjs";
+import {
+  eslintLiveText,
+  projectConfigName,
+  strictConfigsOf,
+  vitestLiveText,
+} from "./graph.configs.mjs";
 
 const SEEDS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "seat", "templates");
 const seed = (name) => fs.readFileSync(path.join(SEEDS, name), "utf8");

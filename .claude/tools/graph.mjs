@@ -20998,12 +20998,12 @@ if (mode === "verify") {
     ]);
   }
   checkStep(() => {
-    const axes = foreignAxesNamed();
-    const off = FOREIGN ? SCENARIO_LISTS.foreignOff : [];
     checkHead("Чужое окружение — не проверено (предупреждение, прогон не роняет)", () => ({
-      n: axes.length,
+      n: foreignAxesNamed().length,
       unit: "осей окружения, чужих по осмотру посадки",
     }));
+    const axes = foreignAxesNamed();
+    const off = FOREIGN ? SCENARIO_LISTS.foreignOff : [];
     console.log("  не проверено: " + (axes.length + off.length));
     for (const one of axes)
       console.log(
@@ -29696,9 +29696,11 @@ if (mode === "verify") {
       (f) => isTestPath(f) && !f.includes("/tests/") && !testsOutsideHit(f),
     ),
   );
-  SEAT_FACTS.testsAway = (strayTests ?? []).map((f) =>
-    norm(path.relative(REPO, f)).split(path.sep).join("/"),
-  );
+  checkStep(() => {
+    SEAT_FACTS.testsAway = (strayTests ?? []).map((f) =>
+      norm(path.relative(REPO, f)).split(path.sep).join("/"),
+    );
+  });
   // Исключение обязано стоять на РЕШЕНИИ: поле снимает красное, а причину
   // снять не может. Настройка говорила «обязан иметь запись в реестре
   // решений», а спрашивала это одна лишь её строка: адрес, вписанный без

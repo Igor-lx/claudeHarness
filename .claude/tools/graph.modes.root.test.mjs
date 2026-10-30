@@ -253,10 +253,10 @@ describe("испытательная посадка одной командой"
         [path.join(dest, ".claude", "tools", "graph.mjs"), "seat", dest],
         { cwd: dest, encoding: "utf8" },
       );
-      // На месте посадка с историей — уже не пустая папка: копировать полку
-      // в саму себя она не пробует, а отказывает по истории.
+      // На месте уже посаженная папка: вторую посадку поверх своей она не
+      // делает, а отказывает до единой правки.
       expect(self.status, self.stdout).toBe(1);
-      expect(self.stdout).toContain("У репозитория своя история");
+      expect(self.stdout).toContain("Обвязка здесь уже посажена");
     } finally {
       fs.rmSync(path.dirname(dest), { recursive: true, force: true });
     }

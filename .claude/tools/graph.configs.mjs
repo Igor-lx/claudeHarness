@@ -445,3 +445,160 @@ export const jestCollects = (config, configDir, repoRoot) => {
     return match(posix(path.relative(rootDir, abs)));
   };
 };
+
+/** Строгость семени конфига компилятора — опции, которые звено типов
+ * приносит живому проекту. */
+const STRICT_KEYS = /^(?:strict|no[A-Z]\w*|exactOptional\w*)$/;
+
+/** Имя, под которым конфиг проекта ложится рядом с конфигом обвязки:
+ * `eslint.config.js` → `eslint.project.config.js`. Конфигом корня его
+ * узнаёт тот же образец `*.config.*`, что и прочие: линт с типами их не
+ * разбирает. */
+export const projectConfigName = (own) => own.replace(/\.(config|conf)\./, (m, word) => ".project." + word + ".");
+
+/** Конфиг линта обвязки для живого проекта: конфиг проекта подключён
+ * первым, правила обвязки — поверх; линт с типами читает строгие конфиги
+ * звена типов. */
+export const eslintLiveText = (seed, own, strictConfigs) => {
+  const lines = seed.split("\n");
+  const lastImport = lines.reduce((at, line, i) => (line.startsWith("import ") ? i : at), -1);
+  if (own !== null)
+    lines.splice(lastImport + 1, 0, 'import project from "./' + own + '";');
+  let text = lines.join("\n");
+  if (own !== null) {
+    const head = "export default tseslint.config(\n";
+    if (!text.includes(head)) throw new Error("в семени конфига линта нет `" + head.trim() + "`");
+    text =
+      text.replace(head, "const harness = tseslint.config(\n") +
+      [
+        "",
+        "// The project's config first, the harness on top; a plugin both load is the harness's.",
+        "const shared = Object.assign({}, ...harness.map((block) => block.plugins ?? {}));",
+        "export default [",
+        "  ...[project].flat().map((block) =>",
+        "    block.plugins === undefined",
+        "      ? block",
+        "      : {",
+        "          ...block,",
+        "          plugins: Object.fromEntries(",
+        "            Object.entries(block.plugins).map(([name, plugin]) => [name, shared[name] ?? plugin]),",
+        "          ),",
+        "        },",
+        "  ),",
+        "  ...harness,",
+        "];",
+        "",
+      ].join("\n");
+  }
+  if (!text.includes("projectService: true,")) throw new Error("в семени конфига линта нет `projectService: true`");
+  return text.replace(
+    "projectService: true,",
+    "project: [" + strictConfigs.map((one) => '"./' + one + '"').join(", ") + "],",
+  );
+};
+
+/** Конфиг раннера тестов: конфиг проекта под ним, сверху — исключения
+ * обвязки. */
+export const vitestLiveText = (base) =>
+  [
+    "// The project's config with the harness exclusions on top.",
+    'import { configDefaults, defineConfig, mergeConfig } from "vitest/config";',
+    ...(base === null ? [] : ['import project from "./' + base + '";']),
+    "",
+    "export default defineConfig(async (env) =>",
+    "  mergeConfig(" + (base === null ? "{}" : 'typeof project === "function" ? await project(env) : project') + ", {",
+    "    test: {",
+    '      exclude: [...configDefaults.exclude, ".claude/**", ".stryker-tmp/**"],',
+    "      passWithNoTests: true,",
+    "    },",
+    "  }),",
+    ");",
+    "",
+  ].join("\n");
+
+/** Строгие копии конфигов компилятора: на конфиг — копия, продолжающая его
+ * и несущая строгость семени; на решение со ссылками — копия каждой ссылки
+ * и решение из копий (`seat/seat.md`, раздел о строгости). Отдаёт файлы и
+ * вызов звена типов. */
+export const strictConfigsOf = (read, seedTsconfig) => {
+  const seed = parseJsonc(seedTsconfig) ?? {};
+  const strict = Object.fromEntries(
+    Object.entries(seed.compilerOptions ?? {}).filter(([k]) => STRICT_KEYS.test(k)),
+  );
+  const root = parseJsonc(read("tsconfig.json") ?? "{}") ?? {};
+  const files = {};
+  const copyOf = (name) => {
+    const own = parseJsonc(read(name) ?? "{}") ?? {};
+    const options = { ...strict, noEmit: true };
+    if (own.compilerOptions?.tsBuildInfoFile !== undefined)
+      options.tsBuildInfoFile = "./node_modules/.tmp/" + name.replace(/\.json$/, ".strict.tsbuildinfo");
+    return { extends: "./" + name, compilerOptions: options };
+  };
+  if (Array.isArray(root.references) && root.references.length > 0 && root.compilerOptions === undefined) {
+    const refs = root.references.map((r) => String(r.path).replace(/^\.\//, ""));
+    const names = refs.map((r) => (r.endsWith(".json") ? r : r + "/tsconfig.json"));
+    const copies = names.map((one) => one.replace(/\.json$/, ".strict.json"));
+    names.forEach((one, i) => (files[copies[i]] = copyOf(one)));
+    files["tsconfig.strict.json"] = { files: [], references: copies.map((one) => ({ path: "./" + one })) };
+    return { files, call: "tsc -b tsconfig.strict.json", lint: copies };
+  }
+  files["tsconfig.strict.json"] = copyOf("tsconfig.json");
+  return { files, call: "tsc -p tsconfig.strict.json", lint: ["tsconfig.strict.json"] };
+};
+
+/** Композиция конфигов знакомого проекта: конфиг проекта того же
+ * инструмента ложится рядом `*.project.config.*` и подключается из конфига
+ * обвязки; строгость — копиями конфигов компилятора; старый формат линта —
+ * рядом. Имена конфигов — карта посадки: семя и его другие имена. Отдаёт
+ * файлы к записи, переносы, строки отчёта и строгость звена типов
+ * (`seat/seat.md`, шаг 1-бис). */
+export const composeLive = ({ exists, read, seed, map, roots, prettierInManifest }) => {
+  const entry = (pick) => (map.copy ?? []).find(pick);
+  const namesOf = (e) => (e === undefined ? [] : [e.to, ...(e.alsoKnownAs ?? [])]);
+  const lying = (names) => names.find((one) => exists(one)) ?? null;
+  const lint = entry((e) => e.neededBy === "lint" && !e.to.includes("/"));
+  const runner = entry((e) => e.neededBy === "test" && !e.to.includes("/"));
+  const mutate = entry((e) => e.neededBy === "mutate" && !e.to.includes("/"));
+  const format = entry((e) => e.inManifest === "prettier");
+  const node = entry((e) => e.inManifest === "volta");
+  const compiler = entry((e) => e.to === COMPILER_CONFIG);
+  const files = {};
+  const moves = [];
+  const report = [];
+  const strict = strictConfigsOf(read, seed(compiler.to));
+  for (const [name, json] of Object.entries(strict.files)) files[name] = JSON.stringify(json, null, 2) + "\n";
+  const isLegacy = (one) => /^\.eslintrc/.test(one);
+  const ownLint = lying(namesOf(lint).filter((one) => !isLegacy(one)));
+  if (ownLint !== null) moves.push([ownLint, projectConfigName(ownLint)]);
+  files[lint.to] = eslintLiveText(seed(lint.to), ownLint === null ? null : projectConfigName(ownLint), strict.lint);
+  const ownRunner = lying(runner.shadowedBy ?? []);
+  if (ownRunner !== null) moves.push([ownRunner, projectConfigName(ownRunner)]);
+  const base = ownRunner !== null ? projectConfigName(ownRunner) : lying(namesOf(runner));
+  files[(runner.shadowedBy ?? [])[0]] = vitestLiveText(base);
+  // Старый формат конфига линта ESLint 9 и новее не читает, а подключить
+  // его из плоского нечем: он ложится рядом, правила переносит переход.
+  const legacy = (lint.alsoKnownAs ?? []).filter((one) => isLegacy(one) && exists(one));
+  for (const one of legacy) moves.push([one, one.replace(/^\.eslintrc/, ".eslintrc.project")]);
+  if (legacy.length > 0)
+    report.push(
+      "Старый конфиг линта лежит как " +
+        legacy.map((one) => one.replace(/^\.eslintrc/, ".eslintrc.project")).join(", ") +
+        ": ESLint 9 и новее его не читает, и его правила не действуют, пока их не перенесут в конфиг проекта нового формата.",
+    );
+  if (lying(namesOf(format)) === null && !prettierInManifest) files[format.to] = seed(format.to);
+  const ownMutate = lying(namesOf(mutate));
+  if (ownMutate !== null) moves.push([ownMutate, projectConfigName(ownMutate)]);
+  const stryker = JSON.parse(seed(mutate.to));
+  stryker.mutate = roots.flatMap((r) => [
+    r + "/**/*.ts",
+    r + "/**/*.tsx",
+    "!" + r + "/**/*.d.ts",
+    "!" + r + "/**/*.test.*",
+    "!" + r + "/**/*.spec.*",
+    "!" + r + "/**/tests/**",
+    "!" + r + "/**/__tests__/**",
+  ]);
+  files[mutate.to] = JSON.stringify(stryker, null, 2) + "\n";
+  if (lying(namesOf(node)) === null) files[node.to] = seed(node.to);
+  return { files, moves, report, strict };
+};

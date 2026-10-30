@@ -940,6 +940,15 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
     );
     process.exit(0);
   }
+  // Обвязка уже посажена — испытательной посадкой либо прежней посадкой по
+  // инструкции: настройка проекта лежит, и вторая посадка поверх неё
+  // смешала бы своё с его. Полный прогон нашёл это повторным вызовом на
+  // испытательной посадке: команда пошла сажать её как живой проект.
+  if (existsSync(path.join(gitDir, SEAT_MARKER)) || existsSync(path.join(target, ".context", "graph.config.mjs")))
+    refuse(
+      "Обвязка здесь уже посажена: настройка проекта лежит в .context/graph.config.mjs.",
+      "Обновить обвязку — скопировать полку поверх .claude/; испытательную посадку обновляет `seat <папка>` из мастерской.",
+    );
   const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] };
   const asked = (args) => {
     try {
