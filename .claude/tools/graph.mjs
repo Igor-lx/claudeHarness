@@ -26,6 +26,7 @@ import { builtinModules, createRequire } from "node:module";
 // забытым слагаемым такой комбинации.
 import {
   classifyRun,
+  idleReportOf,
   HELD_BY_DEBT_ROW,
   HELD_BY_WAITING_SEED,
   localiseRecipe,
@@ -6871,6 +6872,9 @@ if (mode === "falsify") {
   // печатать такую строку вместе с проектными значило бы советовать работу,
   // которой не существует.
   const idle = [];
+  // Сверка, назвавшая в чистом прогоне, почему молчит: предмет есть, держит
+  // его долг либо решение. Печатается своей секцией, со своей строкой.
+  const quiet = [];
   try {
     const cleanOut = runVerify(tmp);
     const clean = readSections(cleanOut);
@@ -7172,7 +7176,7 @@ if (mode === "falsify") {
     for (const r0 of recipes) {
       const r = localise(r0);
       if (unresolved(r) || idleByDesign(r)) {
-        idle.push(r.section + " — предмета в этом проекте нет");
+        idle.push(r.section);
         continue;
       }
       // Предмета у сверки в этом проекте нет — поле настройки пусто. Ломать
@@ -7187,14 +7191,14 @@ if (mode === "falsify") {
       // «перехода нет: напоминать не о чем», и прогон краснел на законном
       // устройстве проекта.
       if (subjectless(r.section)) {
-        idle.push(r.section + " — предмета в этом проекте нет");
+        idle.push(r.section);
         continue;
       }
       // Сверка молчит намеренно и говорит почему: «предмета нет» читалось
       // неправдой, когда предмет есть, а держит его долг. Выведено десятой
       // посадкой.
       if (idleByNote(r.section)) {
-        idle.push(r.section + " — сверка молчит намеренно:" + IDLE_NOTES[r.section].replace(/^\s*/, " "));
+        quiet.push({ section: r.section, note: IDLE_NOTES[r.section] });
         continue;
       }
       // Адрес выше корня песочницы указывает в рабочее дерево — такой рецепт
@@ -7207,12 +7211,9 @@ if (mode === "falsify") {
       if (Array.isArray(r.edits)) {
         const { failed, after } = runSteps(r);
         if (failed !== undefined) {
-          (subjectless(r.section)
-            ? idle
-            : r.project !== true && (r.own === true || stepsFromSeed(r))
-              ? foreign
-              : broken
-          ).push(r.section + " — " + failed);
+          (r.project !== true && (r.own === true || stepsFromSeed(r)) ? foreign : broken).push(
+            r.section + " — " + failed,
+          );
           continue;
         }
         record(r.section, after);
@@ -7238,12 +7239,9 @@ if (mode === "falsify") {
       }
       const at = path.join(tmp, r.file);
       if (!existsSync(at)) {
-        (subjectless(r.section)
-          ? idle
-          : r.project !== true && (r.own === true || stepFromSeed(r))
-            ? foreign
-            : broken
-        ).push(r.section + " — файла нет: " + r.file);
+        (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
+          r.section + " — файла нет: " + r.file,
+        );
         continue;
       }
       const before = readFileSync(at, "utf8");
@@ -7278,12 +7276,9 @@ if (mode === "falsify") {
           const lines = before.split(NEWLINE);
           const at0 = lines.findIndex((l) => l.trim() === r.after);
           if (at0 < 0) {
-            (subjectless(r.section)
-              ? idle
-              : r.project !== true && (r.own === true || stepFromSeed(r))
-                ? foreign
-                : broken
-            ).push(r.section + " — якорь дописывания не найден: " + r.after);
+            (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
+              r.section + " — якорь дописывания не найден: " + r.after,
+            );
             continue;
           }
           lines.splice(at0 + 1, 0, text);
@@ -7294,12 +7289,9 @@ if (mode === "falsify") {
         rmSync(at);
       } else {
         if (!before.includes(r.find.split("\n").join(NEWLINE))) {
-          (subjectless(r.section)
-            ? idle
-            : r.project !== true && (r.own === true || stepFromSeed(r))
-              ? foreign
-              : broken
-          ).push(r.section + " — рецепт не находит своего места");
+          (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
+            r.section + " — рецепт не находит своего места",
+          );
           continue;
         }
         writeFileSync(
@@ -7412,15 +7404,7 @@ if (mode === "falsify") {
   );
   console.log("  при заведении, и с тех пор её здоровье никем не проверено.");
 
-  if (idle.length) {
-    console.log("");
-    console.log("=== БЕЗ ПРЕДМЕТА: РЕЦЕПТ ЕСТЬ, ЛОМАТЬ НЕЧЕГО ===");
-    for (const n of idle)
-      console.log("  " + n.split(" — ")[0] + " — предмета в этом проекте нет");
-    console.log(
-      "  Рецепт приехал с обвязкой и здесь не на чем сработать. Заведётся предмет — сработает сам.",
-    );
-  }
+  for (const line of idleReportOf(idle, quiet)) console.log(line);
 
   if (noSubject.length) {
     console.log("");

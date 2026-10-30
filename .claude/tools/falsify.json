@@ -1440,6 +1440,7 @@
       "section": "Непромеренное названо долгом перехода",
       "own": true,
       "file": ".context/15-transition.md",
+      "whenFile": ".context/15-transition.md",
       "find": "| № | Расхождение | Сейчас | Держит | План | Цена |",
       "replace": "| № | Вид | Сейчас | Держит | План | Цена |"
     },

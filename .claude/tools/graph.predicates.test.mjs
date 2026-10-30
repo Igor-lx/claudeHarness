@@ -12,6 +12,7 @@ import * as vocabulary from "./graph.predicates.mjs";
 const {
   PREDICATE_CASES,
   classifyRun,
+  idleReportOf,
   inComment,
   printedIsRed,
   sectionsOf,
@@ -525,6 +526,39 @@ describe("printedIsRed", () => {
     expect(printedIsRed(["=== А ===", "  проверено: 3"], WARN, none)).toBe(
       false,
     );
+  });
+});
+
+describe("idleReportOf", () => {
+  // Рецепт не прогонялся по двум разным причинам, и каждая печатается своей.
+  // Прежде обе выходили «предмета в этом проекте нет»: сверка раскладки,
+  // молчащая при долге перехода, читалась беспредметной, и причину искали
+  // чтением кода. Выведено одиннадцатой посадкой, проект F.
+  it("молчащая намеренно сверка — своей секцией и со своей причиной", () => {
+    const lines = idleReportOf(
+      ["Отложенное семя"],
+      [{ section: "Новый узел лежит по раскладке", note: "  отступление объявлено решением либо долгом перехода: раскладка проекта своя" }],
+    );
+    expect(lines).toContain("=== БЕЗ ПРЕДМЕТА: РЕЦЕПТ ЕСТЬ, ЛОМАТЬ НЕЧЕГО ===");
+    expect(lines).toContain("  Отложенное семя — предмета в этом проекте нет");
+    expect(lines).toContain("=== СВЕРКА МОЛЧИТ НАМЕРЕННО: РЕЦЕПТ НЕ ПРОГОНЯЛСЯ ===");
+    expect(lines).toContain(
+      "  Новый узел лежит по раскладке — отступление объявлено решением либо долгом перехода: раскладка проекта своя",
+    );
+    expect(lines.join(NEWLINE)).not.toMatch(/по раскладке — предмета/);
+  });
+
+  it("пустая секция не печатается вовсе", () => {
+    expect(idleReportOf([], [])).toEqual([]);
+    const onlyQuiet = idleReportOf([], [{ section: "А", note: "  причина" }]);
+    expect(onlyQuiet.join(NEWLINE)).not.toContain("БЕЗ ПРЕДМЕТА");
+    expect(idleReportOf(["А"], []).join(NEWLINE)).not.toContain("МОЛЧИТ НАМЕРЕННО");
+  });
+
+  it("сверка с несколькими рецептами названа одной строкой", () => {
+    const lines = idleReportOf(["А", "Б", "А"], []);
+    expect(lines.filter((l) => l.startsWith("  А — "))).toHaveLength(1);
+    expect(lines).toContain("  Б — предмета в этом проекте нет");
   });
 });
 
