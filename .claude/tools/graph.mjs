@@ -34922,6 +34922,23 @@ if (mode === "verify") {
     }
     for (const row of transitionDebt())
       for (const name of row.names) {
+        const found = HELD_FOUND.get(name);
+        if (found === undefined || row.count === null || row.count <= found) continue;
+        unheld.push(
+          "пункт " +
+            row.no +
+            " держит «" +
+            name +
+            "» числом `" +
+            row.count +
+            "`, а она находит " +
+            found +
+            " — долг сжимается следом за починкой: " +
+            (found === 0 ? "удалить пункт" : "поставить `" + found + "`"),
+        );
+      }
+    for (const row of transitionDebt())
+      for (const name of row.names) {
         if (!PRINTED.has(name)) continue;
         // Сверку со своим храповиком держит поле долга, и сверх него она
         // говорит сама.

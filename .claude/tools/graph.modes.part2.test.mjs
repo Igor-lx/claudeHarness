@@ -5846,6 +5846,11 @@ describe("пункт долга и названная им сверка", () => 
       // Пункт держит число, а не папку: третий тест мимо `tests/` назван.
       test("zzThree.test.ts");
       expect(away()).toHaveLength(1);
+      // Починка сжимает долг: пункт, держащий больше найденного, назван.
+      for (const name of ["zzTwo.test.ts", "zzThree.test.ts"]) fs.rmSync(path.join(box, "src", "app", name));
+      expect((verifyIn(box).get("Пункт долга держит названную сверку") ?? []).join("\n")).toContain(
+        "держит «Тесты лежат в `tests/`» числом `2`, а она находит 1 — долг сжимается следом за починкой: поставить `1`",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
