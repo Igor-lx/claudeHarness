@@ -488,46 +488,48 @@ it, each with its own question:
 
 ## Status
 
-**v0.3.1: ready for work.** Everything described here is in place. v0.3.0
-closed a plan that checked it on real runs rather than by
-description: the full self-test suite passes on Linux and on Windows; every
-check that has its subject on the test stand catches its planted breakage;
-seating works in one command in an empty folder and in a project like a fresh `create vite`
-template; the bar pass, measured by planting known defects into existing
-code, caught every plant - a group of twenty-four and the single re-runs of
-the misses; a forty-nine-probe run of the harness as a process found thirteen
-defects, all fixed. The architecture and the concept are settled. Next comes
+**v0.4.0: ready for work.** Everything described here is in place, and it
+is checked on real runs rather than by description: the full self-test suite
+passes on Linux and on Windows; every check that has its subject on the test
+stand catches its planted breakage; seating works in one command in all
+three scenarios - an empty folder, a familiar project and a foreign one -
+and the self-tests seat eighteen small projects of all three by that command;
+the bar pass, measured by planting known defects into existing code, caught
+every plant. The architecture and the concept are settled. Next comes
 writing real projects on it; details of the rules, the checks and the tool's
 output may still change between versions.
 
-What changed since v0.3.0:
+What changed since v0.3.1:
 
-- **renames and moves are probed too**: the bar probe plants a defect in a
-  file that the edit renames or moves - in place, within a layer and between
-  layers - and the bar pass catches it at the new path;
-- **a rule hidden in a hook is asked about**: a shared hook that computes a
-  domain rule in place, instead of calling a plain function, now gets a
-  machine question on keeping domain logic out of the framework.
+- **any project is seated by one command, in one of three scenarios**: an
+  empty folder gets everything; a familiar project gets its stack plan shown,
+  changes nothing until you agree, and then has its versions brought to the
+  verified set and its own configs composed with the harness ones, not
+  rewritten; a foreign project gets the rules and the knowledge base only,
+  nothing is installed, and the report names what the harness cannot see;
+- **"seat the harness" is enough**: a `seat` skill makes the agent run that
+  one command and answer its outcome, without reading the long seating
+  instruction;
+- **seating is proven as intended**: the self-tests seat eighteen projects
+  that were not built from the harness seeds - two empty, seven familiar,
+  nine foreign - and check that each ends in two commits on top of its
+  history, touches none of the project's files beyond the named ones, sets
+  the gates its scenario calls for and changes nothing on a second call;
+- **checks follow the scenario**: the harness's own self-checks run only in
+  its repository, and checks of the stack's form are muted in a foreign
+  project and named there as not seen;
+- **a big project costs the agent no more to seat**: on a generated project
+  of 1,364 files the agent reads the same few thousand characters as on a
+  small one, and only the machine time grows; the transition of such a
+  project is split by areas, and its protocols no longer grow with the
+  square of repeated code;
+- **eleven rounds of seating trial projects** found and fixed classes of
+  defects in the tool: workspaces, foreign frameworks recognised by their
+  package, peer conflicts named before the install, pinned versions held by
+  a check with a debt ratchet, code the harness does not read named.
 
-What changed between v0.2.1 and v0.3.0:
-
-- **a clean machine is enough**: seating installs the verified Node.js and
-  npm, and git if it is missing, before its first change;
-
-- **seating an empty folder in one command**, with every link of the check
-  chain tried on a planted breakage and the baseline written in numbers;
-- **Windows** is verified: the self-test suite runs there in CI;
-- **the seed pins exact versions**: a new project gets exactly the set the
-  self-tests ran on, and the verified set is raised to it;
-- **the bar pass reads more and decides less by itself**: a short neighbour
-  is read whole, a "clean" on mutation coverage needs a fresh measurement,
-  removal of a node names exports left without a consumer, a commit of a
-  check-chain config passes the chain;
-- **the rules come at their moment**: settings, skills and styles rules load
-  with their files, so the entry doctrine is about a tenth smaller, and the
-  guard names rules that changed on disk after the session started;
-- **the files the harness writes itself** are checked record by record, and
-  a seed of an older edition is named as such after an update.
+Earlier releases and what each brought -
+[GitHub releases](https://github.com/Igor-lx/claudeHarness/releases).
 
 ## License
 
