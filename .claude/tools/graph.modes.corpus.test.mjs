@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SEAT_PACKAGES, TOOL_DIR } from "./graph.modes.shared.mjs";
+import { runTool } from "./graph.seat.mjs";
 
 /**
  * Корпус посадок. Обвязку проверяли на проектах, которые она сама и
@@ -30,7 +31,12 @@ const plant = (project) => {
   const box = fs.mkdtempSync(path.join(os.tmpdir(), "corpus-" + project.name + "-"));
   for (const [rel, text] of Object.entries(project.files)) {
     fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
-    fs.writeFileSync(path.join(box, rel), project.crlf === true ? text.replace(/\n/g, "\r\n") : text);
+    // Хук проекта исполняем: иначе git на Linux его пропускает, а на Windows
+    // запускает, и посадка проверялась бы на двух системах по-разному.
+    const hook = project.hooksPath !== undefined && rel.startsWith(project.hooksPath + "/");
+    fs.writeFileSync(path.join(box, rel), project.crlf === true ? text.replace(/\n/g, "\r\n") : text, {
+      mode: hook ? 0o755 : 0o644,
+    });
   }
   if (Object.keys(project.files).length > 0) {
     git(box, "init", "-q");
@@ -58,10 +64,12 @@ const snapshot = (box) => {
       .map((rel) => [rel, fs.readFileSync(path.join(box, rel))]),
   );
 };
+/** `npm` — через запуск инструмента: на Windows это `npm.cmd`, и без оболочки
+ * он не запускается. */
 const npm = (box, ...args) => {
   const env = { ...process.env };
   delete env.CLAUDE_CODE_CHILD_SESSION;
-  return spawnSync("npm", args, { cwd: box, encoding: "utf8", env });
+  return runTool("npm", args, { cwd: box, env });
 };
 /** Что посадка вправе сделать с файлом проекта: знакомому — дописать
  * списки и манифест и положить свой конфиг рядом под проектным именем;
@@ -145,6 +153,9 @@ describe("корпус посадок", () => {
             expect(touched, "файлы проекта, тронутые посадкой").toEqual([]);
             const hooks = spawnSync("git", ["config", "core.hooksPath"], { cwd: box, encoding: "utf8" }).stdout.trim();
             expect(hooks).toBe(project.scenario === "foreign" ? hooksBefore : ".claude/hooks/git");
+            // Свой хук проекта посадка не обходит: оба её коммита прошли через него.
+            if (project.hooksPath !== undefined)
+              expect(fs.readFileSync(path.join(box, ".git", "hook-ran"), "utf8").trim().split("\n")).toHaveLength(2);
             if (project.scenario === "foreign") expect(fs.existsSync(path.join(box, "node_modules"))).toBe(false);
             for (const left of [".stryker-tmp", ".проба-сверок", "reports"]) expect(fs.existsSync(path.join(box, left)), left).toBe(false);
             const head = git(box, "rev-parse", "HEAD");
@@ -166,7 +177,7 @@ describe("корпус посадок", () => {
             }
             if (project.scenario === "empty") {
               const chain = npm(box, "run", "-s", "check");
-              expect(chain.status, chain.stdout + chain.stderr).toBe(0);
+              expect(chain.status, chain.out).toBe(0);
             }
             // Связи, которых сверка не печатает: куда ведёт импорт.
             for (const one of project.briefs ?? []) {

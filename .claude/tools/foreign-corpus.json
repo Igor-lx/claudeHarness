@@ -69,7 +69,7 @@
       "hooksPath": ".husky",
       "files": {
         "package.json": "{\n  \"name\": \"hooked\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"typecheck\": \"tsc --noEmit\",\n    \"test\": \"vitest run\",\n    \"prepare\": \"husky\"\n  },\n  \"devDependencies\": {\n    \"husky\": \"^9.1.7\",\n    \"typescript\": \"~5.6.3\",\n    \"vitest\": \"^2.1.8\"\n  }\n}\n",
-        ".husky/pre-commit": "npm test\n",
+        ".husky/pre-commit": "#!/bin/sh\necho ran >> \"$(git rev-parse --git-dir)/hook-ran\"\n",
         "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
         "src/even.ts": "export const isEven = (n: number): boolean => n % 2 === 0;\n",
         "src/even.test.ts": "import { describe, expect, it } from \"vitest\";\nimport { isEven } from \"./even\";\n\ndescribe(\"isEven\", () => {\n  it(\"works\", () => {\n    expect(isEven(2)).toBe(true);\n  });\n});\n"
