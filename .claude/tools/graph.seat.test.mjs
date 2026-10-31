@@ -1009,6 +1009,29 @@ describe("посадка на месте одной командой", () => {
     }
   }, 120000);
 
+  it("пустая папка внутри чужого репозитория — отказ теми же словами, что живому проекту, вложенного репозитория нет", () => {
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), "seat-outer-"));
+    const shelfBox = boxWithShelf("seat-inner-src-");
+    try {
+      gitIn(outer, "init", "-q");
+      fs.writeFileSync(path.join(outer, "README.md"), "# outer\n");
+      gitIn(outer, "add", "-A");
+      gitIn(outer, "commit", "-qm", "outer");
+      const inner = path.join(outer, "app");
+      fs.mkdirSync(inner);
+      fs.cpSync(path.join(shelfBox, ".claude"), path.join(inner, ".claude"), { recursive: true });
+      const r = seatHere(inner, "--packages", ROOT);
+      expect(r.status, r.stdout).toBe(1);
+      expect(r.stdout).toContain("Проект лежит внутри репозитория");
+      expect(r.stdout).toContain("Позвать посадку из корня репозитория");
+      expect(fs.existsSync(path.join(inner, ".git"))).toBe(false);
+      expect(fs.readdirSync(inner)).toEqual([".claude"]);
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+      fs.rmSync(shelfBox, { recursive: true, force: true });
+    }
+  }, 120000);
+
   it("репозиторий посреди операции либо на отсоединённой вершине — отказ до работы, папка не тронута", () => {
     const box = boxWithShelf("seat-busy-");
     try {

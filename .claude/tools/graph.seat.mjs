@@ -985,6 +985,16 @@ export const gitBusyOf = (root) => {
   return null;
 };
 
+/** Репозиторий выше папки, у которой своего `.git` нет; иначе `null`.
+ * Посадка коммитит в корне репозитория проекта: живому проекту в подпапке
+ * она отказывала, а пустой папке там же заводила вложенный репозиторий. Решено
+ * разработчиком `2026-10-31`: отказ обоим, одними словами. */
+export const enclosingRepoOf = (root) => {
+  if (existsSync(path.join(root, ".git"))) return null;
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  return r.status === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : null;
+};
+
 /** Отчёт о коммитах посадки от имени seat, один на оба сценария: git на
  * машине не знает имени, и первый свой коммит человека упал бы. Выведено
  * посадкой с голой машины; живая посадка о нём молчала. */
@@ -1068,6 +1078,12 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
     refuse(
       "Обвязка здесь уже посажена: настройка проекта лежит в .context/graph.config.mjs.",
       "Обновить обвязку — скопировать полку поверх .claude/; испытательную посадку обновляет `seat <папка>` из мастерской.",
+    );
+  const above = enclosingRepoOf(target);
+  if (above !== null)
+    refuse(
+      "Проект лежит внутри репозитория " + norm(above) + ", а не в его корне: посадка коммитит в корне репозитория проекта.",
+      "Позвать посадку из корня репозитория либо вынести проект в свой репозиторий.",
     );
   const gitBusy = existsSync(gitDir) ? gitBusyOf(target) : null;
   if (gitBusy !== null) refuse(gitBusy[0].toUpperCase() + gitBusy.slice(1), "Папка не тронута.");
