@@ -4897,6 +4897,67 @@ describe("признаки по всей планке в модели свода
     }
   }, 180000);
 
+  it("повтор и метка в протоколе — факт один раз: пара строкой, группа тел, условий и меток строкой у первого файла", () => {
+    const box = seatEmpty("repeat-once-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      // Блок строк ловят окна; короткое тело и условие окна не видят.
+      const block = (name) =>
+        [
+          "export const zzSum" + name + " = (values: { weight: number; enabled: boolean; name: string }[], limit: number) => {",
+          "  const total = values.reduce((sum, one) => sum + one.weight, 0);",
+          "  const ready = values.filter((one) => one.weight > limit && one.enabled);",
+          "  const names = ready.map((one) => one.name.trim().toLowerCase());",
+          "  const unique = names.filter((name, at) => names.indexOf(name) === at);",
+          "  const share = unique.length / Math.max(total, 1);",
+          "  return { total, unique, share };",
+          "};",
+          "",
+        ].join("\n");
+      const short = (name) =>
+        [
+          "export const zzPick" + name + " = (xs: readonly number[]) => xs.filter((x) => x > 0 && x < 10);",
+          "export const zzAllowed" + name + " = (account: { isAdmin: boolean; isActive: boolean }): boolean => {",
+          "  if (account.isAdmin && account.isActive) return true;",
+          "  return false;",
+          "};",
+          "",
+        ].join("\n");
+      for (const name of ["A", "B", "C"]) put("src/shared/zzRep/zz" + name + ".ts", block(name));
+      for (const name of ["P", "Q", "R"]) put("src/shared/zzRep/zz" + name + ".ts", short(name));
+      // Метка, которую сравнивают в трёх единицах переноса.
+      for (const name of ["X", "Y", "Z"])
+        put(
+          "src/shared/zzTag" + name + "/zzTag" + name + ".ts",
+          "export const zzWide" + name + ' = (kind: string) => (kind === "plain" ? 1 : 2);\n',
+        );
+      tool("bar", "shared");
+      const lines = fs
+        .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
+        .split("\n")
+        .filter((l) => /^\| П\d+ \| повтор \|/.test(l));
+      const count = (re) => lines.filter((l) => re.test(l)).length;
+      // Три файла — три пары окон, а не шесть встречных строк.
+      expect(count(/строки \d+–\d+ повторены в/)).toBe(3);
+      // Тело и условие трёх файлов — по строке на группу, со всеми копиями.
+      const pick = lines.filter((l) => /тело `zzPick/.test(l));
+      expect(pick).toHaveLength(1);
+      expect(pick[0]).toMatch(/zzQ\.ts:1`, `shared\/zzRep\/zzR\.ts:1`/);
+      const cond = lines.filter((l) => /условие `/.test(l));
+      expect(cond).toHaveLength(1);
+      expect(cond[0]).toMatch(/zzQ\.ts:3`, `shared\/zzRep\/zzR\.ts:3`/);
+      const tag = fs
+        .readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8")
+        .split("\n")
+        .filter((l) => /^\| П\d+ \| метка \|/.test(l));
+      expect(tag).toHaveLength(1);
+      expect(tag[0]).toMatch(/zzTagY\.ts:1`, `shared\/zzTagZ\/zzTagZ\.ts:1`/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("мутационный замер файла: не мерен, устарел, оставил выживших", () => {
     const box = seatEmpty("mutrow-");
     try {

@@ -11806,8 +11806,13 @@ const cloneIndex = () => {
   return CLONES_CACHE;
 };
 /** Повторы файла: его строки, повторённые в другом месте проекта, —
- * диапазоном на каждого партнёра, — и его условия, повторённые там же. */
-const repeatsOf = (f) => {
+ * диапазоном на каждого партнёра, — и его условия, повторённые там же.
+ * `seen` — факты, уже названные этим протоколом: пара окон встаёт одной
+ * строкой, а не двумя встречными, группа тел и условий — одной строкой у
+ * первого её файла со всеми копиями. Без этого группа из k копий давала k
+ * строк по k−1 адресов. Замерено: `600` копий одного тела дали протокол
+ * приложения в `30` миллионов знаков. */
+const repeatsOf = (f, seen = new Set()) => {
   const { windows, conditions, bodies } = cloneIndex();
   const byPartner = new Map();
   for (const list of windows.values()) {
@@ -11827,19 +11832,25 @@ const repeatsOf = (f) => {
         });
       }
   }
+  const pair = (other) => "окно\0" + [f, other].sort().join("\0");
   const out = [...byPartner]
+    .filter(([other]) => !seen.has(pair(other)))
     .sort((a, b) => barByRel(a[0], b[0]))
-    .map(([other, r]) => ({
-      line: r.from,
-      mark: "",
-      what: "строки " + r.from + "–" + r.to + " повторены в " + barQuoted(rel(other) + ":" + r.at),
-    }));
+    .map(([other, r]) => {
+      seen.add(pair(other));
+      return {
+        line: r.from,
+        mark: "",
+        what: "строки " + r.from + "–" + r.to + " повторены в " + barQuoted(rel(other) + ":" + r.at),
+      };
+    });
   // Тело, повторённое там, где окно строк повтора не нашло.
   for (const list of bodies.values()) {
     const mine = list.find((x) => x.file === f);
-    if (mine === undefined) continue;
+    if (mine === undefined || seen.has(list)) continue;
     const others = list.filter((x) => x !== mine && !byPartner.has(x.file));
     if (others.length === 0) continue;
+    seen.add(list);
     out.push({
       line: mine.line,
       mark: "",
@@ -11853,16 +11864,17 @@ const repeatsOf = (f) => {
   for (const [cond, list] of conditions) {
     const mine = list.filter((x) => x.file === f);
     const others = list.filter((x) => x.file !== f);
-    if (mine.length > 0 && others.length > 0)
-      out.push({
-        line: mine[0].line,
-        mark: "условие",
-        what:
-          "условие " +
-          barQuoted(cond.slice(0, 60)) +
-          " повторено в " +
-          barQuoted(rel(others[0].file) + ":" + others[0].line),
-      });
+    if (mine.length === 0 || others.length === 0 || seen.has(list)) continue;
+    seen.add(list);
+    out.push({
+      line: mine[0].line,
+      mark: "условие",
+      what:
+        "условие " +
+        barQuoted(cond.slice(0, 60)) +
+        " повторено в " +
+        others.map((x) => barQuoted(rel(x.file) + ":" + x.line)).join(", "),
+    });
   }
   return out;
 };
@@ -11870,14 +11882,16 @@ const repeatsOf = (f) => {
 /** Метки файла, с которыми сравнивают и в других единицах переноса: новый
  * вариант метки потребует правки в каждой. Найдено пробой планки: вид
  * заметки, разобранный тернарным сравнением в трёх слоях, прошёл свод без
- * вопроса о цене изменения — короткое сравнение индекс условий не видит. */
-const tagRepeatsOf = (f) => {
+ * вопроса о цене изменения — короткое сравнение индекс условий не видит.
+ * `seen` — как у `repeatsOf`: группа метки встаёт раз на протокол. */
+const tagRepeatsOf = (f, seen = new Set()) => {
   const out = [];
   for (const [key, list] of cloneIndex().tags) {
     const mine = list.find((x) => x.file === f);
-    if (mine === undefined) continue;
+    if (mine === undefined || seen.has(list)) continue;
     const others = list.filter((x) => unitOf(x.file) !== unitOf(f));
     if (others.length === 0) continue;
+    seen.add(list);
     const [name, tag] = key.split("=");
     out.push({
       line: mine.line,
@@ -13976,6 +13990,7 @@ const barModelOf = (
   const seenCycles = new Set();
   const seenRecords = new Set();
   const seenKeys = new Set();
+  const seenRepeats = new Set();
 
   const subjectRel = new Set(subject.map(rel));
   // Удалённый узел предмета: имя, которое он брал, могло остаться без
@@ -14178,9 +14193,9 @@ const barModelOf = (
         "парная копия: " + barQuoted(twin),
         change && !subjectRel.has(twin) ? "не тронута" : "",
       );
-    for (const r of want("повтор") ? repeatsOf(f) : [])
+    for (const r of want("повтор") ? repeatsOf(f, seenRepeats) : [])
       add("повтор", where + ":" + r.line, r.what, r.mark);
-    for (const r of want("метка") ? tagRepeatsOf(f) : [])
+    for (const r of want("метка") ? tagRepeatsOf(f, seenRepeats) : [])
       add("метка", where + ":" + r.line, r.what);
     for (const what of want("постоянный") ? constantInputsOf(f) : [])
       add("постоянный", where, what);
