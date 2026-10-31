@@ -6,8 +6,9 @@ name: harness-bootstrap
 on:
   workflow_dispatch:
   # A bootstrap edit or a new verified set is tested without being remembered.
+  # Every branch, not only main: on main alone a red run showed up only
+  # after the merge, and harness-windows stayed red for twenty runs unnoticed.
   push:
-    branches: [main]
     paths:
       - .claude/seat/bootstrap.sh
       - .claude/seat/templates/graph.config.mjs

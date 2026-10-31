@@ -5,8 +5,9 @@ name: harness-windows
 on:
   workflow_dispatch:
   # A tool or seat edit is tested on Windows without being remembered.
+  # Every branch, not only main: on main alone a red run showed up only
+  # after the merge, and harness-windows stayed red for twenty runs unnoticed.
   push:
-    branches: [main]
     paths:
       - .claude/tools/**
       - .claude/seat/**
