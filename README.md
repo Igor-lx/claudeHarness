@@ -493,7 +493,7 @@ is checked on real runs rather than by description: the full self-test suite
 passes on Linux and on Windows; every check that has its subject on the test
 stand catches its planted breakage; seating works in one command in all
 three scenarios - an empty folder, a familiar project and a foreign one -
-and the self-tests seat eighteen small projects of all three by that command;
+and the self-tests seat a corpus of small projects of all three by that command;
 the bar pass, measured by planting known defects into existing code, caught
 every plant. The architecture and the concept are settled. Next comes
 writing real projects on it; details of the rules, the checks and the tool's
@@ -510,9 +510,9 @@ What changed since v0.3.1:
 - **"seat the harness" is enough**: a `seat` skill makes the agent run that
   one command and answer its outcome, without reading the long seating
   instruction;
-- **seating is proven as intended**: the self-tests seat eighteen projects
-  that were not built from the harness seeds - two empty, seven familiar,
-  nine foreign - and check that each ends in two commits on top of its
+- **seating is proven as intended**: the self-tests seat a corpus of
+  projects that were not built from the harness seeds, of all three kinds,
+  and check that each ends in two commits on top of its
   history, touches none of the project's files beyond the named ones, sets
   the gates its scenario calls for and changes nothing on a second call;
 - **checks follow the scenario**: the harness's own self-checks run only in

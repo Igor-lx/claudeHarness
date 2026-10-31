@@ -74,7 +74,10 @@ const npm = (box, ...args) => {
 /** Что посадка вправе сделать с файлом проекта: знакомому — дописать
  * списки и манифест и положить свой конфиг рядом под проектным именем;
  * чужому — дописать только исключения git. Прочее — байт в байт. */
-const OWN_CHANGED = { familiar: [".gitignore", ".gitattributes", ".prettierignore", "package.json"], foreign: [".gitignore"] };
+const OWN_CHANGED = {
+  familiar: [".gitignore", ".gitattributes", ".prettierignore", "package.json", ".claude/settings.json"],
+  foreign: [".gitignore", ".claude/settings.json"],
+};
 const besideName = (rel) =>
   rel === "CLAUDE.md"
     ? "CLAUDE.project.md"
@@ -147,7 +150,8 @@ describe("корпус посадок", () => {
               if (fs.existsSync(at) && fs.readFileSync(at).equals(bytes)) continue;
               if (fs.existsSync(at) && allowed.includes(rel)) continue;
               const beside = path.join(box, besideName(rel));
-              if (project.scenario === "familiar" && !fs.existsSync(at) && fs.existsSync(beside) && fs.readFileSync(beside).equals(bytes)) continue;
+              // Перенесён рядом: на своём месте его нет либо лежит файл обвязки.
+              if (project.scenario === "familiar" && fs.existsSync(beside) && fs.readFileSync(beside).equals(bytes)) continue;
               touched.push(rel);
             }
             expect(touched, "файлы проекта, тронутые посадкой").toEqual([]);

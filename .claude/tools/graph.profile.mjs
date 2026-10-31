@@ -43,6 +43,10 @@ const readJson = (at) => {
  * `commits` — сколько коммитов в истории: свежий шаблон узнаётся только
  * без своей истории. `withTools` — оси-инструменты, которые разработчик
  * велел заменить своими: они чужими не считаются. */
+/** Чужая ось, которую ставит сам классификатор, а не карта посадки: у
+ * проекта нет манифеста. Сверка чужого окружения узнаёт её по этому имени. */
+export const NO_MANIFEST_AXIS = "манифест";
+
 export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => {
   const read = (rel) => {
     const at = path.join(root, rel);
@@ -64,7 +68,7 @@ export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => 
   });
   const foreign =
     manifest === null
-      ? [{ axis: "манифест", what: "package.json нет", tool: null }, ...survey.foreign]
+      ? [{ axis: NO_MANIFEST_AXIS, what: "package.json нет", tool: null }, ...survey.foreign]
       : survey.foreign;
   return {
     scenario: foreign.length > 0 ? "foreign" : "familiar",

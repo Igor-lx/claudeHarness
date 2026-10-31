@@ -951,6 +951,18 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
       "Обновить обвязку — скопировать полку поверх .claude/; испытательную посадку обновляет `seat <папка>` из мастерской.",
     );
   const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] };
+  // Полка уже в истории, а настройки посадки нет — так выглядит мастерская:
+  // у проекта перед посадкой полка новая и неотслеживаемая. Прежде `seat .`,
+  // позванный в клоне мастерской, сажал обвязку в её же репозиторий.
+  try {
+    execFileSync("git", ["ls-files", "--error-unmatch", ".claude/tools/graph.mjs"], quiet);
+    refuse(
+      "Полка .claude/ уже лежит в истории этого репозитория, а настройки посадки нет: так выглядит мастерская обвязки, её не сажают.",
+      "В проекте — убрать полку из истории коммитом, положить заново и позвать посадку.",
+    );
+  } catch {
+    // Полки в истории нет, репозитория нет либо нет git: решает дальнейшее.
+  }
   const asked = (args) => {
     try {
       return execFileSync("git", args, quiet).trim();
@@ -965,29 +977,31 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
     const at = path.join(target, rel);
     return existsSync(at) && statSync(at).isFile() ? readFileSync(at, "utf8") : null;
   };
+  // Ключ мастерской назвал папку без пакетов — молча ставить из сети
+  // значило бы подменить проверяемое.
+  if (packagesFrom !== null && !existsSync(path.join(packagesFrom, "node_modules")))
+    refuse("Ключ --packages назвал папку без node_modules: " + norm(packagesFrom) + ".");
   const entries = readdirSync(target).filter((e) => e !== ".claude" && e !== ".git");
   const kind = inPlaceKindOf(entries, read, commits);
-  // Живой проект — знакомый либо чужой: свой порядок, `graph.seatlive.mjs`.
-  if (kind.kind === "живой")
-    live({
-      shelf,
-      target,
-      env,
-      packagesFrom,
-      apply,
-      profile: profileOf({ root: target, shelf, commits, withTools }),
-    });
+  const profile = kind.kind === "живой" ? profileOf({ root: target, shelf, commits, withTools }) : null;
+  // Среда — до первой правки у всех, кому посадка ставит пакеты: живой
+  // проект прежде уходил в свой порядок раньше неё, и знакомый без npm падал
+  // уже на установке.
   const declared = verifiedOf(
     readFileSync(path.join(shelf, "seat", "templates", "graph.config.mjs"), "utf8"),
   );
-  const { low } = envLowOf(declared);
-  if (low.length > 0)
-    refuse(
-      "Среда ниже проверенной связки — посадка не начата, папка не тронута:",
-      ...low.map((one) => "  " + one.name + " " + one.have + " — нужно " + one.need),
-      "Поднять: " + ENV_BOOTSTRAP + " — ставит Node.js и npm проверенной связки и git;",
-      "посадка зовёт его сама, сказав, что и куда ставит. Затем команду зовут снова.",
-    );
+  if (profile?.scenario !== "foreign") {
+    const { low } = envLowOf(declared);
+    if (low.length > 0)
+      refuse(
+        "Среда ниже проверенной связки — посадка не начата, папка не тронута:",
+        ...low.map((one) => "  " + one.name + " " + one.have + " — нужно " + one.need),
+        "Поднять: " + ENV_BOOTSTRAP + " — ставит Node.js и npm проверенной связки и git;",
+        "посадка зовёт его сама, сказав, что и куда ставит. Затем команду зовут снова.",
+      );
+  }
+  // Живой проект — знакомый либо чужой: свой порядок, `graph.seatlive.mjs`.
+  if (profile !== null) live({ shelf, target, env, packagesFrom, apply, profile });
 
   // Откат: всё, что положила посадка, снимается в обратном порядке.
   const undo = [];

@@ -1,7 +1,10 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { SEAT_PACKAGES } from "./graph.modes.shared.mjs";
 
 import {
   configDebt,
@@ -13,6 +16,8 @@ import {
   rulesWithOwnLayout,
   rulesWithout,
   scriptsLive,
+  settingsMerged,
+  shelfUntracked,
   sourceRootsOf,
   tableRows,
   transitionWith,
@@ -71,6 +76,30 @@ describe("живая посадка: база без каркаса", () => {
     expect(out).not.toContain("Раскладка умолчания обвязки, три слоя.");
     expect(out).toContain("<Раскладка проекта:");
     expect(out).toContain("**Законное, хотя со стороны читается нарушением:**");
+  });
+});
+
+describe("живая посадка: своё проекта внутри полки", () => {
+  const map = JSON.parse(fs.readFileSync(path.join(SEEDS, "..", "map.json"), "utf8"));
+
+  it("неотслеживаемое полки — любой формой строки git; своё проекта внутри полки и вне её — нет", () => {
+    for (const one of ["?? .claude/", "?? .claude", "?? .claude/README.md", "?? .claude/rules/", "?? .claude/hooks/", "?? .claude/hooks/git/", '?? ".claude/rules/a b.md"'])
+      expect(shelfUntracked(one, map), one).toBe(true);
+    for (const one of ["?? .claude/commands/x.md", "?? .claude/settings.local.json", "?? .claude/hooks/own.sh", " M .claude/README.md", "?? notes.txt", "?? src/.claude/x"])
+      expect(shelfUntracked(one, map), one).toBe(false);
+  });
+
+  it("настройки проекта: свои строки и хуки остаются, строки и хуки семени дописываются один раз", () => {
+    const seedSettings = JSON.parse(seed("settings.json"));
+    const own = { model: "x", permissions: { allow: ["Bash(make:*)"], deny: ["Bash(rm:*)"] }, hooks: { Stop: [{ hooks: [{ type: "command", command: "own-stop" }] }] } };
+    const once = settingsMerged(own, seedSettings);
+    expect(once.model).toBe("x");
+    expect(once.permissions.allow).toEqual(expect.arrayContaining(["Bash(make:*)", ...(seedSettings.permissions.allow ?? [])]));
+    expect(once.permissions.deny).toEqual(expect.arrayContaining(["Bash(rm:*)", ...(seedSettings.permissions.deny ?? [])]));
+    for (const [event, groups] of Object.entries(seedSettings.hooks ?? {}))
+      for (const g of groups) expect(once.hooks[event], event).toContainEqual(g);
+    expect(once.hooks.Stop).toContainEqual({ hooks: [{ type: "command", command: "own-stop" }] });
+    expect(settingsMerged(once, seedSettings)).toEqual(once);
   });
 });
 
@@ -193,8 +222,171 @@ describe("живая посадка: композиция конфигов и с
     expect(replaced).toEqual([{ name: "test", was: "vitest" }]);
   });
 
+  it("строгость: существующий, но не разбираемый конфиг компилятора — отказ с его именем", () => {
+    const tsconfig = seed("tsconfig.json");
+    const files = { "tsconfig.json": '{ "references": [ { "path": "./tsconfig.app.json" }, ' };
+    expect(() => strictConfigsOf((n) => files[n] ?? null, tsconfig)).toThrow(/tsconfig\.json проекта не разбирается/);
+    const solution = { "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }', "tsconfig.app.json": "{ oops" };
+    expect(() => strictConfigsOf((n) => solution[n] ?? null, tsconfig)).toThrow(/tsconfig\.app\.json проекта/);
+    expect(strictConfigsOf(() => null, tsconfig).call).toBe("tsc -p tsconfig.strict.json");
+  });
+
   it("корень исходников: `src`, иначе папки верхнего уровня с кодом, без конфигов корня", () => {
     expect(sourceRootsOf(["src/a.ts", "lib/b.ts"])).toEqual(["src"]);
     expect(sourceRootsOf(["lib/a.ts", "vite.config.ts", "scripts/x.config.js", "README.md"])).toEqual(["lib"]);
+  });
+});
+
+// Отказы посадки живого проекта: причина названа верно, проект байт в байт
+// прежний, история не тронута. Выведено прогоном проб по холодному контуру.
+describe("живая посадка: отказ возвращает проект и называет причину", () => {
+  const SHELF = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const CORPUS = JSON.parse(fs.readFileSync(path.join(SHELF, "tools", "foreign-corpus.json"), "utf8"));
+  const OWN = new Set(JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8")).projectOwnedInsideHarness ?? []);
+  const git = (box, ...args) =>
+    execFileSync("git", ["-c", "user.email=t@x", "-c", "user.name=t", ...args], { cwd: box, encoding: "utf8" }).trim();
+  const plantLive = (files, sub = "") => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "seatlive-refuse-"));
+    const box = path.join(root, sub);
+    for (const [rel, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+      fs.writeFileSync(path.join(box, rel), text);
+    }
+    git(root, "init", "-q");
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "project", "--no-verify");
+    fs.cpSync(SHELF, path.join(box, ".claude"), {
+      recursive: true,
+      filter: (src) => !(path.dirname(src) === SHELF && OWN.has(path.basename(src))),
+    });
+    return { root, box };
+  };
+  const seatIn = (box, args, env = {}) => {
+    const e = { ...process.env, ...env };
+    delete e.CLAUDE_CODE_CHILD_SESSION;
+    const r = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "seat", ".", ...args], { cwd: box, encoding: "utf8", env: e });
+    return { status: r.status, out: String(r.stdout ?? "") + String(r.stderr ?? "") };
+  };
+  const tracked = (root) =>
+    new Map(git(root, "ls-files").split("\n").filter(Boolean).map((f) => [f, fs.readFileSync(path.join(root, f), "utf8")]));
+  const apply = ["--apply", "--packages", path.dirname(SEAT_PACKAGES)];
+  const files = () => ({ ...CORPUS.projects.find((p) => p.name === "create-vite").files });
+  const same = (root, before, commits) => {
+    expect(tracked(root)).toEqual(before);
+    expect(Number(git(root, "rev-list", "--count", "HEAD"))).toBe(commits);
+    expect(git(root, "status", "--porcelain").split("\n").filter((l) => l && !/^\?\? (?:\S+\/)?\.claude\/$/.test(l))).toEqual([]);
+  };
+
+  it("проект в подпапке репозитория: названа папка репозитория, а не его отсутствие", () => {
+    const { root, box } = plantLive(files(), "app");
+    try {
+      const before = tracked(root);
+      const r = seatIn(box, apply);
+      expect(r.status, r.out).toBe(1);
+      expect(r.out).toContain("Проект лежит внутри репозитория");
+      expect(r.out).not.toContain("без репозитория git");
+      same(root, before, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("занятое имя переноса и записи: отказ до первой правки, своё проекта цело", () => {
+    for (const [name, text] of [["CLAUDE.project.md", "# notes\n"], ["eslint.project.config.js", "export default [];\n"], [".context/00-map.md", "# our map\n"]]) {
+      const f = files();
+      f["CLAUDE.md"] = "# rules\n";
+      f[name] = text;
+      const { root, box } = plantLive(f);
+      try {
+        const before = tracked(root);
+        const r = seatIn(box, apply);
+        expect(r.status, r.out).toBe(1);
+        expect(r.out).toContain("Имя " + name + " уже занято файлом проекта");
+        same(root, before, 1);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }, 360000);
+
+  it.skipIf(process.platform === "win32")("знакомый проект без npm: среда названа до первой правки", () => {
+    const { root, box } = plantLive(files());
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "seatlive-bin-"));
+    fs.symlinkSync(process.execPath, path.join(bin, "node"));
+    try {
+      const before = tracked(root);
+      const r = seatIn(box, ["--apply"], { PATH: bin + path.delimiter + "/usr/bin" + path.delimiter + "/bin" });
+      expect(r.status, r.out).toBe(1);
+      expect(r.out).toContain("Среда ниже проверенной связки");
+      expect(r.out).not.toContain("переставила");
+      same(root, before, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("отказ git на коммите посадки — занятый индекс: откат возвращает файлы и историю", () => {
+    const { root, box } = plantLive(files());
+    try {
+      const before = tracked(root);
+      fs.writeFileSync(path.join(root, ".git", "index.lock"), "");
+      const r = seatIn(box, apply);
+      fs.rmSync(path.join(root, ".git", "index.lock"), { force: true });
+      expect(r.status, r.out).toBe(1);
+      expect(r.out).toContain("Коммит посадки не прошёл");
+      expect(r.out).toContain("index.lock");
+      expect(r.out).not.toMatch(/node:internal|\n\s+at /);
+      same(root, before, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 600000);
+});
+
+describe("посадка в мастерской", () => {
+  it("полка в истории репозитория без настройки посадки — отказ, история и файлы не тронуты", () => {
+    const SHELF = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "seat-workshop-"));
+    const git = (...args) => execFileSync("git", ["-c", "user.email=t@x", "-c", "user.name=t", ...args], { cwd: box, encoding: "utf8" }).trim();
+    try {
+      fs.writeFileSync(path.join(box, "README.md"), "# harness\n");
+      fs.cpSync(SHELF, path.join(box, ".claude"), { recursive: true });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "workshop", "--no-verify");
+      const env = { ...process.env };
+      delete env.CLAUDE_CODE_CHILD_SESSION;
+      const r = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "seat", "."], { cwd: box, encoding: "utf8", env });
+      expect(r.status, r.stdout).toBe(1);
+      expect(r.stdout).toContain("так выглядит мастерская обвязки");
+      expect(git("rev-list", "--count", "HEAD")).toBe("1");
+      expect(git("status", "--porcelain")).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+});
+
+describe("скилл посадки называет исходы словами команды", () => {
+  // Таблица исходов скилла `seat` — то, по чему ассистент узнаёт ответ
+  // команды. Строка, которой команда больше не печатает, оставляла скилл
+  // без исхода, и признака не было. Выведено прогоном проб по холодному
+  // контуру.
+  it("каждый исход из первой графы таблицы печатает инструмент", () => {
+    const TOOLS = path.dirname(fileURLToPath(import.meta.url));
+    const skill = fs.readFileSync(path.join(TOOLS, "..", "skills", "seat", "SKILL.md"), "utf8");
+    const table = skill.slice(skill.indexOf("## Исходы"), skill.indexOf("## Чего не делать"));
+    const said = [...table.matchAll(/^\| (.+?) \| /gm)]
+      .slice(2)
+      .flatMap((m) => [...m[1].matchAll(/`([^`]+)`/g)].map((one) => one[1]));
+    expect(said.length).toBeGreaterThan(5);
+    const code = fs
+      .readdirSync(TOOLS)
+      .filter((f) => /^graph[\w.]*\.mjs$/.test(f) && !f.endsWith(".test.mjs"))
+      .map((f) => fs.readFileSync(path.join(TOOLS, f), "utf8"))
+      .join("\n");
+    expect(said.filter((one) => !code.includes(one))).toEqual([]);
   });
 });

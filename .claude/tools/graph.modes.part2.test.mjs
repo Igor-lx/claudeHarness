@@ -6497,3 +6497,23 @@ describe("долг описания и шаг плана перехода", () =
     }
   }, 240000);
 });
+
+describe("поле сценария у проекта прежней редакции", () => {
+  // Значение семени — мастерская: совет «переписать из семени» оставлял
+  // обновлённый проект исполнять самопроверки обвязки у себя. Выведено
+  // прогоном проб по холодному контуру.
+  it("нет поля scenario — названы значения посаженного проекта, а не значение семени", () => {
+    const box = seatEmpty("scenario-gone-");
+    try {
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      const was = fs.readFileSync(cfg, "utf8");
+      expect(was).toMatch(/^ {2}scenario: .*,\n/m);
+      fs.writeFileSync(cfg, was.replace(/^ {2}scenario: .*,\n/m, ""));
+      const said = (verifyIn(box).get("Настройка проекта знает все поля семени") ?? []).join("\n");
+      expect(said).toContain('scenario — поле посадки, которого у проекта нет: посаженному в пустую папку — "empty"');
+      expect(said).not.toContain("scenario — поле семени");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});

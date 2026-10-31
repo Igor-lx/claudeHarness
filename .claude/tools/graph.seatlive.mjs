@@ -48,6 +48,41 @@ const LISTS = new Set([".gitignore", ".gitattributes", ".prettierignore"]);
 /** Скрипты звеньев, которые посадка пишет живому проекту. */
 const LIVE_SCRIPTS = ["typecheck", "lint", "format:check", "test", "test:coverage", "mutate", "check"];
 
+/** Строка `git status --porcelain` — неотслеживаемый файл самой полки, а не
+ * работа проекта. Проект, уже державший своё в `.claude/`, видит полку не
+ * одной строкой `?? .claude/`, а по файлу, и посадка отказывала ему вовсе.
+ * Своё проекта внутри полки — `projectOwnedInsideHarness` и `harnessInside`
+ * карты. */
+export const shelfUntracked = (line, map) => {
+  const m = /^\?\? "?(\.claude(?:\/[^"]*)?)"?$/.exec(line);
+  if (m === null) return false;
+  const parts = m[1].split("/").slice(1).filter(Boolean);
+  if (parts.length === 0) return true;
+  if ((map?.projectOwnedInsideHarness ?? []).includes(parts[0])) return false;
+  const inside = map?.harnessInside?.[parts[0]];
+  return inside === undefined || parts.length === 1 || inside.includes(parts[1]);
+};
+
+/** Настройки среды проекта со своими строками и строками семени: разрешения
+ * — объединением, хуки — недостающими группами по команде. Свой файл проекта
+ * оставался как был, и в проекте не стояли ни запреты обвязки, ни её хуки —
+ * ворота конца хода и страж обхода. */
+export const settingsMerged = (own, seed) => {
+  const out = { ...own, permissions: { ...(own.permissions ?? {}) }, hooks: { ...(own.hooks ?? {}) } };
+  for (const [kind, list] of Object.entries(seed.permissions ?? {}))
+    out.permissions[kind] = [...new Set([...(own.permissions?.[kind] ?? []), ...list])];
+  const callOf = (group) => JSON.stringify((group?.hooks ?? []).map((h) => [h.command, ...(h.args ?? [])]));
+  for (const [event, groups] of Object.entries(seed.hooks ?? {})) {
+    const have = new Set((out.hooks[event] ?? []).map((g) => callOf(g) + "|" + (g.matcher ?? "")));
+    out.hooks[event] = [
+      ...(out.hooks[event] ?? []),
+      ...groups.filter((g) => !have.has(callOf(g) + "|" + (g.matcher ?? ""))),
+    ];
+  }
+  if (Object.keys(out.hooks).length === 0) delete out.hooks;
+  return out;
+};
+
 /** Текст базы без записей о том, чего в проекте нет: абзацы каркаса между
  * пометками `КАРКАС`, строки таблиц и записи решений, называющие адрес
  * из `gone`. Адрес узнаётся целиком и без корня `src/`: реестр тестов
@@ -293,21 +328,31 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
       return null;
     }
   };
-  if (!existsSync(at(".git")))
+  if (!existsSync(at(".git"))) {
+    // Репозиторий выше папки проекта — другая причина и другой выход.
+    const top = asked(["rev-parse", "--show-toplevel"]);
     refuse(
-      "Живой проект без репозитория git: посадка коммитит своё поверх истории проекта.",
-      "Завести репозиторий, закоммитить проект и позвать посадку снова.",
+      ...(top !== null && top !== ""
+        ? [
+            "Проект лежит внутри репозитория " + norm(top) + ", а не в его корне: посадка коммитит в корне репозитория проекта.",
+            "Позвать посадку из корня репозитория либо вынести проект в свой репозиторий.",
+          ]
+        : [
+            "Живой проект без репозитория git: посадка коммитит своё поверх истории проекта.",
+            "Завести репозиторий, закоммитить проект и позвать посадку снова.",
+          ]),
     );
+  }
+  const map = readJson(path.join(shelf, "seat", "map.json"));
   const dirty = (asked(["status", "--porcelain"]) ?? "")
     .split("\n")
-    .filter((l) => l.trim() !== "" && !/^\?\? \.claude\/?$/.test(l));
+    .filter((l) => l.trim() !== "" && !shelfUntracked(l, map));
   if (dirty.length > 0)
     refuse(
       "Незакоммиченное в проекте — посадка его не смешивает со своим:",
       ...dirty.slice(0, 6).map((l) => "  " + l),
       "Закоммитить либо убрать и позвать посадку снова.",
     );
-  const map = readJson(path.join(shelf, "seat", "map.json"));
   const plan = profile.survey?.plan ?? [];
   if (familiar && plan.length > 0 && !apply) {
     say(
@@ -329,7 +374,17 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   const seedOf = (rel) => readFileSync(path.join(seedDir, rel), "utf8");
   // Откат: всё, что положила посадка до первого коммита, снимается.
   const undo = [];
+  // Файл проекта посадка пишет поверх, только если перенесла его рядом либо
+  // он из объявленного короткого списка: прежде занятое имя — свой
+  // `CLAUDE.project.md`, свой `eslint.project.config.js` — затиралось без
+  // признака.
+  const ownFiles = new Set((asked(["ls-files", "-z"]) ?? "").split("\0").filter(Boolean));
+  const movedAway = new Set();
+  const overwritable = new Set([...LISTS, "package.json", ".claude/settings.json"]);
+  const taken = (rel, why) =>
+    fail("Имя " + rel + " уже занято файлом проекта, а посадка кладёт туда " + why + ".", "Переименовать свой файл, закоммитить и позвать посадку снова.");
   const write = (rel, text) => {
+    if (ownFiles.has(rel) && !movedAway.has(rel) && !overwritable.has(rel)) taken(rel, "свой файл");
     const was = read(rel);
     let made = null;
     for (let dir = path.dirname(at(rel)); !existsSync(dir); dir = path.dirname(dir)) made = dir;
@@ -342,8 +397,13 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     });
   };
   const move = (from, to) => {
+    if (existsSync(at(to))) taken(to, from + " проекта");
     renameSync(at(from), at(to));
-    undo.push(() => renameSync(at(to), at(from)));
+    movedAway.add(from);
+    undo.push(() => {
+      renameSync(at(to), at(from));
+      movedAway.delete(from);
+    });
   };
   // Установка меняет папку пакетов на месте, и откат вернуть её не может:
   // отказ после неё так и говорит.
@@ -379,14 +439,19 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
       else m[one.section][one.name] = one.to;
       m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
     }
-    const composed = composeLive({
-      exists: (rel) => existsSync(at(rel)),
-      read,
-      seed: seedOf,
-      map,
-      roots,
-      prettierInManifest: manifest?.prettier !== undefined,
-    });
+    let composed;
+    try {
+      composed = composeLive({
+        exists: (rel) => existsSync(at(rel)),
+        read,
+        seed: seedOf,
+        map,
+        roots,
+        prettierInManifest: manifest?.prettier !== undefined,
+      });
+    } catch (e) {
+      fail("Конфиги проекта не сложились с конфигами обвязки: " + e.message + ".", "Поправить конфиг проекта, закоммитить и позвать посадку снова.");
+    }
     strict = composed.strict;
     const seedScripts = readJson(path.join(seedDir, "package.json")).scripts;
     const bodies = Object.fromEntries(
@@ -439,6 +504,9 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     }
     if (e.to.startsWith(".context/") || e.to.startsWith("docs/")) {
       if (existsSync(at(e.to))) {
+        // `.context/` — папка базы обвязки: свой файл проекта там занимает
+        // имя записи, и посадка кончалась красной сверкой без заготовки.
+        if (e.to.startsWith(".context/")) taken(e.to, "запись базы обвязки");
         report.push(e.to + " проекта сохранён; заготовка обвязки не легла.");
         continue;
       }
@@ -446,7 +514,18 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
       continue;
     }
     if (e.to === ".claude/settings.json") {
-      if (!existsSync(at(e.to))) write(e.to, seed);
+      const own = read(e.to);
+      if (own === null) write(e.to, seed);
+      else {
+        let parsed;
+        try {
+          parsed = JSON.parse(own);
+        } catch (err) {
+          fail("Свой .claude/settings.json проекта не разбирается: " + err.message, "Поправить файл и позвать посадку снова.");
+        }
+        write(e.to, JSON.stringify(settingsMerged(parsed, JSON.parse(seed)), null, 2) + "\n");
+        report.push("Свой .claude/settings.json проекта сохранён; разрешения и хуки обвязки дописаны в него.");
+      }
       continue;
     }
     // Конфиги стека знакомому положила композиция; чужому их не кладут.
@@ -465,7 +544,10 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   try {
     field("scenario", profile.scenario);
     field("foreignAxes", profile.foreign.map((one) => one.axis));
-    field("src", roots.length === 1 ? "../" + roots[0] : roots.map((r) => "../" + r));
+    // Кода на языках обвязки нет вовсе — корень исходников остаётся семенным:
+    // пустой список настройка не принимает, а весь проект корнем взял бы и
+    // саму базу.
+    if (roots.length > 0) field("src", roots.length === 1 ? "../" + roots[0] : roots.map((r) => "../" + r));
     const seeded = configList(config, "seeded") ?? [];
     field("seeded", seeded.filter((one) => existsSync(path.join(target, ".context", one))));
     if (!familiar) field("lintConfigOff", null);
@@ -494,8 +576,9 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     } else {
       const lockWas = read("package-lock.json");
       undo.push(() => (lockWas === null ? rmSync(at("package-lock.json"), { force: true }) : writeFileSync(at("package-lock.json"), lockWas)));
-      reinstalled = true;
       const install = runTool("npx", ["-y", "npm@11", "install", "--no-audit", "--no-fund"], { cwd: target, env });
+      // Не запустившаяся установка папку пакетов не трогала.
+      reinstalled = install.error === null;
       if (install.status !== 0)
         fail("Пакеты не встали: установка `npx -y npm@11 install` упала:", ...tailOf(saidBy(install), 6));
     }
@@ -671,18 +754,30 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   const identity = asked(["config", "user.email"]) ? [] : ["-c", "user.name=seat", "-c", "user.email=seat@local"];
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
   // Свои ворота проекта посадка не обходит: не пустили коммит — отказ, и
-  // проект как был.
-  git("add", "-A");
+  // проект как был. Отказ git на любом из двух коммитов — занятый индекс,
+  // подпись, хук — идёт тем же откатом: прежде `git add` мимо него оставлял
+  // проект посаженным наполовину.
+  const startHead = asked(["rev-parse", "HEAD"]);
+  const markerAt = path.join(target, ".git", SEAT_HERE_MARKER);
+  const commitFailed = (e) => {
+    asked(["reset", "-q", ...(startHead === null ? [] : [startHead])]);
+    rmSync(markerAt, { force: true });
+    fail("Коммит посадки не прошёл — ворота проекта либо git:", ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? "") || String(e.message), 8));
+  };
   try {
+    git("add", "-A");
     git("commit", "-qm", "chore: seat the harness");
   } catch (e) {
-    asked(["reset", "-q"]);
-    fail("Коммит посадки не прошёл ворота проекта:", ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? ""), 8));
+    commitFailed(e);
   }
-  writeFileSync(path.join(target, ".git", SEAT_HERE_MARKER), norm(shelf) + "\n");
-  const base = git("rev-parse", "HEAD");
-  write(configRel, withSeatingBase(read(configRel), base));
-  git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
+  try {
+    writeFileSync(markerAt, norm(shelf) + "\n");
+    const base = git("rev-parse", "HEAD");
+    write(configRel, withSeatingBase(read(configRel), base));
+    git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
+  } catch (e) {
+    commitFailed(e);
+  }
   if (familiar) git("config", "core.hooksPath", ".claude/hooks/git");
   const verify = runTool(process.execPath, [at(".claude/tools/graph.mjs"), "verify"], { cwd: target, env });
 

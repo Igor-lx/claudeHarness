@@ -525,10 +525,19 @@ export const strictConfigsOf = (read, seedTsconfig) => {
   const strict = Object.fromEntries(
     Object.entries(seed.compilerOptions ?? {}).filter(([k]) => STRICT_KEYS.test(k)),
   );
-  const root = parseJsonc(read("tsconfig.json") ?? "{}") ?? {};
+  // Конфиг есть, а не разбирается — причина отказа, а не пустой объект:
+  // прежде строгая копия ложилась поверх сломанного, и отказ винил звено.
+  const parsed = (name) => {
+    const raw = read(name);
+    if (raw === null) return {};
+    const one = parseJsonc(raw);
+    if (one === null) throw new Error(name + " проекта не разбирается как JSON с комментариями");
+    return one;
+  };
+  const root = parsed("tsconfig.json");
   const files = {};
   const copyOf = (name) => {
-    const own = parseJsonc(read(name) ?? "{}") ?? {};
+    const own = parsed(name);
     const options = { ...strict, noEmit: true };
     if (own.compilerOptions?.tsBuildInfoFile !== undefined)
       options.tsBuildInfoFile = "./node_modules/.tmp/" + name.replace(/\.json$/, ".strict.tsbuildinfo");

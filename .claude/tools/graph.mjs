@@ -185,7 +185,7 @@ import {
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
-import { SCENARIO_NAMES, commitsIn, foreignOffer, scenarioByShelf, scenarioOf } from "./graph.profile.mjs";
+import { NO_MANIFEST_AXIS, SCENARIO_NAMES, commitsIn, foreignOffer, scenarioByShelf, scenarioOf } from "./graph.profile.mjs";
 import { runSeatLive } from "./graph.seatlive.mjs";
 // Страж протокола свода: окно модели предмета и вердикт чтению.
 import {
@@ -5835,7 +5835,10 @@ const foreignAxesNamed = () => {
   const mapAt = shelfAt("seat/map.json");
   const axes =
     mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
-  return foreign.map((name) => ({ axis: name, known: axes.some((a) => a.axis === name) }));
+  return foreign.map((name) => ({
+    axis: name,
+    known: name === NO_MANIFEST_AXIS || axes.some((a) => a.axis === name),
+  }));
 };
 
 /** Баннер перехода. Печатается ПЕРВОЙ строкой каждого прогона и своим
@@ -33314,10 +33317,15 @@ if (mode === "verify") {
   checkStep(() => {
     for (const [top, inner] of seedFields) {
       if (inner === null) {
+        // У сценария значение семени — мастерская: проект, посаженный
+        // прежней редакцией и переписавший `null`, исполнял бы самопроверки
+        // обвязки у себя.
         if (!(top in CONFIG))
           fieldGone.push(
-            top +
-              " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
+            top === "scenario"
+              ? 'scenario — поле посадки, которого у проекта нет: посаженному в пустую папку — "empty", живому — "familiar" либо "foreign"; null семени — только мастерская'
+              : top +
+                  " — поле семени, которого у проекта нет. Переписать его из семени вместе с объяснением",
           );
         continue;
       }
