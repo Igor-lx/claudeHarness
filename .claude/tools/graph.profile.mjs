@@ -3,9 +3,12 @@ import path from "node:path";
 
 import {
   inPlaceKindOf,
+  manifestOf,
   projectFilesOf,
   stackSurveyOf,
 } from "./graph.seat.mjs";
+
+export { manifestOf };
 
 /** Сценарий посадки проекта — один ответ на всю обвязку: осмотр стека,
  * посадка и сверка базы спрашивают его здесь. Решено разработчиком
@@ -53,10 +56,10 @@ export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => 
     return existsSync(at) && statSync(at).isFile() ? readFileSync(at, "utf8") : null;
   };
   const entries = readdirSync(root).filter((e) => e !== ".claude" && e !== ".git");
-  const kind = inPlaceKindOf(entries, read, commits);
+  const kind = inPlaceKindOf(entries, read, commits, projectFilesOf(root));
   if (kind.kind !== "живой")
     return { scenario: "empty", kind, survey: null, foreign: [] };
-  const manifest = readJson(path.join(root, "package.json"));
+  const manifest = manifestOf(root);
   const survey = stackSurveyOf({
     manifest,
     files: projectFilesOf(root),
@@ -104,9 +107,9 @@ export const foreignOffer = (foreign, shelfCall = "node .claude/tools/graph.mjs"
     restack
       ? "  переставить — заменить чужие инструменты своими: " +
         shelfCall +
-        " env . --apply --with=" +
+        ' env . --apply --with="' +
         tools.map((f) => f.axis).join(",") +
-        "; после этого проект знакомый, и посадку зовут снова"
+        '"; после этого проект знакомый, и посадку зовут снова'
       : "  переставить нельзя одной командой: чужое здесь не только инструменты (" +
         foreign
           .filter((f) => f.tool === null || f.tool === undefined)

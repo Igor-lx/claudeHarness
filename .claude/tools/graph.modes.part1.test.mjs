@@ -1399,6 +1399,50 @@ describe("карта качества сверяется и на втором у
 });
 
 describe("ревизия сводов по истории", () => {
+  it("основание вне истории вершины — историю посадки переписали — названо, а не выключает ревизию заметкой", () => {
+    const box = seatEmpty("istoriya-vne-");
+    try {
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      // Коммит посадки, слитый потом в другой: объект есть, а в истории вершины его нет.
+      git("checkout", "-q", "-b", "side");
+      fs.writeFileSync(path.join(box, "zz-side.txt"), "side\n");
+      git("add", "zz-side.txt");
+      git("commit", "-qm", "side", "--no-verify");
+      const side = git("rev-parse", "HEAD");
+      git("checkout", "-q", "-");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const cfg = fs
+        .readFileSync(cfgAt, "utf8")
+        .replace(/^ {2}barSince: [^,]*,/m, '  barSince: "' + side + '",')
+        .replace(/^ {2}seriesSince: [^,]*,/m, '  seriesSince: "' + side + '",')
+        .replace(/^ {4}since: [^,]*,/m, '    since: "' + side + '",');
+      fs.writeFileSync(cfgAt, cfg);
+      git("commit", "-qam", "основания", "--no-verify");
+      const got = verifyIn(box);
+      const past = (got.get("Коммит с кодом накрыт сводом") ?? []).join("\n");
+      expect(past).toContain("основание barSince " + side.slice(0, 12) + " не в истории вершины");
+      expect(past).toContain("основание seriesSince " + side.slice(0, 12) + " не в истории вершины");
+      expect((got.get("Находки закрыты") ?? []).join("\n")).toContain("основание findings.since " + side.slice(0, 12) + " не в истории вершины");
+      // Основание в истории — строки нет.
+      const head = git("rev-parse", "HEAD");
+      fs.writeFileSync(cfgAt, cfg.split(side).join(head));
+      git("commit", "-qam", "основания в истории", "--no-verify");
+      const again = verifyIn(box);
+      expect((again.get("Коммит с кодом накрыт сводом") ?? []).join("\n")).not.toContain("не в истории вершины");
+      expect((again.get("Находки закрыты") ?? []).join("\n")).not.toContain("не в истории вершины");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
     try {

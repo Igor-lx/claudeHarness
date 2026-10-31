@@ -95,6 +95,10 @@ const tool = (box, ...args) => {
   });
 };
 
+// Посадки корпуса идут разом и делят процессор с соседними файлами тестов: на
+// раннере Windows знакомая посадка не укладывалась в лимит Linux (run 55).
+const SEAT_BUDGET_MS = process.platform === "win32" ? 1_800_000 : 600_000;
+
 describe("корпус посадок", () => {
   it("у каждого проекта назван сценарий посадки, у чужого — его чужие оси", () => {
     const wrong = CORPUS.projects
@@ -194,7 +198,7 @@ describe("корпус посадок", () => {
             fs.rmSync(box, { recursive: true, force: true });
           }
         },
-        600000,
+        SEAT_BUDGET_MS,
       );
   });
 });

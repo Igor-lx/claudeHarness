@@ -17,6 +17,7 @@ import {
   rulesWithout,
   scriptsLive,
   settingsMerged,
+  settingsShapeFault,
   shelfUntracked,
   sourceRootsOf,
   tableRows,
@@ -100,6 +101,18 @@ describe("живая посадка: своё проекта внутри пол
       for (const g of groups) expect(once.hooks[event], event).toContainEqual(g);
     expect(once.hooks.Stop).toContainEqual({ hooks: [{ type: "command", command: "own-stop" }] });
     expect(settingsMerged(once, seedSettings)).toEqual(once);
+  });
+
+  it("свои настройки не той формы названы до слияния; та форма и пустые поля — нет", () => {
+    expect(settingsShapeFault({})).toBeNull();
+    expect(settingsShapeFault({ model: "x", permissions: { allow: ["Bash(make:*)"], defaultMode: "acceptEdits" }, hooks: { Stop: [{ hooks: [] }] } })).toBeNull();
+    expect(settingsShapeFault([])).toBe("не объект JSON");
+    expect(settingsShapeFault({ permissions: [] })).toBe("permissions — не объект");
+    expect(settingsShapeFault({ permissions: { allow: "Bash(make:*)" } })).toBe("permissions.allow — не список строк");
+    expect(settingsShapeFault({ permissions: { deny: [1] } })).toBe("permissions.deny — не список строк");
+    expect(settingsShapeFault({ hooks: [] })).toBe("hooks — не объект");
+    expect(settingsShapeFault({ hooks: { Stop: { command: "echo" } } })).toBe("hooks.Stop — не список групп с полем hooks списком");
+    expect(settingsShapeFault({ hooks: { Stop: [{ hooks: "echo" }] } })).toBe("hooks.Stop — не список групп с полем hooks списком");
   });
 });
 
@@ -343,6 +356,59 @@ describe("живая посадка: отказ возвращает проек�
       fs.rmSync(root, { recursive: true, force: true });
     }
   }, 600000);
+
+  it("сбой, которого посадка не ждала, — тем же откатом с причиной, а не стеком", () => {
+    const f = files();
+    delete f[".gitignore"];
+    f[".gitignore/keep"] = "x\n";
+    const { root, box } = plantLive(f);
+    try {
+      const before = tracked(root);
+      const r = seatIn(box, apply);
+      expect(r.status, r.out).toBe(1);
+      expect(r.out).toContain("Посадка упала посреди работы:");
+      expect(r.out).toContain(".gitignore");
+      expect(r.out).not.toMatch(/node:internal|\n\s+at /);
+      same(root, before, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 600000);
+
+  it("рабочее дерево git — `.git` файлом: посадка кладёт метку в папку git этого дерева", () => {
+    const plain = CORPUS.projects.find((p) => p.name === "plain-js");
+    const { root, box } = plantLive({ ...plain.files });
+    const wt = root + "-wt";
+    try {
+      git(root, "worktree", "add", "-q", wt);
+      fs.cpSync(path.join(box, ".claude"), path.join(wt, ".claude"), { recursive: true });
+      const r = seatIn(wt, []);
+      expect(r.status, r.out).toBe(0);
+      expect(fs.statSync(path.join(wt, ".git")).isFile()).toBe(true);
+      expect(fs.existsSync(path.resolve(wt, git(wt, "rev-parse", "--git-path", "claude-seat-here")))).toBe(true);
+      expect(seatIn(wt, []).out).toContain("=== Посадка уже сделана ===");
+    } finally {
+      fs.rmSync(wt, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("git без имени на машине: живой проект закоммичен от имени seat, и отчёт это говорит", () => {
+    const plain = CORPUS.projects.find((p) => p.name === "plain-js");
+    const { root, box } = plantLive({ ...plain.files });
+    const none = path.join(root, "..", path.basename(root) + ".gitconfig");
+    try {
+      fs.writeFileSync(none, "");
+      const r = seatIn(box, [], { GIT_CONFIG_GLOBAL: none, GIT_CONFIG_NOSYSTEM: "1" });
+      expect(r.status, r.out).toBe(0);
+      expect(git(root, "log", "-1", "--format=%an <%ae>")).toBe("seat <seat@local>");
+      expect(r.out).toContain("git не знает, кто вы: коммиты посадки сделаны от имени seat <seat@local>.");
+      expect(r.out).toContain('git config --global user.name "Имя"');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(none, { force: true });
+    }
+  }, 300000);
 });
 
 describe("посадка в мастерской", () => {

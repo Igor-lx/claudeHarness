@@ -162,6 +162,8 @@ import {
 import {
   envLowOf,
   ENV_BOOTSTRAP,
+  gitPathOf,
+  unknownFlagsOf,
   layShelf,
   lintBlockersOf,
   eslintBoundaryOf,
@@ -182,10 +184,12 @@ import {
   uncolored,
   verifiedOf,
   versionCmp,
+  withRefusal,
+  withToolsOf,
 } from "./graph.seat.mjs";
 // Расход сессии свода: разбор журнала `claude -p`.
 import { costLines, costOf, journalOf } from "./graph.cost.mjs";
-import { NO_MANIFEST_AXIS, SCENARIO_NAMES, commitsIn, foreignOffer, scenarioByShelf, scenarioOf } from "./graph.profile.mjs";
+import { NO_MANIFEST_AXIS, SCENARIO_NAMES, commitsIn, foreignOffer, manifestOf, scenarioByShelf, scenarioOf } from "./graph.profile.mjs";
 import { runSeatLive } from "./graph.seatlive.mjs";
 // Страж протокола свода: окно модели предмета и вердикт чтению.
 import {
@@ -774,18 +778,35 @@ if (mode === "env") {
   // Живой проект на стеке новее связки: линт обвязки на нём не встанет, и
   // какие критерии теряют машинную проверку, печатает режим, а не память
   // сессии (находка Н-3 плана `2026-10-20`). Папку проекта называют доводом.
-  const projectAt = process.argv[3] ?? null;
-  const manifestAt =
-    projectAt === null ? null : path.join(path.resolve(projectAt), "package.json");
+  const projectAt = process.argv[3]?.startsWith("--") ? null : (process.argv[3] ?? null);
+  const unknownFlags = unknownFlagsOf(process.argv.slice(3), ["--apply", "--with"]);
+  if (unknownFlags.length > 0) {
+    console.log("=== Ключ режиму env неизвестен ===");
+    console.log("  " + unknownFlags.join(", ") + ". Есть: --apply, --with=<оси>.");
+    process.exit(1);
+  }
+  if (projectAt !== null && !(existsSync(projectAt) && statSync(projectAt).isDirectory())) {
+    console.log("=== Окружение проекта не осмотрено ===");
+    console.log("  Папки проекта нет: " + path.resolve(projectAt) + ".");
+    process.exit(1);
+  }
+  // Битый манифест — отказ с его именем, а не стек и не «манифеста нет».
+  const manifestOrStop = (root) => {
+    try {
+      return manifestOf(root);
+    } catch (e) {
+      console.log("=== Окружение проекта не осмотрено ===");
+      console.log("  " + e.message + ". Поправить файл и позвать снова.");
+      process.exit(1);
+    }
+  };
   // После `--apply` предупреждение печатается по манифесту, который
   // установка оставила: прежний стек его уже не держит. Выведено десятой
   // посадкой: строка о TypeScript новее связки стояла над «стек приведён».
   const sayBlockers = () => {
-    if (manifestAt === null || !existsSync(manifestAt)) return;
-    const blockers = lintBlockersOf(
-      JSON.parse(readFileSync(manifestAt, "utf8")),
-      declared,
-    );
+    const manifest = projectAt === null ? null : manifestOrStop(path.resolve(projectAt));
+    if (manifest === null) return;
+    const blockers = lintBlockersOf(manifest, declared);
     if (blockers.length > 0) {
       console.log("=== Линт обвязки на этом проекте не встанет (предупреждение) ===");
       for (const one of blockers) console.log("  " + one + ".");
@@ -809,13 +830,17 @@ if (mode === "env") {
     const mapAt = path.join(here, "..", "seat", "map.json");
     const seatMap = existsSync(mapAt) ? readJson(mapAt, {}) : {};
     const axes = seatMap.stackAxes ?? [];
-    const withArg = process.argv.find((a) => a.startsWith("--with="));
-    const withTools = withArg === undefined ? [] : withArg.slice(7).split(",").map((x) => x.trim());
+    const withAsked = withToolsOf(process.argv, seatMap);
+    const withWrong = withRefusal(withAsked);
+    if (withWrong !== null) {
+      console.log("=== Окружение проекта не осмотрено ===");
+      for (const one of withWrong) console.log("  " + one);
+      process.exit(1);
+    }
+    const withTools = withAsked.tools;
     // Версии — те, что посадка ставит в пустую папку: на них обвязка проверена.
     const seedPkg = readJson(path.join(here, "..", "seat", "templates", "package.json"), {});
-    const manifest = existsSync(path.join(root, "package.json"))
-      ? readJson(path.join(root, "package.json"), {})
-      : null;
+    const manifest = manifestOrStop(root);
     const gitIn = (args) => {
       try {
         return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -1915,7 +1940,7 @@ const linkConfigAt = (link) => {
  * `.claude` лежит одна полка. Узнаётся по метке посадки в папке git. Нужен
  * сверкам, чей предмет — описание полки её же словами: в живом проекте в
  * `.claude` законно лежат и его свои папки. */
-const IN_TEST_SEAT = existsSync(path.join(REPO_AT, ".git", SEAT_MARKER));
+const IN_TEST_SEAT = existsSync(gitPathOf(REPO_AT, SEAT_MARKER));
 /** Справочник режимов — лежит рядом с инструментом и читается из работы.
  *
  * Побайтовых пар здесь больше нет, и это следствие раскладки: доктрина,
@@ -2256,6 +2281,20 @@ const BAR_NOSEAL_RE = new RegExp(
   "m",
 );
 const barQuoted = (x) => BAR_TICK + x + BAR_TICK;
+/** Основание истории в этой копии: "есть" — предок вершины; "мелкая" —
+ * не предок, а копия мелкая, и глубины просто не хватает; "вне" — не предок
+ * в полной копии: историю посадки переписали — слили коммиты, перебазировали.
+ * Сверка по истории тогда читала не те коммиты либо выключалась заметкой, и
+ * прогон оставался зелёным. Выведено пробой по холодному контуру. */
+const baseInHistory = (hash, cwd) => {
+  const ask = (args) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (ask(["merge-base", "--is-ancestor", hash, "HEAD"]).status === 0) return "есть";
+  return ask(["rev-parse", "--is-shallow-repository"]).stdout.trim() === "true" ? "мелкая" : "вне";
+};
+/** Строка находки об основании вне истории ветки: поле и что объявить. */
+const baseOutside = (field, hash) =>
+  "основание " + field + " " + hash.slice(0, 12) + " не в истории вершины — историю посадки переписали (слияние коммитов, перебазирование). Объявить основанием коммит посадки этой истории: поля barSince, seriesSince и findings.since";
+
 const barDigest = (text) =>
   createHash("sha1")
     .update(
@@ -6846,7 +6885,7 @@ if (mode === "falsify") {
   try {
     execFileSync("git", ["init", "-q"], { cwd: tmp, stdio: "ignore" });
     // Песочница — копия того же проекта, и метку посадки несёт тоже.
-    const marker = path.join(REPO_ROOT, ".git", SEAT_MARKER);
+    const marker = gitPathOf(REPO_ROOT, SEAT_MARKER);
     if (existsSync(marker))
       writeFileSync(path.join(tmp, ".git", SEAT_MARKER), readFileSync(marker));
     execFileSync("git", ["add", "-A"], { cwd: tmp, stdio: "ignore" });
@@ -30436,6 +30475,7 @@ if (mode === "verify") {
   // Обе стороны спрашивают один помощник, `barCoverFault`. Разойтись им
   // нечем — это не две проверки одного, а ворота и ревизия при них.
   const barPast = [];
+  const barBase = [];
   let barPastLooked = 0;
   let barPastNote = null;
   await checkStepAsync(async () => {
@@ -30461,6 +30501,8 @@ if (mode === "verify") {
             stdio: ["ignore", "pipe", "ignore"],
           });
         const seeds = seedOfPath();
+        for (const [field, hash] of [["barSince", CONFIG.barSince], ["seriesSince", CONFIG.seriesSince]])
+          if (hash != null && baseInHistory(hash, REPO_AT) === "вне") barBase.push(baseOutside(field, hash));
         let log;
         try {
           log = git(["log", "--format=%H", CONFIG.barSince + "..HEAD"])
@@ -31362,6 +31404,7 @@ if (mode === "verify") {
         ? "  без свода: " + barPast.length
         : "  " + barPastNote,
     );
+    for (const one of barBase) console.log("    " + one);
     for (const one of barPast)
       console.log(
         "    " + one + ". Свод делают до коммита и кладут в тот же коммит",
@@ -33317,9 +33360,8 @@ if (mode === "verify") {
   checkStep(() => {
     for (const [top, inner] of seedFields) {
       if (inner === null) {
-        // У сценария значение семени — мастерская: проект, посаженный
-        // прежней редакцией и переписавший `null`, исполнял бы самопроверки
-        // обвязки у себя.
+        // У сценария значение семени — мастерская: проект, переписавший
+        // `null` из семени, исполнял бы самопроверки обвязки у себя.
         if (!(top in CONFIG))
           fieldGone.push(
             top === "scenario"
@@ -33704,6 +33746,8 @@ if (mode === "verify") {
               ? -1
               : log.findIndex((l) => l.startsWith(CONFIG.findings.since));
           const range = base < 0 ? null : log.slice(0, base + 1);
+          if (CONFIG.findings.since != null && baseInHistory(CONFIG.findings.since, REPO) === "вне")
+            findingDrift.push(baseOutside("findings.since", CONFIG.findings.since));
           if (range === null)
             findingsNote =
               CONFIG.findings.since == null

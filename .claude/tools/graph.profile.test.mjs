@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { foreignOffer, scenarioByShelf } from "./graph.profile.mjs";
+import { foreignOffer, manifestOf, scenarioByShelf } from "./graph.profile.mjs";
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SHELF = path.join(TOOL_DIR, "..");
@@ -47,7 +47,7 @@ describe("сценарий посадки", () => {
   it("чужому проекту — что не проверено и два пути; переставить только инструменты", () => {
     const tools = foreignOffer([{ axis: "раннер тестов", what: "jest", tool: "test" }]).join("\n");
     expect(tools).toContain("раннер тестов: jest");
-    expect(tools).toContain("env . --apply --with=раннер тестов");
+    expect(tools).toContain('env . --apply --with="раннер тестов";');
     expect(tools).toContain("перейти — новая пустая посадка");
     const mixed = foreignOffer([
       { axis: "раннер тестов", what: "jest", tool: "test" },
@@ -55,5 +55,25 @@ describe("сценарий посадки", () => {
     ]).join("\n");
     expect(mixed).not.toContain("--with=");
     expect(mixed).toContain("переставить нельзя одной командой: чужое здесь не только инструменты (структура)");
+  });
+});
+
+describe("манифест проекта — один читатель", () => {
+  it("нет файла — null; BOM — как без него; битый, null и массив — ошибка с именем файла", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "manifest-of-"));
+    const put = (text) => fs.writeFileSync(path.join(box, "package.json"), text);
+    try {
+      expect(manifestOf(box)).toBeNull();
+      put('\uFEFF{ "name": "a", "devDependencies": { "vitest": "4.1.11" } }');
+      expect(manifestOf(box)).toEqual({ name: "a", devDependencies: { vitest: "4.1.11" } });
+      put('{\n<<<<<<< HEAD\n  "name": "a"\n=======\n}\n');
+      expect(() => manifestOf(box)).toThrow("package.json проекта не разбирается как JSON");
+      for (const text of ["null", "[]", "3"]) {
+        put(text);
+        expect(() => manifestOf(box), text).toThrow("package.json проекта — не объект JSON");
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
   });
 });

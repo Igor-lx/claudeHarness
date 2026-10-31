@@ -14,9 +14,13 @@ import path from "node:path";
 import { composeLive } from "./graph.configs.mjs";
 import { SCENARIO_NAMES, foreignOffer } from "./graph.profile.mjs";
 import {
+  IDENTITY_NOTICE,
   SEAT_HERE_MARKER,
   claimSandbox,
   factsWithBaseline,
+  gitPathOf,
+  unexpectedRolledBack,
+  manifestOf,
   mergedLines,
   norm,
   projectFilesOf,
@@ -61,6 +65,28 @@ export const shelfUntracked = (line, map) => {
   if ((map?.projectOwnedInsideHarness ?? []).includes(parts[0])) return false;
   const inside = map?.harnessInside?.[parts[0]];
   return inside === undefined || parts.length === 1 || inside.includes(parts[1]);
+};
+
+/** Чем свои настройки среды проекта не той формы, которую сливает
+ * `settingsMerged`; `null` — той. Событие хука объектом вместо списка
+ * роняло посадку стеком посреди записи семян, разрешение строкой вместо
+ * списка резалось по буквам. */
+export const settingsShapeFault = (own) => {
+  const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!isObject(own)) return "не объект JSON";
+  if (own.permissions !== undefined) {
+    if (!isObject(own.permissions)) return "permissions — не объект";
+    for (const [kind, list] of Object.entries(own.permissions))
+      if (["allow", "deny", "ask"].includes(kind) && (!Array.isArray(list) || list.some((one) => typeof one !== "string")))
+        return "permissions." + kind + " — не список строк";
+  }
+  if (own.hooks !== undefined) {
+    if (!isObject(own.hooks)) return "hooks — не объект";
+    for (const [event, groups] of Object.entries(own.hooks))
+      if (!Array.isArray(groups) || groups.some((g) => !isObject(g) || (g.hooks !== undefined && !Array.isArray(g.hooks))))
+        return "hooks." + event + " — не список групп с полем hooks списком";
+  }
+  return null;
 };
 
 /** Настройки среды проекта со своими строками и строками семени: разрешения
@@ -309,7 +335,9 @@ const readJson = (at) => {
 };
 
 /** Посадка живого проекта: `profile` — ответ `scenarioOf`. */
-export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }) => {
+export const runSeatLive = (args) => unexpectedRolledBack((box) => seatLive(args, box));
+
+const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => {
   const say = (...lines) => {
     for (const one of lines) console.log(one);
   };
@@ -417,10 +445,11 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
         : "Проект возвращён в прежний вид.",
     );
   };
+  box.fail = fail;
   const report = [];
   const files = projectFilesOf(target);
   const roots = sourceRootsOf(files);
-  const manifest = readJson(at("package.json"));
+  const manifest = manifestOf(target);
   const ownScripts = { ...(manifest?.scripts ?? {}) };
 
   // 1. Стек и манифест — только знакомому.
@@ -523,6 +552,8 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
         } catch (err) {
           fail("Свой .claude/settings.json проекта не разбирается: " + err.message, "Поправить файл и позвать посадку снова.");
         }
+        const fault = settingsShapeFault(parsed);
+        if (fault !== null) fail("Свой .claude/settings.json проекта не той формы: " + fault + ".", "Поправить файл и позвать посадку снова.");
         write(e.to, JSON.stringify(settingsMerged(parsed, JSON.parse(seed)), null, 2) + "\n");
         report.push("Свой .claude/settings.json проекта сохранён; разрешения и хуки обвязки дописаны в него.");
       }
@@ -565,7 +596,8 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   const rows = [];
   const npmRun = (name) => runTool("npm", ["run", "-s", name], { cwd: target, env });
   if (familiar) {
-    const needed = Object.keys({ ...readJson(at("package.json")).dependencies, ...readJson(at("package.json")).devDependencies });
+    const installed = manifestOf(target);
+    const needed = Object.keys({ ...installed.dependencies, ...installed.devDependencies });
     const from = packagesFrom === null ? null : path.join(packagesFrom, "node_modules");
     const linked = from !== null && needed.every((n) => existsSync(path.join(from, n, "package.json")));
     const hadModules = existsSync(at("node_modules"));
@@ -690,7 +722,7 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   let redTests = 0;
   if (familiar) {
     const ownTestsGreen = runTool("npm", ["test"], { cwd: target, env }).status === 0;
-    const trials = trialLiveLinks(target, env, roots, files, readJson(at("package.json")).scripts, ownTestsGreen);
+    const trials = trialLiveLinks(target, env, roots, files, manifestOf(target).scripts, ownTestsGreen);
     if (!ownTestsGreen) report.push("Мутации не испытаны: начальный прогон мутатора гоняет тесты проекта, а они красные.");
     const blind = trials.filter((t) => !t.caught);
     if (blind.length > 0)
@@ -753,12 +785,13 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   // 8. Коммиты, основания, ворота.
   const identity = asked(["config", "user.email"]) ? [] : ["-c", "user.name=seat", "-c", "user.email=seat@local"];
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
+  if (identity.length > 0) report.push(IDENTITY_NOTICE.join(" "));
   // Свои ворота проекта посадка не обходит: не пустили коммит — отказ, и
   // проект как был. Отказ git на любом из двух коммитов — занятый индекс,
   // подпись, хук — идёт тем же откатом: прежде `git add` мимо него оставлял
   // проект посаженным наполовину.
   const startHead = asked(["rev-parse", "HEAD"]);
-  const markerAt = path.join(target, ".git", SEAT_HERE_MARKER);
+  const markerAt = gitPathOf(target, SEAT_HERE_MARKER);
   const commitFailed = (e) => {
     asked(["reset", "-q", ...(startHead === null ? [] : [startHead])]);
     rmSync(markerAt, { force: true });
@@ -778,6 +811,7 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
   } catch (e) {
     commitFailed(e);
   }
+  box.fail = null;
   if (familiar) git("config", "core.hooksPath", ".claude/hooks/git");
   const verify = runTool(process.execPath, [at(".claude/tools/graph.mjs"), "verify"], { cwd: target, env });
 

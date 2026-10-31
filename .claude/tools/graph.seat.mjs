@@ -480,6 +480,25 @@ export const peerConflictsOf = ({ plan, places, installed }) => {
   return { conflicts, unread };
 };
 
+/** Манифест проекта: `null` — файла нет. Файл есть, а не разбирается, —
+ * ошибка с его именем: битый манифест, читаемый как отсутствующий, сажал
+ * проект с конфликтом слияния в нём чужим «без package.json». Метку порядка
+ * байтов npm принимает — принимает и он: иначе живая посадка переписала бы
+ * манифест без зависимостей проекта. */
+export const manifestOf = (root) => {
+  const at = path.join(root, "package.json");
+  if (!existsSync(at)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(at, "utf8").replace(/^\uFEFF/, ""));
+  } catch (e) {
+    throw new Error("package.json проекта не разбирается как JSON: " + e.message);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("package.json проекта — не объект JSON");
+  return parsed;
+};
+
 /** План осмотра — в манифест и одной установкой. Упала установка —
  * манифест и блокировка возвращаются как были, и ответ называет конец
  * вывода. Скрипт звена оси, заменённой своей, ставится семенным, а прежний
@@ -491,7 +510,7 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
   const lockBefore = existsSync(lockAt) ? readFileSync(lockAt, "utf8") : null;
   const manifestAt = path.join(root, "package.json");
   const before = readFileSync(manifestAt, "utf8");
-  const m = JSON.parse(before);
+  const m = manifestOf(root);
   for (const one of survey.plan) {
     for (const section of ["dependencies", "devDependencies"])
       if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
@@ -661,6 +680,16 @@ export const SEAT_MARKER = "claude-seat";
  * относятся. Нужна одному повторному вызову. */
 export const SEAT_HERE_MARKER = "claude-seat-here";
 
+/** Файл в папке git проекта. У рабочего дерева `git worktree` и у подмодуля
+ * `.git` — файл, а не папка: путь `<корень>/.git/<имя>` вёл в никуда, и
+ * посадка падала стеком на своей метке. Без `.git` у корня — тот путь: git
+ * иначе назвал бы папку репозитория выше. */
+export const gitPathOf = (root, name) => {
+  if (!existsSync(path.join(root, ".git"))) return path.join(root, ".git", name);
+  const r = spawnSync("git", ["rev-parse", "--git-path", name], { cwd: root, encoding: "utf8" });
+  return r.status === 0 && r.stdout.trim() !== "" ? path.resolve(root, r.stdout.trim()) : path.join(root, ".git", name);
+};
+
 export const walkFiles = (root, rel = ".", out = []) => {
   for (const e of readdirSync(path.join(root, rel), { withFileTypes: true })) {
     const r = path.join(rel, e.name);
@@ -720,12 +749,20 @@ const VITE_TEMPLATE = [
   /^src$/,
 ];
 
+/** Файлы шаблона внутри `src` и `public`. Свой файл проекта среди них делает
+ * папку живой: шаблон посадка удаляет, и без git его не вернуть. */
+const TEMPLATE_INSIDE = [
+  /^src\/(App\.css|App\.tsx|index\.css|main\.tsx|vite-env\.d\.ts)$/,
+  /^(src\/assets|public)\/[^/]+\.(svg|png|jpe?g|webp|gif|ico)$/,
+];
+
 /** Что лежит в папке посадки на месте рядом с полкой. `entries` — имена в
  * корне, кроме `.claude` и `.git`; `read` — текст файла по пути от корня либо
- * `null`; `commits` — коммитов в репозитории. Свежий шаблон узнаётся по трём
- * признакам сразу (`seat/seat.md`, раздел «Умолчание — это то, что привезла
- * обвязка»); всё, что не пусто, не витрина и не шаблон, — живой проект. */
-export const inPlaceKindOf = (entries, read, commits) => {
+ * `null`; `commits` — коммитов в репозитории; `listed` — файлы от корня.
+ * Свежий шаблон узнаётся по четырём признакам сразу (`seat/seat.md`, раздел
+ * «Умолчание — это то, что привезла обвязка»); всё, что не пусто, не витрина
+ * и не шаблон, — живой проект. */
+export const inPlaceKindOf = (entries, read, commits, listed = null) => {
   const own = entries.filter((e) => !OS_LITTER.has(e));
   if (own.length === 0) return { kind: "пусто", remove: [], extra: [] };
   if (own.every((e) => HOSTING_NAMES.some((re) => re.test(e))))
@@ -735,7 +772,8 @@ export const inPlaceKindOf = (entries, read, commits) => {
     commits <= 1 &&
     (read("README.md") ?? "").split("\n")[0].trim() ===
       "# React + TypeScript + Vite" &&
-    (read("src/App.tsx") ?? "").includes("and save to test HMR");
+    (read("src/App.tsx") ?? "").includes("and save to test HMR") &&
+    (listed ?? []).every((f) => !/^(src|public)\//.test(f) || TEMPLATE_INSIDE.some((re) => re.test(f)));
   const extra = own.filter((e) => !fromTemplate.includes(e));
   if (template && extra.length === 0)
     return { kind: "шаблон", remove: fromTemplate.sort(), extra: [] };
@@ -923,7 +961,78 @@ export const tailOf = (text, n = 6) =>
  * отчёт фазы 1 с вопросом фазы 2 (решение разработчика Р1, `2026-10-20`).
  * Отказ до первого коммита возвращает папку в прежний вид: повторный вызов
  * после починки идёт с начала. */
-const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, profileOf }) => {
+/** Состояние репозитория, в котором коммит посадки не ляжет на ветку либо
+ * ляжет посреди чужой операции, — причина отказа; иначе `null`. Посадка на
+ * отсоединённой вершине проходила, и её коммиты повисали вне ветки. */
+export const gitBusyOf = (root) => {
+  const ask = (args) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  if (ask(["rev-parse", "--git-dir"]).status !== 0) return null;
+  const at = (name) => {
+    const one = ask(["rev-parse", "--git-path", name]).stdout.trim();
+    return one !== "" && existsSync(path.resolve(root, one));
+  };
+  const busy = [
+    ["rebase-merge", "идёт перебазирование (rebase)"],
+    ["rebase-apply", "идёт перебазирование (rebase)"],
+    ["MERGE_HEAD", "идёт слияние (merge)"],
+    ["CHERRY_PICK_HEAD", "идёт перенос коммита (cherry-pick)"],
+    ["REVERT_HEAD", "идёт откат коммита (revert)"],
+    ["BISECT_LOG", "идёт поиск коммита (bisect)"],
+  ].find(([name]) => at(name));
+  if (busy !== undefined) return busy[1] + ": коммиты посадки легли бы посреди неё. Закончить либо прервать её и позвать посадку снова.";
+  const onBranch = ask(["symbolic-ref", "-q", "HEAD"]).status === 0;
+  if (!onBranch) return "вершина отсоединена (detached HEAD): коммиты посадки повисли бы вне ветки. Перейти на ветку и позвать посадку снова.";
+  return null;
+};
+
+/** Отчёт о коммитах посадки от имени seat, один на оба сценария: git на
+ * машине не знает имени, и первый свой коммит человека упал бы. Выведено
+ * посадкой с голой машины; живая посадка о нём молчала. */
+export const IDENTITY_NOTICE = [
+  "git не знает, кто вы: коммиты посадки сделаны от имени seat <seat@local>.",
+  'Своим коммитам нужно имя: git config --global user.name "Имя" и',
+  'git config --global user.email "почта".',
+];
+
+/** Оси-инструменты, названные ключом `--with=`: `unknown` — имена, которых
+ * среди них нет. Опечатка, принятая без отказа, оставляла ось чужой, и
+ * перестановка не делала ничего. */
+export const withToolsOf = (argv, map) => {
+  const at = argv.find((one) => one.startsWith("--with="));
+  const known = (map?.stackAxes ?? []).filter((a) => a.tool !== undefined).map((a) => a.axis);
+  const named = at === undefined ? [] : at.slice("--with=".length).split(",").map((x) => x.trim()).filter(Boolean);
+  return { tools: named.filter((n) => known.includes(n)), unknown: named.filter((n) => !known.includes(n)), known };
+};
+
+/** Ключи, которых режим не знает. Опечатка, принятая молча, делала другое:
+ * `--aply` давала план вместо посадки, `--package` поставила бы пакеты из
+ * сети. Ключ со значением через `=` узнаётся по имени до знака. */
+export const unknownFlagsOf = (argv, known) =>
+  argv.filter((one) => one.startsWith("--") && !known.includes(one.split("=")[0]));
+
+/** Отказ на ключе `--with=`, назвавшем не ось-инструмент. */
+export const withRefusal = ({ unknown, known }) =>
+  unknown.length === 0
+    ? null
+    : ["Ключ --with= назвал не ось-инструмент карты: " + unknown.join(", ") + ".", "Оси-инструменты: " + known.join(", ") + "; имена с пробелом — в кавычках."];
+
+/** Сбой, которого посадка не ждала, после первой её правки и до её коммита —
+ * тем же откатом с причиной строкой, а не стеком: файл проекта не той формы
+ * (`.gitignore` папкой, хуки объектом) оставлял проект посаженным
+ * наполовину. `box.fail` стоит, пока откат возможен. */
+export const unexpectedRolledBack = (work) => {
+  const box = { fail: null };
+  try {
+    return work(box);
+  } catch (e) {
+    if (box.fail === null) throw e;
+    box.fail("Посадка упала посреди работы: " + String(e?.message ?? e).split("\n")[0] + ".", "Это файл проекта не той формы либо сбой обвязки — причина строкой выше.");
+  }
+};
+
+const runSeatHere = (args) => unexpectedRolledBack((box) => seatHere(args, box));
+
+const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, profileOf }, box) => {
   const say = (...lines) => {
     for (const one of lines) console.log(one);
   };
@@ -932,8 +1041,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
     process.exit(1);
   };
   const gitDir = path.join(target, ".git");
-  const marker = path.join(gitDir, SEAT_HERE_MARKER);
-  if (existsSync(marker)) {
+  if (existsSync(gitPathOf(target, SEAT_HERE_MARKER))) {
     say(
       "=== Посадка уже сделана ===",
       "  Фаза 1 собрана этой командой — метка " + SEAT_HERE_MARKER + " стоит; повторять нечего.",
@@ -945,10 +1053,30 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
   // инструкции: настройка проекта лежит, и вторая посадка поверх неё
   // смешала бы своё с его. Полный прогон нашёл это повторным вызовом на
   // испытательной посадке: команда пошла сажать её как живой проект.
-  if (existsSync(path.join(gitDir, SEAT_MARKER)) || existsSync(path.join(target, ".context", "graph.config.mjs")))
+  // Настройка лежит, а в истории её нет и метки нет — посадку оборвали до её
+  // коммита: «уже посажена» оставляло проект посаженным наполовину.
+  const configLies = existsSync(path.join(target, ".context", "graph.config.mjs"));
+  let configCommitted = false;
+  if (configLies && existsSync(gitDir))
+    try {
+      execFileSync("git", ["ls-files", "--error-unmatch", ".context/graph.config.mjs"], { cwd: target, stdio: "ignore" });
+      configCommitted = true;
+    } catch {
+      configCommitted = false;
+    }
+  if (existsSync(gitPathOf(target, SEAT_MARKER)) || configCommitted)
     refuse(
       "Обвязка здесь уже посажена: настройка проекта лежит в .context/graph.config.mjs.",
       "Обновить обвязку — скопировать полку поверх .claude/; испытательную посадку обновляет `seat <папка>` из мастерской.",
+    );
+  const gitBusy = existsSync(gitDir) ? gitBusyOf(target) : null;
+  if (gitBusy !== null) refuse(gitBusy[0].toUpperCase() + gitBusy.slice(1), "Папка не тронута.");
+  if (configLies)
+    refuse(
+      "Прошлую посадку оборвали до её коммита: настройка .context/graph.config.mjs лежит незакоммиченной.",
+      existsSync(gitDir)
+        ? "Вернуть проект к последнему коммиту — git checkout -- . и git clean -fd -e .claude — и позвать посадку снова; папку node_modules установка могла переставить: npm ci."
+        : "Убрать из папки всё, кроме .claude, и позвать посадку снова.",
     );
   const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] };
   // Полка уже в истории, а настройки посадки нет — так выглядит мастерская:
@@ -982,8 +1110,14 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
   if (packagesFrom !== null && !existsSync(path.join(packagesFrom, "node_modules")))
     refuse("Ключ --packages назвал папку без node_modules: " + norm(packagesFrom) + ".");
   const entries = readdirSync(target).filter((e) => e !== ".claude" && e !== ".git");
-  const kind = inPlaceKindOf(entries, read, commits);
-  const profile = kind.kind === "живой" ? profileOf({ root: target, shelf, commits, withTools }) : null;
+  const kind = inPlaceKindOf(entries, read, commits, projectFilesOf(target));
+  let profile = null;
+  if (kind.kind === "живой")
+    try {
+      profile = profileOf({ root: target, shelf, commits, withTools });
+    } catch (e) {
+      refuse(e.message + ".", "Поправить файл, закоммитить и позвать посадку снова; папка не тронута.");
+    }
   // Среда — до первой правки у всех, кому посадка ставит пакеты: живой
   // проект прежде уходил в свой порядок раньше неё, и знакомый без npm падал
   // уже на установке.
@@ -1012,6 +1146,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
     rollback();
     refuse(...why, "Папка возвращена в прежний вид.");
   };
+  box.fail = fail;
   // Шаблон уезжает во временную папку, а не стирается: откат возвращает его,
   // удачная посадка снимает копию.
   let keep = null;
@@ -1142,23 +1277,44 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
     fail("Базовая линия не записалась: " + e.message, ...tailOf(tiersRun.out));
   }
 
-  // Репозиторий, коммит посадки, основания ревизии и серии, ворота. Отката
-  // дальше нет: коммиты — уже история.
+  // Репозиторий, коммит посадки, основания ревизии и серии, ворота. Отказ
+  // git на любом шаге — подпись, глобальный хук, занятый индекс — идёт
+  // откатом, как у живого проекта: иначе метка посадки оставалась без
+  // коммита, и повторный вызов отвечал «уже сделана».
   const hadGit = existsSync(gitDir);
-  if (!hadGit) execFileSync("git", ["init", "-q"], quiet);
-  const identity =
-    asked(["config", "user.email"]) === "" ? ["-c", "user.name=seat", "-c", "user.email=seat@local"] : [];
-  const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
-  writeFileSync(marker, norm(shelf) + "\n");
-  const configAt = path.join(target, ".context", "graph.config.mjs");
-  // Сценарий посадки — ответ одной команды на всю обвязку (`graph.profile.mjs`).
-  writeFileSync(configAt, readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "empty",'));
-  git("add", "-A");
-  git("commit", "-qm", "chore: seat the harness");
-  const base = git("rev-parse", "HEAD");
-  writeFileSync(configAt, withSeatingBase(readFileSync(configAt, "utf8"), base));
-  git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
-  git("config", "core.hooksPath", ".claude/hooks/git");
+  const startHead = hadGit ? asked(["rev-parse", "-q", "--verify", "HEAD"]) : "";
+  let identity = [];
+  try {
+    if (!hadGit) execFileSync("git", ["init", "-q"], quiet);
+    identity =
+      asked(["config", "user.email"]) === "" ? ["-c", "user.name=seat", "-c", "user.email=seat@local"] : [];
+    const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
+    const configAt = path.join(target, ".context", "graph.config.mjs");
+    // Сценарий посадки — ответ одной команды на всю обвязку (`graph.profile.mjs`).
+    writeFileSync(configAt, readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "empty",'));
+    git("add", "-A");
+    git("commit", "-qm", "chore: seat the harness");
+    // Метка — после коммита: оборванная до него посадка иначе отвечала бы
+    // «уже сделана».
+    writeFileSync(gitPathOf(target, SEAT_HERE_MARKER), norm(shelf) + "\n");
+    const base = git("rev-parse", "HEAD");
+    writeFileSync(configAt, withSeatingBase(readFileSync(configAt, "utf8"), base));
+    git("commit", "-qam", "chore: record the seating bases of the bar, the series and the findings");
+    git("config", "core.hooksPath", ".claude/hooks/git");
+  } catch (e) {
+    rmSync(gitPathOf(target, SEAT_HERE_MARKER), { force: true });
+    if (!hadGit) rmSync(gitDir, { recursive: true, force: true });
+    else if (startHead !== "") asked(["reset", "-q", startHead]);
+    else {
+      asked(["update-ref", "-d", "HEAD"]);
+      asked(["reset", "-q"]);
+    }
+    fail(
+      "Коммит посадки не прошёл — git отказал:",
+      ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? "") || String(e.message), 8),
+    );
+  }
+  box.fail = null;
   if (keep !== null) rmSync(keep, { recursive: true, force: true });
   const verify = runTool(process.execPath, [tool, "verify"], { cwd: target, env });
 
@@ -1239,14 +1395,7 @@ const runSeatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live,
     "  - Скиллы /task, /probe, /bar-probe, /audit, /handoff эта сессия не увидит:",
     "    перечень собирается на старте. Нужен перезапуск в папке проекта.",
   );
-  // Свежая машина: git стоит, а имени нет. Посадка коммитит от имени seat,
-  // а первый свой коммит человека упал бы. Выведено посадкой с голой машины.
-  if (identity.length > 0)
-    say(
-      "  - git не знает, кто вы: коммиты посадки сделаны от имени seat <seat@local>.",
-      '    Своим коммитам нужно имя: git config --global user.name "Имя" и',
-      '    git config --global user.email "почта".',
-    );
+  if (identity.length > 0) say("  - " + IDENTITY_NOTICE[0], ...IDENTITY_NOTICE.slice(1).map((one) => "    " + one));
   if (kind.kind === "шаблон")
     say(
       "  - Версии шаблона заменены проверенными: TypeScript — " +
@@ -1314,22 +1463,29 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     if (shop) refuse("Магазин кладут на посадку в отдельную папку, а не на месте.");
     const env = { ...process.env };
     delete env.CLAUDE_CODE_CHILD_SESSION;
+    const unknown = unknownFlagsOf(argv, ["--shop", "--packages", "--apply", "--with"]);
+    if (unknown.length > 0)
+      refuse("Ключ посадке неизвестен: " + unknown.join(", ") + ".", "Есть: --packages <папка>, --apply, --with=<оси>.");
     const at = argv.indexOf("--packages");
-    const withAt = argv.find((one) => one.startsWith("--with="));
+    if (at >= 0 && (argv[at + 1] === undefined || argv[at + 1].startsWith("--")))
+      refuse("Ключ --packages без папки: за ним идёт папка, где уже стоят пакеты.");
+    const withAsked = withToolsOf(argv, JSON.parse(readFileSync(path.join(shelf, "seat", "map.json"), "utf8")));
+    const withWrong = withRefusal(withAsked);
+    if (withWrong !== null) refuse(...withWrong);
     runSeatHere({
       shelf,
       target,
       env,
-      packagesFrom: at < 0 || argv[at + 1] === undefined ? null : path.resolve(argv[at + 1]),
+      packagesFrom: at < 0 ? null : path.resolve(argv[at + 1]),
       apply: argv.includes("--apply"),
-      withTools: withAt === undefined ? [] : withAt.slice("--with=".length).split(","),
+      withTools: withAsked.tools,
       live,
       profileOf,
     });
   }
   const busy = existsSync(target) && readdirSync(target).length > 0;
   // По `.git` и `graph.mjs` живой проект с обвязкой от посадки не отличить.
-  const marker = path.join(target, ".git", SEAT_MARKER);
+  const marker = gitPathOf(target, SEAT_MARKER);
   if (busy && path.resolve(target, ".claude") === path.resolve(shelf))
     refuse("Полка сажается сама в себя: " + norm(target));
   if (busy && (stand || !existsSync(marker)))

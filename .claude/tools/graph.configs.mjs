@@ -29,7 +29,9 @@ const packageIn = (repoRoot, name) => {
 /** Конфиг с комментариями: `tsconfig.json` их допускает, `JSON.parse` — нет.
  * `null` — разобрать не удалось. Запасной путь для конфига компилятора, когда
  * компилятора у проекта нет. */
-export const parseJsonc = (raw) => {
+export const parseJsonc = (text) => {
+  // Метку порядка байтов компилятор пропускает.
+  const raw = text.replace(/^\uFEFF/, "");
   try {
     return JSON.parse(raw);
   } catch {
@@ -68,8 +70,25 @@ export const parseJsonc = (raw) => {
       }
       out += c;
     }
+    // Висячую запятую перед `}` и `]` компилятор принимает, `JSON.parse` — нет.
+    let bare = "";
+    inString = false;
+    for (let i = 0; i < out.length; i += 1) {
+      const c = out[i];
+      if (inString) {
+        bare += c;
+        if (c === "\\") {
+          bare += out[i + 1] ?? "";
+          i += 1;
+        } else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') inString = true;
+      if (c === "," && /^\s*[}\]]/.test(out.slice(i + 1))) continue;
+      bare += c;
+    }
     try {
-      return JSON.parse(out);
+      return JSON.parse(bare);
     } catch {
       return null;
     }

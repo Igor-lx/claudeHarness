@@ -19,6 +19,10 @@ import {
   stackApply,
   stackSurveyOf,
   eslintBoundaryOf,
+  gitBusyOf,
+  unknownFlagsOf,
+  withRefusal,
+  withToolsOf,
 } from "./graph.seat.mjs";
 import { OUT_OF_TREE } from "./graph.predicates.mjs";
 
@@ -77,12 +81,18 @@ describe("посадка на месте: что лежит рядом с пол
     expect(kind.kind).toBe("витрина");
   });
 
-  it("свежий шаблон — по трём признакам сразу, и его файлы названы к удалению", () => {
+  it("свежий шаблон — по четырём признакам сразу, и его файлы названы к удалению", () => {
     const entries = ["README.md", "src", "package.json", "index.html", ".oxlintrc.json"];
     const files = { "README.md": viteReadme, "src/App.tsx": viteApp };
     const kind = inPlaceKindOf(entries, read(files), 1);
     expect(kind.kind).toBe("шаблон");
     expect(kind.remove).toEqual([...entries].sort());
+    // Четвёртый: в `src` и `public` нет файлов сверх шаблона. Свой файл там
+    // делает папку живой — иначе посадка удалила бы его вместе с шаблоном.
+    const template = ["src/App.tsx", "src/App.css", "src/main.tsx", "src/index.css", "src/vite-env.d.ts", "src/assets/react.svg", "src/assets/hero.png", "public/vite.svg", "package.json", "index.html"];
+    expect(inPlaceKindOf(entries, read(files), 0, template).kind).toBe("шаблон");
+    for (const own of ["src/cart.ts", "src/App.test.tsx", "src/pages/Home.tsx", "public/data.json", "src/assets/icons/x.svg"])
+      expect(inPlaceKindOf(entries, read(files), 0, [...template, own]).kind, own).toBe("живой");
     expect(inPlaceKindOf(entries, read(files), 2).kind).toBe("живой");
     expect(
       inPlaceKindOf(entries, read({ ...files, "src/App.tsx": "own app\n" }), 0).kind,
@@ -906,6 +916,154 @@ describe("посадка на месте одной командой", () => {
       for (const box of [bare, dirty, asked]) fs.rmSync(box, { recursive: true, force: true });
     }
   });
+
+  it("git отказал на коммите пустой посадки — откат: папки git и метки нет, папка как была", () => {
+    const dest = boxWithShelf("seat-nocommit-");
+    const hooks = fs.mkdtempSync(path.join(os.tmpdir(), "seat-nocommit-hooks-"));
+    const global = path.join(hooks, "gitconfig");
+    try {
+      fs.writeFileSync(path.join(hooks, "pre-commit"), "#!/bin/sh\necho refused by the global hook >&2\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(global, "[user]\n\tname = t\n\temail = t@local\n[core]\n\thooksPath = " + hooks.replace(/\\/g, "/") + "\n");
+      const run = spawnSync(
+        process.execPath,
+        [path.join(dest, ".claude", "tools", "graph.mjs"), "seat", dest, "--packages", ROOT],
+        { cwd: dest, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: "1" } },
+      );
+      expect(run.status, run.stdout + run.stderr).toBe(1);
+      expect(run.stdout).toContain("Коммит посадки не прошёл — git отказал:");
+      expect(run.stdout).toContain("refused by the global hook");
+      expect(run.stdout).toContain("Папка возвращена в прежний вид.");
+      expect(fs.readdirSync(dest)).toEqual([".claude"]);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.rmSync(hooks, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("ключ, назвавший не то, — отказ до работы: --with= не ось-инструмент, --packages без папки", () => {
+    const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
+    expect(withToolsOf(["seat", ".", "--with=раннер тестов,линтер"], map)).toMatchObject({ tools: ["раннер тестов", "линтер"], unknown: [] });
+    expect(withToolsOf(["seat", "."], map).tools).toEqual([]);
+    const typo = withToolsOf(["env", ".", "--with=раннер"], map);
+    expect(typo.unknown).toEqual(["раннер"]);
+    expect(withRefusal(typo)?.[0]).toBe("Ключ --with= назвал не ось-инструмент карты: раннер.");
+    // Ось без инструмента переставить нечем — она тоже не ось-инструмент.
+    expect(withToolsOf(["env", ".", "--with=структура"], map).unknown).toEqual(["структура"]);
+    expect(withRefusal(withToolsOf(["seat", "."], map))).toBeNull();
+    const box = boxWithShelf("seat-flags-");
+    try {
+      const wrong = seatHere(box, "--with=раннер");
+      expect(wrong.status, wrong.stdout).toBe(1);
+      expect(wrong.stdout).toContain("Ключ --with= назвал не ось-инструмент карты: раннер.");
+      const bare = seatHere(box, "--packages");
+      expect(bare.status, bare.stdout).toBe(1);
+      expect(bare.stdout).toContain("Ключ --packages без папки");
+      expect(unknownFlagsOf(["seat", ".", "--apply", "--with=линтер", "--packages", "x", "--aply"], ["--apply", "--with", "--packages"])).toEqual(["--aply"]);
+      const typoFlag = seatHere(box, "--aply");
+      expect(typoFlag.status, typoFlag.stdout).toBe(1);
+      expect(typoFlag.stdout).toContain("Ключ посадке неизвестен: --aply.");
+      const envTypo = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", box, "--aply"], { cwd: ROOT, encoding: "utf8" });
+      expect(envTypo.status, envTypo.stdout).toBe(1);
+      expect(envTypo.stdout).toContain("=== Ключ режиму env неизвестен ===");
+      const envNowhere = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", path.join(box, "nowhere")], { cwd: ROOT, encoding: "utf8" });
+      expect(envNowhere.status, envNowhere.stdout + envNowhere.stderr).toBe(1);
+      expect(envNowhere.stdout).toContain("Папки проекта нет:");
+      expect(envNowhere.stderr).not.toMatch(/\n\s+at /);
+      const env = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", box, "--with=раннер"], { cwd: ROOT, encoding: "utf8" });
+      expect(env.status, env.stdout).toBe(1);
+      expect(env.stdout).toContain("Ключ --with= назвал не ось-инструмент карты: раннер.");
+      expect(fs.readdirSync(box)).toEqual([".claude"]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("настройка лежит незакоммиченной — посадку оборвали, а не «уже посажена»; закоммиченная — посажена", () => {
+    const box = boxWithShelf("seat-cut-");
+    const bare = boxWithShelf("seat-cut-bare-");
+    try {
+      const seedConfig = fs.readFileSync(path.join(SHELF, "seat", "templates", "graph.config.mjs"), "utf8");
+      fs.writeFileSync(path.join(box, "main.ts"), "export const x = 1;\n");
+      fs.renameSync(path.join(box, ".claude"), box + "-shelf");
+      gitIn(box, "init", "-q");
+      gitIn(box, "add", "-A");
+      gitIn(box, "commit", "-qm", "project");
+      fs.renameSync(box + "-shelf", path.join(box, ".claude"));
+      fs.mkdirSync(path.join(box, ".context"));
+      fs.writeFileSync(path.join(box, ".context", "graph.config.mjs"), seedConfig);
+      const cut = seatHere(box, "--packages", ROOT);
+      expect(cut.status, cut.stdout).toBe(1);
+      expect(cut.stdout).toContain("Прошлую посадку оборвали до её коммита");
+      expect(cut.stdout).toContain("git checkout -- . и git clean -fd -e .claude");
+      expect(cut.stdout).not.toContain("уже посажена");
+      gitIn(box, "add", ".context/graph.config.mjs");
+      gitIn(box, "commit", "-qm", "seated");
+      expect(seatHere(box, "--packages", ROOT).stdout).toContain("Обвязка здесь уже посажена");
+      fs.mkdirSync(path.join(bare, ".context"));
+      fs.writeFileSync(path.join(bare, ".context", "graph.config.mjs"), seedConfig);
+      const loose = seatHere(bare, "--packages", ROOT);
+      expect(loose.status, loose.stdout).toBe(1);
+      expect(loose.stdout).toContain("Убрать из папки всё, кроме .claude");
+    } finally {
+      for (const one of [box, bare, box + "-shelf"]) fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("репозиторий посреди операции либо на отсоединённой вершине — отказ до работы, папка не тронута", () => {
+    const box = boxWithShelf("seat-busy-");
+    try {
+      expect(gitBusyOf(box)).toBeNull();
+      fs.writeFileSync(path.join(box, "main.ts"), "export const x = 1;\n");
+      fs.renameSync(path.join(box, ".claude"), box + "-shelf");
+      gitIn(box, "init", "-q");
+      gitIn(box, "add", "-A");
+      gitIn(box, "commit", "-qm", "project");
+      fs.renameSync(box + "-shelf", path.join(box, ".claude"));
+      expect(gitBusyOf(box)).toBeNull();
+      for (const [name, said] of [["rebase-merge", "перебазирование"], ["MERGE_HEAD", "слияние"], ["CHERRY_PICK_HEAD", "cherry-pick"], ["BISECT_LOG", "bisect"]]) {
+        const at = path.join(box, ".git", name);
+        if (name === "rebase-merge") fs.mkdirSync(at);
+        else fs.writeFileSync(at, "x\n");
+        expect(gitBusyOf(box), name).toContain(said);
+        fs.rmSync(at, { recursive: true, force: true });
+      }
+      gitIn(box, "checkout", "-q", "--detach");
+      expect(gitBusyOf(box)).toContain("detached HEAD");
+      const r = seatHere(box, "--packages", ROOT);
+      expect(r.status, r.stdout).toBe(1);
+      expect(r.stdout).toContain("Вершина отсоединена (detached HEAD)");
+      expect(gitIn(box, "status", "--porcelain")).toBe("?? .claude/");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(box + "-shelf", { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("битый манифест живого проекта — отказ с его именем, а не «package.json нет»; осмотр среды так же", () => {
+    const box = boxWithShelf("seat-badjson-");
+    try {
+      fs.mkdirSync(path.join(box, "src"));
+      fs.writeFileSync(path.join(box, "src", "main.ts"), "export const x = 1;\n");
+      fs.writeFileSync(path.join(box, "package.json"), '{\n<<<<<<< HEAD\n  "name": "a"\n=======\n  "name": "b"\n>>>>>>> other\n}\n');
+      fs.renameSync(path.join(box, ".claude"), box + "-shelf");
+      gitIn(box, "init", "-q");
+      gitIn(box, "add", "-A");
+      gitIn(box, "commit", "-qm", "project");
+      fs.renameSync(box + "-shelf", path.join(box, ".claude"));
+      const said = seatHere(box, "--packages", ROOT);
+      expect(said.status, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toContain("package.json проекта не разбирается как JSON");
+      expect(said.stdout).not.toContain("package.json нет");
+      expect(gitIn(box, "status", "--porcelain")).toBe("?? .claude/");
+      const env = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", box], { cwd: ROOT, encoding: "utf8" });
+      expect(env.status, env.stdout + env.stderr).toBe(1);
+      expect(env.stdout).toContain("=== Окружение проекта не осмотрено ===");
+      expect(env.stdout).toContain("package.json проекта не разбирается как JSON");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(box + "-shelf", { recursive: true, force: true });
+    }
+  }, 120000);
 
   it("звено, не поймавшее посаженную ошибку, — отказ, и папка возвращена в прежний вид", () => {
     const dest = boxWithShelf("seat-blind-");
