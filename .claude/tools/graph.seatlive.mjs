@@ -551,19 +551,16 @@ export const runSeatLive = ({ shelf, target, env, packagesFrom, apply, profile }
     write(configRel, config);
   }
   const layout = [];
-  if (first.testsAway.length > 0) {
-    const dirs = [...new Set(first.testsAway.map((f) => path.posix.dirname(f) + "/"))].sort();
-    config = read(configRel);
-    field("testsOutside", dirs);
-    write(configRel, config);
+  // Тесты вне `tests/` держит пункт своим числом, адреса печатает сверка:
+  // список папок рос бы с проектом и стоял вторым рядом с настройкой.
+  if (first.testsAway.length > 0)
     layout.push([
-      "Тесты вне папки `tests/`: " + dirs.map((d) => "`" + d + "`").join(", "),
+      "Тесты вне папки `tests/`",
       "`" + first.testsAway.length + "`",
       "«Тесты лежат в `tests/`»",
-      "перенести в `tests/` своего слоя по слову разработчика",
+      "перенести в `tests/` своего слоя по слову разработчика; адреса печатает сверка",
       "`" + first.testsAway.length + "` тестов",
     ]);
-  }
 
   // 6. Долг вторым прогоном: файлы по предмету уже легли.
   const second = facts();

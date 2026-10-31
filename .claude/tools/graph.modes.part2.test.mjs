@@ -5824,6 +5824,32 @@ describe("пункт долга и названная им сверка", () => 
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  it("тесты вне `tests/` держатся числом пункта: адресов в нём нет, лишний тест назван", () => {
+    const box = seatEmpty("tests-held-");
+    try {
+      const test = (name) =>
+        fs.writeFileSync(
+          path.join(box, "src", "app", name),
+          'import { expect, it } from "vitest";\nit("zz", () => expect(1).toBe(1));\n',
+        );
+      test("zzOne.test.ts");
+      test("zzTwo.test.ts");
+      const away = () => verifyIn(box).get("Тесты лежат в `tests/`") ?? [];
+      expect(away()).toHaveLength(2);
+      withTransitionDebt(box, [
+        "| 1 | Тесты вне папки `tests/` | `2` | «Тесты лежат в `tests/`» | перенести в `tests/` своего слоя; адреса печатает сверка | `2` тестов |",
+      ]);
+      const held = verifyIn(box);
+      expect(held.get("Тесты лежат в `tests/`") ?? []).toEqual([]);
+      expect(held.get("Пункт долга держит названную сверку") ?? []).toEqual([]);
+      // Пункт держит число, а не папку: третий тест мимо `tests/` назван.
+      test("zzThree.test.ts");
+      expect(away()).toHaveLength(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
 
 /**

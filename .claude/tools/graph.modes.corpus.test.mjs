@@ -119,6 +119,8 @@ describe("корпус посадок", () => {
             expect(verify.stdout).toContain("  упало исключением: 0");
             const config = fs.readFileSync(path.join(box, ".context", "graph.config.mjs"), "utf8");
             expect(config).toContain('  scenario: "' + project.scenario + '",');
+            // Тесты вне `tests/` держит число пункта долга, а не список папок.
+            expect(config).toContain("  testsOutside: null,");
             const named = (verify.stdout.split(FOREIGN_HEAD)[1] ?? "").split("\n===")[0];
             for (const axis of project.foreignAxes ?? [])
               expect(named).toContain("    " + axis + " — чужое окружение");
