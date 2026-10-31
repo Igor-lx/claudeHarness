@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BAR_CHECK_KINDS, isRulesState, isStopState } from "./graph.predicates.mjs";
 import {
+  SEAT_PACKAGES,
   TOOL_DIR,
   seatEmpty,
   withTransitionDebt,
@@ -4014,6 +4015,10 @@ describe("серия", () => {
   // спрашивался (находка Н-10, решение Р7).
   it("коммит конфига цепочки: ворота требуют цепочку, свода не требуют", () => {
     const box = seatEmpty("konfig-");
+    // Конфиг форматтера сверяют форматтером проекта, как в посадке. Без ссылки
+    // на пакеты тест брал `prettier`, стоящий на машине глобально, и на
+    // Windows, где его нет, краснел с прогона `24` CI.
+    fs.symlinkSync(SEAT_PACKAGES, path.join(box, "node_modules"), "junction");
     try {
       const git = (...args) =>
         execFileSync(
