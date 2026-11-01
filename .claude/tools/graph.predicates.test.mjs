@@ -627,6 +627,25 @@ describe("idleReportOf", () => {
     expect(lines).toContain("  Звено цепочки не задвоено — сверка формы стека");
     expect(idleReportOf(["А"], []).join(NEWLINE)).not.toContain("ЗАГЛУШЕНА");
   });
+
+  it("каждая секция — пустая строка, заголовок, строки, итоговая строка", () => {
+    expect(
+      idleReportOf(["А"], [{ section: "Б", note: " причина " }], [{ section: "В", why: "почему" }]),
+    ).toEqual([
+      "",
+      "=== БЕЗ ПРЕДМЕТА: РЕЦЕПТ ЕСТЬ, ЛОМАТЬ НЕЧЕГО ===",
+      "  А — предмета в этом проекте нет",
+      "  Рецепт приехал с обвязкой и здесь не на чем сработать. Заведётся предмет — сработает сам.",
+      "",
+      "=== СВЕРКА МОЛЧИТ НАМЕРЕННО: РЕЦЕПТ НЕ ПРОГОНЯЛСЯ ===",
+      "  Б — причина",
+      "  Предмет есть, а сверка в чистом прогоне назвала, почему о нём молчит. Уйдёт причина — рецепт пойдёт сам.",
+      "",
+      "=== СВЕРКА ЗАГЛУШЕНА СЦЕНАРИЕМ ПОСАДКИ: РЕЦЕПТ НЕ ПРОГОНЯЛСЯ ===",
+      "  В — почему",
+      "  Сверку здесь не исполняет сценарий посадки (`shelfOnly` и `foreignOff` карты посадки): ломать её незачем.",
+    ]);
+  });
 });
 
 describe("шаг перехода «Рецепты фальсификации»", () => {
@@ -657,6 +676,16 @@ describe("шаг перехода «Рецепты фальсификации»"
       "Фальсификация на этом проекте, `2026-11-02`: рецептов обвязки, не нашедших места и не перенацеленных, — `0`.",
     ]);
     expect(withFalsifyTrace("без таблицы", "x", heading)).toBeNull();
+    // Строка с пробелами по краям — та же строка: второй она не заводится.
+    const padded = first.replace(/\nФальсификация на этом проекте([^\n]*)/, "\n  Фальсификация на этом проекте$1  ");
+    expect(falsifyStepVerdict(padded, { stepOpen: false, namedOpen: none }).looked).toBe(1);
+    expect(withFalsifyTrace(padded, "новая", heading).split(NEWLINE).filter((l) => l.includes("Фальсификация"))).toEqual([]);
+    // Строка итога первой строкой файла заменяется на месте.
+    expect(withFalsifyTrace(falsifyTraceLine("2026-11-01", []) + NEWLINE + plan, "новая", heading).split(NEWLINE)[0]).toBe("новая");
+    // Шапка с пробелами в конце, шапка первой строкой, таблица в конце файла.
+    expect(withFalsifyTrace(plan.replace(heading, heading + "  "), "новая", heading)).toContain(NEWLINE + "новая" + NEWLINE);
+    const bare = [heading, "| --- | --- | --- | --- |", "| 3 | шаг | — | `graph.mjs falsify` |"].join(NEWLINE);
+    expect(withFalsifyTrace(bare, "новая", heading)).toBe(bare + NEWLINE + NEWLINE + "новая");
     expect(withFalsifyTrace(plan.split(NEWLINE).join("\r\n"), "x", heading)).toContain("\r\n");
   });
 
@@ -696,7 +725,9 @@ describe("шаг перехода «Рецепты фальсификации»"
     const twice = withFalsifyTrace(plan, line, heading) + NEWLINE + line;
     expect(falsifyStepVerdict(twice, { stepOpen: true, namedOpen: none }).gaps[0]).toMatch(/стоит в файле перехода 2 раза/);
     const lying = withFalsifyTrace(plan, line.replace("— `0`", "— `3`"), heading);
-    expect(falsifyStepVerdict(lying, { stepOpen: false, namedOpen: none }).gaps[0]).toMatch(/называет `3` рецептов, а имён в ней 0/);
+    expect(falsifyStepVerdict(lying, { stepOpen: false, namedOpen: none }).gaps).toEqual([
+      "строка итога `falsify` называет `3` рецептов, а имён в ней 0 — прогнать `graph.mjs falsify`, он перепишет строку",
+    ]);
   });
 
   it("открытыми находками считаются только открытые строки реестра, имена — ёлочками в «Что найдено»", () => {
@@ -704,13 +735,18 @@ describe("шаг перехода «Рецепты фальсификации»"
     const registry = [
       head,
       "| --- | --- | --- | --- | --- | --- |",
-      "| 1 | рецепт «А» не перенацелить | переход | | нечем | открыта |",
-      "| 2 | рецепт «Б» сломан | переход | `abc123` | «Б» | закрыта |",
+      "| 1 | рецепт «Сверка А» не перенацелить | переход | | нечем | открыта |",
+      "| 2 | рецепт «Сверка Б» сломан | переход | `abc123` | «Сверка Б» | закрыта |",
       "",
-      "| 3 | «В» после таблицы | — | | | открыта |",
+      "| 3 | «Сверка В» после таблицы | — | | | открыта |",
     ].join(NEWLINE);
-    expect([...openFindingNames(registry, head)]).toEqual(["А"]);
+    expect([...openFindingNames(registry, head)]).toEqual(["Сверка А"]);
     expect([...openFindingNames("нет таблицы", head)]).toEqual([]);
+    // Строки, похожие на реестр, без его шапки — не реестр.
+    expect([...openFindingNames(["текст", "| 1 | «Сверка Г» | — | | | открыта |"].join(NEWLINE), head)]).toEqual([]);
+    // Шапка с пробелами в конце и таблица в конце файла.
+    const tail = [head + "  ", "| --- | --- | --- | --- | --- | --- |", "| 4 | «Сверка Д» | — | | | открыта |"].join(NEWLINE);
+    expect([...openFindingNames(tail, head)]).toEqual(["Сверка Д"]);
   });
 });
 
