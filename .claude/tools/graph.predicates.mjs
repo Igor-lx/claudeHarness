@@ -6461,8 +6461,9 @@ export const cutFromSeed = (body, seedBody) => {
  * предмета (`idle` — имена сверок) либо она в чистом прогоне сказала, почему
  * молчит (`quiet` — сверка и её строка из `IDLE_NOTES`). Это две причины, и
  * печатаются они порознь: «предмета нет» о сверке, чей предмет держит долг,
- * — неправда. Выведено одиннадцатой посадкой. */
-export const idleReportOf = (idle, quiet) => {
+ * — неправда. Выведено одиннадцатой посадкой. Третья причина — `muted`,
+ * сверка и почему сценарий посадки её здесь не исполняет. */
+export const idleReportOf = (idle, quiet, muted = []) => {
   const lines = [];
   if (idle.length > 0) {
     lines.push("", "=== БЕЗ ПРЕДМЕТА: РЕЦЕПТ ЕСТЬ, ЛОМАТЬ НЕЧЕГО ===");
@@ -6474,6 +6475,12 @@ export const idleReportOf = (idle, quiet) => {
     lines.push("", "=== СВЕРКА МОЛЧИТ НАМЕРЕННО: РЕЦЕПТ НЕ ПРОГОНЯЛСЯ ===");
     for (const one of quiet) lines.push("  " + one.section + " — " + one.note.trim());
     lines.push("  Предмет есть, а сверка в чистом прогоне назвала, почему о нём молчит. Уйдёт причина — рецепт пойдёт сам.");
+  }
+  if (muted.length > 0) {
+    lines.push("", "=== СВЕРКА ЗАГЛУШЕНА СЦЕНАРИЕМ ПОСАДКИ: РЕЦЕПТ НЕ ПРОГОНЯЛСЯ ===");
+    const why = new Map(muted.map((one) => [one.section, one.why]));
+    for (const [section, reason] of why) lines.push("  " + section + " — " + reason);
+    lines.push("  Сверку здесь не исполняет сценарий посадки (`shelfOnly` и `foreignOff` карты посадки): ломать её незачем.");
   }
   return lines;
 };

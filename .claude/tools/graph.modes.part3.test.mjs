@@ -4074,6 +4074,71 @@ describe("песочница прерванного прогона не оста
   }, 300000);
 });
 
+/** Посаженный проект: самопроверки обвязки в нём не исполняются, а звенья —
+ * скрипты под именами семени. Прежде `falsify` прогонял рецепты заглушённых
+ * сверок и печатал их «устаревшими», а рецепт близнеца звена заводил скрипт
+ * под проектным именем — звеном такой здесь не считается, и поломку брала
+ * чужая сверка. Код выхода был `1` на каждом посаженном проекте. Найдено
+ * холодным прогоном `2026-11-01`: знакомый и чужой проекты корпуса. */
+describe("`falsify` в посаженном проекте", () => {
+  it("рецепт заглушённой сверки не прогоняется, близнец звена под именем семени пойман, код ноль", () => {
+    const box = seatEmpty("falsify-seated-");
+    try {
+      const configAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        configAt,
+        fs.readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "familiar",'),
+      );
+      const recipesAt = path.join(box, ".claude", "tools", "falsify.json");
+      const all = JSON.parse(fs.readFileSync(recipesAt, "utf8")).recipes;
+      const pick = (section) => all.filter((r) => r.section === section);
+      fs.writeFileSync(
+        recipesAt,
+        JSON.stringify({ recipes: [...pick("Доктрина в бюджете"), ...pick("Звено цепочки не задвоено")] }),
+      );
+      const run = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "falsify"], {
+        cwd: box,
+        encoding: "utf8",
+        env: { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1" },
+      });
+      expect(run.stdout).toContain("  поймали поломку: 1 из 2");
+      expect(run.stdout).toContain("=== СВЕРКА ЗАГЛУШЕНА СЦЕНАРИЕМ ПОСАДКИ: РЕЦЕПТ НЕ ПРОГОНЯЛСЯ ===");
+      expect(run.stdout).toContain("  Доктрина в бюджете — самопроверка обвязки: исполняется и фальсифицируется в мастерской");
+      expect(run.stdout).not.toContain("рецепт устарел");
+      expect(run.stdout).not.toContain("Поломка ушла не туда");
+      expect(run.status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  // Решено разработчиком `2026-10-30`: в посаженном проекте звено — скрипт под
+  // именем семени, и проектный скрипт, зовущий тот же инструмент, звеном не
+  // считается. Близнец здесь — скрипт семени, зовущий инструмент чужого звена.
+  it("близнец — скрипт семени с вызовом чужого звена; проектный скрипт с тем же вызовом — нет", () => {
+    const box = seatEmpty("twin-seated-");
+    try {
+      const configAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        configAt,
+        fs.readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "familiar",'),
+      );
+      const pkgAt = path.join(box, "package.json");
+      const seed = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      const twinsWith = (scripts) => {
+        fs.writeFileSync(pkgAt, JSON.stringify({ ...seed, scripts: { ...seed.scripts, ...scripts } }, null, 2) + "\n");
+        return verifyIn(box).get("Звено цепочки не задвоено") ?? [];
+      };
+      expect(twinsWith({ "test:coverage": "vitest run" })).toEqual([
+        "test — одно звено под именами: test, test:coverage",
+      ]);
+      expect(twinsWith({ "lint-own": "eslint ." })).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 /**
  * Сравнение версий записано один раз: копий было четыре, и направление не
  * держала ни одна проверка — перевёрнутое, оно пропускало старую машину с

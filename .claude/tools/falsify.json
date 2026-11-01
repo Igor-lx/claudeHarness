@@ -716,8 +716,8 @@
     {
       "section": "Звено цепочки не задвоено",
       "file": "package.json",
-      "find": "\"scripts\": {",
-      "replace": "\"scripts\": {\n    \"lint-twin\": \"eslint .\","
+      "find": "\"test:coverage\": \"vitest run --coverage\"",
+      "replace": "\"test:coverage\": \"vitest run\""
     },
     {
       "section": "Правила направления",

@@ -6514,10 +6514,16 @@ const SCENARIO_LISTS = (() => {
   const map = mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {};
   return { shelfOnly: map.shelfOnly ?? [], foreignOff: map.foreignOff ?? [] };
 })();
-const MUTED = new Set([
-  ...(SHELF_HOME ? [] : SCENARIO_LISTS.shelfOnly),
-  ...(FOREIGN ? SCENARIO_LISTS.foreignOff : []),
+/** Заглушённая сверка и почему: `falsify` печатает причину вместо рецепта. */
+const MUTED_WHY = new Map([
+  ...(SHELF_HOME
+    ? []
+    : SCENARIO_LISTS.shelfOnly.map((s) => [s, "самопроверка обвязки: исполняется и фальсифицируется в мастерской"])),
+  ...(FOREIGN
+    ? SCENARIO_LISTS.foreignOff.map((s) => [s, "сверка формы стека: в чужом проекте не исполняется"])
+    : []),
 ]);
+const MUTED = new Set(MUTED_WHY.keys());
 /** Имена перечней, которых нет среди сверок: опечатка глушила бы ничто. */
 const MUTED_UNKNOWN = [...SCENARIO_LISTS.shelfOnly, ...SCENARIO_LISTS.foreignOff].filter(
   (name) => !CHECK_SECTIONS.includes(name),
@@ -6993,6 +6999,10 @@ if (mode === "falsify") {
   // Сверка, назвавшая в чистом прогоне, почему молчит: предмет есть, держит
   // его долг либо решение. Печатается своей секцией, со своей строкой.
   const quiet = [];
+  // Сверка, которую сценарий посадки здесь не исполняет: секции её нет ни до
+  // поломки, ни после, и рецепт печатался «устаревшим» — посаженный проект
+  // краснел двадцатью строками самопроверок обвязки.
+  const muted = [];
   try {
     const cleanOut = runVerify(tmp);
     const clean = readSections(cleanOut);
@@ -7294,6 +7304,10 @@ if (mode === "falsify") {
     for (const r0 of recipes) {
       await new Promise((resolve) => setImmediate(resolve));
       const r = localise(r0);
+      if (MUTED.has(r.section)) {
+        muted.push({ section: r.section, why: MUTED_WHY.get(r.section) });
+        continue;
+      }
       if (unresolved(r) || idleByDesign(r)) {
         idle.push(r.section);
         continue;
@@ -7451,7 +7465,8 @@ if (mode === "falsify") {
   const noSubject = [];
   const uncovered = [];
   for (const s of CHECK_SECTIONS) {
-    if (covered.has(s)) continue;
+    // Долг заглушённой сверки — долг того проекта, где она исполняется.
+    if (covered.has(s) || MUTED.has(s)) continue;
     if (RECIPE_IMPOSSIBLE[s] !== undefined) {
       noSubject.push(s + " — " + RECIPE_IMPOSSIBLE[s]);
       continue;
@@ -7517,7 +7532,7 @@ if (mode === "falsify") {
   );
   console.log("  при заведении, и с тех пор её здоровье никем не проверено.");
 
-  for (const line of idleReportOf(idle, quiet)) console.log(line);
+  for (const line of idleReportOf(idle, quiet, muted)) console.log(line);
 
   if (noSubject.length) {
     console.log("");
@@ -32598,7 +32613,7 @@ if (mode === "verify") {
     for (const g of chainTwins) console.log("    " + g);
     if (chainTwins.length > 0)
       console.log(
-        "  снять близнеца из манифеста: звено живёт под именем семени",
+        "  звено живёт одним скриптом под именем семени: снять близнеца либо вернуть скрипту семени вызов его звена",
       );
   });
   checkStep(() => {
