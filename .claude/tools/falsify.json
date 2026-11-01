@@ -1059,8 +1059,8 @@
     {
       "section": "Версии установленного (предупреждение, прогон не роняет)",
       "file": ".context/graph.config.mjs",
-      "find": "    prettier: \"3.9.10\",",
-      "replace": "    prettier: \"999.0.0\","
+      "find": "    node: \"",
+      "replace": "    node: \"999.0.0\",\n    nodeWas: \""
     },
     {
       "section": "Состав бочки в записи карты",

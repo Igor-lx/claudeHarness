@@ -1,0 +1,2 @@
+# The shelf keeps LF in any project: `.claude/seat/.gitattributes-why.md`.
+* text=auto eol=lf

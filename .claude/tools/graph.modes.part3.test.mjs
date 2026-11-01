@@ -4112,6 +4112,64 @@ describe("`falsify` в посаженном проекте", () => {
     }
   }, 300000);
 
+  // Чужому проекту посадка не кладёт ни корневой `.gitattributes`, ни пакетов,
+  // ни конфига мутаций. Рецепт концов строк ломал файл полки, которому LF не
+  // объявлял никто; рецепт версий поднимал пакет, которого нет; сверка
+  // непромеренного шла без области мутаций, и её поломку брала чужая сверка.
+  it("чужой проект: концы строк полки и версия среды пойманы, сверка мутаций заглушена, код ноль", () => {
+    const box = seatEmpty("falsify-foreign-");
+    try {
+      const configAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        configAt,
+        fs.readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "foreign",'),
+      );
+      for (const one of [".gitattributes", "stryker.config.json"]) fs.rmSync(path.join(box, one));
+      const recipesAt = path.join(box, ".claude", "tools", "falsify.json");
+      const all = JSON.parse(fs.readFileSync(recipesAt, "utf8")).recipes;
+      const pick = (section) => all.filter((r) => r.section === section);
+      fs.writeFileSync(
+        recipesAt,
+        JSON.stringify({
+          recipes: [
+            ...pick("Концы строк рабочего дерева сходятся с объявленными"),
+            ...pick("Версии установленного (предупреждение, прогон не роняет)"),
+            ...pick("Непромеренное названо долгом перехода"),
+          ],
+        }),
+      );
+      const run = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "falsify"], {
+        cwd: box,
+        encoding: "utf8",
+        env: { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1" },
+      });
+      expect(run.stdout).toContain("  поймали поломку: 2 из 3");
+      expect(run.stdout).toContain(
+        "  Непромеренное названо долгом перехода — сверка формы стека: в чужом проекте не исполняется",
+      );
+      expect(run.stdout).not.toContain("Поломка не дошла");
+      expect(run.stdout).not.toContain("Поломка ушла не туда");
+      expect(run.status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("полка объявляет LF сама: без корневого `.gitattributes` её файлы — eol=lf, файл проекта — нет", () => {
+    const box = seatEmpty("shelf-eol-");
+    try {
+      fs.rmSync(path.join(box, ".gitattributes"));
+      execFileSync("git", ["init", "-q"], { cwd: box });
+      const eolOf = (rel) =>
+        execFileSync("git", ["check-attr", "eol", "--", rel], { cwd: box, encoding: "utf8" }).trim();
+      expect(eolOf(".claude/state/todo.md")).toBe(".claude/state/todo.md: eol: lf");
+      expect(eolOf(".claude/tools/graph.mjs")).toBe(".claude/tools/graph.mjs: eol: lf");
+      expect(eolOf("package.json")).toBe("package.json: eol: unspecified");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   // Решено разработчиком `2026-10-30`: в посаженном проекте звено — скрипт под
   // именем семени, и проектный скрипт, зовущий тот же инструмент, звеном не
   // считается. Близнец здесь — скрипт семени, зовущий инструмент чужого звена.
