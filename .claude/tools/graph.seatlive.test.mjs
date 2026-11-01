@@ -178,7 +178,7 @@ describe("живая посадка: настройка, факты, перех�
   it("шаги и пункты долга дописываются в свои таблицы, номера продолжают уже стоящие", () => {
     const plan = { heading: "| № | Шаг | Объём | Чем проверяется |", debtHeading: "| № | Расхождение | Сейчас | Держит | План | Цена |" };
     const once = transitionWith(seed("15-transition.md"), plan, [["Карта", "`3` файлов", "«Покрытие карты»"]], [["Раз", "`1`", "«lint»", "п", "ц"]]);
-    expect(once).toContain("| 3 | Карта | `3` файлов | «Покрытие карты» |");
+    expect(once).toContain("| 4 | Карта | `3` файлов | «Покрытие карты» |");
     const twice = transitionWith(once, plan, [], [["Два", "`2`", "«test»", "п", "ц"]]);
     expect(twice).toContain("| 1 | Раз | `1` | «lint» | п | ц |");
     expect(twice).toContain("| 2 | Два | `2` | «test» | п | ц |");

@@ -6485,6 +6485,114 @@ export const idleReportOf = (idle, quiet, muted = []) => {
   return lines;
 };
 
+/** Строка итога `falsify` в файле перехода: дата прогона и рецепты обвязки,
+ * не нашедшие места в проекте и не перенацеленные им. Пишет её сам прогон,
+ * читает сверка «Рецепты фальсификации перенацелены переходом»: шаг знания
+ * закрыт, а строки нет — переход закрыли, не прогнав. */
+const FALSIFY_TRACE =
+  /^Фальсификация на этом проекте, `(\d{4}-\d{2}-\d{2})`: рецептов обвязки, не нашедших места и не перенацеленных, — `(\d+)`(?:: (.*))?\.$/;
+
+export const falsifyTraceLine = (date, sections) =>
+  "Фальсификация на этом проекте, `" +
+  date +
+  "`: рецептов обвязки, не нашедших места и не перенацеленных, — `" +
+  sections.length +
+  "`" +
+  (sections.length > 0 ? ": " + sections.map((s) => "«" + s + "»").join(", ") : "") +
+  ".";
+
+const falsifyTracesOf = (text) =>
+  text
+    .split(/\r?\n/)
+    .map((l) => FALSIFY_TRACE.exec(l.trim()))
+    .filter((m) => m !== null)
+    .map((m) => ({
+      date: m[1],
+      left: Number(m[2]),
+      sections: [...(m[3] ?? "").matchAll(/«([^»]+)»/g)].map((x) => x[1]),
+    }));
+
+/** Файл перехода со строкой итога: прежняя заменяется на месте, новая
+ * ложится под таблицей знания. Таблицы знания нет — `null`: класть некуда. */
+export const withFalsifyTrace = (text, line, heading) => {
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const rows = text.split(/\r?\n/);
+  const at = rows.findIndex((l) => FALSIFY_TRACE.test(l.trim()));
+  if (at >= 0) {
+    rows[at] = line;
+    return rows.join(newline);
+  }
+  const head = rows.findIndex((l) => l.startsWith(heading));
+  if (head < 0) return null;
+  let end = head + 2;
+  while (end < rows.length && rows[end].startsWith("|")) end += 1;
+  rows.splice(end, 0, "", line);
+  return rows.join(newline);
+};
+
+/** Имена сверок, которые называют ёлочками открытые строки реестра находок:
+ * рецепт такой сверки, который перенацелить нельзя, — поломка обвязки, и
+ * строка реестра его законный исход. */
+export const openFindingNames = (text, heading) => {
+  const rows = text.split(/\r?\n/);
+  const head = rows.findIndex((l) => l.startsWith(heading));
+  const names = new Set();
+  if (head < 0) return names;
+  for (let i = head + 2; i < rows.length && rows[i].startsWith("|"); i += 1) {
+    const cells = rows[i].split("|").slice(1, -1).map((c) => c.trim());
+    if (cells.at(-1) !== "открыта") continue;
+    for (const m of (cells[1] ?? "").matchAll(/«([^»]+)»/g)) names.add(m[1]);
+  }
+  return names;
+};
+
+/** Исход шага знания «Рецепты фальсификации» по тексту файла перехода: пока
+ * шаг открыт — ход; закрыт — строка итога обязана быть одна и не оставлять
+ * рецептов, кроме названных открытыми находками. `looked` — строк итога. */
+export const falsifyStepVerdict = (planText, { stepOpen, namedOpen }) => {
+  const traces = falsifyTracesOf(planText);
+  const looked = traces.length;
+  if (traces.length > 1)
+    return {
+      looked,
+      said: null,
+      gaps: ["строка итога `falsify` стоит в файле перехода " + traces.length + " раза — оставить одну: её пишет сам прогон"],
+    };
+  const trace = traces[0] ?? null;
+  if (trace !== null && trace.left !== trace.sections.length)
+    return {
+      looked,
+      said: null,
+      gaps: ["строка итога `falsify` называет `" + trace.left + "` рецептов, а имён в ней " + trace.sections.length + " — прогнать `graph.mjs falsify`, он перепишет строку"],
+    };
+  const left = trace === null ? [] : trace.sections.filter((s) => !namedOpen.has(s));
+  if (stepOpen)
+    return {
+      looked,
+      said:
+        trace === null
+          ? "шаг открыт: `graph.mjs falsify` на этом проекте ещё не прогонялся"
+          : "шаг открыт: прогон " + trace.date + ", не перенацелено рецептов " + left.length,
+      gaps: [],
+    };
+  if (trace === null)
+    return {
+      looked,
+      said: null,
+      gaps: ["шаг «Рецепты фальсификации» закрыт, а строки итога `falsify` в файле перехода нет: вернуть шаг в таблицу знания и прогнать `graph.mjs falsify`"],
+    };
+  if (left.length === 0)
+    return { looked, said: "шаг закрыт: прогон " + trace.date + ", рецептов под свой проект не осталось", gaps: [] };
+  return {
+    looked,
+    said: null,
+    gaps: left.map(
+      (s) =>
+        "«" + s + "» — рецепт не нашёл места и не перенацелен: записать его под свой файл в `falsify.json` базы и прогнать `graph.mjs falsify` снова; перенацелить нельзя — открытой строкой реестра находок, назвавшей сверку",
+    ),
+  };
+};
+
 /** Что сделал посаженный слом — по ВСЕМУ прогону, а не в одной секции.
  *
  * Четыре исхода:

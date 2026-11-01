@@ -13,7 +13,11 @@ const {
   PREDICATE_CASES,
   classifyRun,
   cutFromSeed,
+  falsifyStepVerdict,
+  falsifyTraceLine,
   idleReportOf,
+  openFindingNames,
+  withFalsifyTrace,
   recipeEditOf,
   inComment,
   printedIsRed,
@@ -622,6 +626,91 @@ describe("idleReportOf", () => {
     expect(lines.filter((l) => l === "  Доктрина в бюджете — самопроверка обвязки")).toHaveLength(1);
     expect(lines).toContain("  Звено цепочки не задвоено — сверка формы стека");
     expect(idleReportOf(["А"], []).join(NEWLINE)).not.toContain("ЗАГЛУШЕНА");
+  });
+});
+
+describe("шаг перехода «Рецепты фальсификации»", () => {
+  // Переход закрылся, ни разу не позвав `falsify`: шага не было, и три
+  // рецепта остались без места. Выведено переходом сессией `2026-11-01`.
+  const heading = "| № | Шаг | Объём | Чем проверяется |";
+  const plan = [
+    "## Знание",
+    "",
+    heading,
+    "| --- | --- | --- | --- |",
+    "| 3 | Рецепты фальсификации | рецептов | `graph.mjs falsify` |",
+    "",
+    "## Долг перехода",
+  ].join(NEWLINE);
+  const none = new Set();
+
+  it("строка итога ложится под таблицей знания, а повторная — на место прежней", () => {
+    const first = withFalsifyTrace(plan, falsifyTraceLine("2026-11-01", ["А", "Б"]), heading);
+    const rows = first.split(NEWLINE);
+    expect(rows[5]).toBe("");
+    expect(rows[6]).toBe(
+      "Фальсификация на этом проекте, `2026-11-01`: рецептов обвязки, не нашедших места и не перенацеленных, — `2`: «А», «Б».",
+    );
+    expect(rows.at(-1)).toBe("## Долг перехода");
+    const second = withFalsifyTrace(first, falsifyTraceLine("2026-11-02", []), heading);
+    expect(second.split(NEWLINE).filter((l) => l.startsWith("Фальсификация на этом проекте"))).toEqual([
+      "Фальсификация на этом проекте, `2026-11-02`: рецептов обвязки, не нашедших места и не перенацеленных, — `0`.",
+    ]);
+    expect(withFalsifyTrace("без таблицы", "x", heading)).toBeNull();
+    expect(withFalsifyTrace(plan.split(NEWLINE).join("\r\n"), "x", heading)).toContain("\r\n");
+  });
+
+  it("шаг открыт — ход; закрыт без строки итога — красное", () => {
+    expect(falsifyStepVerdict(plan, { stepOpen: true, namedOpen: none })).toEqual({
+      looked: 0,
+      said: "шаг открыт: `graph.mjs falsify` на этом проекте ещё не прогонялся",
+      gaps: [],
+    });
+    const closed = falsifyStepVerdict(plan, { stepOpen: false, namedOpen: none });
+    expect(closed.said).toBeNull();
+    expect(closed.gaps).toEqual([
+      "шаг «Рецепты фальсификации» закрыт, а строки итога `falsify` в файле перехода нет: вернуть шаг в таблицу знания и прогнать `graph.mjs falsify`",
+    ]);
+  });
+
+  it("закрыт: ноль рецептов — чисто; рецепт без места — красное, пока его сверку не назвала открытая находка", () => {
+    const clean = withFalsifyTrace(plan, falsifyTraceLine("2026-11-01", []), heading);
+    expect(falsifyStepVerdict(clean, { stepOpen: false, namedOpen: none })).toEqual({
+      looked: 1,
+      said: "шаг закрыт: прогон 2026-11-01, рецептов под свой проект не осталось",
+      gaps: [],
+    });
+    const left = withFalsifyTrace(plan, falsifyTraceLine("2026-11-01", ["Звено цепочки не задвоено"]), heading);
+    const red = falsifyStepVerdict(left, { stepOpen: false, namedOpen: none });
+    expect(red.gaps).toHaveLength(1);
+    expect(red.gaps[0]).toMatch(/^«Звено цепочки не задвоено» — рецепт не нашёл места и не перенацелен/);
+    const named = falsifyStepVerdict(left, { stepOpen: false, namedOpen: new Set(["Звено цепочки не задвоено"]) });
+    expect(named.gaps).toEqual([]);
+    expect(falsifyStepVerdict(left, { stepOpen: true, namedOpen: none }).said).toBe(
+      "шаг открыт: прогон 2026-11-01, не перенацелено рецептов 1",
+    );
+  });
+
+  it("строка итога дважды и число, не сошедшееся с именами, — красное в любом состоянии шага", () => {
+    const line = falsifyTraceLine("2026-11-01", []);
+    const twice = withFalsifyTrace(plan, line, heading) + NEWLINE + line;
+    expect(falsifyStepVerdict(twice, { stepOpen: true, namedOpen: none }).gaps[0]).toMatch(/стоит в файле перехода 2 раза/);
+    const lying = withFalsifyTrace(plan, line.replace("— `0`", "— `3`"), heading);
+    expect(falsifyStepVerdict(lying, { stepOpen: false, namedOpen: none }).gaps[0]).toMatch(/называет `3` рецептов, а имён в ней 0/);
+  });
+
+  it("открытыми находками считаются только открытые строки реестра, имена — ёлочками в «Что найдено»", () => {
+    const head = "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |";
+    const registry = [
+      head,
+      "| --- | --- | --- | --- | --- | --- |",
+      "| 1 | рецепт «А» не перенацелить | переход | | нечем | открыта |",
+      "| 2 | рецепт «Б» сломан | переход | `abc123` | «Б» | закрыта |",
+      "",
+      "| 3 | «В» после таблицы | — | | | открыта |",
+    ].join(NEWLINE);
+    expect([...openFindingNames(registry, head)]).toEqual(["А"]);
+    expect([...openFindingNames("нет таблицы", head)]).toEqual([]);
   });
 });
 

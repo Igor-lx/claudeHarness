@@ -27,7 +27,11 @@ import { builtinModules, createRequire } from "node:module";
 import {
   classifyRun,
   cutFromSeed,
+  falsifyStepVerdict,
+  falsifyTraceLine,
   idleReportOf,
+  openFindingNames,
+  withFalsifyTrace,
   recipeEditOf,
   HELD_BY_DEBT_ROW,
   HELD_BY_WAITING_SEED,
@@ -6421,6 +6425,7 @@ const CHECK_SECTIONS = [
   "В файле узла только сам узел",
   "Предложенное сводом названо находкой",
   "Архитектурный проход перехода запечатан",
+  "Рецепты фальсификации перенацелены переходом",
   "Архитектурный факт назван записью",
   "Файлы базы заведены под свой предмет",
   "Предмет из кода назван в своём файле базы",
@@ -6705,6 +6710,7 @@ const RECIPE_NEEDS = {
   "Шаги перехода закрывают измерение": "transition",
   "Напоминание о переходе включено": "transition",
   "Архитектурный проход перехода запечатан": "transition",
+  "Рецепты фальсификации перенацелены переходом": "transition",
   // Окна свежести нет — исполнение хуков не сверяется, и ломать нечего.
   "Хуки проекта исполняются в этой сессии": "guardTraceAgeS",
   // Мутационного прогона нет — непромеренного нет: проект со своим раннером.
@@ -7003,6 +7009,11 @@ if (mode === "falsify") {
   // поломки, ни после, и рецепт печатался «устаревшим» — посаженный проект
   // краснел двадцатью строками самопроверок обвязки.
   const muted = [];
+  // Сверки, чей рецепт прогонялся. У сверки бывает рецепт на каждое
+  // состояние предмета — шаг перехода открыт и закрыт, — и простаивающий по
+  // устройству второй рецепт печатал её «предмета в этом проекте нет», когда
+  // первый её только что поймал. Выведено переходом сессией `2026-11-01`.
+  const ran = new Set();
   try {
     const cleanOut = runVerify(tmp);
     const clean = readSections(cleanOut);
@@ -7023,6 +7034,7 @@ if (mode === "falsify") {
     };
 
     const record = (section, after) => {
+      ran.add(section);
       const { how, why } = classifyRun(clean, after, section);
       if (how === "caught") caught.push(section);
       else if (how === "broken") broken.push(section + why);
@@ -7503,6 +7515,21 @@ if (mode === "falsify") {
   const foreignLeft = foreign.filter(
     (f) => !retargeted.has(f.split(" — ")[0]),
   );
+  // Идёт переход — прогон оставляет итог в его файле: закрыть шаг знания
+  // «Рецепты фальсификации», не прогнав, не даёт сверка, читающая эту строку.
+  // Выведено переходом сессией `2026-11-01`: шага не было, и переход
+  // закрылся, ни разу не позвав режим.
+  const planAt =
+    CONFIG.transition?.file == null ? null : path.join(BASE, CONFIG.transition.file);
+  if (planAt !== null && existsSync(planAt)) {
+    const sections = [...new Set(foreignLeft.map((f) => f.split(" — ")[0]))];
+    const next = withFalsifyTrace(
+      readFileSync(planAt, "utf8"),
+      falsifyTraceLine(new Date().toISOString().slice(0, 10), sections),
+      CONFIG.transition.heading,
+    );
+    if (next !== null) writeFileSync(planAt, next);
+  }
   if (foreignLeft.length) {
     console.log("");
     console.log("=== РЕЦЕПТЫ НАПИСАНЫ ПОД СВОЙ ПРОЕКТ ===");
@@ -7518,7 +7545,10 @@ if (mode === "falsify") {
     console.log(
       "  " +
         path.relative(REPO_ROOT, projectRecipesAt).split(path.sep).join("/") +
-        ", той же формы. Работа перехода, шаг знания.",
+        ", той же формы. Работа перехода, шаг знания «Рецепты фальсификации»;",
+    );
+    console.log(
+      "  перенацелить нельзя — открытая строка реестра находок, назвавшая сверку.",
     );
   }
 
@@ -7532,7 +7562,7 @@ if (mode === "falsify") {
   );
   console.log("  при заведении, и с тех пор её здоровье никем не проверено.");
 
-  for (const line of idleReportOf(idle, quiet, muted)) console.log(line);
+  for (const line of idleReportOf(idle.filter((s) => !ran.has(s)), quiet, muted)) console.log(line);
 
   if (noSubject.length) {
     console.log("");
@@ -30467,6 +30497,44 @@ if (mode === "verify") {
     }));
     if (archSaid !== null) console.log("  " + archSaid);
     for (const one of archGaps) console.log("    " + one);
+  });
+  // Рецепты фальсификации перенацелены переходом.
+  //
+  // Рецепт обвязки, не нашедший места в живом проекте, оставляет его сверку
+  // без фальсификации на этом проекте. Перенацелить его — работа перехода,
+  // шаг знания с измерением `graph.mjs falsify`; прогон пишет строку итога в
+  // файл перехода. Шаг закрыт, а строки нет либо в ней остались рецепты —
+  // переход закрыли, не прогнав. Выведено переходом сессией `2026-11-01`.
+  let recipeLooked = 0;
+  let recipeSaid = null;
+  let recipeGaps = [];
+  checkStep(() => {
+    const planAt =
+      CONFIG.transition?.file == null ? null : path.join(BASE, CONFIG.transition.file);
+    if (planAt === null || !existsSync(planAt)) {
+      recipeSaid = "перехода нет — перенацеливать нечего";
+      return;
+    }
+    const findingsAt =
+      CONFIG.findings?.file == null ? null : path.join(BASE, CONFIG.findings.file);
+    const verdict = falsifyStepVerdict(readFileSync(planAt, "utf8"), {
+      stepOpen: (transitionOpen() ?? []).some((s) => /graph\.mjs falsify/.test(s.line)),
+      namedOpen:
+        findingsAt !== null && existsSync(findingsAt)
+          ? openFindingNames(readFileSync(findingsAt, "utf8"), CONFIG.findings.heading)
+          : new Set(),
+    });
+    recipeLooked = verdict.looked;
+    recipeSaid = verdict.said;
+    recipeGaps = verdict.gaps;
+  });
+  checkStep(() => {
+    checkHead("Рецепты фальсификации перенацелены переходом", () => ({
+      n: recipeLooked,
+      unit: "строк итога `falsify` в файле перехода",
+    }));
+    if (recipeSaid !== null) console.log("  " + recipeSaid);
+    for (const one of recipeGaps) console.log("    " + one);
   });
   // Архитектурный факт назван записью.
   //

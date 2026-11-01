@@ -4170,6 +4170,66 @@ describe("`falsify` в посаженном проекте", () => {
     }
   });
 
+  // Переход сессией `2026-11-01` закрылся, ни разу не позвав `falsify`: шага
+  // не было, и три рецепта остались без места. Шаг стоит в семени файла
+  // перехода, прогон пишет строку итога, закрытый без неё шаг — красное.
+  it("переход: шаг «Рецепты фальсификации» из семени, строка итога от прогона, закрытый без неё шаг — красное", () => {
+    const box = seatEmpty("falsify-step-");
+    try {
+      withTransitionDebt(box, []);
+      const planAt = path.join(box, ".context", "15-transition.md");
+      const section = "Рецепты фальсификации перенацелены переходом";
+      expect(fs.readFileSync(planAt, "utf8")).toContain("| `graph.mjs falsify` |");
+      expect(verifyIn(box).get(section) ?? []).toEqual([]);
+      const withStep = fs.readFileSync(planAt, "utf8");
+      const closeStep = () =>
+        fs.writeFileSync(
+          planAt,
+          fs
+            .readFileSync(planAt, "utf8")
+            .split("\n")
+            .filter((l) => !l.includes("| `graph.mjs falsify` |"))
+            .join("\n"),
+        );
+      closeStep();
+      expect(verifyIn(box).get(section)).toEqual([
+        "шаг «Рецепты фальсификации» закрыт, а строки итога `falsify` в файле перехода нет: вернуть шаг в таблицу знания и прогнать `graph.mjs falsify`",
+      ]);
+      fs.writeFileSync(planAt, withStep);
+      const recipesAt = path.join(box, ".claude", "tools", "falsify.json");
+      const own = JSON.parse(fs.readFileSync(recipesAt, "utf8")).recipes.filter((r) => r.section === section);
+      expect(own.map((r) => (r.whenStepOpen ? "open" : r.whenStepClosed ? "closed" : "?"))).toEqual(["open", "closed"]);
+      fs.writeFileSync(
+        recipesAt,
+        JSON.stringify({
+          recipes: [
+            ...own,
+            { section: "Звено цепочки не задвоено", own: true, file: "package.json", find: "места нет", replace: "x" },
+          ],
+        }),
+      );
+      const run = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "falsify"], {
+        cwd: box,
+        encoding: "utf8",
+        env: { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1" },
+      });
+      // Рецепт на открытый шаг ловит, на закрытый простаивает по устройству —
+      // и сверка не печатается «предмета нет»: её предмет есть.
+      expect(run.stdout).toContain("  поймали поломку: 1 из 3");
+      expect(run.stdout).not.toContain(section + " — предмета в этом проекте нет");
+      expect(run.stdout).toContain("шаг знания «Рецепты фальсификации»");
+      expect(fs.readFileSync(planAt, "utf8")).toMatch(
+        /\nФальсификация на этом проекте, `\d{4}-\d{2}-\d{2}`: рецептов обвязки, не нашедших места и не перенацеленных, — `1`: «Звено цепочки не задвоено»\.\n/,
+      );
+      closeStep();
+      const left = verifyIn(box).get(section) ?? [];
+      expect(left).toHaveLength(1);
+      expect(left[0]).toMatch(/^«Звено цепочки не задвоено» — рецепт не нашёл места и не перенацелен/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   // Решено разработчиком `2026-10-30`: в посаженном проекте звено — скрипт под
   // именем семени, и проектный скрипт, зовущий тот же инструмент, звеном не
   // считается. Близнец здесь — скрипт семени, зовущий инструмент чужого звена.

@@ -1521,6 +1521,31 @@
       "whenStepOpen": "bar\\s+--transition"
     },
     {
+      "section": "Рецепты фальсификации перенацелены переходом",
+      "whenStepOpen": "graph\\.mjs falsify",
+      "edits": [
+        {
+          "file": ".context/15-transition.md",
+          "find": "| `graph.mjs falsify` |",
+          "replace": "| `graph.mjs verify` |"
+        },
+        {
+          "file": ".context/15-transition.md",
+          "append": "Фальсификация на этом проекте, `2026-01-01`: рецептов обвязки, не нашедших места и не перенацеленных, — `1`: «Проба»."
+        }
+      ]
+    },
+    {
+      "section": "Рецепты фальсификации перенацелены переходом",
+      "whenStepClosed": "graph\\.mjs falsify",
+      "edits": [
+        {
+          "file": ".context/15-transition.md",
+          "append": "Фальсификация на этом проекте, `2026-01-01`: рецептов обвязки, не нашедших места и не перенацеленных, — `1`: «Проба»."
+        }
+      ]
+    },
+    {
       "section": "Архитектурный проход перехода запечатан",
       "whenStepClosed": "bar\\s+--transition",
       "edits": [
