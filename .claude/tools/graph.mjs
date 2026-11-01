@@ -11748,6 +11748,30 @@ const CONDITION_CHARS = 24;
  * Найдено ревьюером пробы. Тело короче стольких знаков — `x.length > 0` —
  * повторяется законно. */
 const BODY_CHARS = 32;
+/** Расчёт, повторённый внутри одного файла с другими именами: строка
+ * присваивания либо возврата не короче стольких знаков, с операцией и
+ * литералом. Окно строк его не видит — он короче и с другими именами, — а
+ * планка называет повтор внутри узла дефектом (`I5`). Найдено пробой планки:
+ * две подписи счётчика одной функции прошли свод дважды. */
+const INSIDE_CHARS = 30;
+const SHAPE_WORDS = new Set(
+  "const let var return if else new typeof instanceof in of await async true false null undefined this void".split(" "),
+);
+/** Форма строки: имена — одним знаком, слова языка и литералы как есть. */
+const shapeOf = (line) =>
+  line
+    .split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/\b[A-Za-z_$][\w$]*\b/g, (w) => (SHAPE_WORDS.has(w) ? w : "§"))))
+    .join("");
+/** Строка — расчёт: присваивание либо возврат, с литералом и не меньше чем
+ * двумя операциями; запасное `??` и цепочка `?.` расчётом не считаются. */
+const computesOf = (line) => {
+  if (line.length < INSIDE_CHARS) return false;
+  if (!/^return\b/.test(line) && !/(?:^|[^=!<>])=(?![=>])/.test(line)) return false;
+  if (!/"[^"]*"|'[^']*'|\b\d+\b/.test(line)) return false;
+  const bare = line.replace(/\?\?|\?\./g, " ").replace(/=>/g, " ");
+  return (bare.match(/===|!==|&&|\|\||\?|[+\-*/%](?![=+\-])/g) ?? []).length >= 2;
+};
 /** Где кончается выражение, начатое с `from`: первая точка с запятой либо
  * строка с начала строки вне скобок; `-1` — скобка закрылась раньше. С
  * `arrow` ищется стрелка вне скобок, а не конец. */
@@ -11801,6 +11825,7 @@ const cloneIndex = () => {
   const conditions = new Map();
   const bodies = new Map();
   const tags = new Map();
+  const inside = new Map();
   for (const f of files) {
     if (isTest(f) || f.endsWith(".d.ts")) continue;
     const code = commentlessOf(readFileSync(f, "utf8"));
@@ -11812,6 +11837,14 @@ const cloneIndex = () => {
           r.t !== "" &&
           !/^(?:import\b|export\s*(?:type\s*)?[{*]|[)}\]>;,]+$)/.test(r.t),
       );
+    const shapes = new Map();
+    for (const r of rows) {
+      if (!computesOf(r.t)) continue;
+      const k = shapeOf(r.t);
+      if (!shapes.has(k)) shapes.set(k, []);
+      shapes.get(k).push(r.n);
+    }
+    inside.set(f, [...shapes.values()].filter((list) => list.length > 1));
     for (let k = 0; k + CLONE_ROWS <= rows.length; k += 1) {
       const chunk = rows
         .slice(k, k + CLONE_ROWS)
@@ -11844,7 +11877,7 @@ const cloneIndex = () => {
       tags.get(key).push({ file: f, line: Number(one.slice(0, cut)) });
     }
   }
-  CLONES_CACHE = { windows, conditions, bodies, tags };
+  CLONES_CACHE = { windows, conditions, bodies, tags, inside };
   return CLONES_CACHE;
 };
 /** Повторы файла: его строки, повторённые в другом месте проекта, —
@@ -11855,7 +11888,7 @@ const cloneIndex = () => {
  * строк по k−1 адресов. Замерено: `600` копий одного тела дали протокол
  * приложения в `30` миллионов знаков. */
 const repeatsOf = (f, seen = new Set()) => {
-  const { windows, conditions, bodies } = cloneIndex();
+  const { windows, conditions, bodies, inside } = cloneIndex();
   const byPartner = new Map();
   for (const list of windows.values()) {
     if (list.length < 2) continue;
@@ -11903,6 +11936,12 @@ const repeatsOf = (f, seen = new Set()) => {
         others.map((x) => barQuoted(rel(x.file) + ":" + x.line)).join(", "),
     });
   }
+  for (const lines of inside.get(f) ?? [])
+    out.push({
+      line: lines[0],
+      mark: "внутри узла",
+      what: "расчёт строки " + lines[0] + " повторён в строках " + lines.slice(1).join(", ") + " того же файла с другими именами",
+    });
   for (const [cond, list] of conditions) {
     const mine = list.filter((x) => x.file === f);
     const others = list.filter((x) => x.file !== f);

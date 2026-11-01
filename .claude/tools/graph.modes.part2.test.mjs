@@ -4897,6 +4897,57 @@ describe("признаки по всей планке в модели свода
     }
   }, 180000);
 
+  it("тот же расчёт внутри одного файла с другими именами — строка повтора «внутри узла»; запасное `??` и подпись типа — нет", () => {
+    const box = seatEmpty("inside-repeat-");
+    try {
+      const tool = toolIn(box);
+      const put = putIn(box);
+      put(
+        "src/shared/zzCount/zzCount.ts",
+        [
+          "export const zzLabels = (done: number, open: number): string => {",
+          '  const finished = done === 1 ? "1 item" : String(done) + " items";',
+          '  const pending = open === 1 ? "1 item" : String(open) + " items";',
+          '  return finished + " / " + pending;',
+          "};",
+          "",
+        ].join("\n"),
+      );
+      put(
+        "src/shared/zzQuiet/zzQuiet.ts",
+        [
+          "export type ZzLog = {",
+          '  readonly info: (event: string, detail?: Record<string, "a" | "b">) => void;',
+          '  readonly warn: (event: string, detail?: Record<string, "a" | "b">) => void;',
+          "};",
+          "export const zzNames = (first?: string, last?: string): string => {",
+          '  const head = first?.trim() ?? "";',
+          '  const tail = last?.trim() ?? "";',
+          '  return head + " " + tail;',
+          "};",
+          "",
+        ].join("\n"),
+      );
+      tool("bar", "shared");
+      const rows = modelOf(box);
+      expect(has(rows, "повтор", "внутри узла", "shared/zzCount/zzCount.ts:2")).toBe(true);
+      expect(rows.some((r) => r.mark === "внутри узла" && r.where.includes("zzQuiet"))).toBe(false);
+      // Об этой строке спрашивают оба критерия, которые называют повтор внутри узла.
+      const text = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      const n = Number(/^\| П(\d+) \| повтор \|[^\n]*внутри узла/m.exec(text)?.[1]);
+      const asks = (id) => {
+        const line = text.split("\n").find((l) => l.startsWith("| " + id + " |")) ?? "";
+        const said = /спрашивают: ([^|]+)/.exec(line)?.[1] ?? "";
+        return [...said.matchAll(/П(\d+)(?:–П(\d+))?/g)].some((m) => Number(m[1]) <= n && n <= Number(m[2] ?? m[1]));
+      };
+      expect(Number.isFinite(n)).toBe(true);
+      expect(asks("I5")).toBe(true);
+      expect(asks("A6-бис")).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it("повтор и метка в протоколе — факт один раз: пара строкой, группа тел, условий и меток строкой у первого файла", () => {
     const box = seatEmpty("repeat-once-");
     try {
