@@ -83,6 +83,13 @@ describe("живая посадка: база без каркаса", () => {
 describe("живая посадка: своё проекта внутри полки", () => {
   const map = JSON.parse(fs.readFileSync(path.join(SEEDS, "..", "map.json"), "utf8"));
 
+  it("неотслеживаемое полки без карты — вся папка полки своя у обвязки", () => {
+    expect(shelfUntracked("?? .claude/", undefined)).toBe(true);
+    expect(shelfUntracked("?? .claude/tools/graph.mjs", undefined)).toBe(true);
+    expect(shelfUntracked(" M .claude/tools/graph.mjs", undefined)).toBe(false);
+    expect(shelfUntracked("?? .claude/tools/graph.mjs", {})).toBe(true);
+  });
+
   it("неотслеживаемое полки — любой формой строки git; своё проекта внутри полки и вне её — нет", () => {
     for (const one of ["?? .claude/", "?? .claude", "?? .claude/README.md", "?? .claude/rules/", "?? .claude/hooks/", "?? .claude/hooks/git/", '?? ".claude/rules/a b.md"'])
       expect(shelfUntracked(one, map), one).toBe(true);
@@ -101,6 +108,14 @@ describe("живая посадка: своё проекта внутри пол
       for (const g of groups) expect(once.hooks[event], event).toContainEqual(g);
     expect(once.hooks.Stop).toContainEqual({ hooks: [{ type: "command", command: "own-stop" }] });
     expect(settingsMerged(once, seedSettings)).toEqual(once);
+    // Своих разрешений и хуков нет — ровно строки семени; своё поле, которого
+    // в семени нет, остаётся; без хуков у обоих — поля хуков нет.
+    expect(settingsMerged({}, seedSettings)).toEqual({ permissions: seedSettings.permissions, hooks: seedSettings.hooks });
+    expect(settingsMerged({ permissions: { defaultMode: "acceptEdits" } }, seedSettings).permissions.defaultMode).toBe("acceptEdits");
+    expect(settingsMerged({}, { permissions: { allow: ["a"] } })).toEqual({ permissions: { allow: ["a"] } });
+    // Группа с пустым списком хуков: своя без поля hooks — та же группа, чужая — дописывается.
+    expect(settingsMerged({ hooks: { Stop: [{ matcher: "x" }] } }, { hooks: { Stop: [{ matcher: "x", hooks: [] }] } }).hooks.Stop).toEqual([{ matcher: "x" }]);
+    expect(settingsMerged({}, { hooks: { Stop: [{ hooks: [] }] } }).hooks.Stop).toEqual([{ hooks: [] }]);
   });
 
   it("свои настройки не той формы названы до слияния; та форма и пустые поля — нет", () => {
@@ -113,6 +128,12 @@ describe("живая посадка: своё проекта внутри пол
     expect(settingsShapeFault({ hooks: [] })).toBe("hooks — не объект");
     expect(settingsShapeFault({ hooks: { Stop: { command: "echo" } } })).toBe("hooks.Stop — не список групп с полем hooks списком");
     expect(settingsShapeFault({ hooks: { Stop: [{ hooks: "echo" }] } })).toBe("hooks.Stop — не список групп с полем hooks списком");
+    for (const odd of [null, "x", 3]) expect(settingsShapeFault(odd), String(odd)).toBe("не объект JSON");
+    expect(settingsShapeFault({ permissions: null })).toBe("permissions — не объект");
+    expect(settingsShapeFault({ permissions: { allow: ["ok", 1] } })).toBe("permissions.allow — не список строк");
+    expect(settingsShapeFault({ permissions: { ask: "x" } })).toBe("permissions.ask — не список строк");
+    expect(settingsShapeFault({ hooks: { Stop: [{ hooks: [] }, "x"] } })).toBe("hooks.Stop — не список групп с полем hooks списком");
+    expect(settingsShapeFault({ hooks: { Stop: [{ matcher: "x" }] } })).toBeNull();
   });
 });
 

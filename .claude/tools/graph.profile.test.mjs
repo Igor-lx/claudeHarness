@@ -66,6 +66,8 @@ describe("манифест проекта — один читатель", () => 
       expect(manifestOf(box)).toBeNull();
       put('\uFEFF{ "name": "a", "devDependencies": { "vitest": "4.1.11" } }');
       expect(manifestOf(box)).toEqual({ name: "a", devDependencies: { vitest: "4.1.11" } });
+      put('{ "name": "a\uFEFFb" }');
+      expect(manifestOf(box)).toEqual({ name: "a\uFEFFb" });
       put('{\n<<<<<<< HEAD\n  "name": "a"\n=======\n}\n');
       expect(() => manifestOf(box)).toThrow("package.json проекта не разбирается как JSON");
       for (const text of ["null", "[]", "3"]) {

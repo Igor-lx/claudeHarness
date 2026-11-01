@@ -19,7 +19,9 @@ import {
   stackApply,
   stackSurveyOf,
   eslintBoundaryOf,
+  enclosingRepoOf,
   gitBusyOf,
+  gitPathOf,
   unknownFlagsOf,
   withRefusal,
   withToolsOf,
@@ -950,6 +952,9 @@ describe("посадка на месте одной командой", () => {
     // Ось без инструмента переставить нечем — она тоже не ось-инструмент.
     expect(withToolsOf(["env", ".", "--with=структура"], map).unknown).toEqual(["структура"]);
     expect(withRefusal(withToolsOf(["seat", "."], map))).toBeNull();
+    // Пробелы вокруг имён и пустые места между запятыми — не имена; карты нет — осей нет.
+    expect(withToolsOf(["seat", ".", "--with= линтер ,, раннер тестов ,"], map)).toMatchObject({ tools: ["линтер", "раннер тестов"], unknown: [] });
+    expect(withToolsOf(["seat", ".", "--with=линтер"], undefined)).toMatchObject({ tools: [], unknown: ["линтер"], known: [] });
     const box = boxWithShelf("seat-flags-");
     try {
       const wrong = seatHere(box, "--with=раннер");
@@ -1009,6 +1014,43 @@ describe("посадка на месте одной командой", () => {
     }
   }, 120000);
 
+  it("путь в папку git и репозиторий выше — у git, а не руками; у папки без `.git` — свой путь", () => {
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), "seat-gitpath-"));
+    try {
+      const lone = path.join(outer, "lone");
+      fs.mkdirSync(lone);
+      expect(gitPathOf(lone, "x")).toBe(path.join(lone, ".git", "x"));
+      expect(enclosingRepoOf(lone)).toBeNull();
+      const repo = path.join(outer, "repo");
+      fs.mkdirSync(repo);
+      gitIn(repo, "init", "-q");
+      fs.writeFileSync(path.join(repo, "a.txt"), "a\n");
+      gitIn(repo, "add", "-A");
+      gitIn(repo, "commit", "-qm", "a");
+      expect(gitPathOf(repo, "x")).toBe(path.join(repo, ".git", "x"));
+      expect(enclosingRepoOf(repo)).toBeNull();
+      const sub = path.join(repo, "sub");
+      fs.mkdirSync(sub);
+      expect(fs.realpathSync(enclosingRepoOf(sub))).toBe(fs.realpathSync(repo));
+      // Своего `.git` у подпапки нет — путь её, а не репозитория выше.
+      expect(gitPathOf(sub, "x")).toBe(path.join(sub, ".git", "x"));
+      // `.git` файлом, который ведёт в никуда: git не отвечает — путь у корня.
+      const broken = path.join(outer, "broken");
+      fs.mkdirSync(broken);
+      fs.writeFileSync(path.join(broken, ".git"), "gitdir: " + path.join(outer, "nowhere") + "\n");
+      expect(gitPathOf(broken, "x")).toBe(path.join(broken, ".git", "x"));
+      const wt = path.join(outer, "wt");
+      gitIn(repo, "worktree", "add", "-q", wt);
+      expect(fs.statSync(path.join(wt, ".git")).isFile()).toBe(true);
+      const marker = gitPathOf(wt, "x");
+      expect(marker).not.toBe(path.join(wt, ".git", "x"));
+      expect(fs.existsSync(path.dirname(marker))).toBe(true);
+      expect(enclosingRepoOf(wt)).toBeNull();
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+    }
+  });
+
   it("пустая папка внутри чужого репозитория — отказ теми же словами, что живому проекту, вложенного репозитория нет", () => {
     const outer = fs.mkdtempSync(path.join(os.tmpdir(), "seat-outer-"));
     const shelfBox = boxWithShelf("seat-inner-src-");
@@ -1043,11 +1085,12 @@ describe("посадка на месте одной командой", () => {
       gitIn(box, "commit", "-qm", "project");
       fs.renameSync(box + "-shelf", path.join(box, ".claude"));
       expect(gitBusyOf(box)).toBeNull();
-      for (const [name, said] of [["rebase-merge", "перебазирование"], ["MERGE_HEAD", "слияние"], ["CHERRY_PICK_HEAD", "cherry-pick"], ["BISECT_LOG", "bisect"]]) {
+      for (const [name, said] of [["rebase-merge", "перебазирование"], ["rebase-apply", "перебазирование"], ["MERGE_HEAD", "слияние"], ["CHERRY_PICK_HEAD", "cherry-pick"], ["REVERT_HEAD", "revert"], ["BISECT_LOG", "bisect"]]) {
         const at = path.join(box, ".git", name);
-        if (name === "rebase-merge") fs.mkdirSync(at);
+        if (name.startsWith("rebase-")) fs.mkdirSync(at);
         else fs.writeFileSync(at, "x\n");
         expect(gitBusyOf(box), name).toContain(said);
+        expect(gitBusyOf(box), name).toContain("коммиты посадки легли бы посреди неё");
         fs.rmSync(at, { recursive: true, force: true });
       }
       gitIn(box, "checkout", "-q", "--detach");
