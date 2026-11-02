@@ -89,7 +89,7 @@ describe("чем держится каждый критерий планки", (
     }
   }, 180000);
 
-  it("матрица сходится и краснеет на каждой из десяти поломок", () => {
+  it("матрица сходится и краснеет на каждой из одиннадцати поломок", () => {
     const box = seatEmpty("hold-");
     try {
       const vocab = path.join(box, ".claude", "tools", "graph.predicates.mjs");
@@ -202,6 +202,17 @@ describe("чем держится каждый критерий планки", (
       ).toContain(
         "UNSEEN.zzSpot: пятно словаря, которого не называет ни один критерий",
       );
+      // У критерия ни одной посадки в книге проб.
+      const bookAt = path.join(box, ".claude", "tools", "bar-probes.json");
+      const bookClean = fs.readFileSync(bookAt, "utf8");
+      const book = JSON.parse(bookClean);
+      expect(book.plants.some((p) => p.criterion === "B4")).toBe(true);
+      fs.writeFileSync(bookAt, JSON.stringify({ ...book, plants: book.plants.filter((p) => p.criterion !== "B4") }));
+      const landless = run();
+      fs.writeFileSync(bookAt, bookClean);
+      expect(landless.code).toBe(1);
+      expect(landless.out).toContain("B4: нет ни одной посадки в книге проб");
+      expect(landless.out).not.toMatch(/A8: нет ни одной посадки/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -1526,6 +1537,32 @@ describe("скиллы цитируют то, что печатают режим
           missing.push(name + ": «" + m[1] + "»");
     }
     expect(missing).toEqual([]);
+  });
+
+  // Проза называет держателя тестом по имени; переименованный тест оставил бы
+  // ссылку на несуществующее без признака.
+  it("тест, названный прозой полки по имени, есть среди тестов обвязки", () => {
+    const flat = (text) => text.replace(/\s+/g, " ");
+    const tests = flat(
+      fs
+        .readdirSync(TOOL_DIR)
+        .filter((f) => f.endsWith(".test.mjs"))
+        .map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8"))
+        .join("\n"),
+    );
+    const shelf = path.join(TOOL_DIR, "..");
+    const prose = (dir) =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const at = path.join(dir, e.name);
+        if (e.isDirectory()) return e.name === "state" && dir === shelf ? [] : prose(at);
+        return e.name.endsWith(".md") ? [at] : [];
+      });
+    const named = [];
+    for (const at of prose(shelf))
+      for (const m of flat(fs.readFileSync(at, "utf8")).matchAll(/[Тт]ест(?:ом|а|у|ы)?(?: обвязки)? «([^»]{8,})»/g))
+        named.push([path.relative(shelf, at), m[1]]);
+    expect(named.length).toBeGreaterThan(5);
+    expect(named.filter(([, name]) => !tests.includes(name)).map(([at, name]) => at + ": «" + name + "»")).toEqual([]);
   });
 });
 

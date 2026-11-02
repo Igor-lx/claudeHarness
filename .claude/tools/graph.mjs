@@ -20154,6 +20154,9 @@ if (mode === "bar-hold") {
   let beyond = 0;
   let beyondCriteria = 0;
   let planted = 0;
+  // Критерий без посадки — суждение свода по нему не мерено ни разу, а
+  // README обещает посадку каждому.
+  const landless = [];
   const tiers = new Map(BAR_TIERS.map(([tier]) => [tier, 0]));
   console.log("=== Чем держится каждый критерий планки ===");
   console.log("| критерий | уровень | чем держится | опора | вне держателя | посадок |");
@@ -20197,6 +20200,7 @@ if (mode === "bar-hold") {
     }
     const plants = plantsOf.get(c.id) ?? 0;
     if (isMachine && plants > 0) planted += 1;
+    if (!c.slogan && plants === 0 && plantsOf.size > 0) landless.push(c.id);
     const formsCell =
       said === ""
         ? isMachine
@@ -20278,6 +20282,7 @@ if (mode === "bar-hold") {
   ]);
   const problems = [
     ...holes.map((id) => id + ": нет решения, чем держится, — ни держателя, ни записанной причины"),
+    ...landless.map((id) => id + ": нет ни одной посадки в книге проб — ловит ли его свод, не мерено"),
     ...formFaults,
     ...barSpotsUnnamed().map(
       (key) =>
