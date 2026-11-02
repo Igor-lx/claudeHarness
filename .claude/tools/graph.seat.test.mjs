@@ -1411,6 +1411,28 @@ describe("записка к семени называет те значения,
   });
 });
 
+// Рекурсивное `cpSync` без фильтра роняет процесс на Windows, когда путь не
+// по-латински (прогоны `72` и `74`); копия папки идёт через `copyTree`.
+it("код инструмента не копирует папку рекурсивным cpSync без фильтра", () => {
+  const bare = [];
+  for (const name of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {
+    const text = fs.readFileSync(path.join(TOOL_DIR, name), "utf8");
+    for (let at = text.indexOf("cpSync("); at >= 0; at = text.indexOf("cpSync(", at + 1)) {
+      let depth = 0;
+      let end = at + "cpSync".length;
+      do {
+        if (text[end] === "(") depth += 1;
+        if (text[end] === ")") depth -= 1;
+        end += 1;
+      } while (depth > 0 && end < text.length);
+      const call = text.slice(at, end);
+      if (/recursive:\s*true/.test(call) && !/filter:/.test(call))
+        bare.push(name + ":" + text.slice(0, at).split("\n").length);
+    }
+  }
+  expect(bare).toEqual([]);
+});
+
 // Связку читают текстом — посадка и загрузчик, — а правду о ней говорит
 // импорт семени: правка семени, которую разбор текста не переварит, укоротила
 // бы план стека без признака.

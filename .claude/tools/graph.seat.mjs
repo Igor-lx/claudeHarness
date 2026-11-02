@@ -545,6 +545,13 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
   };
 };
 
+/** Копия папки целиком. Рекурсивное `cpSync` без фильтра Node 22 ведёт в
+ * копирование на C++, и на Windows путь не по-латински роняет процесс кодом
+ * `0xC0000409` без единой строки: так падала посадка шаблона в папку с
+ * кириллицей (`harness-windows`, прогоны `72` и `74`). С фильтром копирует
+ * реализация на JS — тот же путь, которым песочница серии копирует проект. */
+export const copyTree = (from, to) => cpSync(from, to, { recursive: true, filter: () => true });
+
 /** Песочница прогона под номером, занятая атомарно: два запуска одного режима
  * в одну миллисекунду стирали друг другу папку посреди работы. Занятый номер
  * обходится, чужая папка не стирается. */
@@ -1193,12 +1200,12 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
   if (kind.remove.length > 0) {
     keep = claimSandbox(systemTemp(), "seat-template-").at;
     for (const name of kind.remove) {
-      cpSync(path.join(target, name), path.join(keep, name), { recursive: true });
+      copyTree(path.join(target, name), path.join(keep, name));
       rmSync(path.join(target, name), { recursive: true, force: true });
     }
     undo.push(() => {
       for (const name of kind.remove)
-        cpSync(path.join(keep, name), path.join(target, name), { recursive: true });
+        copyTree(path.join(keep, name), path.join(target, name));
       rmSync(keep, { recursive: true, force: true });
     });
   }
