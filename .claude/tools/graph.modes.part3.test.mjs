@@ -2869,9 +2869,10 @@ describe("экономия свода по журналу пробы 2026-10-13"
           "",
         ].join("\n"),
       );
-      expect(tool("bar-fill", answersAt)).toMatch(
-        /раскрыто пачечными строками ядра: [0-9]+ исходов/,
-      );
+      const filled = tool("bar-fill", answersAt);
+      expect(filled).toMatch(/раскрыто пачечными строками ядра: [0-9]+ исходов/);
+      // Прежний ответ `A2` пачка обошла — и назвала это числом.
+      expect(filled).toMatch(/пачечными строками не тронуто: [1-9][0-9]* исходов — исход уже стоял/);
       expect(rowOf("A1-бис", "app/zzWide.ts").slice(4, 7)).toEqual([
         "чисто",
         "—",

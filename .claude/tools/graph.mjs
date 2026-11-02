@@ -19948,6 +19948,10 @@ if (mode === "bar-fill") {
   // пустые исходы — машинный и прежний ответ не трогаются; приём в `bar`
   // судит раскрытую строку так же, как ручную.
   let batched = 0;
+  // Исход, который уже стоит, пачка не трогает — и говорит об этом числом:
+  // свод пробы `2026-11-02` прочёл «вписано» и не знал, что часть строк
+  // осталась прежней.
+  let batchKept = 0;
   for (const { line, n } of asked) {
     const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
     if (!parts[0].startsWith(BAR_CORE_KEY)) continue;
@@ -19995,7 +19999,10 @@ if (mode === "bar-fill") {
     }
     const [col] = fillOf(BAR_FILL_FORMS.outcome);
     for (const [, row] of mine) {
-      if (row.cells[col] !== "") continue;
+      if (row.cells[col] !== "") {
+        batchKept += 1;
+        continue;
+      }
       row.cells[col] = outcome;
       row.cells[col + 1] = "—";
       row.cells[col + 2] = what;
@@ -20116,6 +20123,12 @@ if (mode === "bar-fill") {
   if (batched > 0)
     console.log(
       "  из них раскрыто пачечными строками ядра: " + batched + " исходов",
+    );
+  if (batchKept > 0)
+    console.log(
+      "  пачечными строками не тронуто: " +
+        batchKept +
+        " исходов — исход уже стоял; заменить — строкой `критерий@предмет`",
     );
   if (fresh.length > 0)
     console.log(
