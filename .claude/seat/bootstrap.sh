@@ -43,9 +43,16 @@ tmp=""
 part=""
 trap 'rm -rf "$log" "$tmp" "$part"' EXIT
 orig_path="$PATH"
-# Обновление npm с выводом в журнал: на сбое печатается его конец, а не одно «не встал».
-npm_up() {
-  npm install -g "npm@$npm_need" >"$log" 2>&1
+# Подъём npm засчитывается по версии, которая отвечает после, а не по коду установки:
+# новый npm встаёт в свою папку, а в PATH раньше бывает старый. Журнал — для отказа.
+npm_raised() {
+  npm install -g "npm@$npm_need" >"$log" 2>&1 || return 1
+  local now
+  now="$(version_of npm || true)"
+  if [ -z "$now" ] || ver_lt "$now" "$npm_need"; then
+    echo "после установки отвечает npm ${now:-никакой}: в PATH раньше стоит другой" >>"$log"
+    return 1
+  fi
 }
 fail() {
   printf '\n%s\n' "$*"
@@ -234,15 +241,15 @@ if [ "$use_own" = 1 ]; then
 fi
 npm_have="$(version_of npm || true)"
 if [ -z "$npm_have" ] || ver_lt "$npm_have" "$npm_need"; then
-  if ! npm_up; then
-    # Системный npm без прав на запись: свой Node.js со своим npm.
+  if ! npm_raised; then
+    # Системный npm не поднялся до связки: свой Node.js со своим npm.
     [ "$use_own" = 1 ] && fail "npm $npm_need не встал в $dest: $(tail -n 5 "$log")"
     install_node
     persist_path
     export PATH="$bin:$PATH"
     use_own=1
-    done_lines+=("node: $node_have → $node_need, папка $dest: системный npm не поднимается без прав администратора")
-    npm_up || fail "npm $npm_need не встал в $dest: $(tail -n 5 "$log")"
+    done_lines+=("node: $node_have → $node_need, папка $dest: системный npm не поднялся до связки — $(tail -n 1 "$log")")
+    npm_raised || fail "npm $npm_need не встал в $dest: $(tail -n 5 "$log")"
   fi
   done_lines+=("npm: ${npm_have:-не было} → $(version_of npm)")
 fi

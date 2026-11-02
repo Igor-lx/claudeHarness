@@ -1402,7 +1402,13 @@ describe("загрузчик среды посадки", () => {
     process.platform === "linux" &&
     bashAt !== "" &&
     ["sha256sum", ...shell].every((name) => spawnSync("sh", ["-c", "command -v " + name]).status === 0);
-  const install = (nodeSays, before = () => {}, without = "", sums = (text) => text) => {
+  const install = (
+    nodeSays,
+    before = () => {},
+    without = "",
+    sums = (text) => text,
+    { system = {}, npmSays = "echo " + declared.npm } = {},
+  ) => {
     // Апостроф в пути — как в имени профиля `O'Brien`.
     const box = fs.mkdtempSync(path.join(os.tmpdir(), "boot-o'brien-"));
     const name = "node-v" + declared.node + "-linux-" + (os.arch() === "arm64" ? "arm64" : "x64");
@@ -1411,12 +1417,14 @@ describe("загрузчик среды посадки", () => {
     fs.mkdirSync(dist, { recursive: true });
     fs.mkdirSync(pkg, { recursive: true });
     fs.writeFileSync(path.join(pkg, "node"), "#!/bin/sh\n" + nodeSays + "\n");
-    fs.writeFileSync(path.join(pkg, "npm"), "#!/bin/sh\necho " + declared.npm + "\n");
+    fs.writeFileSync(path.join(pkg, "npm"), "#!/bin/sh\n" + npmSays + "\n");
     for (const one of ["node", "npm"]) fs.chmodSync(path.join(pkg, one), 0o755);
     spawnSync("tar", ["-czf", path.join(dist, name + ".tar.gz"), "-C", path.join(box, "pkg"), name]);
     const sum = spawnSync("sha256sum", [name + ".tar.gz"], { cwd: dist, encoding: "utf8" }).stdout;
     fs.writeFileSync(path.join(dist, "SHASUMS256.txt"), sums(sum));
     const bin = fakeBin({ git: "2.43.0" });
+    for (const [name, body] of Object.entries(system))
+      fs.writeFileSync(path.join(bin, name), "#!/bin/sh\n" + body + "\n", { mode: 0o755 });
     for (const one of ["sha256sum", ...shell].filter((one) => one !== without)) {
       const real = spawnSync("sh", ["-c", "command -v " + one], { encoding: "utf8" }).stdout.trim();
       fs.symlinkSync(real, path.join(bin, one));
@@ -1473,6 +1481,41 @@ describe("загрузчик среды посадки", () => {
     const unlisted = install("echo v" + declared.node, () => {}, "", () => "");
     expect(unlisted.run.stdout).toContain("нет строки для node-v" + declared.node);
     expect([forged.left, unlisted.left, forged.profile, unlisted.profile]).toEqual([[], [], null, null]);
+  });
+
+  // Подъём npm засчитывается по версии, которая отвечает после: на Windows новый
+  // npm встаёт в свою папку, а в PATH раньше стоит старый из папки Node.js.
+  it.skipIf(!canInstall)("npm поднят, только когда отвечает версией связки; иначе — свой Node.js, а свой не поднялся — отказ", () => {
+    const node = "echo v" + declared.node;
+    const oldNpm = (onInstall) => 'case "$1" in --version) echo 10.9.4 ;; *) ' + onInstall + " ;; esac";
+    const raised = install(node, () => {}, "", (t) => t, {
+      system: {
+        node,
+        npm: 'f="$(dirname "$0")/raised"; case "$1" in --version) if [ -f "$f" ]; then echo ' + declared.npm + '; else echo 10.9.4; fi ;; *) touch "$f" ;; esac',
+      },
+    });
+    expect(raised.run.status, raised.run.stdout + raised.run.stderr).toBe(0);
+    expect(raised.run.stdout).toContain("npm: 10.9.4 → " + declared.npm);
+    expect(raised.left).toEqual([]);
+
+    const locked = install(node, () => {}, "", (t) => t, {
+      system: { node, npm: oldNpm('echo "npm error code EACCES" >&2; exit 243') },
+    });
+    const shadowed = install(node, () => {}, "", (t) => t, { system: { node, npm: oldNpm("exit 0") } });
+    for (const [one, why] of [
+      [locked, "npm error code EACCES"],
+      [shadowed, "после установки отвечает npm 10.9.4: в PATH раньше стоит другой"],
+    ]) {
+      expect(one.run.status, one.run.stdout + one.run.stderr).toBe(0);
+      expect(one.run.stdout).toContain("системный npm не поднялся до связки — " + why);
+      expect(one.run.stdout).toContain("npm: 10.9.4 → " + declared.npm);
+      expect(one.profile).toContain(one.dest + "/bin:$PATH");
+    }
+
+    const ownLow = install(node, () => {}, "", (t) => t, { system: { node, npm: oldNpm("exit 0") }, npmSays: "echo 10.9.4" });
+    expect(ownLow.run.status).toBe(1);
+    expect(ownLow.run.stdout).toContain("npm " + declared.npm + " не встал в " + ownLow.dest);
+    expect(ownLow.run.stdout).toContain("после установки отвечает npm 10.9.4");
   });
 });
 

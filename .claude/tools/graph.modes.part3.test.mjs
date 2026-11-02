@@ -4057,6 +4057,15 @@ describe("песочница прерванного прогона не оста
     expect(pidAlive(owner)).toBe(true);
   });
 
+  /** Снятие папки прерванного прогона решает ответ системы о мёртвом
+   * процессе; подставная проверка жизни в тестах ниже его не спрашивает. */
+  it("закончившийся процесс система называет мёртвым — на каждой системе прогона", async () => {
+    const { pidAlive } = await import("./graph.seat.mjs");
+    const gone = spawnSync(process.execPath, ["-e", ""]);
+    expect(gone.status).toBe(0);
+    expect(pidAlive(gone.pid)).toBe(false);
+  });
+
   it("папку прерванного прогона снимает следующий; свою он снимает на выходе", async () => {
     const { testRunTemp, ownSandbox } = await import("./graph.seat.mjs");
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "runs-"));
