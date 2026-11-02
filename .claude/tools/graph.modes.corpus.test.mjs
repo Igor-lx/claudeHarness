@@ -182,7 +182,10 @@ describe("корпус посадок", () => {
               const facts = fs.readFileSync(path.join(box, ".context", "01-facts.md"), "utf8");
               // Мерить тесты до посадки нечем — пакетов проекта ещё нет; пункт
               // называет то, что измерено, а не причину.
+              // Красное звено тестов проект объявляет полем `testsRed`: без
+              // объявления красное по недосмотру данных прошло бы долгом.
               if (npm(box, "test").status !== 0) {
+                expect(project.testsRed, "тесты красные, а проект не объявил testsRed").toBe(true);
                 expect(facts).toMatch(/\| `test` \| красно: падают файлов тестов `\d+`/);
                 expect(fs.readFileSync(path.join(box, ".context", "15-transition.md"), "utf8")).toContain("| Тесты проекта красные после посадки |");
               } else expect(facts).toMatch(/\| `test` \| зелено/);
