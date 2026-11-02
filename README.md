@@ -327,10 +327,11 @@ size of the project:
 
 The harness was developed for practical work in a specific environment:
 frontend applications on **React + TypeScript + Vite**. Its guarantee of
-quality rests on that concreteness. A skill that says "write good code" fits
-Python, React and Angular alike - because it checks nothing. A rule a machine
-checks has to know what it checks: which compiler builds the graph, which
-lint rules back each criterion, where a component keeps its styles. So the
+quality rests on that concreteness. A skill that says "write good code"
+applies equally to any code on any stack - Python or C++, React, Angular or
+Vue - because it asks for nothing concrete and checks nothing. A rule a
+machine checks has to know what it checks: which compiler builds the graph,
+which lint rules back each criterion, where a component keeps its styles. So the
 effort went into depth rather than breadth: how fully the code is analysed,
 how strictly every criterion is checked, how reliably the result reaches its
 goal. Seating is tuned to the stack:
@@ -373,8 +374,11 @@ set, is raised to it with a notice - the rule set comes with the harness.
 
 **Other stacks.** The graph, the knowledge base, the quality bar and most
 checks work on any TypeScript or JavaScript code; the templates and the
-stack-specific checks assume React and Vite. Moving the harness to another
-stack is not hard: the principles stay the same, only the templates and the
+stack-specific checks assume React and Vite. In a project on another stack
+seating installs nothing and leaves the code alone: the stack-specific checks
+are muted and named as unchecked, and the report says what the harness does
+not see there - that list is where an agent starts. Moving the harness to
+another stack is not hard: the principles stay the same, only the templates and the
 stack-specific checks change. Take the ideas and the tools - an agent will adapt
 the rest, seat it and finish it.
 
