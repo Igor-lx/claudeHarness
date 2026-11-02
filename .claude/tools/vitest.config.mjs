@@ -16,6 +16,9 @@ export default defineConfig({
     root: fileURLToPath(new URL("../..", import.meta.url)),
     include: [".claude/tools/**/*.test.mjs"],
     environment: "node",
+    // Тест без своего лимита зовёт посадку и git: на Windows под полным
+    // набором `5` секунд умолчания не хватило двум таким (прогон `66`).
+    testTimeout: 60_000,
     // Тесты разбирают вывод сверки по секциям — им полный. `CI` конвейера
     // снимает требование ворот, а тесты ждут машину разработчика.
     env: {
