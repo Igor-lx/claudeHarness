@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   BAR_CUTS,
   BAR_SIGNALS,
@@ -4042,6 +4042,55 @@ describe("песочница прерванного прогона не оста
       expect(got).toEqual({ removed: ["1"], ownerless: ["3"] });
       expect(fs.readdirSync(parent).sort()).toEqual(["2", "2.pid", "3"]);
       expect(sweepDeadSandboxes(path.join(parent, "нет"))).toEqual({ removed: [], ownerless: [] });
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  /** Прерванный прогон тестов обвязки оставлял песочницы во временной папке
+   * системы: двенадцать песочниц по `600M` заполнили диск облачной сессии. */
+  it("тест идёт во временной папке своего прогона, и владелец её жив", async () => {
+    const { pidAlive } = await import("./graph.seat.mjs");
+    const at = os.tmpdir();
+    expect(path.basename(path.dirname(at))).toBe("harness-tests");
+    const owner = Number(fs.readFileSync(at + ".pid", "utf8").trim());
+    expect(pidAlive(owner)).toBe(true);
+  });
+
+  it("папку прерванного прогона снимает следующий; свою он снимает на выходе", async () => {
+    const { testRunTemp, ownSandbox } = await import("./graph.seat.mjs");
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "runs-"));
+    try {
+      for (const id of ["1", "2"]) {
+        fs.mkdirSync(path.join(parent, id));
+        fs.writeFileSync(path.join(parent, id, "песочница"), "");
+      }
+      ownSandbox(path.join(parent, "1"), 101);
+      ownSandbox(path.join(parent, "2"), 202);
+      const run = testRunTemp(parent, 303, (pid) => pid !== 101);
+      expect(fs.existsSync(path.join(parent, "1"))).toBe(false);
+      expect(fs.existsSync(path.join(parent, "2", "песочница"))).toBe(true);
+      expect(fs.readFileSync(run.at + ".pid", "utf8")).toBe("303\n");
+      expect(fs.readdirSync(run.at)).toEqual([]);
+      fs.writeFileSync(path.join(run.at, "песочница"), "");
+      run.drop();
+      expect(fs.readdirSync(parent).sort()).toEqual(["2", "2.pid"]);
+      // Не снятое на выходе названо, а не брошено исключением: оно сменило
+      // бы код прогона, а папку снимет следующий прогон.
+      const again = testRunTemp(parent, 404, () => true);
+      fs.rmSync(again.at + ".pid");
+      fs.mkdirSync(again.at + ".pid");
+      const said = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      try {
+        expect(() => again.drop()).not.toThrow();
+        expect(String(said.mock.calls[0]?.[0])).toContain(
+          "временная папка прогона не снята",
+        );
+      } finally {
+        said.mockRestore();
+      }
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }

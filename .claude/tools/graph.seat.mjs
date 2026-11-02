@@ -605,6 +605,27 @@ export const sweepDeadSandboxes = (parent, alive = pidAlive) => {
   return { removed, ownerless };
 };
 
+/** Временная папка прогона тестов обвязки, своя на прогон: песочницу, которую
+ * прерванный тест не снял, она уносит с собой. Папки прерванных прогонов
+ * снимает следующий — их владелец мёртв. Выведено: двенадцать песочниц по
+ * `600M` заполнили диск облачной сессии. */
+export const testRunTemp = (parent, pid = process.pid, alive = pidAlive) => {
+  sweepDeadSandboxes(parent, alive);
+  const { at } = claimSandbox(parent, "");
+  ownSandbox(at, pid);
+  const drop = () => {
+    try {
+      rmSync(at, { recursive: true, force: true });
+      rmSync(at + ".pid", { force: true });
+    } catch (e) {
+      process.stderr.write(
+        `временная папка прогона не снята: ${at} (${e.code ?? e.message}) — её снимет следующий прогон\n`,
+      );
+    }
+  };
+  return { at, drop };
+};
+
 /** Манифесты установленных пакетов — и только они.
  *
  * Папка зависимостей в песочницу не копируется: она весит сотни мегабайт и

@@ -1,10 +1,13 @@
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { systemTemp } from "./graph.seat.mjs";
+import { systemTemp, testRunTemp } from "./graph.seat.mjs";
 
 // Короткое имя `TEMP` на Windows (`RUNNER~1`) git и сборщик видят длинным, и
 // проект, посаженный тестом во временную папку, расходился с самим собой.
-const temp = systemTemp();
+// Папка своя на прогон: прерванный прогон оставлял песочницы в общей.
+const run = testRunTemp(path.join(systemTemp(), "harness-tests"));
+process.once("exit", run.drop);
 
 // Тесты обвязки идут своей командой, вне прогона проекта: обвязка — не код
 // проекта. Справочник, раздел «Тесты самого инструмента».
@@ -18,7 +21,9 @@ export default defineConfig({
     env: {
       GRAPH_VERIFY_FULL: "1",
       CI: "",
-      ...(process.platform === "win32" ? { TEMP: temp, TMP: temp } : {}),
+      TMPDIR: run.at,
+      TEMP: run.at,
+      TMP: run.at,
     },
   },
 });
