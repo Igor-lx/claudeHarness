@@ -22,7 +22,9 @@ import {
   enclosingRepoOf,
   gitBusyOf,
   gitPathOf,
+  SEAT_MARKER,
   unknownFlagsOf,
+  verifiedOf,
   withRefusal,
   withToolsOf,
 } from "./graph.seat.mjs";
@@ -1331,6 +1333,31 @@ describe("записка к семени называет те значения,
     }
     expect(pairs.length).toBeGreaterThan(0);
     expect(pairs.filter((p) => !p.found)).toEqual([]);
+  });
+});
+
+// README мастерской переписывают проверенную связку прозой для человека:
+// подъём связки в семени обязан поднять и их. Мастерскую испытательная
+// посадка знает по своей метке — в ней путь полки, с которой посажена.
+describe("README мастерской называет проверенную связку", () => {
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const workshopShelf = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  const workshop = workshopShelf === "" ? "" : path.dirname(workshopShelf);
+  const hasReadme = workshop !== "" && fs.existsSync(path.join(workshop, "README.md"));
+  it.skipIf(!hasReadme)("каждая версия `x.y.z` в README — значение связки, и корневые README называют каждое", () => {
+    const seed = fs.readFileSync(path.join(workshopShelf, "seat", "templates", "graph.config.mjs"), "utf8");
+    const values = new Set(Object.values(verifiedOf(seed)));
+    expect(values.size).toBeGreaterThan(0);
+    const versionsIn = (rel) =>
+      new Set(
+        [...fs.readFileSync(path.join(workshop, rel), "utf8").matchAll(/(?<![v\d.])\d+\.\d+\.\d+(?![\d.])/g)].map((m) => m[0]),
+      );
+    for (const rel of ["README.md", "README.ru.md", ".claude/README.md"]) {
+      const named = versionsIn(rel);
+      expect([...named].filter((v) => !values.has(v)), rel + ": версии не из связки").toEqual([]);
+      if (rel !== ".claude/README.md")
+        expect([...values].filter((v) => !named.has(v)), rel + ": значения связки, которых нет").toEqual([]);
+    }
   });
 });
 
