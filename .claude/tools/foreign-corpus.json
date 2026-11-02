@@ -1,5 +1,5 @@
 {
-  "_": "Корпус посадок: проекты, собранные не из семян обвязки, по одному на форму, которую посадка обязана встретить; `create-vite` — похожий проект, каким его ставят люди. Поле `scenario` — сценарий посадки, который проект обязан получить: `empty` — пустая папка, `familiar` — знакомый проект, `foreign` — чужой (решено разработчиком `2026-10-30`). Тест режимов сажает каждый командой `seat .` — знакомый с согласием на приведение стека — и требует посадку кодом ноль и сверку базы кодом ноль; у чужого `foreignAxes` — оси, которые сверка базы обязана назвать секцией «Чужое окружение — не проверено». `briefs` — строки, которые досье файла обязано назвать и не называть: куда ведёт импорт, сверка не печатает. `testsRed` — тесты проекта красные по устройству: после посадки звено `test` обязано стоять красным пунктом долга. Новая форма, найденная посадкой, ложится сюда проектом.",
+  "_": "Корпус посадок: проекты, собранные не из семян обвязки, по одному на форму, которую посадка обязана встретить; `create-vite` — похожий проект, каким его ставят люди. Поле `scenario` — сценарий посадки, который проект обязан получить: `empty` — пустая папка, `familiar` — знакомый проект, `foreign` — чужой (решено разработчиком `2026-10-30`). Тест режимов сажает каждый командой `seat .` — знакомый с согласием на приведение стека — и требует посадку кодом ноль и сверку базы кодом ноль; у чужого `foreignAxes` — оси, которые сверка базы обязана назвать секцией «Чужое окружение — не проверено». `briefs` — строки, которые досье файла обязано назвать и не называть: куда ведёт импорт, сверка не печатает. `transitionHas` и `transitionHasNot` — пункты, которые план перехода после посадки обязан назвать и не называть. `testsRed` — тесты проекта красные по устройству: после посадки звено `test` обязано стоять красным пунктом долга. Новая форма, найденная посадкой, ложится сюда проектом.",
   "projects": [
     {
       "name": "lib-root",
@@ -377,6 +377,10 @@
       "name": "composite",
       "scenario": "familiar",
       "axis": "знакомый составной: старый стек и пакет выше связки, плоская `src`, тесты рядом и в `__tests__`, глобальный CSS, карта классов пропом и объект стилей в разметке, сборная `utils`; площадка перехода и приведения",
+      "transitionHas": [
+        "Раскладка проекта своя",
+        "Тесты вне папки `tests/`"
+      ],
       "files": {
         "package.json": "{\n  \"name\": \"shop-card\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"tsc && vite build\",\n    \"lint\": \"eslint .\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.3.1\",\n    \"react-dom\": \"^18.3.1\"\n  },\n  \"devDependencies\": {\n    \"@eslint/js\": \"^9.17.0\",\n    \"@testing-library/react\": \"^16.0.1\",\n    \"@types/react\": \"^18.3.12\",\n    \"@types/react-dom\": \"^18.3.1\",\n    \"@vitejs/plugin-react\": \"^4.3.4\",\n    \"eslint\": \"^9.17.0\",\n    \"jsdom\": \"^25.0.1\",\n    \"typescript\": \"~5.6.3\",\n    \"typescript-eslint\": \"^8.72.1\",\n    \"vite\": \"^5.4.11\",\n    \"vitest\": \"^2.1.8\"\n  }\n}\n",
         "index.html": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <title>shop</title>\n  </head>\n  <body>\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/src/main.tsx\"></script>\n  </body>\n</html>\n",
@@ -407,6 +411,57 @@
         "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
         "src/half.ts": "export const half = (value: number): number => value / 2\n",
         "src/half.test.ts": "import { expect, it } from \"vitest\"\nimport { half } from \"./half\"\n\nit(\"halves\", () => {\n  expect(half(4)).toBe(3)\n})\n"
+      }
+    },
+    {
+      "name": "scss-global",
+      "scenario": "familiar",
+      "axis": "глобальный лист SCSS без модулей: ось «листы стилей» карты посадки",
+      "files": {
+        "package.json": "{\n  \"name\": \"scss-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"sass-embedded\": \"^1.80.0\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\n      \"vite/client\"\n    ]\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/App.tsx": "import './app.scss'\n\nexport function App() {\n  return <h1 className=\"title\">Hello</h1>\n}\n",
+        "src/app.scss": "$accent: #c33;\n\n.title {\n  color: $accent;\n}\n",
+        "src/App.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { App } from './App'\n\nit('renders the title', () => {\n  expect(renderToString(<App />)).toContain('Hello')\n})\n"
+      }
+    },
+    {
+      "name": "css-in-js",
+      "scenario": "familiar",
+      "axis": "стили кодом: `styled-components`, листов стилей нет",
+      "files": {
+        "package.json": "{\n  \"name\": \"styled-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\",\n    \"styled-components\": \"^6.1.13\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/Title.tsx": "import styled from 'styled-components'\n\nexport const Title = styled.h1`\n  color: #c33;\n`\n",
+        "src/Title.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { Title } from './Title'\n\nit('renders the text', () => {\n  expect(renderToString(<Title>Hello</Title>)).toContain('Hello')\n})\n"
+      }
+    },
+    {
+      "name": "our-layout",
+      "scenario": "familiar",
+      "axis": "знакомый уже в раскладке обвязки: компонент папкой в `src/components/` с модулем стилей и `tests/`",
+      "transitionHasNot": [
+        "Раскладка проекта своя",
+        "Тесты вне папки `tests/`"
+      ],
+      "files": {
+        "package.json": "{\n  \"name\": \"layout-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\n      \"vite/client\"\n    ]\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/components/Badge/Badge.tsx": "import classes from './Badge.module.css'\n\nexport function Badge({ label }: { label: string }) {\n  return <span className={classes.badge}>{label}</span>\n}\n",
+        "src/components/Badge/Badge.module.css": ".badge {\n  padding: 2px 8px;\n}\n",
+        "src/components/Badge/tests/Badge.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { Badge } from '../Badge'\n\nit('shows the label', () => {\n  expect(renderToString(<Badge label=\"new\" />)).toContain('new')\n})\n"
+      }
+    },
+    {
+      "name": "full-tools",
+      "scenario": "familiar",
+      "axis": "полное окружение: свои Prettier и Stryker со своими конфигами",
+      "files": {
+        "package.json": "{\n  \"name\": \"sum\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\",\n    \"mutate\": \"stryker run\"\n  },\n  \"devDependencies\": {\n    \"@stryker-mutator/core\": \"^8.7.1\",\n    \"@stryker-mutator/vitest-runner\": \"^8.7.1\",\n    \"prettier\": \"^3.3.3\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        ".prettierrc.json": "{\n  \"semi\": false,\n  \"singleQuote\": true\n}\n",
+        "stryker.config.json": "{\n  \"testRunner\": \"vitest\",\n  \"mutate\": [\n    \"src/**/*.ts\",\n    \"!src/**/*.test.ts\"\n  ],\n  \"reporters\": [\n    \"clear-text\"\n  ]\n}\n",
+        "src/sum.ts": "export const sum = (a: number, b: number): number => a + b\n",
+        "src/sum.test.ts": "import { expect, it } from 'vitest'\nimport { sum } from './sum'\n\nit('adds', () => {\n  expect(sum(2, 3)).toBe(5)\n})\n"
       }
     }
   ]

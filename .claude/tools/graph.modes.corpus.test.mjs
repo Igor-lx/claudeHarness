@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SEAT_PACKAGES, TOOL_DIR } from "./graph.modes.shared.mjs";
-import { runTool } from "./graph.seat.mjs";
+import { runTool, verifiedOf } from "./graph.seat.mjs";
 
 /**
  * Корпус посадок. Обвязку проверяли на проектах, которые она сама и
@@ -22,6 +22,7 @@ const OWN_IN_SHELF = new Set(
   JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8")).projectOwnedInsideHarness ?? [],
 );
 const FOREIGN_HEAD = "=== Чужое окружение — не проверено (предупреждение, прогон не роняет) ===";
+const VERIFIED = verifiedOf(fs.readFileSync(path.join(SHELF, "seat", "templates", "graph.config.mjs"), "utf8"));
 
 const git = (box, ...args) => execFileSync("git", args, { cwd: box, encoding: "utf8" }).trim();
 
@@ -186,6 +187,19 @@ describe("корпус посадок", () => {
                 expect(fs.readFileSync(path.join(box, ".context", "15-transition.md"), "utf8")).toContain("| Тесты проекта красные после посадки |");
               } else expect(facts).toMatch(/\| `test` \| зелено/);
               if (project.testsRed === true) expect(facts).toMatch(/\| `test` \| красно/);
+              // Согласие на приведение ставит пакет связки ровно её версией —
+              // и снизу, и сверху (`vitest ^5` у `create-vite` опускается).
+              const manifest = JSON.parse(fs.readFileSync(path.join(box, "package.json"), "utf8"));
+              const declared = { ...manifest.dependencies, ...manifest.devDependencies };
+              expect(
+                Object.entries(VERIFIED)
+                  .filter(([name, want]) => declared[name] !== undefined && declared[name] !== want)
+                  .map(([name, want]) => name + " " + declared[name] + " вместо " + want),
+                "пакеты связки не её версией",
+              ).toEqual([]);
+              const plan = fs.readFileSync(path.join(box, ".context", "15-transition.md"), "utf8");
+              for (const one of project.transitionHas ?? []) expect(plan, one).toContain("| " + one);
+              for (const one of project.transitionHasNot ?? []) expect(plan, one).not.toContain("| " + one);
             }
             if (project.scenario === "empty") {
               const chain = npm(box, "run", "-s", "check");
