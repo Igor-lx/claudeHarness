@@ -15132,6 +15132,26 @@ const barLevelTitle = (level) => level.charAt(0).toUpperCase() + level.slice(1);
 const barSubjectText = (s) => (s === "" ? BAR_NO_SUBJECT : barQuoted(s));
 const barWho = (id, subject) =>
   id + (subject === "" ? "" : " для " + barQuoted(subject));
+/** Файл без своей записи в базе: файл кода — без строки карты, тест — без
+ * строки реестра тестов. «Не требуется» у такого протокол не принимает:
+ * прочитанное в области ложится в базу. Имя сличается хвостом:
+ * снисходительно, ложного отказа это не даёт. */
+const barUnmappedOf = () => {
+  const mapAt = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
+  const mapLines =
+    mapAt !== null && existsSync(mapAt) ? readFileSync(mapAt, "utf8").split(/\r?\n/) : [];
+  const owned = mapLines
+    .filter((l) => l.startsWith("#"))
+    .concat(mapLines.filter((l) => l.startsWith("|")).map(firstCellOf));
+  const testsAt = CONFIG.tests == null ? null : path.join(BASE, CONFIG.tests);
+  const testsText = testsAt !== null && existsSync(testsAt) ? readFileSync(testsAt, "utf8") : "";
+  return (file) => {
+    const tail = file.slice(file.lastIndexOf("/") + 1);
+    if (isTest(file)) return !testsText.includes(tail);
+    return !owned.some((cell) => cell.includes(tail));
+  };
+};
+
 /** Ключ строки модели без номера и без снятия: по нему прежний протокол
  * узнаёт свою строку в новом, когда номера сдвинулись. */
 const barModelKey = (m) => [m.sort, m.where, m.what].join("|");
@@ -17079,29 +17099,7 @@ const barHolesOf = ({
   // заполнен — у обоих есть сверка, — а запись о состоянии, назначение и
   // витрина остались от посадки. База заполняется по форме своего крючка.
   if (withBase) {
-    // Файл, которого карта не называет своей записью, базу не освобождает:
-    // «не требуется» у него неверно без суждения — прочитанное в области
-    // обязано лечь в базу, иначе следующий заход читает его заново. Имя
-    // сличается хвостом: снисходительно, ложного отказа это не даёт.
-    const mapAt = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
-    const mapLines =
-      mapAt !== null && existsSync(mapAt)
-        ? readFileSync(mapAt, "utf8").split(/\r?\n/)
-        : [];
-    const owned = mapLines
-      .filter((l) => l.startsWith("#"))
-      .concat(mapLines.filter((l) => l.startsWith("|")).map(firstCellOf));
-    // Тест описывает не карта, а реестр тестов: его запись ищется там. Прежде
-    // «не требуется» у теста отклонялось всегда — у него нет и не может быть
-    // своей строки в карте.
-    const testsAt = CONFIG.tests == null ? null : path.join(BASE, CONFIG.tests);
-    const testsText =
-      testsAt !== null && existsSync(testsAt) ? readFileSync(testsAt, "utf8") : "";
-    const unmapped = (file) => {
-      const tail = file.slice(file.lastIndexOf("/") + 1);
-      if (isTest(file)) return !testsText.includes(tail);
-      return !owned.some((cell) => cell.includes(tail));
-    };
+    const unmapped = barUnmappedOf();
     for (const file of baseFiles ?? marks.map((m) => m.file)) {
       const c = parsed.base.get(file);
       if (c === undefined) {
@@ -19277,6 +19275,16 @@ if (mode === "bar") {
         "  Сначала база: запись карты спорит с кодом — " +
           mapAhead.map(barQuoted).join(", ") +
           ". Поправить строки карты до ответов: правка карты меняет модель и снимает ответы, стоящие на ней.",
+      );
+    // Запись, которой нет, протокол тоже потребует, и её появление меняет
+    // модель так же: свод пробы `2026-11-02` дописал карту после ответов и
+    // ответил заново `108` исходов.
+    const notMapped = [...mapArea].filter(barUnmappedOf());
+    if (notMapped.length > 0)
+      console.log(
+        "  Сначала база: записи нет — " +
+          notMapped.map(barQuoted).join(", ") +
+          ". Завести строки карты и реестра тестов до ответов: запись меняет модель и снимает ответы, стоящие на ней.",
       );
     for (const line of barKeysFileOf(at)) console.log("  " + line);
     process.exit(1);

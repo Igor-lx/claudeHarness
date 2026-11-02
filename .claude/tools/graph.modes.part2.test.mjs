@@ -3149,6 +3149,17 @@ describe("запись карты не спорит с кодом", () => {
       expect(bar()).toMatch(
         /app\/zzCounter\.ts, база: .не требуется., а сверка «Запись карты не спорит с кодом» опровергает его запись/,
       );
+      // Новый файл без записи назван так же, до ответов: запись, которую
+      // протокол потребует, сняла бы ответы, стоящие на модели.
+      fs.writeFileSync(path.join(box, "src", "app", "zzStepper.ts"), "export const zzStepper = 2;\n");
+      const unmappedSaid = bar();
+      expect(unmappedSaid).toMatch(/Сначала база: записи нет — [^\n]*`app\/zzStepper\.ts`/);
+      expect(unmappedSaid).not.toMatch(/Сначала база: записи нет — [^\n]*`app\/zzCounter\.ts`/);
+      fs.writeFileSync(
+        map,
+        fs.readFileSync(map, "utf8").replace(head, head + "\n| `src/app/zzStepper.ts` | шаг счётчика | нет | нет |"),
+      );
+      expect(bar()).not.toContain("Сначала база: записи нет");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
