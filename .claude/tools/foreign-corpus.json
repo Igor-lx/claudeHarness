@@ -372,6 +372,30 @@
         "README.md": "# tool\n",
         "requirements.txt": "requests==2.32.3\n"
       }
+    },
+    {
+      "name": "composite",
+      "scenario": "familiar",
+      "axis": "знакомый составной: старый стек и пакет выше связки, плоская `src`, тесты рядом и в `__tests__`, глобальный CSS, карта классов пропом и объект стилей в разметке, сборная `utils`; площадка перехода и приведения",
+      "files": {
+        "package.json": "{\n  \"name\": \"shop-card\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"tsc && vite build\",\n    \"lint\": \"eslint .\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.3.1\",\n    \"react-dom\": \"^18.3.1\"\n  },\n  \"devDependencies\": {\n    \"@eslint/js\": \"^9.17.0\",\n    \"@testing-library/react\": \"^16.0.1\",\n    \"@types/react\": \"^18.3.12\",\n    \"@types/react-dom\": \"^18.3.1\",\n    \"@vitejs/plugin-react\": \"^4.3.4\",\n    \"eslint\": \"^9.17.0\",\n    \"jsdom\": \"^25.0.1\",\n    \"typescript\": \"~5.6.3\",\n    \"typescript-eslint\": \"^8.72.1\",\n    \"vite\": \"^5.4.11\",\n    \"vitest\": \"^2.1.8\"\n  }\n}\n",
+        "index.html": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <title>shop</title>\n  </head>\n  <body>\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/src/main.tsx\"></script>\n  </body>\n</html>\n",
+        "src/main.tsx": "import { StrictMode } from 'react'\nimport { createRoot } from 'react-dom/client'\nimport App from './App'\n\ncreateRoot(document.getElementById('root')!).render(\n  <StrictMode>\n    <App />\n  </StrictMode>,\n)\n",
+        "src/App.tsx": "import './App.css'\nimport { Badge } from './Badge'\nimport { Button } from './Button'\nimport { Card } from './Card'\nimport cardClasses from './card.module.css'\nimport { useCounter } from './useCounter'\nimport { formatPrice } from './utils/format'\n\nexport default function App() {\n  const { count, increment } = useCounter()\n  return (\n    <main className=\"app\">\n      <Card classes={cardClasses} title=\"Lamp\">\n        <p>{formatPrice(24.5)}</p>\n        <Badge label=\"new\" />\n      </Card>\n      <Button size=\"large\" onPress={increment}>\n        Added {count}\n      </Button>\n    </main>\n  )\n}\n",
+        "src/App.css": ".app {\n  display: grid;\n  gap: 16px;\n}\n\n.button {\n  padding: 4px 12px;\n  border-radius: 4px;\n}\n\n.button--large {\n  padding: 8px 24px;\n  font-size: 1.25rem;\n}\n",
+        "src/Button.tsx": "import type { ReactNode } from 'react'\n\ntype ButtonProps = {\n  size: 'normal' | 'large'\n  onPress: () => void\n  children: ReactNode\n}\n\nexport function Button({ size, onPress, children }: ButtonProps) {\n  return (\n    <button type=\"button\" className={size === 'large' ? 'button button--large' : 'button'} onClick={onPress}>\n      {children}\n    </button>\n  )\n}\n",
+        "src/Button.test.tsx": "import { render, screen } from '@testing-library/react'\nimport { expect, it } from 'vitest'\nimport { Button } from './Button'\n\nit('renders the label', () => {\n  render(\n    <Button size=\"normal\" onPress={() => undefined}>\n      Add\n    </Button>,\n  )\n  expect(screen.getByRole('button').textContent).toBe('Add')\n})\n",
+        "src/Card.tsx": "import type { ReactNode } from 'react'\n\nconst UNTITLED = 'Untitled'\n\ntype CardProps = {\n  classes: { readonly [name: string]: string }\n  title?: string\n  children: ReactNode\n}\n\nexport function Card({ classes, title = UNTITLED, children }: CardProps) {\n  return (\n    <section className={classes.card}>\n      <h2 className={classes.title}>{title}</h2>\n      {children}\n    </section>\n  )\n}\n",
+        "src/card.module.css": ".card {\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px;\n}\n\n.title {\n  margin: 0 0 8px;\n  font-size: 1.125rem;\n}\n",
+        "src/Badge.tsx": "type BadgeProps = { label: string }\n\nexport function Badge({ label }: BadgeProps) {\n  return <span style={{ padding: '2px 8px', borderRadius: 999, background: '#fde68a' }}>{label}</span>\n}\n",
+        "src/useCounter.ts": "import { useState } from 'react'\nimport { COUNTER_MAX } from './config'\n\nexport function useCounter() {\n  const [count, setCount] = useState(0)\n  const increment = () => setCount((value) => Math.min(value + 1, COUNTER_MAX))\n  return { count, increment }\n}\n",
+        "src/config.ts": "export const COUNTER_MAX = 10\n",
+        "src/utils/format.ts": "export function formatPrice(value: number): string {\n  if (value <= 0) return 'free'\n  return '$' + value.toFixed(2)\n}\n",
+        "src/__tests__/format.test.ts": "import { expect, it } from 'vitest'\nimport { formatPrice } from '../utils/format'\n\nit('formats a price', () => {\n  expect(formatPrice(24.5)).toBe('$24.50')\n})\n",
+        "vite.config.ts": "/// <reference types=\"vitest\" />\nimport react from '@vitejs/plugin-react'\nimport { defineConfig } from 'vite'\n\nexport default defineConfig({\n  plugins: [react()],\n  test: { environment: 'jsdom' },\n})\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2020\",\n    \"lib\": [\n      \"ES2020\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\n      \"vite/client\"\n    ]\n  },\n  \"include\": [\n    \"src\",\n    \"vite.config.ts\"\n  ]\n}\n",
+        "eslint.config.js": "import js from '@eslint/js'\nimport tseslint from 'typescript-eslint'\n\nexport default tseslint.config(\n  { ignores: ['dist'] },\n  { files: ['**/*.{ts,tsx}'], extends: [js.configs.recommended, ...tseslint.configs.recommended] },\n)\n"
+      }
     }
   ]
 }
