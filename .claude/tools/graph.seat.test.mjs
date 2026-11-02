@@ -1076,6 +1076,69 @@ describe("посадка на месте одной командой", () => {
     }
   }, 120000);
 
+  // Отказы по доводам вызова: ни один из них прежде не исполнял ни один тест.
+  it("довод, на котором посадка не начинается, назван, и папка не тронута: файл вместо папки, пакеты без node_modules, пакеты поверх своих, конфиг компилятора, который не разбирается", () => {
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), "seat-args-"));
+    try {
+      const file = path.join(outer, "file.txt");
+      fs.writeFileSync(file, "x\n");
+      const asFile = spawnSync(process.execPath, [path.join(SHELF, "tools", "graph.mjs"), "seat", file], { encoding: "utf8" });
+      expect(asFile.status, asFile.stdout).toBe(1);
+      expect(asFile.stdout).toContain("Это файл, а не папка: ");
+      expect(fs.readFileSync(file, "utf8")).toBe("x\n");
+
+      const empty = boxWithShelf("seat-nopk-");
+      const noModules = path.join(outer, "nopk");
+      fs.mkdirSync(noModules);
+      const bare = seatHere(empty, "--packages", noModules);
+      expect(bare.status, bare.stdout).toBe(1);
+      expect(bare.stdout).toContain("Ключ --packages назвал папку без node_modules: ");
+      expect(fs.readdirSync(empty)).toEqual([".claude"]);
+      fs.rmSync(empty, { recursive: true, force: true });
+
+      const own = boxWithShelf("seat-ownpk-");
+      fs.mkdirSync(path.join(own, "src"));
+      fs.writeFileSync(
+        path.join(own, "package.json"),
+        JSON.stringify({ name: "x", private: true, type: "module", devDependencies: { typescript: "~6.0.0", vitest: "^4.1.0" } }) + "\n",
+      );
+      fs.writeFileSync(path.join(own, "src", "one.ts"), "export const one = 1\n");
+      fs.writeFileSync(path.join(own, ".gitignore"), "node_modules\n");
+      gitIn(own, "init", "-q");
+      gitIn(own, "add", "package.json", "src", ".gitignore");
+      gitIn(own, "commit", "-qm", "project", "--no-verify");
+      fs.mkdirSync(path.join(own, "node_modules"));
+      const before = gitIn(own, "rev-parse", "HEAD");
+      const over = seatHere(own, "--apply", "--packages", ROOT);
+      expect(over.status, over.stdout).toBe(1);
+      expect(over.stdout).toContain("Пакеты ссылкой кладутся только в проект без своей папки node_modules.");
+      expect(gitIn(own, "rev-parse", "HEAD")).toBe(before);
+      expect(gitIn(own, "status", "--porcelain", "--", "package.json", "src")).toBe("");
+      fs.rmSync(own, { recursive: true, force: true });
+
+      // Конфиг компилятора проекта, который не разбирается: сложение отказывает.
+      const broken = boxWithShelf("seat-badts-");
+      fs.mkdirSync(path.join(broken, "src"));
+      fs.writeFileSync(
+        path.join(broken, "package.json"),
+        JSON.stringify({ name: "x", private: true, type: "module", devDependencies: { typescript: "~6.0.0", vitest: "^4.1.0" } }) + "\n",
+      );
+      fs.writeFileSync(path.join(broken, "src", "one.ts"), "export const one = 1\n");
+      fs.writeFileSync(path.join(broken, "tsconfig.json"), '{ "compilerOptions": { "strict": true,\n');
+      gitIn(broken, "init", "-q");
+      gitIn(broken, "add", "package.json", "src", "tsconfig.json");
+      gitIn(broken, "commit", "-qm", "project", "--no-verify");
+      const unparsed = seatHere(broken, "--apply", "--packages", ROOT);
+      expect(unparsed.status, unparsed.stdout).toBe(1);
+      expect(unparsed.stdout).toContain("Конфиги проекта не сложились с конфигами обвязки: tsconfig.json проекта не разбирается");
+      expect(unparsed.stdout).toContain("Проект возвращён в прежний вид.");
+      expect(gitIn(broken, "status", "--porcelain")).toBe("?? .claude/");
+      fs.rmSync(broken, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("репозиторий посреди операции либо на отсоединённой вершине — отказ до работы, папка не тронута", () => {
     const box = boxWithShelf("seat-busy-");
     try {
