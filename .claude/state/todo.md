@@ -275,7 +275,7 @@ CSS-in-JS; карта классов пропом; объект стилей в 
 дочерние процессы `node graph.mjs seat`. По каждому проекту собрать множество
 диапазонов `graph.seat.mjs`, `graph.seatlive.mjs` и `graph.profile.mjs` со
 счётом больше нуля. Уникальное проекта — диапазоны, которых нет ни у одного
-другого. Скрипт разовый, лежит вне репозитория. Решение по итогу:
+другого. Команды и скрипт — справка «Команды и площадки», замер покрытия корпусом; проверены `2026-11-02` на проектах `empty` и `crlf`. Решение по итогу:
 
 - проект без уникального диапазона — снять из корпуса; коммит называет
   каждый снятый и почему;
@@ -287,8 +287,7 @@ CSS-in-JS; карта классов пропом; объект стилей в 
 
 **2.5. Две посадки сессией-работником.**
 
-- **2.5.1. Пустая папка.** Площадка — пустая папка с копией `.claude` полки и
-  `git init`. Задание: «посади обвязку; проект — небольшое приложение: список дел с отметкой сделанного».
+- **2.5.1. Пустая папка.** Площадка — пустая папка с копией `.claude` полки, без `git init`: репозиторий заводит посадка, так же делает корпусный тест для проекта `empty`. Задание: «посади обвязку; проект — небольшое приложение: список дел с отметкой сделанного».
   Наблюдатель: посадка кодом `0`; вопросы фазы 2 получили ответ из строки
   задания; `permission_denials` в выводе пуст; ход не кончился без печати
   там, где был код.
@@ -385,9 +384,7 @@ CSS-in-JS; карта классов пропом; объект стилей в 
 `.claude/README.md`, раздел «Мастерская и проекты», в перечень файлов самого
 репозитория.
 
-**4.1. Площадка.** Извлечь `composite` из корпуса в пустую папку вне
-репозитория (справка «Команды и площадки»), `git init`, первый коммит,
-скопировать `.claude` полки.
+**4.1. Площадка.** Собрать площадку из проекта `composite` порядком «площадка из проекта корпуса» справки «Команды и площадки» — тем же, что у корпусного теста. Сажает её сессия 1.
 
 **4.2. Сессия 1 — посадка и переход.** Задание: «посади обвязку — согласие на
 приведение стека даю, `seat . --apply`; проект — небольшое приложение на
@@ -430,7 +427,7 @@ bundle.
 перехода удалён, когда опустел. Сохранить
 `workshop/composite-baseline.bundle` — **базовая точка** пункта 5.
 
-**4.6. Приёмка «как с нуля» — машинный критерий.** Эталон — проект,
+**4.6. Приёмка «как с нуля» — машинный критерий.** Эталон и сравнение набора сверок — командами справки «Команды и площадки». Эталон — проект,
 посаженный командой `seat .` в пустую папку с копией `.claude` полки. Всё
 нижеследующее обязано выполняться:
 
@@ -534,9 +531,7 @@ bundle.
 
 **6.1. Мутационный прогон по модулям инструмента, правленым в пунктах
 1–5.** Охват — `git diff --stat 4028205..HEAD -- .claude/tools/` без тестов
-и данных. Порядок и разбор — по образцу коммитов `8e09205` и `dbb389b`: их
-сообщения называют охват, счёт и исход каждого выжившего. Конфиг Stryker
-разовый, вне репозитория. Выжившие — три исхода: тест добавлен, код
+и данных. Конфиг и команда — справка «Команды и площадки», мутации инструмента. Разбор выживших — по образцу коммитов `8e09205` и `dbb389b`: их сообщения называют охват, счёт и исход каждого выжившего. Выжившие — три исхода: тест добавлен, код
 исправлен, неубиваем с причиной.
 
 **6.2. `falsify` на испытательной посадке:**
@@ -618,6 +613,122 @@ node -e 'const fs=require("fs");for(const l of fs.readFileSync(process.argv[1],"
 
 **Корпусный тест по имени проекта** — из испытательной посадки:
 `npx vitest run --config .claude/tools/vitest.config.mjs .claude/tools/graph.modes.corpus.test.mjs -t "<имя>"`.
+
+**Площадка из проекта корпуса** — тем же порядком, что `plant` в `graph.modes.corpus.test.mjs`. Для пустой папки — только последняя строка: репозиторий заводит посадка.
+
+```
+M=<корень мастерской>; P=<пустая папка вне репозитория>; mkdir -p "$P"
+cd "$M" && node -e '<команда извлечения выше>' <имя проекта> "$P"
+cd "$P" && git init -q && git config user.email probe@example.com && git config user.name probe && git config core.autocrlf false && git add -A && git commit -qm project --no-verify
+cp -r "$M/.claude" "$P/.claude"
+```
+
+Сажает сессия-работник (пункты `2` и `4`) либо команда из папки площадки: `env -u CLAUDE_CODE_CHILD_SESSION node .claude/tools/graph.mjs seat . --apply --packages <испытательная посадка>`; чужому проекту — без `--apply` и `--packages`, как в корпусном тесте.
+
+**Эталон «с нуля» и сравнение набора сверок** (шаг `4.6`):
+
+```
+R=<пустая папка вне репозитория>; mkdir -p "$R" && cp -r "$M/.claude" "$R/.claude"
+cd "$R" && env -u CLAUDE_CODE_CHILD_SESSION node .claude/tools/graph.mjs seat . --apply --packages <испытательная посадка>
+cd <папка проекта> && env -u CLAUDE_CODE_CHILD_SESSION node .claude/tools/graph.mjs verify --full > <папка вне>/<имя>.verify
+node -e 'const fs=require("fs");const h=f=>new Set(fs.readFileSync(f,"utf8").split("\n").filter(l=>l.startsWith("=== ")));const [a,b]=process.argv.slice(1).map(h);console.log("только в эталоне:",[...a].filter(x=>!b.has(x)));console.log("только в проекте:",[...b].filter(x=>!a.has(x)))' <эталон>.verify <проект>.verify
+```
+
+**Замер покрытия корпусом** (шаг `2.4`) — из испытательной посадки, по проекту. Ключ `-t` берёт имя проекта с тире: имя теста начинается с него, и без тире `create-vite` захватит `create-vite-fresh`.
+
+```
+for n in <имена проектов корпуса>; do NODE_V8_COVERAGE=<папка замера>/$n npx vitest run --config .claude/tools/vitest.config.mjs .claude/tools/graph.modes.corpus.test.mjs -t "$n — " > <папка замера>/$n.log 2>&1; done
+node <скрипт ниже, вне репозитория> <папка замера> .claude/tools
+```
+
+Скрипт печатает по каждому из модулей посадки уникальные строки каждого проекта и число строк, которых не прошёл никто. Проверен `2026-11-02` на проектах `empty` и `crlf`: тесты — код `0`; у `empty` своё есть только в `graph.seat.mjs`.
+
+```js
+// Unique coverage of the seating code per corpus project.
+// Usage: node cov.mjs <coverage root: one folder per project> <shelf tools dir>
+import fs from "node:fs";
+import path from "node:path";
+
+const [root, tools] = process.argv.slice(2);
+const FILES = ["graph.seat.mjs", "graph.seatlive.mjs", "graph.profile.mjs"];
+const projects = fs.readdirSync(root).filter((p) => fs.statSync(path.join(root, p)).isDirectory());
+
+// project -> file -> list of dumps; a dump is every range of every function of one process
+const data = {};
+for (const p of projects) {
+  data[p] = {};
+  for (const f of fs.readdirSync(path.join(root, p))) {
+    if (!f.endsWith(".json")) continue;
+    let j;
+    try {
+      j = JSON.parse(fs.readFileSync(path.join(root, p, f), "utf8"));
+    } catch {
+      continue;
+    }
+    for (const s of j.result ?? []) {
+      const base = s.url.split("/").pop();
+      if (!FILES.includes(base)) continue;
+      (data[p][base] ??= []).push(s.functions.flatMap((fn) => fn.ranges));
+    }
+  }
+}
+
+// Executed at offset x: in some dump the smallest range holding x has count > 0.
+const executed = (dumps, x) =>
+  dumps.some((ranges) => {
+    let best = null;
+    for (const r of ranges)
+      if (r.startOffset <= x && x < r.endOffset && (best === null || r.endOffset - r.startOffset < best.endOffset - best.startOffset))
+        best = r;
+    return best !== null && best.count > 0;
+  });
+
+for (const file of FILES) {
+  const src = fs.readFileSync(path.join(tools, file), "utf8");
+  const lineOf = (x) => src.slice(0, x).split("\n").length;
+  const cuts = new Set([0, src.length]);
+  for (const p of projects) for (const d of data[p][file] ?? []) for (const r of d) cuts.add(r.startOffset).add(r.endOffset);
+  const xs = [...cuts].sort((a, b) => a - b).slice(0, -1);
+  const hit = Object.fromEntries(projects.map((p) => [p, xs.map((x) => executed(data[p][file] ?? [], x))]));
+  console.log(`== ${file}: segments ${xs.length}`);
+  for (const p of projects) {
+    const lines = new Set();
+    xs.forEach((x, i) => {
+      if (hit[p][i] && projects.every((q) => q === p || !hit[q][i])) lines.add(lineOf(x));
+    });
+    console.log(`  ${p}: unique segments at lines ${lines.size === 0 ? "none" : [...lines].slice(0, 12).join(", ") + (lines.size > 12 ? ` (+${lines.size - 12})` : "")}`);
+  }
+  const none = new Set();
+  xs.forEach((x, i) => {
+    if (projects.every((p) => !hit[p][i])) none.add(lineOf(x));
+  });
+  console.log(`  run by no project: ${none.size} lines`);
+}
+```
+
+**Мутации инструмента** (шаг `6.1`) — разовые файлы в папке испытательной посадки, в репозиторий не кладутся и после прогона удаляются. Набор тестов — те, что бьют по мутируемому; `mutate` принимает и строки файла вида `<файл>:<первая>-<последняя>`.
+
+```js
+// .claude/tools/vitest.mutate.config.mjs
+import { defineConfig } from "vitest/config";
+import base from "./vitest.config.mjs";
+
+export default defineConfig({ ...base, test: { ...base.test, include: [".claude/tools/graph.cost.test.mjs"] } });
+```
+
+```json
+{
+  "testRunner": "vitest",
+  "vitest": { "configFile": ".claude/tools/vitest.mutate.config.mjs" },
+  "mutate": [".claude/tools/graph.cost.mjs"],
+  "coverageAnalysis": "perTest",
+  "reporters": ["clear-text", "progress"],
+  "tempDirName": ".stryker-tool-tmp",
+  "concurrency": 4
+}
+```
+
+Второй файл кладут в корень испытательной посадки под именем stryker.tool.config.json; команда оттуда — `npx stryker run stryker.tool.config.json`. Проверено `2026-11-02` на `graph.cost.mjs`: код `0`, убито `215`, выжило `122`, без покрытия `16`, `27` секунд. Код внутри `graph.mjs`, исполняемый дочерним процессом `node graph.mjs`, Stryker не достаёт — его держит ручная фальсификация, как в коммитах `8e09205` и `dbb389b`.
 
 ## Справка: составной проект
 
