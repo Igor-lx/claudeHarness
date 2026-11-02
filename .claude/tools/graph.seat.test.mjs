@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   envLowOf,
@@ -1399,6 +1399,15 @@ describe("записка к семени называет те значения,
   });
 });
 
+// Связку читают текстом — посадка и загрузчик, — а правду о ней говорит
+// импорт семени: правка семени, которую разбор текста не переварит, укоротила
+// бы план стека без признака.
+it("текстовый читатель связки читает семя так же, как его импорт", async () => {
+  const seedAt = path.join(SHELF, "seat", "templates", "graph.config.mjs");
+  const { CONFIG } = await import(pathToFileURL(seedAt).href);
+  expect(verifiedOf(fs.readFileSync(seedAt, "utf8"))).toEqual(CONFIG.verifiedVersions);
+});
+
 // README мастерской переписывают проверенную связку прозой для человека:
 // подъём связки в семени обязан поднять и их. Мастерскую испытательная
 // посадка знает по своей метке — в ней путь полки, с которой посажена.
@@ -1421,6 +1430,35 @@ describe("README мастерской называет проверенную с
       if (rel !== ".claude/README.md")
         expect([...values].filter((v) => !named.has(v)), rel + ": значения связки, которых нет").toEqual([]);
     }
+  });
+
+  // Раздел «Что внутри» перечисляет папки полки; сверка перечней читает прозу
+  // самой полки, а README мастерской с полкой не едут.
+  it.skipIf(!hasReadme)("README мастерской называют каждую папку полки", () => {
+    const folders = fs
+      .readdirSync(workshopShelf, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => "`" + e.name + "/`");
+    expect(folders.length).toBeGreaterThan(2);
+    for (const rel of ["README.md", "README.ru.md"]) {
+      const text = fs.readFileSync(path.join(workshop, rel), "utf8");
+      expect(folders.filter((one) => !text.includes(one)), rel).toEqual([]);
+    }
+  });
+
+  // Перевод правят в одном файле, а второй отстаёт без признака. Фрагмент
+  // кода переводом не меняется, кроме слов в заполнителе `<путь>`.
+  it.skipIf(!hasReadme)("README на двух языках несут одни и те же фрагменты кода", () => {
+    const spans = (rel) =>
+      new Set(
+        [...fs.readFileSync(path.join(workshop, rel), "utf8").replace(/```[\s\S]*?```/g, "").matchAll(/`([^`\n]+)`/g)].map((m) =>
+          m[1].replace(/<[^>]*>/g, "<>"),
+        ),
+      );
+    const en = spans("README.md");
+    const ru = spans("README.ru.md");
+    expect([...en].filter((one) => !ru.has(one)), "только в README.md").toEqual([]);
+    expect([...ru].filter((one) => !en.has(one)), "только в README.ru.md").toEqual([]);
   });
 });
 

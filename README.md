@@ -257,7 +257,8 @@ the project on every run, with the project's own TypeScript compiler, or with
 regular expressions when the compiler is not installed. It reads imports and
 re-exports, side-effect imports, dynamic `import()`, exports and constants;
 resolves the path aliases from `tsconfig.json` and follows links by name
-through barrel files. From this it answers what a file uses and who uses it,
+through barrel files (`index.ts` files that only re-export the folder). From
+this it answers what a file uses and who uses it,
 the blast radius of an edit, which tests reach a file, cycles, exports nobody
 uses and imports that go against the declared layer direction.
 
