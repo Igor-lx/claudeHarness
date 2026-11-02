@@ -613,6 +613,12 @@ describe("признаки, видимые текстом, в модели св�
         "src/components/ZzClock/types.ts",
         "export type ZzClockProps = {\n  a: boolean;\n  b?: boolean;\n  c: boolean;\n};\n",
       );
+      // Тип, который файл отдаёт ответом и не принимает параметром, — форма
+      // состояния: его поля не входы, и вопроса о россыпи входов к ним нет.
+      put(
+        "src/components/ZzClock/zzRequest.ts",
+        "export type ZzRequest = {\n  idle: boolean;\n  busy: boolean;\n  done: boolean;\n};\nexport const zzRequest = (): ZzRequest => ({ idle: true, busy: false, done: false });\n",
+      );
       // Параметр на своей строке: место признака — его строка, а не строка
       // выше, где кончился предыдущий.
       put(
@@ -662,6 +668,10 @@ describe("признаки, видимые текстом, в модели св�
       );
       expect(read).toMatch(row("флаги", "булевых полей состояния `2`: строка 11, строка 12", "состояние"));
       expect(read).toMatch(row("флаги", "булевых полей в типах `3`: строка 2, строка 3, строка 4", "вход"));
+      expect(read).toMatch(
+        new RegExp("^\\| П\\d+ \\| флаги \\| `[^`]*zzRequest\\.ts(?::\\d+)?` \\| булевых полей состояния `3`: строка 2, строка 3, строка 4 \\| [^|]* \\| состояние \\|", "m"),
+      );
+      expect(read).not.toMatch(/^\| П\d+ \| флаги \| `[^`]*zzRequest\.ts(?::\d+)?` \| булевых полей в типах/m);
 
       // Признаки места и состояние модуля — у своих адресов.
       expect(tool("levels", "shared/zzFormat/zzFormat.ts")).toContain(

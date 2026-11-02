@@ -11512,7 +11512,7 @@ const symptomsOf = (f) => {
     ),
   ];
   if (typeFlags.length >= TYPE_FLAGS_FROM)
-    for (const m of typeFlags) hit("флаги", m.index, "", "вход");
+    for (const m of typeFlags) hit("флаги", m.index, "", typeFlagsMark(bare, m.index));
 
   // Признаки по всей планке — чистый разбор словаря.
   hits.push(
@@ -11576,6 +11576,22 @@ const placeSymptomsOf = (f) => {
           .join("; "),
     });
   return out;
+};
+
+/** Булевы поля типа — вход, пока файл не говорит иного: тип, который файл
+ * отдаёт ответом функции либо держит состоянием и ни разу не принимает
+ * параметром, — форма состояния, и вопрос о россыпи входов (`B8`) к нему
+ * ложный (свод `2026-11-02`, посадка `C1`). Тип без употребления в файле
+ * остаётся входом: так лежат типы входов рядом с компонентом. */
+const typeFlagsMark = (bare, at) => {
+  const name = [...bare.slice(0, at).matchAll(/\b(?:type|interface)\s+([\w$]+)/g)].at(-1)?.[1];
+  if (name === undefined) return "вход";
+  const esc = name.replace(/\$/g, "\\$");
+  const taken = new RegExp("\\([^)]*:\\s*" + esc + "\\b").test(bare);
+  const held = new RegExp(
+    "\\)\\s*:\\s*" + esc + "\\b|\\b(?:useState|useReducer|useRef|signal|createSignal)\\s*<\\s*" + esc + "\\b",
+  ).test(bare);
+  return held && !taken ? "состояние" : "вход";
 };
 
 /** Признак строкой модели: что это и где — первые строки по номеру. */
