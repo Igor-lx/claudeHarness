@@ -734,8 +734,8 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       result: format.status === 0 ? "зелено" : "красно: файлов `" + unformatted + "` — приводит фаза 2 отдельным коммитом",
       how: "npm run format:check",
     });
-    // Тесты, красные на коде до посадки, — долг проекта, а не поломка
-    // посадки: держит их пункт долга, называющий звено.
+    // Красные тесты держит пункт долга, называющий звено. Мерить их до
+    // посадки нечем — пакетов проекта ещё нет, — и пункт причину не называет.
     const test = runTool("npm", ["test"], { cwd: target, env });
     const counts = testCountsOf(test.out);
     if (test.status === 0)
@@ -748,13 +748,23 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       const failed = Number(/Test Files\s+(\d+) failed/.exec(uncolored(test.out))?.[1] ?? 1);
       rows.push({ name: "test", result: "красно: падают файлов тестов `" + failed + "` — пункт долга перехода «test»", how: "npm test" });
       redTests = failed;
-      report.push("Тесты проекта красные на коде до посадки: падают файлов " + failed + "; записаны в план перехода.");
+      report.push(
+        "Тесты проекта красные после посадки: падают файлов " +
+          failed +
+          "; записаны в план перехода. Код проекта посадка не трогала: причина — в нём, в приведённом стеке либо в подключении его конфигов.",
+      );
     }
     if (redTests > 0)
       write(
         transitionAt.to,
         transitionWith(read(transitionAt.to), { heading: "| № | Шаг | Объём | Чем проверяется |", debtHeading: "| № | Расхождение | Сейчас | Держит | План | Цена |" }, [], [
-          ["Тесты проекта красные на коде до посадки", "`" + redTests + "`", "«test»", "адреса печатает `npm test`; чинит работа по слову разработчика", "`" + redTests + "` файлов тестов"],
+          [
+            "Тесты проекта красные после посадки",
+            "`" + redTests + "`",
+            "«test»",
+            "адреса печатает `npm test`; причину — код проекта, приведённый стек, подключение его конфигов — находит и чинит работа по слову разработчика",
+            "`" + redTests + "` файлов тестов",
+          ],
         ]),
       );
     const mutated = trials.find((t) => t.name === "mutate");

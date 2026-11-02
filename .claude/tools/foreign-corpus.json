@@ -1,5 +1,5 @@
 {
-  "_": "Корпус посадок: проекты, собранные не из семян обвязки, по одному на форму, которую посадка обязана встретить; `create-vite` — похожий проект, каким его ставят люди. Поле `scenario` — сценарий посадки, который проект обязан получить: `empty` — пустая папка, `familiar` — знакомый проект, `foreign` — чужой (решено разработчиком `2026-10-30`). Тест режимов сажает каждый командой `seat .` — знакомый с согласием на приведение стека — и требует посадку кодом ноль и сверку базы кодом ноль; у чужого `foreignAxes` — оси, которые сверка базы обязана назвать секцией «Чужое окружение — не проверено». `briefs` — строки, которые досье файла обязано назвать и не называть: куда ведёт импорт, сверка не печатает. Новая форма, найденная посадкой, ложится сюда проектом.",
+  "_": "Корпус посадок: проекты, собранные не из семян обвязки, по одному на форму, которую посадка обязана встретить; `create-vite` — похожий проект, каким его ставят люди. Поле `scenario` — сценарий посадки, который проект обязан получить: `empty` — пустая папка, `familiar` — знакомый проект, `foreign` — чужой (решено разработчиком `2026-10-30`). Тест режимов сажает каждый командой `seat .` — знакомый с согласием на приведение стека — и требует посадку кодом ноль и сверку базы кодом ноль; у чужого `foreignAxes` — оси, которые сверка базы обязана назвать секцией «Чужое окружение — не проверено». `briefs` — строки, которые досье файла обязано назвать и не называть: куда ведёт импорт, сверка не печатает. `testsRed` — тесты проекта красные по устройству: после посадки звено `test` обязано стоять красным пунктом долга. Новая форма, найденная посадкой, ложится сюда проектом.",
   "projects": [
     {
       "name": "lib-root",
@@ -395,6 +395,18 @@
         "vite.config.ts": "/// <reference types=\"vitest\" />\nimport react from '@vitejs/plugin-react'\nimport { defineConfig } from 'vite'\n\nexport default defineConfig({\n  plugins: [react()],\n  test: { environment: 'jsdom' },\n})\n",
         "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2020\",\n    \"lib\": [\n      \"ES2020\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\n      \"vite/client\"\n    ]\n  },\n  \"include\": [\n    \"src\",\n    \"vite.config.ts\"\n  ]\n}\n",
         "eslint.config.js": "import js from '@eslint/js'\nimport tseslint from 'typescript-eslint'\n\nexport default tseslint.config(\n  { ignores: ['dist'] },\n  { files: ['**/*.{ts,tsx}'], extends: [js.configs.recommended, ...tseslint.configs.recommended] },\n)\n"
+      }
+    },
+    {
+      "name": "red-tests",
+      "scenario": "familiar",
+      "axis": "тест проекта красный: посадка называет его пунктом долга, не приписывая причину",
+      "testsRed": true,
+      "files": {
+        "package.json": "{\n  \"name\": \"halves\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/half.ts": "export const half = (value: number): number => value / 2\n",
+        "src/half.test.ts": "import { expect, it } from \"vitest\"\nimport { half } from \"./half\"\n\nit(\"halves\", () => {\n  expect(half(4)).toBe(3)\n})\n"
       }
     }
   ]

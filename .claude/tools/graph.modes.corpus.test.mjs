@@ -28,7 +28,8 @@ const git = (box, ...args) => execFileSync("git", args, { cwd: box, encoding: "u
 /** Проект с историей и полкой в `.claude`, как его оставляет человек перед
  * командой посадки. */
 const plant = (project) => {
-  const box = fs.mkdtempSync(path.join(os.tmpdir(), "corpus-" + project.name + "-"));
+  // Кириллица и пробел в пути — как в имени профиля Windows «Игорь Л».
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "корпус " + project.name + "-"));
   for (const [rel, text] of Object.entries(project.files)) {
     fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
     // Хук проекта исполняем: иначе git на Linux его пропускает, а на Windows
@@ -178,10 +179,13 @@ describe("корпус посадок", () => {
             if (project.scenario === "familiar") {
               for (const link of ["typecheck", "lint"]) expect(npm(box, "run", "-s", link).status, link).toBe(0);
               const facts = fs.readFileSync(path.join(box, ".context", "01-facts.md"), "utf8");
+              // Мерить тесты до посадки нечем — пакетов проекта ещё нет; пункт
+              // называет то, что измерено, а не причину.
               if (npm(box, "test").status !== 0) {
                 expect(facts).toMatch(/\| `test` \| красно: падают файлов тестов `\d+`/);
-                expect(fs.readFileSync(path.join(box, ".context", "15-transition.md"), "utf8")).toContain("Тесты проекта красные");
+                expect(fs.readFileSync(path.join(box, ".context", "15-transition.md"), "utf8")).toContain("| Тесты проекта красные после посадки |");
               } else expect(facts).toMatch(/\| `test` \| зелено/);
+              if (project.testsRed === true) expect(facts).toMatch(/\| `test` \| красно/);
             }
             if (project.scenario === "empty") {
               const chain = npm(box, "run", "-s", "check");
