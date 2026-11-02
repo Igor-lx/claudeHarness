@@ -365,12 +365,11 @@ not pick versions yourself:
 | lint and format | ESLint 10.13.0, @eslint/js 10.0.1, typescript-eslint 8.72.0, React Hooks plugin 7.1.1, React Refresh plugin 0.5.7, @eslint-react 5.28.7, jsx-a11y-x 0.2.0, SonarJS 4.2.2, eslint-config-prettier 10.1.8, globals 17.13.0, Prettier 3.9.10 |
 
 On a machine without Node.js, or with Node.js or npm below the set, seating
-installs the verified ones before its first change. In a live project no
-package is upgraded: seating adds only what is
-missing, and packages below the set are named by the run - a notice, not a
-failure; whether to upgrade is your call. One exception: a lint plugin whose
-rule set the seeded lint config takes by name, a major version behind the
-set, is raised to it with a notice - the rule set comes with the harness.
+installs the verified ones before its first change. In a familiar project no
+package changes without your consent: seating shows the stack plan, and only
+with consent (`--apply`) installs what is missing and raises what lags behind
+to the set. Packages below the set that turn up later are named by the run -
+a notice, not a failure; whether to upgrade is your call.
 
 **Other stacks.** The graph, the knowledge base, the quality bar and most
 checks work on any TypeScript or JavaScript code; the templates and the
