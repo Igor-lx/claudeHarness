@@ -524,7 +524,7 @@ export const vitestLiveText = (base) =>
     'import { configDefaults, defineConfig, mergeConfig } from "vitest/config";',
     ...(base === null ? [] : ['import project from "./' + base + '";']),
     "",
-    "export default defineConfig(async (env) =>",
+    "export default defineConfig(" + (base === null ? "() =>" : "async (env) =>"),
     "  mergeConfig(" + (base === null ? "{}" : 'typeof project === "function" ? await project(env) : project') + ", {",
     "    test: {",
     '      exclude: [...configDefaults.exclude, ".claude/**", ".stryker-tmp/**"],',
@@ -595,6 +595,9 @@ export const composeLive = ({ exists, read, seed, map, roots, prettierInManifest
   const report = [];
   const strict = strictConfigsOf(read, seed(compiler.to));
   for (const [name, json] of Object.entries(strict.files)) files[name] = JSON.stringify(json, null, 2) + "\n";
+  // Своего конфига компилятора у проекта нет: строгой копии нечего
+  // продолжать, и проект получает семя, как пустая папка.
+  if (read(COMPILER_CONFIG) === null) files[COMPILER_CONFIG] = seed(compiler.to);
   const isLegacy = (one) => /^\.eslintrc/.test(one);
   const ownLint = lying(namesOf(lint).filter((one) => !isLegacy(one)));
   if (ownLint !== null) moves.push([ownLint, projectConfigName(ownLint)]);

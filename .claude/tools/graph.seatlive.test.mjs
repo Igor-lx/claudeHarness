@@ -217,6 +217,10 @@ describe("живая посадка: композиция конфигов и с
     expect(vitestLiveText("vite.config.ts")).toContain('import project from "./vite.config.ts";');
     expect(vitestLiveText(null)).toContain("mergeConfig({}, {");
     expect(vitestLiveText(null)).toContain('".claude/**"');
+    // Без конфига проекта параметр некому передать: под строгостью обвязки
+    // он был бы ошибкой «объявлен, но не прочитан» в её же файле.
+    expect(vitestLiveText(null)).toContain("export default defineConfig(() =>");
+    expect(vitestLiveText(null)).not.toContain("env");
   });
 
   it("строгость: копия конфига; у решения — копия каждой ссылки, своя память компилятора у той, что её задала", () => {
