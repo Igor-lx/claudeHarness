@@ -2890,7 +2890,11 @@ const barHolesGrouped = (holes) => {
     }
     const vars = list.map((h) => h.match(BAR_HOLE_VAR) ?? []);
     const same = vars[0].map((v, k) => vars.every((x) => x[k] === v));
-    out.push(kind + " — " + list.length + ":");
+    // Общее всем дырам вида стоит в строке вида своим словом: под ней его
+    // нет, и многоточие на его месте теряло критерий (свод `2026-11-02`).
+    let at = 0;
+    const head = list[0].replace(BAR_HOLE_VAR, (word) => (same[at++] ? word : "…"));
+    out.push(head + " — " + list.length + ":");
     let line = "";
     for (const v of vars) {
       const one = v.filter((_, k) => !same[k]).join(" ");

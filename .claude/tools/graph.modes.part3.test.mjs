@@ -2771,11 +2771,15 @@ describe("экономия свода по журналу пробы 2026-10-13"
       });
       const out = tool("bar", "app/zzWide.ts");
       const head =
-        /чисто без опоры на модель своего уровня: назвать строку уровня … — годятся … — ([0-9]+):$/m.exec(
+        /^ {4}(\S+) для (\S+): чисто без опоры на модель своего уровня: назвать строку уровня .* — ([0-9]+):$/m.exec(
           out,
         );
       expect(head, out).not.toBeNull();
-      expect(Number(head[1])).toBeGreaterThanOrEqual(6);
+      expect(Number(head[3])).toBeGreaterThanOrEqual(6);
+      // Разное у дыр — многоточием, общее — своим словом: предмет один у всех,
+      // и без него строки под видом не говорили бы, о чём они.
+      expect(head[1]).toBe("…");
+      expect(head[2]).toBe("`app/zzWide.ts`");
       // Каждая дыра вида — своими переменными словами, без повтора текста.
       expect(out).not.toMatch(
         /^ {4}A10 для `app\/zzWide\.ts`: чисто без опоры на модель своего уровня/m,
