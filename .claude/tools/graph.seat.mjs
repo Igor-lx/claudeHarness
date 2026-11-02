@@ -371,7 +371,9 @@ export const stackSurveyOf = ({
       foreign.push({ axis: axis.axis, what, tool: axis.tool ?? null });
       continue;
     }
-    if (axis.uiOnly && !hasUi) {
+    // Ось интерфейса без интерфейса — без предмета, пока проект не объявил
+    // её пакет сам: объявленный приводится к связке, как любой другой.
+    if (axis.uiOnly && !hasUi && !axis.ours.some(has)) {
       rows.push({ axis: axis.axis, state: "без предмета", note: "интерфейса нет" });
       continue;
     }
@@ -390,7 +392,7 @@ export const stackSurveyOf = ({
     const notes = [];
     for (const name of axis.ours) {
       const want = verified[name];
-      if (want === undefined || unwanted.has(name)) continue;
+      if (want === undefined) continue;
       const alt = (alternatives[name] ?? []).find(has);
       if (alt !== undefined) {
         notes.push(alt + " — объявленная замена " + name);
@@ -398,8 +400,9 @@ export const stackSurveyOf = ({
       }
       const holders = places.filter((p) => ownIn(p, name) !== undefined);
       if (holders.length === 0) {
-        // Пакет одноранговый — его ставит потребитель, а не проект.
-        if (has(name)) continue;
+        // Пакет одноранговый — его ставит потребитель, а не проект; пакет
+        // интерфейса проекту без интерфейса не дописывается.
+        if (has(name) || unwanted.has(name)) continue;
         const section = name === "react" || name === "react-dom" ? "dependencies" : "devDependencies";
         plan.push({ name, from: null, to: want, section });
         moves.push(name + " — нет");

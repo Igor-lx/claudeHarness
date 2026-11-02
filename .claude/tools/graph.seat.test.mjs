@@ -319,6 +319,18 @@ describe("осмотр окружения проекта по осям карт�
     });
   const planOf = (s) => Object.fromEntries(s.plan.map((p) => [p.name, p]));
 
+  // Выведено корпусом: `js-configs` без интерфейса оставался на Vite `5` при
+  // согласии на приведение, а Vitest поднимался до `4`.
+  it("проект без интерфейса: объявленный пакет оси интерфейса приводится к связке, недостающий не дописывается", () => {
+    const s = survey({ devDependencies: { vite: "^5.4.11", vitest: "^2.1.8", typescript: "~5.6.3" } }, ["src/clamp.ts"]);
+    const plan = planOf(s);
+    expect(plan.vite).toEqual({ name: "vite", from: "^5.4.11", to: OURS.vite, section: "devDependencies" });
+    for (const name of ["react", "react-dom", "@vitejs/plugin-react", "@types/react"]) expect(plan[name], name).toBeUndefined();
+    const bare = survey({ devDependencies: { vitest: "^2.1.8", typescript: "~5.6.3" } }, ["src/clamp.ts"]);
+    expect(planOf(bare).vite).toBeUndefined();
+    expect(bare.rows.find((r) => r.axis === "сборщик").state).toBe("без предмета");
+  });
+
   it("предшественник пакета оси — план снимает его, установка удаляет из манифеста", () => {
     // Выведено одиннадцатой посадкой: `@typescript-eslint/*` `7` держат пиром
     // ESLint `8`, и `--apply` с ESLint `10` падал на конфликте.
