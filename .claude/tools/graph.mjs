@@ -15282,6 +15282,31 @@ const barModelFor = (rows, level, subject, neighbours = null) =>
           const p = barPlaceOf(r.where);
           return level === "узел" ? p.unit === subject : p.layer === subject;
         });
+/** Замеренная беспредметность, если модель того же предмета её не
+ * опровергает; опровергает — пусто, и строку судит сессия. Замер и модель
+ * видят текст разными признаками: контроллер отмены без эффекта. */
+const barNoneHeld = (reason, { c, subject, model, neighbours, kind }) =>
+  reason === "" ||
+  barModelFault(
+    [
+      c.id,
+      "нет предмета",
+      reason,
+      kind,
+      barModelCode(
+        barModelFor(
+          model.map((m) => ({ ...m, release: m.release ?? "" })),
+          c.level,
+          subject,
+          neighbours,
+        ),
+      ),
+      c.level,
+      "",
+    ].join("|"),
+  ) !== ""
+    ? ""
+    : reason;
 /** Лежит ли файл в предмете строки: единица переноса, слой либо соседи. */
 const barInsideOf = (level, subject, abs, neighbours = null) =>
   subject === "" ||
@@ -18032,7 +18057,14 @@ const barTransitionPlan = (s, live) => {
     expected,
     levelSubjects: { [s.level]: [s.key] },
     withBase: false,
-    noneOf: (c) => barNoSubject(c.id + "|" + flags),
+    noneOf: (c, subject) =>
+      barNoneHeld(barNoSubject(c.id + "|" + flags), {
+        c,
+        subject,
+        model,
+        neighbours: null,
+        kind: "на переход",
+      }),
     // Свидетели — у единицы переноса: на её ядро отвечают фразой и
     // объявлениями. У слоя и приложения единиц много, и ответ о них стоит в
     // их собственных протоколах.
@@ -18462,13 +18494,23 @@ const barInputsOf = async ({
       (f) => (split === "узел" ? unitOf(f) : layerOf(f)) === s,
     );
   };
-  const noneOf = (c, s) => {
+  const measuredNone = (c, s) => {
     const split = barSplitOf(c.id + "|" + c.level);
     if (s === "" || split === "") return barNoSubject(c.id + "|" + flagsAll);
     const k = split + "|" + s;
     if (!flagsBy.has(k))
       flagsBy.set(k, barFlagsOf(scopeOf(c, s), manifestTouched));
     return barNoSubject(c.id + "|" + flagsBy.get(k));
+  };
+  const noneBy = new Map();
+  const noneOf = (c, s) => {
+    const k = c.id + "|" + s;
+    if (!noneBy.has(k))
+      noneBy.set(
+        k,
+        barNoneHeld(measuredNone(c, s), { c, subject: s, model, neighbours, kind }),
+      );
+    return noneBy.get(k);
   };
   // Спор с красной сверкой-держателем — только у строки, чей предмет в
   // работе есть: находка о проекте целиком не делает предмета там, где его

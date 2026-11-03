@@ -305,6 +305,49 @@ describe("свод на правке — по той же области, что
     }
   }, 300000);
 
+  it("заготовка «нет предмета» не спорит с моделью: ресурс без эффекта и таймера — предмет", () => {
+    const box = seatEmpty("none-model-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      // Обычная функция заводит контроллер отмены: строка ресурса есть, а
+      // эффекта, таймера и наблюдателя в предмете нет.
+      const at = path.join(box, "src", "shared", "zzNet", "zzSignal.ts");
+      fs.mkdirSync(path.dirname(at), { recursive: true });
+      fs.writeFileSync(at, "export const zzSignal = (): AbortSignal => new AbortController().signal;\n");
+      tool("bar");
+      const proto = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      expect(proto).toMatch(/^\| П\d+ \| ресурс \| `shared\/zzNet\/zzSignal\.ts:1` \|/m);
+      const rows = (id) =>
+        [...proto.matchAll(new RegExp("^\\| " + id + " \\|[^|\\n]*\\|[^|\\n]*\\| ([^|\\n]*) \\|", "gm"))].map(
+          (m) => m[1].trim(),
+        );
+      for (const id of ["C12", "E4"]) expect(rows(id).length).toBeGreaterThan(0);
+      for (const id of ["F1", "F2", "E4", "C12", "M3"])
+        for (const outcome of rows(id)) expect(outcome, id).not.toBe("нет предмета");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("потребитель за областью — строкой радиуса и вопросом о совместимости", () => {
     const box = seatEmpty("radius-");
     try {
