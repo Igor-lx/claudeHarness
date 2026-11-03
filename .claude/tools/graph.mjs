@@ -16893,7 +16893,11 @@ const barHolesOf = ({
           continue;
         }
         const not = token.startsWith(BAR_CROSS_NOT);
-        const id = not ? token.slice(BAR_CROSS_NOT.length).trim() : token;
+        // «X для `предмет`» — та форма, какой находку называют ключи и дыры.
+        const id = (not ? token.slice(BAR_CROSS_NOT.length).trim() : token).replace(
+          /\s+для\s+`[^`]*`$/,
+          "",
+        );
         said.add(id);
         if (!criterionIds.has(id))
           holes.push(

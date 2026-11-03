@@ -3035,6 +3035,11 @@ describe("экономия свода по журналу пробы 2026-10-13"
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(
         /^\| A4 — `src\/app\/zzWide\.ts:1` \| [^|]*надвое[^|]* \| B1 \| не B1 \|$/m,
       );
+      // Критерий с предметом — той же формой, какой его называют ключи и
+      // дыры: «A1 для `предмет`». Свод проб `2026-11-03` получил на ней отказ.
+      fs.writeFileSync(answersAt, "также A4 — `app/zzWide.ts:1` | не B1, не A1 для `app/zzWide.ts`\n");
+      tool("bar-fill", answersAt);
+      expect(tool("bar", "app/zzWide.ts")).not.toContain("не критерий этого свода");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
