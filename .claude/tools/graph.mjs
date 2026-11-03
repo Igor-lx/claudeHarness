@@ -54,6 +54,7 @@ import {
   barCoreCriterion,
   testEnumeratesInputs,
   barModelFault,
+  barRadiusFault,
   barRestsOn,
   barLevelFault,
   barDeltaFault,
@@ -16979,6 +16980,17 @@ const barHolesOf = ({
       ),
     );
     if (fault !== "") holes.push(barWho(c.id, subject) + ": " + fault);
+    if (c.id === "J9-тер" && one.outcome === "нашлось") {
+      const radius = barModelFor(parsed.model, c.level, subject, neighbours)
+        .filter((r) => r.sort === "радиус")
+        .map((r) => r.id + "=" + r.where.replace(/`/g, "").trim())
+        .join(";");
+      const more = barMorePlacesOf(one.what);
+      const late = barRadiusFault(
+        [one.addr, more].filter(Boolean).join(",") + "|" + flat(one.what) + "|" + radius,
+      );
+      if (late !== "") holes.push(barWho(c.id, subject) + ": " + late);
+    }
   }
   // Итог по уровням: строка на предмет уровня, согласная с моделью и с
   // исходами. Открытая находка предмета — по её адресу.

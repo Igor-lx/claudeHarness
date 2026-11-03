@@ -434,6 +434,23 @@ describe("свод на правке — по той же области, что
         pick: { "J9-тер": "нет предмета |  | тестов не трогали | " },
       });
       expect(tool("bar")).toMatch(/J9-тер: нет предмета, а в модели он есть: П\d+/);
+      // «Нашлось» в другом узле не закрывает строку радиуса номером: её узел
+      // стоит местом находки, либо она названа словами «не сдвинуто».
+      const radiusOf = () => /\| (П\d+) \| радиус \|/.exec(fs.readFileSync(protoAt, "utf8"))[1];
+      const late = /J9-тер: нашлось, а строки радиуса без вердикта: П\d+ \(`shared\/zzFmt\/zzFmt\.ts`\)/;
+      const found = (addr, what) => {
+        fs.rmSync(protoAt);
+        tool("bar");
+        const id = radiusOf();
+        fillBar(protoAt, {
+          release: "не нужно: проба",
+          pick: { "J9-тер": "нашлось | " + addr + " | " + what.replace("{П}", id) + " | вопрос" },
+        });
+        return tool("bar");
+      };
+      expect(found("shared/zzFmt/zzPad.ts:1", "ширина сдвинута ({П})")).toMatch(late);
+      expect(found("shared/zzFmt/zzPad.ts:1", "ширина сдвинута; {П}: не сдвинуто — ответ показа тот же")).not.toMatch(late);
+      expect(found("shared/zzFmt/zzFmt.ts:3", "ширина сдвинута ({П})")).not.toMatch(late);
       mutationMeasured(box);
       fs.rmSync(protoAt);
       tool("bar");
