@@ -336,6 +336,9 @@ describe("свод на правке — по той же области, что
       tool("bar");
       const proto = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
       expect(proto).toMatch(/^\| П\d+ \| ресурс \| `shared\/zzNet\/zzSignal\.ts:1` \|/m);
+      // Размах считает файлы кода без тестов и так и говорит: сессия свода
+      // `2026-11-03` сверила «файлов» с правленым вместе с тестами.
+      expect(proto).toMatch(/^\| П\d+ \| размах \| `правка` \| файлов кода без тестов `1`;/m);
       const rows = (id) =>
         [...proto.matchAll(new RegExp("^\\| " + id + " \\|[^|\\n]*\\|[^|\\n]*\\| ([^|\\n]*) \\|", "gm"))].map(
           (m) => m[1].trim(),

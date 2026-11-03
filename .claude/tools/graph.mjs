@@ -15037,7 +15037,7 @@ const barModelOf = (
       add(
         "размах",
         change ? "правка" : transition ? "проект" : "область",
-        "файлов " +
+        "файлов кода без тестов " +
           barQuoted(String(own.length)) +
           "; единиц переноса " +
           barQuoted(String(units.length)) +
