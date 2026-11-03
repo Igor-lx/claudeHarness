@@ -593,6 +593,9 @@ describe("область сбора раннера jest", () => {
   it("файл на TypeScript переводит компилятор проекта; сбой загрузки — причина, а не падение", () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-jest-ts-"));
     try {
+      // Компилятор проекта — в его папке пакетов, а не там, где его найдёт машина.
+      fs.mkdirSync(path.join(box, "node_modules"));
+      fs.symlinkSync(path.join(process.cwd(), "node_modules", "typescript"), path.join(box, "node_modules", "typescript"), "junction");
       fs.writeFileSync(path.join(box, "jest.config.ts"), 'const roots: string[] = ["<rootDir>/d"];\nexport default { roots };\n');
       expect(jestConfigLoad(box, {}).config.roots).toEqual(["<rootDir>/d"]);
       fs.writeFileSync(path.join(box, "jest.config.ts"), 'export default { roots: missing };\n');
@@ -600,6 +603,7 @@ describe("область сбора раннера jest", () => {
       expect(said.config).toBeNull();
       expect(said.broke).toContain("missing");
     } finally {
+      fs.rmSync(path.join(box, "node_modules", "typescript"), { force: true });
       fs.rmSync(box, { recursive: true, force: true });
     }
   });
