@@ -240,6 +240,10 @@ describe("свод: строки держателя «линт» ставит м
       const pkg0 = JSON.parse(fs.readFileSync(pkgAt0, "utf8"));
       pkg0.engines.node = ">=" + process.versions.node;
       fs.writeFileSync(pkgAt0, JSON.stringify(pkg0, null, 2) + "\n");
+      // `.nvmrc` — вторая запись той же версии: иначе на машине новее
+      // связки сверка видит их расхождение, и `R6` теряет опору.
+      const nvmAt0 = path.join(box, ".nvmrc");
+      if (fs.existsSync(nvmAt0)) fs.writeFileSync(nvmAt0, process.versions.node + "\n");
       const graph = path.join(box, ".claude", "tools", "graph.mjs");
       const withLint = { ...process.env, NODE_PATH: path.join(process.cwd(), "node_modules") };
       const bar = (env) =>
@@ -352,6 +356,8 @@ describe("свод: строки держателя «линт» ставит м
       const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
       pkg.engines.node = ">=" + process.versions.node;
       fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      const nvmAt = path.join(box, ".nvmrc");
+      if (fs.existsSync(nvmAt)) fs.writeFileSync(nvmAt, process.versions.node + "\n");
       const graph = path.join(box, ".claude", "tools", "graph.mjs");
       const bar = (env) =>
         spawnSync(process.execPath, [graph, "bar", "src/app/zzMany"], { cwd: box, encoding: "utf8", env }).stdout;
