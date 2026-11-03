@@ -590,6 +590,20 @@ describe("область сбора раннера jest", () => {
     }
   });
 
+  it("файл на TypeScript переводит компилятор проекта; сбой загрузки — причина, а не падение", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-jest-ts-"));
+    try {
+      fs.writeFileSync(path.join(box, "jest.config.ts"), 'const roots: string[] = ["<rootDir>/d"];\nexport default { roots };\n');
+      expect(jestConfigLoad(box, {}).config.roots).toEqual(["<rootDir>/d"]);
+      fs.writeFileSync(path.join(box, "jest.config.ts"), 'export default { roots: missing };\n');
+      const said = jestConfigLoad(box, {});
+      expect(said.config).toBeNull();
+      expect(said.broke).toContain("missing");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   it("корни, образцы, выражение и исключения решают так же, как раннер", () => {
     const at = (rel) => path.join(without, rel);
     const narrow = jestCollects({ testMatch: ["<rootDir>/packages/*/test/**/*.test.js"] }, without, withPackages);

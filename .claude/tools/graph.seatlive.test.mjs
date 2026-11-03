@@ -192,6 +192,22 @@ describe("живая посадка: настройка, факты, перех�
       ["`3`", "«Найденное — исправлено, а не отложено»"],
     ]);
   });
+
+  it("каждый вид долга встаёт своей строкой с числом и держателем", () => {
+    const kinds = ["subjects", "decisions", "invariants", "constants", "readme", "types", "lint", "pins", "markers", "comments", "tongue", "guarantees"];
+    const { steps, items } = debtPlanOf(Object.fromEntries(kinds.map((k, i) => [k, i + 1])));
+    expect(steps.map((s) => s[1])).toEqual(["`1` записей", "`2` пометок", "`3` пометок", "`4` констант", "`5` папок"]);
+    expect(items.map((i) => [i[0], i[1]])).toEqual([
+      ["Ошибки типов под строгостью обвязки", "`6`"],
+      ["Находки линтера под правилами обвязки", "`7`"],
+      ["Версии зависимостей диапазоном", "`8`"],
+      ["Маркеры отложенной работы в коде", "`9`"],
+      ["Комментарии сверх потолка", "`10`"],
+      ["Строки кода не на языке кода", "`11`"],
+      ["Строки витрины без теста", "`12`"],
+    ]);
+    for (const row of [...steps, ...items]) expect(row.join(" | "), row[0]).toMatch(/«[^»]+»/);
+  });
 });
 
 describe("живая посадка: композиция конфигов и скриптов", () => {
@@ -342,6 +358,29 @@ describe("живая посадка: отказ возвращает проек�
         expect(r.status, r.out).toBe(1);
         expect(r.out).toContain("Имя " + name + " уже занято файлом проекта");
         same(root, before, 1);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }, 360000);
+
+  it("своя настройка среды не той формы либо не JSON — отказ с причиной, своё проекта цело", () => {
+    for (const [text, said] of [
+      ['{ "permissions": [] }\n', "Свой .claude/settings.json проекта не той формы: permissions — не объект."],
+      ["{ broken\n", "Свой .claude/settings.json проекта не разбирается: "],
+    ]) {
+      const f = files();
+      f[".claude/settings.json"] = text;
+      const { root, box } = plantLive(f);
+      try {
+        const before = tracked(root);
+        const r = seatIn(box, apply);
+        expect(r.status, r.out).toBe(1);
+        expect(r.out).toContain(said);
+        // Своя настройка закоммичена — полка рядом с ней видна git поштучно.
+        expect(tracked(root)).toEqual(before);
+        expect(fs.readFileSync(path.join(box, ".claude", "settings.json"), "utf8")).toBe(text);
+        expect(git(root, "status", "--porcelain").split("\n").filter((l) => l && !l.startsWith("?? .claude/"))).toEqual([]);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

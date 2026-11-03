@@ -868,6 +868,24 @@ describe("посадка на месте одной командой", () => {
     }
   }, 300000);
 
+  it("команда без папки и магазин на месте — отказ до работы", () => {
+    const dest = boxWithShelf("seat-cli-");
+    try {
+      const bare = spawnSync(process.execPath, [path.join(dest, ".claude", "tools", "graph.mjs"), "seat"], {
+        cwd: dest,
+        encoding: "utf8",
+      });
+      expect(bare.status).toBe(1);
+      expect(bare.stdout).toContain("Куда сажать, не сказано: seat <папка> [--shop].");
+      const shop = seatHere(dest, "--shop");
+      expect(shop.status).toBe(1);
+      expect(shop.stdout).toContain("Магазин кладут на посадку в отдельную папку, а не на месте.");
+      expect(fs.existsSync(path.join(dest, "CLAUDE.md"))).toBe(false);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  }, 120000);
+
   it("свежий шаблон сборщика убирается и заменяется заготовкой обвязки, список убранного напечатан", () => {
     const dest = boxWithShelf("seat-vite-");
     try {
