@@ -2453,6 +2453,35 @@ describe("база о своём: документы узла, сторона т
     }
   }, 180000);
 
+  // Адрес, на который режиму ответить нечем, — код 1 и ответ по роду адреса:
+  // голое «ничего не нашлось» читается как «связей нет», то есть «рисков нет».
+  it("режим с адресом на адрес без ответа кончается кодом 1 и называет, почему", () => {
+    const box = seatEmpty("no-address-");
+    try {
+      const run = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+      for (const mode of ["brief", "plan", "levels", "blast", "bar"]) {
+        const r = run(mode, "src/zzNowhere.ts");
+        expect(r.status, mode).toBe(1);
+        expect(r.stdout, mode).toContain("`zzNowhere.ts` — такого файла нет.");
+      }
+      for (const mode of ["plan", "blast"]) {
+        const r = run(mode, "app/tests/App.test.tsx");
+        expect(r.status, mode).toBe(1);
+        expect(r.stdout, mode).toContain("— это тест, у него «");
+      }
+      run("bar", "app/App.tsx");
+      const page = run("bar-read", "999");
+      expect(page.status).toBe(1);
+      expect(page.stdout).toContain("Страницы с таким номером нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("файл объявленной папки тестов — сторона тестов, а не код карты", () => {
     const box = seatEmpty("testdir-");
     try {

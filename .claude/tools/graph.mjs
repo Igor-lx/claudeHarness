@@ -6051,6 +6051,14 @@ const argPath = (a) => {
  * стили внутри исходников, а обвязка — правила, полка, инструмент — лежит вне
  * его области, и сказать об этом надо прямо. Найдено пробой: досье на файл
  * полки правил отвечало ровно тем же, чем на выдуманный путь. */
+/** Ответ режима радиуса — `plan`, `blast` — на адрес, у которого радиуса
+ * нет. Тест в граф входит, но радиуса у него не бывает: он сам проверка.
+ * Пока у `blast` был свой ответ, он говорил голое «ничего не нашлось». */
+const noRadiusOf = (arg, question) =>
+  [...files, ...styleFiles].some((f) => isTest(f) && rel(f).includes(arg))
+    ? `${BACKTICK}${arg}${BACKTICK} — это тест, у него «${question}» не спрашивают:` +
+      ` что он гоняет и что закрепляет — ${BACKTICK}graph.mjs brief${BACKTICK}.`
+    : outOfScope(arg);
 const outOfScope = (arg) => {
   const tick = String.fromCharCode(96);
   // Документ проекта — не узел, не свод и не полка: `plan` отвечал на него
@@ -7992,7 +8000,7 @@ if (mode === "blast") {
   }
   rows.sort((a, b) => b[1] - a[1]);
   if (arg && rows.length === 0) {
-    console.log(`Ничего не нашлось по ${arg}.`);
+    console.log(noRadiusOf(arg, "радиус"));
     process.exitCode = 1;
   } else if (arg) {
     console.log(`=== Радиус поражения: ${arg} ===\n`);
@@ -8036,17 +8044,8 @@ if (mode === "plan") {
       "Укажи путь: node .claude/tools/graph.mjs plan <путь или его хвост>",
     );
     process.exitCode = 1;
-  } else if (hits.length === 0 && matched.length > 0) {
-    // «Ничего не нашлось» про существующий файл отправляет читателя искать
-    // опечатку в пути, которой нет. У теста вопрос «что придётся тронуть»
-    // стоит наоборот: тронут будет он сам, а его радиус — то, что он гоняет.
-    console.log(
-      `${BACKTICK}${arg}${BACKTICK} — это тест, у него «что придётся тронуть» не спрашивают:` +
-        ` что он гоняет и что закрепляет — ${BACKTICK}graph.mjs brief${BACKTICK}.`,
-    );
-    process.exitCode = 1;
   } else if (hits.length === 0) {
-    console.log(outOfScope(arg));
+    console.log(noRadiusOf(arg, "что придётся тронуть"));
     process.exitCode = 1;
   } else {
     for (const target of hits.slice(0, 6)) {
