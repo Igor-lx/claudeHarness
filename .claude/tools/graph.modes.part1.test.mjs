@@ -34,6 +34,51 @@ import {
  * запечатанным сводом.
  */
 describe("ворота конца хода", () => {
+  it("свод на задаче чтения, начатый и не запечатанный, держит ход; пауза и печать отпускают, протокол в истории — нет", () => {
+    const box = seatEmpty("stop-read-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=stop", "-c", "user.email=stop@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [graph, ...args], { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const hook = () => spawnSync(process.execPath, [graph, "stop", "--hook"], { cwd: box, encoding: "utf8", input: "{}" });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      expect(hook().status).toBe(0);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/App.tsx");
+      const held = hook();
+      expect(held.status).toBe(2);
+      expect(held.stderr).toContain("свод на задаче чтения не закончен");
+      expect(held.stderr).toContain("graph.mjs bar app/App.tsx");
+      expect(JSON.parse(tool("stop", "--session")).systemMessage).toContain("свод чтения не закончен");
+      tool("stop", "--pause", "жду, нужен ли полный свод");
+      expect(hook().status).toBe(0);
+      expect(tool("stop", "--session")).toContain("незаконченная работа — жду, нужен ли полный свод");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar", "app/App.tsx")).toContain("печать поставлена");
+      expect(hook().status).toBe(0);
+      // Протокол чтения, лежащий в истории без печати, хода не держит.
+      fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: `[^`]+`$/m, "- печать: `нет`"));
+      git("add", "-A");
+      git("commit", "-qm", "свод в истории", "--no-verify");
+      expect(hook().status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("отказ, пауза на вид правки, клапан со следом, печать снимает всё", () => {
     const box = seatEmpty("stop-");
     try {

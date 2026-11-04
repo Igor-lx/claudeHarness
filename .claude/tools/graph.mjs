@@ -8510,7 +8510,38 @@ if (mode === "stop") {
     protoAt !== null && existsSync(protoAt) ? readFileSync(protoAt, "utf8") : null;
   const fault =
     want.length === 0 ? "" : barCoverFault(want, body) || barGroundFault(body);
-  const paused = state.pause?.digest === digest && want.length > 0;
+  // Свод на задаче чтения, начатый этой работой, держит ход так же, как
+  // правка кода: доктрина спрашивает свод в обоих родах. Начатый — протокол
+  // правлен против последнего коммита; лежащий в истории ход не держит.
+  // Выведено: ревью пробы `2026-11-04` бросило свод без печати.
+  const readFault = (() => {
+    if (want.length > 0 || gitDir === null || body === null) return "";
+    const was = barHeaderOf(body);
+    if (was.kind !== "на чтение") return "";
+    let dirty = "";
+    try {
+      dirty = execFileSync("git", ["status", "--porcelain", "--", protoAt], {
+        cwd: REPO_AT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      dirty = "";
+    }
+    if (dirty === "") return "";
+    if (was.seal === null || was.seal === "нет")
+      return "свод чтения `" + (was.address ?? "") + "` начат и не запечатан";
+    if (was.seal !== barSealOf(body))
+      return "печать свода чтения не сходится: протокол правлен после неё";
+    return "";
+  })();
+  const holdFault = want.length > 0 ? fault : readFault;
+  const holdDigest =
+    want.length > 0
+      ? digest
+      : barDigest("на чтение " + (body === null ? "" : (barHeaderOf(body).address ?? "")));
+  const holdFiles = want.length > 0 ? named : [String(CONFIG.barProtocol ?? "")];
+  const paused = state.pause?.digest === holdDigest && holdFault !== "";
   const day = (iso) => String(iso ?? "").slice(0, 10);
 
   if (flag === "--pause") {
@@ -8524,11 +8555,11 @@ if (mode === "stop") {
       );
       process.exit(1);
     }
-    if (want.length === 0) {
-      console.log("  Правки кода нет — пауза не нужна.");
+    if (want.length === 0 && readFault === "") {
+      console.log("  Правки кода и начатого свода чтения нет — пауза не нужна.");
       process.exit(0);
     }
-    state.pause = { digest, reason, at: new Date().toISOString(), files: named };
+    state.pause = { digest: holdDigest, reason, at: new Date().toISOString(), files: holdFiles };
     state.blocks = null;
     save();
     console.log("=== Пауза поставлена ===");
@@ -8552,7 +8583,7 @@ if (mode === "stop") {
     // Между сессиями правку могли закоммитить мимо ворот, откатить или
     // накрыть сводом: пауза и след о ней тогда ни о чём, и печатать их —
     // звать сессию к работе, которой нет. Правило то же, что у конца хода.
-    if (want.length === 0 || fault === "") {
+    if (holdFault === "") {
       if (state.pause != null || state.trace != null || state.blocks != null) {
         state.pause = null;
         state.trace = null;
@@ -8561,7 +8592,7 @@ if (mode === "stop") {
       }
     }
     // Пауза о прежнем виде правки ни о чём: о нынешнем скажет строка ниже.
-    if (paused && fault !== "")
+    if (paused)
       said.push(
         "незаконченная работа — " +
           state.pause.reason +
@@ -8583,17 +8614,12 @@ if (mode === "stop") {
       );
     // Правка без свода, о которой пауза и след молчат: прошлая сессия не дошла
     // до конца хода либо правили вне сессии.
-    if (
-      want.length > 0 &&
-      fault !== "" &&
-      !paused &&
-      state.trace?.digest !== digest
-    )
+    if (holdFault !== "" && !paused && state.trace?.digest !== holdDigest)
       said.push(
-        "правка кода без свода — " +
-          fault +
+        (want.length > 0 ? "правка кода без свода — " : "свод чтения не закончен — ") +
+          holdFault +
           " (файлы: " +
-          named.join(", ") +
+          holdFiles.join(", ") +
           ")",
       );
     if (said.length) {
@@ -8612,7 +8638,7 @@ if (mode === "stop") {
   }
 
   if (flag === "--hook") {
-    if (want.length === 0 || fault === "") {
+    if (holdFault === "") {
       // Правка накрыта сводом либо ушла в коммит: пауза и след больше ни о чём.
       if (state.pause != null || state.trace != null || state.blocks != null) {
         state.pause = null;
@@ -8626,9 +8652,9 @@ if (mode === "stop") {
     // Пауза о другом виде правки ни о чём: правка изменилась после неё.
     if (state.pause != null) state.pause = null;
     const count =
-      state.blocks?.digest === digest ? (state.blocks.count ?? 0) + 1 : 1;
+      state.blocks?.digest === holdDigest ? (state.blocks.count ?? 0) + 1 : 1;
     if (count >= 3) {
-      state.trace = { digest, at: new Date().toISOString(), files: named, fault };
+      state.trace = { digest: holdDigest, at: new Date().toISOString(), files: holdFiles, fault: holdFault };
       state.blocks = null;
       save();
       // Клапан пропускает ход — человек узнаёт об этом сразу, строкой.
@@ -8636,24 +8662,29 @@ if (mode === "stop") {
         JSON.stringify({
           systemMessage:
             "Обвязка: ход кончается без свода по планке — третий отказ подряд: " +
-            fault +
+            holdFault +
             ". Файлы: " +
-            named.join(", ") +
+            holdFiles.join(", ") +
             ". Начало следующей сессии назовёт этот след.",
         }),
       );
       process.exit(0);
     }
-    state.blocks = { digest, count };
+    state.blocks = { digest: holdDigest, count };
     save();
+    const address = body === null ? "" : (barHeaderOf(body).address ?? "");
     process.stderr.write(
-      "Обвязка: ход кончается, а правка кода не накрыта сводом по планке — " +
-        fault +
+      (want.length > 0
+        ? "Обвязка: ход кончается, а правка кода не накрыта сводом по планке — "
+        : "Обвязка: ход кончается, а свод на задаче чтения не закончен — ") +
+        holdFault +
         ".\n" +
         "Файлы: " +
-        named.join(", ") +
+        holdFiles.join(", ") +
         ".\n" +
-        "Работа закончена — свод: `node .claude/tools/graph.mjs bar`, ответы по протоколу, печать.\n" +
+        (want.length > 0
+          ? "Работа закончена — свод: `node .claude/tools/graph.mjs bar`, ответы по протоколу, печать.\n"
+          : "Работа закончена — свод: `node .claude/tools/graph.mjs bar " + address + "`, ответы по протоколу, печать.\n") +
         'Работа не закончена (ждёт ответа разработчика, прервана на развилке) — пауза с причиной: `node .claude/tools/graph.mjs stop --pause "<причина>"`; причину печатает начало следующей сессии.\n',
     );
     process.exit(2);
@@ -8663,11 +8694,11 @@ if (mode === "stop") {
   sayLooked("файлов правки", want.length);
   if (gitDir === null)
     console.log("  git недоступен — ворота конца хода проверить нечем");
-  else if (want.length === 0)
+  else if (want.length === 0 && readFault === "")
     console.log("  правки кода нет — свод не спрашивается");
-  else if (fault === "") console.log("  свод покрывает правку: ход заканчивается");
+  else if (holdFault === "") console.log("  свод покрывает правку: ход заканчивается");
   else if (paused) console.log("  пауза: " + state.pause.reason);
-  else console.log("    не накрыто сводом: " + fault);
+  else console.log("    не накрыто сводом: " + holdFault);
   if (state.trace != null)
     console.log(
       "    след: ход кончен без свода " +
@@ -8675,7 +8706,7 @@ if (mode === "stop") {
         " — " +
         state.trace.fault,
     );
-  process.exit(want.length > 0 && fault !== "" && !paused ? 1 : 0);
+  process.exit(holdFault !== "" && !paused ? 1 : 0);
 }
 // Правка в одной копии из пары — единственный настоящий риск форков, и он
 // виден только в диффе, а не в дереве: файлы законно расходятся там, где
