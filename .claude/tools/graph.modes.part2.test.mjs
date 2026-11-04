@@ -6203,6 +6203,40 @@ describe("предмет под другим именем и форматом", 
     }
   }, 180000);
 
+  it("ключ буквальной карты классов вне типа компонента назван; верный ключ, развёртка и карта переменной — нет", () => {
+    const box = seatEmpty("passed-keys-");
+    try {
+      const put = (rel, text) => {
+        const at = path.join(box, "src", ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      put(
+        "components/ZzKeys/types.ts",
+        "export interface ZzKeysClassMap {\n  readonly [key: string]: string;\n  root?: string;\n  title?: string;\n}\n",
+      );
+      put(
+        "components/ZzKeys/ZzKeys.tsx",
+        'import type { ZzKeysClassMap } from "./types";\n\nexport const ZzKeys = ({ classes }: { classes?: ZzKeysClassMap }) => <i className={classes?.root} />;\n',
+      );
+      put(
+        "app/zzKeysUse.tsx",
+        'import { ZzKeys } from "../components/ZzKeys/ZzKeys";\n\nconst sheet = { root: "a" };\n' +
+          'export const ZzOk = () => <ZzKeys classes={{ root: "a", "title": cx("b", "c") }} />;\n' +
+          "export const ZzSpread = () => <ZzKeys classes={{ ...sheet, root: \"a\" }} />;\n" +
+          "export const ZzSheet = () => <ZzKeys classes={sheet} />;\n" +
+          'export const ZzTypo = () => <ZzKeys classes={{ rot: "a" }} />;\n' +
+          'const cx = (...all: string[]): string => all.join(" ");\n',
+      );
+      const said = verifyIn(box).get("Ключи переданной карты классов названы типом компонента") ?? [];
+      expect(said).toEqual([
+        "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `rot` нет среди ключей карты классов компонента",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("проекту без интерфейса пакеты интерфейса и помощник карт классов не положены", () => {
     const box = seatEmpty("no-ui-");
     try {

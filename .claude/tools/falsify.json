@@ -1105,6 +1105,29 @@
       }
     },
     {
+      "section": "Ключи переданной карты классов названы типом компонента",
+      "edits": [
+        {
+          "create": {
+            "path": "{исходники}/components/ZzKeys/types.ts",
+            "text": "export interface ZzKeysClassMap {\n  readonly [key: string]: string;\n  root?: string;\n}"
+          }
+        },
+        {
+          "create": {
+            "path": "{исходники}/components/ZzKeys/ZzKeys.tsx",
+            "text": "import type { ZzKeysClassMap } from \"./types\";\n\nexport const ZzKeys = ({ classes }: { classes?: ZzKeysClassMap }) => <i className={classes?.root} />;"
+          }
+        },
+        {
+          "create": {
+            "path": "{исходники}/app/zzKeysUse.tsx",
+            "text": "import { ZzKeys } from \"../components/ZzKeys/ZzKeys\";\n\nexport const ZzKeysUse = () => <ZzKeys classes={{ rot: \"zz\" }} />;"
+          }
+        }
+      ]
+    },
+    {
       "section": "Отступление от схемы стилизации объявлено решением",
       "create": {
         "path": "{исходники}/zzStray/zzStray.tsx",

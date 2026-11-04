@@ -6370,6 +6370,7 @@ const CHECK_SECTIONS = [
   "Обещания без опоры собираются сводкой",
   "Связи мимо графа импортов",
   "Имена классов из кода есть в листе стилей",
+  "Ключи переданной карты классов названы типом компонента",
   "Класс из листа стилей спрошен кодом",
   "Отступление от схемы стилизации объявлено решением",
   "Код лежит в объявленных деревьях",
@@ -26454,6 +26455,33 @@ if (mode === "verify") {
   //
   // Имя, названное таблицей связей, законно: это объявленная ЧУЖАЯ сторона, и
   // сводить её не с чем.
+  /** Карты классов в тексте файла с их именованными ключами. Тело в фигурных
+   * скобках читается ДО ЗАКРЫВАЮЩЕЙ СКОБКИ в начале строки: прежде захват
+   * кончался на первой точке с запятой — на индексной подписи, которая в
+   * эталонной карте стоит первой строкой, — и ключи после неё не читались.
+   * Признак карты двойной: соглашение об имени покрывает объединение
+   * литералов, у которого строения нет; строение — индексная подпись строки
+   * на строку — переживает переименование типа. */
+  const classMapsOf = (body) => {
+    const blocks = [
+      ...body.matchAll(/(?:interface|type)\s+(\w+)[^{;]*\{([\s\S]*?)^\}/gm),
+    ].map((m) => ({ name: m[1], body: m[2] }));
+    // Псевдоним-объединение скобок не имеет и кончается точкой с запятой.
+    const unions = [...body.matchAll(/type\s+(\w+)\s*=\s*([^;{]*);/g)].map(
+      (m) => ({ name: m[1], body: m[2] }),
+    );
+    const isMap = (one) =>
+      /ClassMap|ClassNames?|ClassNameKeys|ClassNameMap/.test(one.name) ||
+      /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(one.body);
+    return [...blocks, ...unions].filter(isMap).map((one) => {
+      const keys = new Set();
+      // Ключ — строка вида `имя?: string`; индексная подпись сюда не попадает:
+      // у неё в позиции имени скобка.
+      for (const m of one.body.matchAll(/^\s{2,}(\w+)\??:\s*string/gm)) keys.add(m[1]);
+      for (const m of one.body.matchAll(/"(\w+)"/g)) keys.add(m[1]);
+      return { name: one.name, keys };
+    });
+  };
   const classDrift = [];
   checkStep(() => {
     {
@@ -26485,11 +26513,6 @@ if (mode === "verify") {
           for (const m of readFileSync(at, "utf8").matchAll(/`([^`]+)`/g))
             foreignNamed.add(m[1]);
       }
-
-      // Ключ карты классов: строка вида `имя?: string`. Индексная подпись сюда не
-      // попадает — у неё в позиции имени скобка.
-      const MAP_KEY = /^\s{2,}(\w+)\??:\s*string/gm;
-      const LITERAL = /"(\w+)"/g;
 
       for (const f of files) {
         if (isTest(f) || f.endsWith(".d.ts")) continue;
@@ -26542,29 +26565,7 @@ if (mode === "verify") {
         // --- сторона вторая: именованные ключи карты классов ---
         const own = nearDir(dir);
         if (own.size === 0) continue;
-        // Тело в фигурных скобках читается ДО ЗАКРЫВАЮЩЕЙ СКОБКИ в начале
-        // строки. Прежде захват кончался «на скобке ИЛИ на точке с запятой», и
-        // нежадный разбор останавливался на первой же — на индексной подписи,
-        // которая в эталонной карте стоит первой строкой. Именованные ключи шли
-        // после неё и не читались ни разу.
-        const blocks = [
-          ...body.matchAll(/(?:interface|type)\s+(\w+)[^{;]*\{([\s\S]*?)^\}/gm),
-        ].map((m) => ({ name: m[1], body: m[2] }));
-        // Псевдоним-объединение скобок не имеет и кончается точкой с запятой.
-        const unions = [...body.matchAll(/type\s+(\w+)\s*=\s*([^;{]*);/g)].map(
-          (m) => ({ name: m[1], body: m[2] }),
-        );
-        // Признак карты классов двойной. Соглашение об имени покрывает
-        // объединение литералов, у которого строения нет. Строение — индексная
-        // подпись строки на строку — переживает переименование типа, а имя
-        // нет: переименовали бы, и покрытие пропало бы молча.
-        const isMap = (one) =>
-          /ClassMap|ClassNames?|ClassNameKeys|ClassNameMap/.test(one.name) ||
-          /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(one.body);
-        for (const one of [...blocks, ...unions].filter(isMap)) {
-          const keys = new Set();
-          for (const m of one.body.matchAll(MAP_KEY)) keys.add(m[1]);
-          for (const m of one.body.matchAll(LITERAL)) keys.add(m[1]);
+        for (const { keys } of classMapsOf(body)) {
           for (const k of keys)
             if (!own.has(k) && !foreignNamed.has(k))
               classDrift.push(
@@ -26588,6 +26589,88 @@ if (mode === "verify") {
     if (driftOpen > 0)
       console.log("  держатся долгом перехода или реестром: " + driftOpen);
     for (const d of classDrift.slice(driftOpen)) console.log("    " + d);
+  });
+
+  // Ключи карты, переданной компоненту буквально, — `classes={{ ключ: … }}`, —
+  // сверяются с именованными ключами его карты классов. Индексная подпись
+  // пропускает любое имя, и опечатка не даёт ни ошибки типов, ни красного
+  // теста: класс просто не ложится. Карта переменной (`classes={лист}`) — путь
+  // целого модуля стилей, её не судят; развёрнутое (`...лист`) — тоже: его
+  // ключей в тексте нет. Выведено: ревью пробы `2026-11-04`, решение
+  // разработчика того же дня.
+  const passedDrift = [];
+  let passedSeen = 0;
+  checkStep(() => {
+    const keysByDir = new Map();
+    const keysOfDir = (dir) => {
+      if (!keysByDir.has(dir)) {
+        let keys = null;
+        for (const g of files)
+          if (norm(path.dirname(g)) === dir)
+            for (const one of classMapsOf(codeOf(readFileSync(g, "utf8")))) {
+              keys ??= new Set();
+              for (const k of one.keys) keys.add(k);
+            }
+        keysByDir.set(dir, keys);
+      }
+      return keysByDir.get(dir);
+    };
+    // Части литерала на верхнем уровне: запятая внутри вызова ключа не делит.
+    const partsOf = (text) => {
+      const out = [];
+      let depth = 0;
+      let from = 0;
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if ("([".includes(ch)) depth += 1;
+        else if (")]".includes(ch)) depth -= 1;
+        else if (ch === "," && depth === 0) {
+          out.push(text.slice(from, i));
+          from = i + 1;
+        }
+      }
+      out.push(text.slice(from));
+      return out.map((one) => one.trim()).filter(Boolean);
+    };
+    for (const f of files) {
+      if (f.endsWith(".d.ts")) continue;
+      const raw = readFileSync(f, "utf8");
+      if (!raw.includes("classes={{")) continue;
+      const bound = importBindingsOf(f, raw);
+      for (const m of raw.matchAll(/<([A-Z]\w*)\b[^<>]*?\bclasses=\{\{([^{}]*)\}\}/g)) {
+        const target = bound.get(m[1]);
+        if (target === undefined) continue;
+        const keys = keysOfDir(norm(path.dirname(target)));
+        if (keys == null) continue;
+        passedSeen += 1;
+        for (const part of partsOf(m[2])) {
+          if (part.startsWith("...")) continue;
+          const key = part.split(":")[0].trim().replace(/^["']|["']$/g, "");
+          if (key !== "" && !keys.has(key))
+            passedDrift.push(
+              rel(f) +
+                ": `<" +
+                m[1] +
+                " classes>` — ключа `" +
+                key +
+                "` нет среди ключей карты классов компонента",
+            );
+        }
+      }
+    }
+  });
+  const passedOpen = checkStep(() =>
+    heldOpen("Ключи переданной карты классов названы типом компонента", passedDrift.length),
+  );
+  checkStep(() => {
+    checkHead("Ключи переданной карты классов названы типом компонента", () => ({
+      n: passedSeen,
+      unit: "переданных буквально карт",
+    }));
+    console.log("  расхождений: " + (passedDrift.length - passedOpen));
+    if (passedOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + passedOpen);
+    for (const d of passedDrift.slice(passedOpen)) console.log("    " + d);
   });
 
   // Сторона обратная: класс объявлен листом, и не спрашивает его никто.
