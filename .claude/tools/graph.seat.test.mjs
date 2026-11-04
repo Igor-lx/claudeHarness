@@ -26,6 +26,7 @@ import {
   SEAT_MARKER,
   unknownFlagsOf,
   verifiedOf,
+  walkFiles,
   withRefusal,
   withToolsOf,
 } from "./graph.seat.mjs";
@@ -1542,6 +1543,65 @@ describe("README мастерской называет проверенную с
     const ru = spans("README.ru.md");
     expect([...en].filter((one) => !ru.has(one)), "только в README.md").toEqual([]);
     expect([...ru].filter((one) => !en.has(one)), "только в README.ru.md").toEqual([]);
+  });
+});
+
+// Что ломается только на Windows, здесь не видно ничем, кроме конвейера, а
+// конвейер видит лишь то, что он гоняет и на что он запускается.
+describe("полка не несёт того, что ломается на другой системе молча", () => {
+  // Рекурсивное `cpSync` без фильтра на Windows роняет процесс без строки на
+  // пути не по-латински (`copyTree`); новый вызов без фильтра — тот же сбой.
+  it("рекурсивная копия в коде инструмента идёт с фильтром", () => {
+    const callsOf = (text) => {
+      const out = [];
+      for (const m of text.matchAll(/\bcpSync\(/g)) {
+        let depth = 1;
+        let i = m.index + m[0].length;
+        for (; i < text.length && depth > 0; i += 1) {
+          if (text[i] === "(") depth += 1;
+          else if (text[i] === ")") depth -= 1;
+        }
+        out.push(text.slice(m.index, i));
+      }
+      return out;
+    };
+    const unfiltered = [];
+    for (const name of fs.readdirSync(TOOL_DIR))
+      if (name.endsWith(".mjs") && !name.endsWith(".test.mjs"))
+        for (const call of callsOf(fs.readFileSync(path.join(TOOL_DIR, name), "utf8")))
+          if (/recursive:\s*true/.test(call) && !/\bfilter:/.test(call)) unfiltered.push(name + ": " + call);
+    expect(callsOf("cpSync(a, b, { recursive: true, filter: (s) => f(s) });")).toHaveLength(1);
+    expect(unfiltered).toEqual([]);
+  });
+
+  // Два пути, различные одним регистром, на Windows и macOS — один файл:
+  // клон молча кладёт второй поверх первого.
+  it("пути полки различаются не одним регистром", () => {
+    const seen = new Map();
+    const clash = [];
+    for (const rel of walkFiles(SHELF)) {
+      const key = rel.toLowerCase();
+      if (seen.has(key)) clash.push(seen.get(key) + " — " + rel);
+      else seen.set(key, rel);
+    }
+    expect(seen.size).toBeGreaterThan(10);
+    expect(clash).toEqual([]);
+  });
+
+  // Конвейер Windows запускается по путям: папка полки с исполняемым, которой
+  // в них нет, правится без прогона на Windows. Без прогона остаётся одна проза.
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const workshopShelf = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  const flow = workshopShelf === "" ? "" : path.join(path.dirname(workshopShelf), ".github", "workflows", "harness-windows.yml");
+  it.skipIf(flow === "" || !fs.existsSync(flow))("конвейер Windows запускается на правке каждой папки полки, кроме прозы", () => {
+    const PROSE = new Set(["rules", "rationale", "skills", "state"]);
+    const text = fs.readFileSync(flow, "utf8");
+    const folders = fs
+      .readdirSync(workshopShelf, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !PROSE.has(e.name))
+      .map((e) => e.name);
+    expect(folders).toContain("tools");
+    expect(folders.filter((one) => !text.includes("- .claude/" + one + "/**"))).toEqual([]);
   });
 });
 
