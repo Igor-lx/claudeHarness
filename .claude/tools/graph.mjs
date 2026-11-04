@@ -784,7 +784,7 @@ if (mode === "env") {
   // какие критерии теряют машинную проверку, печатает режим, а не память
   // сессии (находка Н-3 плана `2026-10-20`). Папку проекта называют доводом.
   const projectAt = process.argv[3]?.startsWith("--") ? null : (process.argv[3] ?? null);
-  const unknownFlags = unknownFlagsOf(process.argv.slice(3), ["--apply", "--with"]);
+  const unknownFlags = unknownFlagsOf(process.argv.slice(3), ["--apply", "--with="]);
   if (unknownFlags.length > 0) {
     console.log("=== Ключ режиму env неизвестен ===");
     console.log("  " + unknownFlags.join(", ") + ". Есть: --apply, --with=<оси>.");

@@ -1012,10 +1012,15 @@ describe("посадка на месте одной командой", () => {
       const bare = seatHere(box, "--packages");
       expect(bare.status, bare.stdout).toBe(1);
       expect(bare.stdout).toContain("Ключ --packages без папки");
-      expect(unknownFlagsOf(["seat", ".", "--apply", "--with=линтер", "--packages", "x", "--aply"], ["--apply", "--with", "--packages"])).toEqual(["--aply"]);
+      expect(unknownFlagsOf(["seat", ".", "--apply", "--with=линтер", "--packages", "x", "--aply"], ["--apply", "--with=", "--packages"])).toEqual(["--aply"]);
+      // Значение у ключа без значения — не тот ключ: `--apply=no` сделал бы обратное.
+      expect(unknownFlagsOf(["--apply=no", "--with", "--packages=x"], ["--apply", "--with=", "--packages"])).toEqual(["--apply=no", "--with", "--packages=x"]);
       const typoFlag = seatHere(box, "--aply");
       expect(typoFlag.status, typoFlag.stdout).toBe(1);
       expect(typoFlag.stdout).toContain("Ключ посадке неизвестен: --aply.");
+      const valued = seatHere(box, "--apply=no");
+      expect(valued.status, valued.stdout).toBe(1);
+      expect(valued.stdout).toContain("Ключ посадке неизвестен: --apply=no.");
       const envTypo = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", box, "--aply"], { cwd: ROOT, encoding: "utf8" });
       expect(envTypo.status, envTypo.stdout).toBe(1);
       expect(envTypo.stdout).toContain("=== Ключ режиму env неизвестен ===");

@@ -1056,9 +1056,11 @@ export const withToolsOf = (argv, map) => {
 
 /** Ключи, которых режим не знает. Опечатка, принятая молча, делала другое:
  * `--aply` давала план вместо посадки, `--package` поставила бы пакеты из
- * сети. Ключ со значением через `=` узнаётся по имени до знака. */
+ * сети. Ключ со значением через `=` объявлен со знаком (`--with=`), и только
+ * такой его и принимает: `--apply=no` читался как `--apply` и делал обратное
+ * сказанному. */
 export const unknownFlagsOf = (argv, known) =>
-  argv.filter((one) => one.startsWith("--") && !known.includes(one.split("=")[0]));
+  argv.filter((one) => one.startsWith("--") && !known.includes(one.includes("=") ? one.slice(0, one.indexOf("=") + 1) : one));
 
 /** Отказ на ключе `--with=`, назвавшем не ось-инструмент. */
 export const withRefusal = ({ unknown, known }) =>
@@ -1520,7 +1522,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     if (shop) refuse("Магазин кладут на посадку в отдельную папку, а не на месте.");
     const env = { ...process.env };
     delete env.CLAUDE_CODE_CHILD_SESSION;
-    const unknown = unknownFlagsOf(argv, ["--shop", "--packages", "--apply", "--with"]);
+    const unknown = unknownFlagsOf(argv, ["--shop", "--packages", "--apply", "--with="]);
     if (unknown.length > 0)
       refuse("Ключ посадке неизвестен: " + unknown.join(", ") + ".", "Есть: --packages <папка>, --apply, --with=<оси>.");
     const at = argv.indexOf("--packages");
