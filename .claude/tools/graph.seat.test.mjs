@@ -1498,6 +1498,15 @@ it("текстовый читатель связки читает семя та�
 it("посадка ставит пакеты npm проверенной связки, и версии npm числом в коде инструмента нет", async () => {
   const { CONFIG } = await import(pathToFileURL(path.join(SHELF, "seat", "templates", "graph.config.mjs")).href);
   expect(npmOfShelf(SHELF)).toBe("npm@" + CONFIG.verifiedVersions.npm);
+  // Связка без npm — отказ с причиной, а не установка `npm@undefined`.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "npm-of-shelf-"));
+  try {
+    fs.mkdirSync(path.join(bare, "seat", "templates"), { recursive: true });
+    fs.writeFileSync(path.join(bare, "seat", "templates", "graph.config.mjs"), 'export const CONFIG = {\n  verifiedVersions: {\n    node: "22.23.2",\n  },\n};\n');
+    expect(() => npmOfShelf(bare)).toThrow("в проверенной связке семени нет версии npm");
+  } finally {
+    fs.rmSync(bare, { recursive: true, force: true });
+  }
   const pinned = [];
   for (const name of fs.readdirSync(TOOL_DIR))
     if (name.endsWith(".mjs") && !name.endsWith(".test.mjs"))
