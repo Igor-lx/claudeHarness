@@ -6203,7 +6203,7 @@ describe("предмет под другим именем и форматом", 
     }
   }, 180000);
 
-  it("ключ буквальной карты классов вне типа компонента назван; верный ключ, развёртка и карта переменной — нет", () => {
+  it("ключ буквальной карты классов вне типа компонента назван; верный ключ, ключ с дефисом, развёртка, вычисляемый ключ и карта переменной — нет; значение со скобками карту не прячет", () => {
     const box = seatEmpty("passed-keys-");
     try {
       const put = (rel, text) => {
@@ -6213,7 +6213,7 @@ describe("предмет под другим именем и форматом", 
       };
       put(
         "components/ZzKeys/types.ts",
-        "export interface ZzKeysClassMap {\n  readonly [key: string]: string;\n  root?: string;\n  title?: string;\n}\n",
+        "export interface ZzKeysClassMap {\n  readonly [key: string]: string;\n  root?: string;\n  title?: string;\n  \"sub-title\"?: string;\n}\n",
       );
       put(
         "components/ZzKeys/ZzKeys.tsx",
@@ -6224,12 +6224,18 @@ describe("предмет под другим именем и форматом", 
         'import { ZzKeys } from "../components/ZzKeys/ZzKeys";\n\nconst sheet = { root: "a" };\n' +
           'export const ZzOk = () => <ZzKeys classes={{ root: "a", "title": cx("b", "c") }} />;\n' +
           "export const ZzSpread = () => <ZzKeys classes={{ ...sheet, root: \"a\" }} />;\n" +
+          'export const ZzDash = () => <ZzKeys classes={{ "sub-title": "b" }} />;\n' +
+          'export const ZzComputed = ({ slot }: { slot: "root" | "title" }) => <ZzKeys classes={{ [slot]: "c" }} />;\n' +
+          'export const ZzDashTypo = () => <ZzKeys classes={{ "sub-titel": "d" }} />;\n' +
+          'export const ZzNested = ({ on }: { on: boolean }) => <ZzKeys classes={{ root: cx(on ? "e" : "f"), tilte: `${on}` }} />;\n' +
           "export const ZzSheet = () => <ZzKeys classes={sheet} />;\n" +
           'export const ZzTypo = () => <ZzKeys classes={{ rot: "a" }} />;\n' +
           'const cx = (...all: string[]): string => all.join(" ");\n',
       );
       const said = verifyIn(box).get("Ключи переданной карты классов названы типом компонента") ?? [];
       expect(said).toEqual([
+        "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `sub-titel` нет среди ключей карты классов компонента",
+        "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `tilte` нет среди ключей карты классов компонента",
         "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `rot` нет среди ключей карты классов компонента",
       ]);
     } finally {

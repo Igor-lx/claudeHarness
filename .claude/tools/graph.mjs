@@ -26482,7 +26482,7 @@ if (mode === "verify") {
       // Ключ — строка вида `имя?: string`; индексная подпись сюда не попадает:
       // у неё в позиции имени скобка.
       for (const m of one.body.matchAll(/^\s{2,}(\w+)\??:\s*string/gm)) keys.add(m[1]);
-      for (const m of one.body.matchAll(/"(\w+)"/g)) keys.add(m[1]);
+      for (const m of one.body.matchAll(/"([\w-]+)"/g)) keys.add(m[1]);
       return { name: one.name, keys };
     });
   };
@@ -26626,8 +26626,8 @@ if (mode === "verify") {
       let from = 0;
       for (let i = 0; i < text.length; i += 1) {
         const ch = text[i];
-        if ("([".includes(ch)) depth += 1;
-        else if (")]".includes(ch)) depth -= 1;
+        if ("([{".includes(ch)) depth += 1;
+        else if (")]}".includes(ch)) depth -= 1;
         else if (ch === "," && depth === 0) {
           out.push(text.slice(from, i));
           from = i + 1;
@@ -26641,14 +26641,23 @@ if (mode === "verify") {
       const raw = readFileSync(f, "utf8");
       if (!raw.includes("classes={{")) continue;
       const bound = importBindingsOf(f, raw);
-      for (const m of raw.matchAll(/<([A-Z]\w*)\b[^<>]*?\bclasses=\{\{([^{}]*)\}\}/g)) {
+      for (const m of raw.matchAll(/<([A-Z]\w*)\b[^<>]*?\bclasses=\{\{/g)) {
+        // Литерал — до своей закрывающей скобки: значение со скобками внутри
+        // регулярным выражением не берётся, и карта уходила без суда.
+        let depth = 1;
+        let end = m.index + m[0].length;
+        for (; end < raw.length && depth > 0; end += 1)
+          if (raw[end] === "{") depth += 1;
+          else if (raw[end] === "}") depth -= 1;
+        const literal = raw.slice(m.index + m[0].length, end - 1);
         const target = bound.get(m[1]);
         if (target === undefined) continue;
         const keys = keysOfDir(norm(path.dirname(target)));
         if (keys == null) continue;
         passedSeen += 1;
-        for (const part of partsOf(m[2])) {
-          if (part.startsWith("...")) continue;
+        for (const part of partsOf(literal)) {
+          // Разворот и вычисляемый ключ текстом не называют ключа.
+          if (part.startsWith("...") || part.startsWith("[")) continue;
           const key = part.split(":")[0].trim().replace(/^["']|["']$/g, "");
           if (key !== "" && !keys.has(key))
             passedDrift.push(
