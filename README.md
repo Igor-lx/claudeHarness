@@ -493,7 +493,8 @@ it, each with its own question:
 ## Status
 
 **v0.5.0: ready for work.** Everything described here is
-in place and checked on real runs rather than by description:
+in place and checked on real runs rather than by description; the numbers
+below were measured on 2026-11-04:
 
 - the full self-test suite passes, 2,131 of 2,131 on Linux, and on Windows
   in CI;
