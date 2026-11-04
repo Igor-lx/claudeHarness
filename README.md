@@ -492,45 +492,58 @@ it, each with its own question:
 
 ## Status
 
-**v0.4.0: ready for work.** Everything described here is in place, and it
-is checked on real runs rather than by description: the full self-test suite
-passes on Linux and on Windows; every check that has its subject on the test
-stand catches its planted breakage; seating works in one command in all
-three scenarios - an empty folder, a familiar project and a foreign one -
-and the self-tests seat a corpus of small projects of all three by that command;
-the bar pass, measured by planting known defects into existing code, caught
-every plant. The architecture and the concept are settled. Next comes
-writing real projects on it; details of the rules, the checks and the tool's
-output may still change between versions.
+**v0.4.0 and main after it: ready for work.** Everything described here is
+in place and checked on real runs rather than by description:
 
-What changed since v0.3.1:
+- the full self-test suite passes, 2,131 of 2,131 on Linux, and on Windows
+  in CI;
+- every check that has its subject on the test stand catches its planted
+  breakage: 182 of 206 recipes, the other 24 have nothing to break there,
+  and no check is left without a recipe;
+- seating works in one command in all three scenarios: the self-tests seat
+  a corpus of 24 small projects - 2 empty, 13 familiar, 9 foreign - one for
+  every form the seating code tells apart;
+- a familiar project with its own folder layout and three foreign styling
+  forms went through the transition and then, session by session, was
+  brought to the harness defaults until a machine check found it no
+  different from a project written from scratch;
+- the bar pass caught all 37 defects planted into existing code over four
+  passes: that bounds the miss rate at 8 % with 95 % confidence, without a
+  correction for dependence inside one pass;
+- six fresh sessions, one per kind of task, and seven probes of the daily
+  loop went through the order of work: every step is held by the machine
+  or was seen done, and two steps that no machine can see are held by
+  attention with the reason written down;
+- the parts the daily loop never runs were probed twice, 49 probes each;
+  neither run was clean - 14 and then 9 classes of defects were found and
+  fixed - so no bound on what is still undetected there is claimed.
 
-- **any project is seated by one command, in one of three scenarios**: an
-  empty folder gets everything; a familiar project gets its stack plan shown,
-  changes nothing until you agree, and then has its versions brought to the
-  verified set and its own configs composed with the harness ones, not
-  rewritten; a foreign project gets the rules and the knowledge base only,
-  nothing is installed, and the report names what the harness cannot see;
-- **"seat the harness" is enough**: a `seat` skill makes the agent run that
-  one command and answer its outcome, without reading the long seating
-  instruction;
-- **seating is proven as intended**: the self-tests seat a corpus of
-  projects that were not built from the harness seeds, of all three kinds,
-  and check that each ends in two commits on top of its
-  history, touches none of the project's files beyond the named ones, sets
-  the gates its scenario calls for and changes nothing on a second call;
-- **checks follow the scenario**: the harness's own self-checks run only in
-  its repository, and checks of the stack's form are muted in a foreign
-  project and named there as not seen;
-- **a big project costs the agent no more to seat**: on a generated project
-  of 1,364 files the agent reads the same few thousand characters as on a
-  small one, and only the machine time grows; the transition of such a
-  project is split by areas, and its protocols no longer grow with the
-  square of repeated code;
-- **eleven rounds of seating trial projects** found and fixed classes of
-  defects in the tool: workspaces, foreign frameworks recognised by their
-  package, peer conflicts named before the install, pinned versions held by
-  a check with a debt ratchet, code the harness does not read named.
+The architecture and the concept are settled. Next comes writing real
+projects on it; details of the rules, the checks and the tool's output may
+still change between versions.
+
+What changed since v0.4.0:
+
+- **a read task is held like an edit**: a review that started a bar pass
+  cannot end the turn until the pass is sealed, and a protocol broken by
+  hand holds the turn too;
+- **an edit is checked past its area**: the bar pass names every consumer
+  beyond the area of a changed node and the test that reaches the node
+  through it, and a claim that behaviour stayed compatible answers for each;
+- **a typo in a class-map key is caught**: a key passed in
+  `classes={{ … }}` that the component's map type does not name fails the
+  base check - the compiler lets any name through;
+- **a familiar project is proven end to end**: seating, the transition and
+  the work on its debt, down to a project no different from one written
+  from scratch;
+- **seating fixes**: a folder copy that crashed on Windows in a non-Latin
+  path, a project without `tsconfig.json`, an npm raise counted by the
+  version that answers after it, a folder inside another repository
+  refused in every scenario;
+- **the harness holds more of itself by machine**: the Windows run starts
+  on an edit of the git hooks too, and tests catch a recursive copy without
+  a filter, two shelf paths that differ only by case, and a criterion of
+  the bar without a planted defect.
 
 Earlier releases and what each brought -
 [GitHub releases](https://github.com/Igor-lx/claudeHarness/releases).
