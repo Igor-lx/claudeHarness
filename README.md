@@ -492,11 +492,11 @@ it, each with its own question:
 
 ## Status
 
-**v0.5.0: ready for work.** Everything described here is
+**v0.5.1: ready for work.** Everything described here is
 in place and checked on real runs rather than by description; the numbers
 below were measured on 2026-11-04:
 
-- the full self-test suite passes, 2,131 of 2,131 on Linux, and on Windows
+- the full self-test suite passes, 2,137 of 2,137 on Linux, and on Windows
   in CI;
 - every check that has its subject on the test stand catches its planted
   breakage: 182 of 206 recipes, the other 24 have nothing to break there,
@@ -517,34 +517,32 @@ below were measured on 2026-11-04:
   attention with the reason written down;
 - the parts the daily loop never runs were probed twice, 49 probes each;
   neither run was clean - 14 and then 9 classes of defects were found and
-  fixed - so no bound on what is still undetected there is claimed.
+  fixed - so no bound on what is still undetected there is claimed. Every
+  class those runs ever found, 50 in all, now has a named holder: 44 a test,
+  a check, the seating corpus or CI, which fire on each edit of the
+  harness; 6 are prose kept true by a date or a single place.
 
 The architecture and the concept are settled. Next comes writing real
 projects on it; details of the rules, the checks and the tool's output may
 still change between versions.
 
-What changed since v0.4.0:
+What changed since v0.5.0:
 
-- **a read task is held like an edit**: a review that started a bar pass
-  cannot end the turn until the pass is sealed, and a protocol broken by
-  hand holds the turn too;
-- **an edit is checked past its area**: the bar pass names every consumer
-  beyond the area of a changed node and the test that reaches the node
-  through it, and a claim that behaviour stayed compatible answers for each;
-- **a typo in a class-map key is caught**: a key passed in
-  `classes={{ … }}` that the component's map type does not name fails the
-  base check - the compiler lets any name through;
-- **a familiar project is proven end to end**: seating, the transition and
-  the work on its debt, down to a project no different from one written
-  from scratch;
-- **seating fixes**: a folder copy that crashed on Windows in a non-Latin
-  path, a project without `tsconfig.json`, an npm raise counted by the
-  version that answers after it, a folder inside another repository
-  refused in every scenario;
-- **the harness holds more of itself by machine**: the Windows run starts
-  on an edit of the git hooks too, and tests catch a recursive copy without
-  a filter, two shelf paths that differ only by case, and a criterion of
-  the bar without a planted defect.
+- **whole kinds of defects are held by test, not by probes**: every
+  command, flag, script and shelf path the prose names exists; every tool
+  mode has its entry in the reference; every refusal of the tool and of
+  seating is named by a test or by an exemption with its reason; the tool
+  constants the reference quotes match the code;
+- **seating installs with the npm of the verified set**: it used a floating
+  `npm@11`, so a raise of the set would have left installs behind and two
+  machines could install with two versions;
+- **a flag that takes no value refuses one**: `--apply=no` was read as
+  `--apply` and seating applied the plan;
+- **`blast` answers an address without a radius** as `plan` does, instead
+  of a bare "nothing found", which reads as "no risk";
+- **tests fixed that were green for the wrong reason**: a type-debt case
+  passed on "more by 16" for "more by 1", and a match window counted an
+  untested refusal as tested; both were found by planting the defect.
 
 Earlier releases and what each brought -
 [GitHub releases](https://github.com/Igor-lx/claudeHarness/releases).
