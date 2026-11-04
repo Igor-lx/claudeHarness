@@ -34,7 +34,7 @@ import {
  * запечатанным сводом.
  */
 describe("ворота конца хода", () => {
-  it("свод на задаче чтения, начатый и не запечатанный, держит ход; пауза и печать отпускают, протокол в истории — нет", () => {
+  it("свод на задаче чтения, начатый и не запечатанный, держит ход; пауза и печать отпускают, протокол в истории — нет, испорченный — держит", () => {
     const box = seatEmpty("stop-read-");
     try {
       const graph = path.join(box, ".claude", "tools", "graph.mjs");
@@ -56,6 +56,10 @@ describe("ворота конца хода", () => {
       git("add", "-A");
       git("commit", "-qm", "посадка", "--no-verify");
       expect(hook().status).toBe(0);
+      const pause = (...why) => spawnSync(process.execPath, [graph, "stop", "--pause", ...why], { cwd: box, encoding: "utf8" });
+      const idle = pause("нечего ждать");
+      expect(idle.status).toBe(0);
+      expect(idle.stdout).toContain("пауза не нужна");
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       tool("bar", "app/App.tsx");
       const held = hook();
@@ -63,6 +67,10 @@ describe("ворота конца хода", () => {
       expect(held.stderr).toContain("свод на задаче чтения не закончен");
       expect(held.stderr).toContain("graph.mjs bar app/App.tsx");
       expect(JSON.parse(tool("stop", "--session")).systemMessage).toContain("свод чтения не закончен");
+      const bare = pause();
+      expect(bare.status).toBe(1);
+      expect(bare.stdout).toContain("Пауза без причины не ставится");
+      expect(hook().status).toBe(2);
       tool("stop", "--pause", "жду, нужен ли полный свод");
       expect(hook().status).toBe(0);
       expect(tool("stop", "--session")).toContain("незаконченная работа — жду, нужен ли полный свод");
@@ -73,6 +81,13 @@ describe("ворота конца хода", () => {
       fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: `[^`]+`$/m, "- печать: `нет`"));
       git("add", "-A");
       git("commit", "-qm", "свод в истории", "--no-verify");
+      expect(hook().status).toBe(0);
+      // Испорченный протокол — не отсутствие свода: ход держится и порча названа.
+      fs.writeFileSync(protoAt, "мусор\n");
+      const broken = hook();
+      expect(broken.status).toBe(2);
+      expect(broken.stderr).toContain("протокол свода правлен и не читается");
+      git("checkout", "--", protoAt);
       expect(hook().status).toBe(0);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });

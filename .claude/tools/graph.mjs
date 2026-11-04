@@ -8518,7 +8518,7 @@ if (mode === "stop") {
   const readFault = (() => {
     if (want.length > 0 || gitDir === null || body === null) return "";
     const was = barHeaderOf(body);
-    if (was.kind !== "на чтение") return "";
+    if (was.kind !== null && was.kind !== "на чтение") return "";
     let dirty = "";
     try {
       dirty = execFileSync("git", ["status", "--porcelain", "--", protoAt], {
@@ -8530,6 +8530,10 @@ if (mode === "stop") {
       dirty = "";
     }
     if (dirty === "") return "";
+    // Правленый протокол без шапки рода — испорченный свод, а не его
+    // отсутствие: иначе порча протокола отпускала ход без следа.
+    if (was.kind === null)
+      return "протокол свода правлен и не читается: строки «род» нет — свод начинают заново";
     if (was.seal === null || was.seal === "нет")
       return "свод чтения `" + (was.address ?? "") + "` начат и не запечатан";
     if (was.seal !== barSealOf(body))
