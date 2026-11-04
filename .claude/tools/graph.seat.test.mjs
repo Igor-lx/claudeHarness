@@ -1523,6 +1523,52 @@ it("справочник называет постоянные инструме�
     expect(reference, name).toContain(phrase(valueOf(file, name)));
 });
 
+// Проза называет человеку команды и пути, а исполняет их он сам: режим,
+// переименованный в инструменте, ключ, снятый с режима, скрипт, убранный из
+// семени, и файл, переехавший в полке, оставляли инструкцию неисполнимой.
+it("каждая команда, ключ, скрипт и путь полки, названные в прозе, существуют", () => {
+  const walk = (d) =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const workshopShelf = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  const readmes = workshopShelf === "" ? [] : ["README.md", "README.ru.md"].map((one) => path.join(path.dirname(workshopShelf), one)).filter((one) => fs.existsSync(one));
+  // Обоснование — история: прежние имена в нём законны; семена — проза проекта.
+  const prose = [
+    ...walk(SHELF).filter((f) => f.endsWith(".md") && !f.includes(path.sep + "rationale" + path.sep) && !f.includes(path.sep + "templates" + path.sep)),
+    ...readmes,
+  ];
+  const source = (name) => fs.readFileSync(path.join(TOOL_DIR, name), "utf8");
+  const modes = new Set([...source("graph.mjs").matchAll(/mode === "([\w-]+)"/g)].map((m) => m[1]));
+  const flags = new Set(
+    ["graph.mjs", "graph.seat.mjs", "graph.seatlive.mjs", "graph.series.mjs", "hook.mjs"].flatMap((name) =>
+      [...source(name).matchAll(/"(--[\w-]+)/g)].map((m) => m[1]),
+    ),
+  );
+  const scripts = new Set(Object.keys(JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "package.json"), "utf8")).scripts));
+  const missing = [];
+  let seen = 0;
+  for (const file of prose) {
+    const rel = path.relative(ROOT, file);
+    const text = fs.readFileSync(file, "utf8");
+    for (const m of text.matchAll(/graph\.mjs\s+([a-z][\w-]*)((?:\s+[^`\n|]*)?)/g)) {
+      seen += 1;
+      if (!modes.has(m[1])) missing.push(rel + ": режим " + m[1]);
+      for (const one of m[2].matchAll(/(--[\w-]+)/g)) if (!flags.has(one[1])) missing.push(rel + ": ключ " + one[1] + " у " + m[1]);
+    }
+    for (const m of text.matchAll(/npm run (?:-s )?([\w:.-]+)/g)) {
+      seen += 1;
+      if (!scripts.has(m[1])) missing.push(rel + ": скрипт " + m[1]);
+    }
+    for (const m of text.matchAll(/`((?:\.claude\/)?(?:rules|tools|seat|skills|rationale|hooks|state)\/[\w./-]+)`/g)) {
+      const one = m[1].replace(/^\.claude\//, "").replace(/:\d+$/, "");
+      seen += 1;
+      if (!fs.existsSync(path.join(SHELF, one))) missing.push(rel + ": путь " + m[1]);
+    }
+  }
+  expect(seen).toBeGreaterThan(100);
+  expect(missing).toEqual([]);
+});
+
 // README мастерской переписывают проверенную связку прозой для человека:
 // подъём связки в семени обязан поднять и их. Мастерскую испытательная
 // посадка знает по своей метке — в ней путь полки, с которой посажена.
