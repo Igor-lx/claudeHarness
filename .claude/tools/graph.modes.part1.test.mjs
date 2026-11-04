@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -2485,9 +2486,14 @@ describe("база о своём: документы узла, сторона т
       expect(noTransition.stdout).toContain("Поле `transition` пусто либо файла перехода нет");
       // Долг ошибок типов ноль: новая ошибка роняет обёртку звена с числом сверх долга.
       fs.writeFileSync(path.join(box, "src", "app", "zzTypo.ts"), "export const zzTypo: number = \"x\";\n");
-      const typed = run("types", "--", "npx", "tsc", "--noEmit");
+      // Компилятор — путём, который разрешает сам тест: `npx tsc` искал его по
+      // PATH, на Windows не нашёл и поставил из сети чужой пакет `tsc`.
+      const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+      // Один файл без конфига проекта: у пустой посадки теста нет типов React,
+      // и полный прогон давал шестнадцать ошибок, где «на 1» — начало числа.
+      const typed = run("types", "--", process.execPath, tsc, "--noEmit", "--ignoreConfig", "src/app/zzTypo.ts");
       expect(typed.status).toBe(1);
-      expect(typed.stdout).toContain("— ошибок больше на 1");
+      expect(typed.stdout).toMatch(/— ошибок больше на 1\. /);
       fs.rmSync(path.join(box, "src", "app", "zzTypo.ts"));
       run("bar", "app/App.tsx");
       const page = run("bar-read", "999");
