@@ -2473,10 +2473,35 @@ describe("база о своём: документы узла, сторона т
         expect(r.status, mode).toBe(1);
         expect(r.stdout, mode).toContain("— это тест, у него «");
       }
+      const bare = run();
+      expect(bare.status).toBe(1);
+      expect(bare.stdout).toContain("=== Режим не назван ===");
+      expect(run("zzmode").stdout).toContain("=== Режим `zzmode` инструменту неизвестен ===");
+      const noProto = run("bar-read");
+      expect(noProto.status).toBe(1);
+      expect(noProto.stdout).toContain("=== Страниц нет: протокола нет ===");
+      const noTransition = run("bar", "--transition");
+      expect(noTransition.status).toBe(1);
+      expect(noTransition.stdout).toContain("Поле `transition` пусто либо файла перехода нет");
+      // Долг ошибок типов ноль: новая ошибка роняет обёртку звена с числом сверх долга.
+      fs.writeFileSync(path.join(box, "src", "app", "zzTypo.ts"), "export const zzTypo: number = \"x\";\n");
+      const typed = run("types", "--", "npx", "tsc", "--noEmit");
+      expect(typed.status).toBe(1);
+      expect(typed.stdout).toContain("— ошибок больше на 1");
+      fs.rmSync(path.join(box, "src", "app", "zzTypo.ts"));
       run("bar", "app/App.tsx");
       const page = run("bar-read", "999");
       expect(page.status).toBe(1);
       expect(page.stdout).toContain("Страницы с таким номером нет");
+      const unknown = run("tested", "src/zzNowhere.ts");
+      expect(unknown.status).toBe(1);
+      expect(unknown.stdout).toContain("таких путей на диске нет");
+      // Настройка без места протокола — отказ свода с причиной, а не свод в никуда.
+      const configAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(configAt, fs.readFileSync(configAt, "utf8").replace(/^\s*barProtocol: .*\n/m, ""));
+      const unset = run("bar", "app/App.tsx");
+      expect(unset.status).toBe(1);
+      expect(unset.stdout).toContain("Поле `barProtocol` не объявлено");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -4185,6 +4210,7 @@ describe("серия", () => {
       const red = tool("series");
       expect(red.code, red.out).toBe(1);
       expect(red.out).toContain("=== Серия встала ===");
+      expect(red.out).toContain("красная: цепочка `npm run check` дала код");
       fs.rmSync(path.join(box, "RED"));
       const green = tool("series");
       expect(green.code, green.out).toBe(0);
