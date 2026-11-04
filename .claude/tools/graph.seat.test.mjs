@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   envLowOf,
   factsWithBaseline,
+  copyTree,
   inPlaceKindOf,
   lintBlockersOf,
   mergedLines,
@@ -329,6 +330,20 @@ describe("осмотр окружения проекта по осям карт�
     const bare = survey({ devDependencies: { vitest: "^2.1.8", typescript: "~5.6.3" } }, ["src/clamp.ts"]);
     expect(planOf(bare).vite).toBeUndefined();
     expect(bare.rows.find((r) => r.axis === "сборщик").state).toBe("без предмета");
+  });
+
+  it("пакет оси, которого нет в проверенной связке, план не трогает", () => {
+    const { vitest: _gone, ...partial } = OURS;
+    const s = stackSurveyOf({
+      manifest: { devDependencies: { vitest: "^2.1.8", typescript: "~5.6.3" } },
+      files: ["src/a.ts"],
+      axes: AXES,
+      verified: partial,
+      withTools: [],
+      ui: PLATFORM.ui,
+      alternatives: PLATFORM.alternatives,
+    });
+    expect(planOf(s).vitest).toBeUndefined();
   });
 
   it("предшественник пакета оси — план снимает его, установка удаляет из манифеста", () => {
@@ -1431,6 +1446,22 @@ describe("записка к семени называет те значения,
 
 // Рекурсивное `cpSync` без фильтра роняет процесс на Windows, когда путь не
 // по-латински (прогоны `72` и `74`); копия папки идёт через `copyTree`.
+it("копия папки переносит вложенные папки и каждый файл, в путь не по-латински тоже", () => {
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-копия-"));
+  try {
+    const from = path.join(box, "откуда");
+    fs.mkdirSync(path.join(from, "вложенная"), { recursive: true });
+    fs.writeFileSync(path.join(from, "a.txt"), "a\n");
+    fs.writeFileSync(path.join(from, "вложенная", "b.txt"), "b\n");
+    const to = path.join(box, "куда");
+    copyTree(from, to);
+    expect(fs.readFileSync(path.join(to, "a.txt"), "utf8")).toBe("a\n");
+    expect(fs.readFileSync(path.join(to, "вложенная", "b.txt"), "utf8")).toBe("b\n");
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true });
+  }
+});
+
 it("код инструмента не копирует папку рекурсивным cpSync без фильтра", () => {
   const bare = [];
   for (const name of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {

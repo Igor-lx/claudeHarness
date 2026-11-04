@@ -25,6 +25,7 @@ import {
   withoutAbsentScripts,
 } from "./graph.seatlive.mjs";
 import {
+  composeLive,
   eslintLiveText,
   projectConfigName,
   strictConfigsOf,
@@ -231,12 +232,28 @@ describe("живая посадка: композиция конфигов и с
 
   it("раннер: конфиг проекта основой, исключения обвязки сверху; без конфига проекта — пустая основа", () => {
     expect(vitestLiveText("vite.config.ts")).toContain('import project from "./vite.config.ts";');
+    expect(vitestLiveText("vite.config.ts")).toContain("export default defineConfig(async (env) =>");
     expect(vitestLiveText(null)).toContain("mergeConfig({}, {");
     expect(vitestLiveText(null)).toContain('".claude/**"');
     // Без конфига проекта параметр некому передать: под строгостью обвязки
     // он был бы ошибкой «объявлен, но не прочитан» в её же файле.
     expect(vitestLiveText(null)).toContain("export default defineConfig(() =>");
     expect(vitestLiveText(null)).not.toContain("env");
+  });
+
+  it("проект без своего конфига компилятора получает семя; со своим — строгую копию, а не семя", () => {
+    const map = JSON.parse(fs.readFileSync(path.join(SEEDS, "..", "map.json"), "utf8"));
+    const compose = (own) =>
+      composeLive({
+        exists: (name) => own !== null && name === "tsconfig.json",
+        read: (name) => (name === "tsconfig.json" ? own : null),
+        seed,
+        map,
+        roots: ["src"],
+        prettierInManifest: false,
+      });
+    expect(compose(null).files["tsconfig.json"]).toBe(seed("tsconfig.json"));
+    expect(compose('{ "include": ["lib"] }').files["tsconfig.json"]).toBeUndefined();
   });
 
   it("строгость: копия конфига; у решения — копия каждой ссылки, своя память компилятора у той, что её задала", () => {
