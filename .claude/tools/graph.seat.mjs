@@ -200,6 +200,15 @@ export const verifiedOf = (text) => {
   );
 };
 
+/** Менеджер пакетов, которым посадка ставит пакеты, — `npm` проверенной
+ * связки, а не плавающая старшая версия: иначе подъём связки оставлял установку на
+ * прежнем, и на другой машине ставила бы другая версия. */
+export const npmOfShelf = (shelf) => {
+  const want = verifiedOf(readFileSync(path.join(shelf, "seat", "templates", "graph.config.mjs"), "utf8")).npm;
+  if (want === undefined) throw new Error("в проверенной связке семени нет версии npm");
+  return "npm@" + want;
+};
+
 /** Версия установленного орудия среды: у `node` — своя, у прочих —
  * ответ `--version`; молчание — `null`. */
 export const toolVersion = (name) => {
@@ -1258,13 +1267,14 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
     from !== null && needed.every((n) => existsSync(path.join(from, n, "package.json")));
   if (linked) sandboxPackages(from, path.join(target, "node_modules"));
   else {
-    const install = runTool("npx", ["-y", "npm@11", "install", "--no-audit", "--no-fund"], {
+    const npm = npmOfShelf(shelf);
+    const install = runTool("npx", ["-y", npm, "install", "--no-audit", "--no-fund"], {
       cwd: target,
       env,
     });
     if (install.status !== 0)
       fail(
-        "Пакеты не встали: установка `npx -y npm@11 install` упала:",
+        "Пакеты не встали: установка `npx -y " + npm + " install` упала:",
         ...tailOf(saidBy(install), 3),
         "Нужна сеть; после её появления команду зовут снова.",
       );
@@ -1593,8 +1603,8 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
       );
     }
     // Пакеты — ссылкой у того, откуда зовут, когда там стоит каждый пакет
-    // манифеста посадки; иначе установкой. `npm` версии `10` падает на семени
-    // без lock-файла ошибкой `edgesOut`, поэтому установка — через `npm@11`.
+    // манифеста посадки; иначе установкой `npm` проверенной связки: `npm`
+    // версии `10` падает на семени без lock-файла ошибкой `edgesOut`.
     const from = path.join(shelf, "..", "node_modules");
     const manifest = JSON.parse(
       readFileSync(path.join(target, "package.json"), "utf8"),
@@ -1610,9 +1620,10 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
       sandboxPackages(from, path.join(target, "node_modules"));
       made.push("пакеты: ссылкой на " + norm(from));
     } else {
+      const npm = npmOfShelf(shelf);
       const install = runTool(
         "npx",
-        ["-y", "npm@11", "install", "--no-audit", "--no-fund"],
+        ["-y", npm, "install", "--no-audit", "--no-fund"],
         { cwd: target, env },
       );
       if (install.status !== 0) {
@@ -1625,12 +1636,12 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
           "Пакеты не встали: у того, откуда зовут, их нет (" +
             absent.slice(0, 3).join(", ") +
             (absent.length > 3 ? ", …" : "") +
-            "), а установка `npx -y npm@11 install` упала:",
+            "), а установка `npx -y " + npm + " install` упала:",
           ...said.map((line) => "  " + line),
           "Папка убрана. Нужна сеть либо вызов из проекта, где пакеты стоят.",
         );
       }
-      made.push("пакеты: установлены `npm@11 install`");
+      made.push("пакеты: установлены `" + npm + " install`");
     }
     git("init", "-q");
     writeFileSync(marker, norm(shelf) + "\n");

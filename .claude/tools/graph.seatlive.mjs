@@ -34,6 +34,7 @@ import {
   uncolored,
   walkFiles,
   withSeatingBase,
+  npmOfShelf,
 } from "./graph.seat.mjs";
 
 /** Посадка живого проекта одной командой — знакомого и чужого (решение
@@ -599,11 +600,12 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
     } else {
       const lockWas = read("package-lock.json");
       undo.push(() => (lockWas === null ? rmSync(at("package-lock.json"), { force: true }) : writeFileSync(at("package-lock.json"), lockWas)));
-      const install = runTool("npx", ["-y", "npm@11", "install", "--no-audit", "--no-fund"], { cwd: target, env });
+      const npm = npmOfShelf(shelf);
+      const install = runTool("npx", ["-y", npm, "install", "--no-audit", "--no-fund"], { cwd: target, env });
       // Не запустившаяся установка папку пакетов не трогала.
       reinstalled = install.error === null;
       if (install.status !== 0)
-        fail("Пакеты не встали: установка `npx -y npm@11 install` упала:", ...tailOf(saidBy(install), 6));
+        fail("Пакеты не встали: установка `npx -y " + npm + " install` упала:", ...tailOf(saidBy(install), 6));
     }
     report.push("Пакеты: " + needed.length + (linked ? ", ссылкой на " + norm(from) : ", установлены") + (plan.length > 0 ? "; к связке приведено " + plan.length : "") + ".");
     // Цена строгости и правил линта — долгом: звено зелёно на нынешнем

@@ -11,6 +11,7 @@ import {
   inPlaceKindOf,
   lintBlockersOf,
   mergedLines,
+  npmOfShelf,
   testCountsOf,
   tiersFrom,
   sandboxPackages,
@@ -1490,6 +1491,36 @@ it("текстовый читатель связки читает семя та�
   const seedAt = path.join(SHELF, "seat", "templates", "graph.config.mjs");
   const { CONFIG } = await import(pathToFileURL(seedAt).href);
   expect(verifiedOf(fs.readFileSync(seedAt, "utf8"))).toEqual(CONFIG.verifiedVersions);
+});
+
+// Установка пакетов посадкой — вторая копия версии npm: вписанная числом, она
+// оставалась прежней при подъёме связки и плавала внутри старшей версии.
+it("посадка ставит пакеты npm проверенной связки, и версии npm числом в коде инструмента нет", async () => {
+  const { CONFIG } = await import(pathToFileURL(path.join(SHELF, "seat", "templates", "graph.config.mjs")).href);
+  expect(npmOfShelf(SHELF)).toBe("npm@" + CONFIG.verifiedVersions.npm);
+  const pinned = [];
+  for (const name of fs.readdirSync(TOOL_DIR))
+    if (name.endsWith(".mjs") && !name.endsWith(".test.mjs"))
+      for (const m of fs.readFileSync(path.join(TOOL_DIR, name), "utf8").matchAll(/npm@\d[\w.]*/g)) pinned.push(name + ": " + m[0]);
+  expect(pinned).toEqual([]);
+});
+
+// Справочник называет постоянные инструмента числом: человеку нужна величина,
+// а проза её не считает. Правка постоянной оставляла бы справочник прежним.
+it("справочник называет постоянные инструмента их значениями", () => {
+  const valueOf = (file, name) => {
+    const m = new RegExp("const " + name + " = (\\d+);").exec(fs.readFileSync(path.join(TOOL_DIR, file), "utf8"));
+    expect(m, file + ": " + name).not.toBeNull();
+    return m[1];
+  };
+  const reference = fs.readFileSync(path.join(TOOL_DIR, "graph.md"), "utf8").replace(/\s+/g, " ");
+  for (const [file, name, phrase] of [
+    ["hook.mjs", "LIMIT_S", (v) => "не ответивший за `" + v + "` с"],
+    ["graph.mjs", "BAR_STORE_KEEP", (v) => "не больше `" + v + "` протоколов"],
+    ["graph.mjs", "PAGE_SLICE_LINES", (v) => "не длиннее `" + v + "` строк"],
+    ["graph.mjs", "BAR_HOLES_GROUP", (v) => "у вида от `" + v + "` дыр"],
+  ])
+    expect(reference, name).toContain(phrase(valueOf(file, name)));
 });
 
 // README мастерской переписывают проверенную связку прозой для человека:
