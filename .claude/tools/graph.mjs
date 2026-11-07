@@ -10031,6 +10031,15 @@ if (mode === "bar-probe") {
       );
     const total = pending.length;
     const failed = [];
+    // Причина отказа посадки — из потока ошибок: последняя строка вывода
+    // была шапкой «осмотрено …» и вела не туда. Замерено `2026-11-07`: папки
+    // `TMPDIR` нет, и все посадки книги назвали шапку причиной.
+    const whyNotPlanted = (run) => {
+      const lines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+      const error = lines(run.stderr).find((l) => /^[A-Za-z]*Error\b/.test(l));
+      const said = error ?? lines(run.stderr).at(-1) ?? lines(run.stdout).at(-1) ?? "вывода нет";
+      return said + " (код " + run.status + ")";
+    };
     let rounds = 0;
     while (pending.length > 0) {
       rounds += 1;
@@ -10064,11 +10073,7 @@ if (mode === "bar-probe") {
         for (const one of batch)
           if (batch.length > 1) pending.push({ ...one, alone: true });
           else
-            failed.push(
-              name(one) +
-                " — не встаёт на стенд: " +
-                planted.stdout.trim().split("\n").pop(),
-            );
+            failed.push(name(one) + " — не встаёт на стенд: " + whyNotPlanted(planted));
         continue;
       }
       const box = path.join(systemTemp(), "bar-probe-" + id);

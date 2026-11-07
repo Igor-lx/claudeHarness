@@ -1013,6 +1013,14 @@ describe("стенд проб", () => {
       expect(checked.stdout).toContain("#5 B5 — формат");
       expect(checked.stdout).toContain("#6 J13 — тест «shouts»: failed");
       expect(checked.stdout).not.toMatch(/#1 A3|#2 H7/);
+      // Посадка не встала — причина из потока ошибок, а не шапка вывода.
+      const noTemp = spawnSync(process.execPath, [path.join(dest, ".claude", "tools", "graph.mjs"), "bar-probe", "--stand-check"], {
+        cwd: dest,
+        encoding: "utf8",
+        env: { ...env, TMPDIR: path.join(dest, "zz-no-such-dir"), TEMP: path.join(dest, "zz-no-such-dir"), TMP: path.join(dest, "zz-no-such-dir") },
+      });
+      expect(noTemp.stdout).toMatch(/#3 A9-кватер — не встаёт на стенд: .*ENOENT.*\(код 1\)/);
+      expect(noTemp.stdout).not.toMatch(/не встаёт на стенд: осмотрено/);
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
     }
