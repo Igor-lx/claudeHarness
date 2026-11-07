@@ -329,6 +329,18 @@ export const sourceRootsOf = (files) => {
   return tops.sort();
 };
 
+/** Папки тестов вне корня исходников: папка верхнего уровня, весь код
+ * которой — тесты. Без поля `testDirs` их тестов инструмент не видел, и
+ * посадка знакомого проекта с корневой `tests/` кончалась красной сверкой. */
+export const testDirsOf = (files, roots) =>
+  [...new Set(files.filter((f) => f.includes("/") && CODE.test(f)).map((f) => f.split("/")[0]))]
+    .filter((top) => !roots.includes(top))
+    .filter((top) => {
+      const code = files.filter((f) => f.startsWith(top + "/") && CODE.test(f));
+      return code.length > 0 && code.every((f) => TEST.test(f));
+    })
+    .sort();
+
 const readJson = (at) => {
   try {
     return JSON.parse(readFileSync(at, "utf8"));
@@ -573,6 +585,8 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
     // пустой список настройка не принимает, а весь проект корнем взял бы и
     // саму базу.
     if (roots.length > 0) field("src", roots.length === 1 ? "../" + roots[0] : roots.map((r) => "../" + r));
+    const testDirs = testDirsOf(files, roots);
+    if (testDirs.length > 0) field("testDirs", testDirs.map((one) => "../" + one));
     const seeded = configList(config, "seeded") ?? [];
     field("seeded", seeded.filter((one) => existsSync(path.join(target, ".context", one))));
     if (!familiar) field("lintConfigOff", null);

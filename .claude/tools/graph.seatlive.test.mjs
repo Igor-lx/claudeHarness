@@ -20,6 +20,7 @@ import {
   settingsShapeFault,
   shelfUntracked,
   sourceRootsOf,
+  testDirsOf,
   tableRows,
   transitionWith,
   withoutAbsentScripts,
@@ -305,6 +306,11 @@ describe("живая посадка: композиция конфигов и с
   it("корень исходников: `src`, иначе папки верхнего уровня с кодом, без конфигов корня", () => {
     expect(sourceRootsOf(["src/a.ts", "lib/b.ts"])).toEqual(["src"]);
     expect(sourceRootsOf(["lib/a.ts", "vite.config.ts", "scripts/x.config.js", "README.md"])).toEqual(["lib"]);
+    // Папка верхнего уровня, весь код которой — тесты, — папка тестов: без
+    // поля `testDirs` инструмент её тестов не видел.
+    const files = ["src/a.ts", "tests/a.test.ts", "tests/deep/b.spec.tsx", "scripts/run.ts", "e2e/x.test.ts", "e2e/helper.ts"];
+    expect(testDirsOf(files, sourceRootsOf(files))).toEqual(["tests"]);
+    expect(testDirsOf(["src/a.ts", "src/a.test.ts"], ["src"])).toEqual([]);
   });
 });
 
