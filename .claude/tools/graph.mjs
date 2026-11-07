@@ -11940,7 +11940,9 @@ const CONDITION_CHARS = 24;
 /** Тело функции верхнего уровня, повторённое в другом месте: окно строк
  * короткого тела не видит, а одна выборка в четырёх файлах — тот же повтор.
  * Найдено ревьюером пробы. Тело короче стольких знаков — `x.length > 0` —
- * повторяется законно. */
+ * повторяется законно, если имя у него другое: функция с тем же именем и
+ * тем же телом в другом файле — копия, а не совпавшее выражение. Выведено
+ * сводом пачки проб `2026-11-07`: одна короткая функция в трёх файлах. */
 const BODY_CHARS = 32;
 /** Расчёт, повторённый внутри одного файла с другими именами: строка
  * присваивания либо возврата не короче стольких знаков, с операцией и
@@ -12007,8 +12009,12 @@ const topBodiesOf = (code) => {
       bare[start] === "{" ? closeOf(bare, start) + 1 : depthScan(bare, start, false);
     if (end <= start) continue;
     const text = code.slice(start, end).trim().replace(/\s+/g, " ");
-    if (text.length < BODY_CHARS) continue;
-    out.push({ name: m[1] ?? m[2], line: code.slice(0, start).split(LF).length, text });
+    const name = m[1] ?? m[2];
+    out.push({
+      name,
+      line: code.slice(0, start).split(LF).length,
+      text: text.length < BODY_CHARS ? name + "\0" + text : text,
+    });
   }
   return out;
 };

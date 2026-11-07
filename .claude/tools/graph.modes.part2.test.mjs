@@ -5273,6 +5273,7 @@ describe("признаки по всей планке в модели свода
           "export const zzLen = (xs: readonly number[]) => xs.length;",
           'export const zzWide = (kind: string) => (kind === "plain" ? 1 : 2);',
           'export const zzTall = (kind: string) => kind !== "list";',
+          "export const zzHalf = (n: number) => n / 2;",
           "",
         ].join("\n"),
       );
@@ -5296,6 +5297,7 @@ describe("признаки по всей планке в модели свода
           "  xs.filter((x) => x > 0 && x < 10);",
           "export const zzSize = (xs: readonly number[]) => xs.length;",
           'export const zzMark = (kind: string): string => (kind === "plain" ? "p" : "q");',
+          "export const zzHalf = (n: number) => n / 2;",
           "",
         ].join("\n"),
       );
@@ -5320,6 +5322,8 @@ describe("признаки по всей планке в модели свода
       // короче порога повтором не считается.
       expect(text).toMatch(/тело `zzPick` повторено в `app\/zzUse\.ts:5`/);
       expect(text).not.toMatch(/тело `zzLen`/);
+      // Короткое тело под тем же именем в другом файле — копия функции.
+      expect(text).toMatch(/тело `zzHalf` повторено в `app\/zzUse\.ts:8`/);
       expect(text).toMatch(/zzScale\(…\): довод 2 всегда `2`, мест вызова `2`/);
       expect(has(rows, "тесты", "нет")).toBe(true);
       expect(has(rows, "ответственность", "союз")).toBe(true);
