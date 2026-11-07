@@ -477,6 +477,33 @@ describe("обёртка хуков держит, когда инструмен�
     expect(source).not.toMatch(/\bimport\s*\(/);
   });
 
+  // Без git запись клапана лежит во временной папке: ход держится раз на
+  // запрос и там, а не каждый раз и не ни разу.
+  it("без git клапан конца хода пишет запись во временную папку и держит ход раз на запрос", () => {
+    const box = seatEmpty("obertka-nogit-");
+    try {
+      const graphAt = path.join(box, ".claude", "tools", "graph.mjs");
+      fs.writeFileSync(
+        graphAt,
+        fs.readFileSync(graphAt, "utf8").replace("const mode = process.argv[2];", 'const mode = process.argv[2];\nthrow new Error("проба без git");'),
+      );
+      const env = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(box) };
+      const stop = (prompt) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "hook.mjs"), "stop", "--hook"], {
+          cwd: box,
+          encoding: "utf8",
+          input: JSON.stringify({ hook_event_name: "Stop", prompt_id: prompt }),
+          env,
+          timeout: 30000,
+        });
+      expect(stop("p1").status).toBe(2);
+      expect(stop("p1").status).toBe(0);
+      expect(stop("p2").status).toBe(2);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   it("сломанная настройка, отсутствующий инструмент, падение режима — у каждого хука", () => {
     const box = seatEmpty("obertka-");
     try {
@@ -2479,6 +2506,24 @@ describe("база о своём: документы узла, сторона т
         expect(r.status, mode).toBe(1);
         expect(r.stdout, mode).toContain("`zzNowhere.ts` — такого файла нет.");
       }
+      // Папка внутри исходников без кода и файл исходников не кода — в области,
+      // и ответ называет это, а не «вне области разбора».
+      fs.mkdirSync(path.join(box, "src", "zzEmpty"), { recursive: true });
+      fs.writeFileSync(path.join(box, "src", "app", "zzLogo.svg"), "<svg/>\n");
+      for (const mode of ["brief", "plan", "levels", "bar"]) {
+        const folder = run(mode, "src/zzEmpty");
+        expect(folder.status, mode).toBe(1);
+        expect(folder.stdout, mode).toContain("`zzEmpty` — папка исходников без файлов кода и стилей");
+        expect(folder.stdout, mode).not.toContain("вне области разбора");
+        const asset = run(mode, "src/app/zzLogo.svg");
+        expect(asset.stdout, mode).toContain("`app/zzLogo.svg` — не код и не стиль");
+        expect(asset.stdout, mode).not.toContain("вне области разбора");
+      }
+      // Лист стилей — стиль: `blast` не называет его «не кодом и не стилем».
+      fs.writeFileSync(path.join(box, "src", "app", "zzSheet.module.css"), ".zz { color: red; }\n");
+      const sheet = run("blast", "src/app/zzSheet.module.css");
+      expect(sheet.status).toBe(1);
+      expect(sheet.stdout).toContain("`app/zzSheet.module.css` — лист стилей");
       for (const mode of ["plan", "blast"]) {
         const r = run(mode, "app/tests/App.test.tsx");
         expect(r.status, mode).toBe(1);
@@ -2545,6 +2590,65 @@ describe("база о своём: документы узла, сторона т
       expect(none.status).toBe(1);
       expect(none.stdout).toContain("=== Ничего не нашлось по адресу ===");
       expect(none.stdout).toContain("`zzNowhere`");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  // Режим, который не зовёт ни один тест, меняет ответ без признака: `twins`
+  // называл близнеца тронутого файла, а проверки этому не было никакой.
+  it("twins называет нетронутого близнеца, принимает пару в одной правке и молчит о файле без пары", () => {
+    const box = seatEmpty("twins-");
+    try {
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(cfgAt, fs.readFileSync(cfgAt, "utf8").replace("  forks: [],", '  forks: [{ from: "zzLib", to: "zzFacade" }],'));
+      for (const f of ["zzLib/zzPart.ts", "zzFacade/zzPart.ts", "zzLib/zzOwn.ts"]) {
+        fs.mkdirSync(path.dirname(path.join(box, "src", f)), { recursive: true });
+        fs.writeFileSync(path.join(box, "src", f), "export const zzValue = 1;\n");
+      }
+      const run = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "twins", ...args], {
+          cwd: box,
+          encoding: "utf8",
+        }).stdout;
+      expect(run("src/zzLib/zzPart.ts")).toContain("→ близнец не тронут: zzFacade/zzPart.ts");
+      expect(run("src/zzLib/zzPart.ts", "src/zzFacade/zzPart.ts")).toContain("обе копии каждой пары в правке — ок");
+      expect(run("src/zzLib/zzOwn.ts")).toContain("правка форков не касается");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  // Цикл ищут два места — режим `cycles` и модель уровней, — и правило рёбер у
+  // них одно: импорт самого себя — цикл, ребро к тесту — нет. `levels` молчал
+  // о файле, импортирующем сам себя, и свод не запрещал «чисто» по `A9-бис`.
+  it("цикл из одного файла называют и cycles, и levels", () => {
+    const box = seatEmpty("self-cycle-");
+    try {
+      fs.writeFileSync(path.join(box, "src", "app", "zzSelf.ts"), 'import { zzSelf as again } from "./zzSelf";\nexport const zzSelf = () => again;\n');
+      const run = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], { cwd: box, encoding: "utf8" }).stdout;
+      expect(run("cycles")).toContain("Различных циклов: 1.");
+      expect(run("levels")).toContain("цикл: app/zzSelf.ts → app/zzSelf.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  // Относительный импорт, которого нет на диске, граф отбрасывает; досье
+  // называет его, а не отвечает «импортирует ничего своего».
+  it("досье называет относительный импорт, которого нет на диске", () => {
+    const box = seatEmpty("missing-import-");
+    try {
+      fs.writeFileSync(path.join(box, "src", "app", "zzBroken.ts"), 'import { zzMissing } from "./zzNope";\nexport const zzUses = () => zzMissing;\n');
+      fs.writeFileSync(path.join(box, "src", "app", "zzData.json"), "{}\n");
+      fs.writeFileSync(path.join(box, "src", "app", "zzReads.ts"), 'import zzData from "./zzData.json";\nexport const zzRead = () => zzData;\n');
+      const brief = (at) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "brief", at], { cwd: box, encoding: "utf8" }).stdout;
+      const broken = brief("src/app/zzBroken.ts");
+      expect(broken).toContain("импорт не найден на диске: ./zzNope");
+      expect(broken).not.toContain("ничего своего");
+      expect(brief("src/app/zzReads.ts")).not.toContain("импорт не найден на диске");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

@@ -1094,27 +1094,33 @@ const SCALAR = {
   mutationReport: "строка",
   mutationConfig: "строка",
   mutationLedger: "строка",
-  seeded: "список",
-  pathShortcuts: "список",
-  forks: "список",
-  docPathExceptions: "список",
-  namePrefixes: "список",
-  foreignNames: "список",
-  baselineSections: "список",
-  starBarrels: "список",
+  seeded: "список строк",
+  pathShortcuts: "список пар [префикс, основа] строками",
+  forks: "список пар { from, to } строками",
+  docPathExceptions: "список строк",
+  namePrefixes: "список строк",
+  foreignNames: "список строк",
+  baselineSections: "список строк",
+  starBarrels: "список строк",
   scenario: "строка",
-  foreignAxes: "список",
-  smokeScope: "список",
-  corpusOutside: "список",
-  componentsAt: "список",
-  testsOutside: "список",
-  testDirs: "список",
-  publicEntries: "список",
+  foreignAxes: "список строк",
+  smokeScope: "список строк",
+  corpusOutside: "список строк",
+  componentsAt: "список строк",
+  testsOutside: "список строк",
+  testDirs: "список строк",
+  publicEntries: "список строк",
 };
 const SCALAR_OK = {
   число: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
   строка: (v) => typeof v === "string",
-  список: (v) => Array.isArray(v),
+  "список строк": (v) => Array.isArray(v) && v.every((one) => typeof one === "string"),
+  "список пар { from, to } строками": (v) =>
+    Array.isArray(v) &&
+    v.every((one) => one !== null && typeof one === "object" && typeof one.from === "string" && typeof one.to === "string"),
+  "список пар [префикс, основа] строками": (v) =>
+    Array.isArray(v) &&
+    v.every((one) => Array.isArray(one) && one.length === 2 && one.every((part) => typeof part === "string")),
   "строка либо список строк": (v) =>
     typeof v === "string" ||
     (Array.isArray(v) &&
@@ -1218,17 +1224,30 @@ if (CONFIG.debt != null) {
     process.exit(2);
   }
 }
+// Часть — своего вида: списком идут три, прочие — путь или заголовок строкой.
+// Часть числом проходила проверку наличия и роняла сверку стеком `node:path`.
+const isPair = (one) => Array.isArray(one) && one.length === 2 && one.every((x) => typeof x === "string");
+const PART_LISTS = new Map([
+  ["rules", ["список строк", (one) => typeof one === "string"]],
+  ["allowed", ["список пар [шаблон, правило] строками", isPair]],
+  ["headings", ["список строк", (one) => typeof one === "string"]],
+]);
+const partOk = (p, x) =>
+  PART_LISTS.has(p) ? Array.isArray(x) && x.every(PART_LISTS.get(p)[1]) : typeof x === "string";
 for (const [field, parts] of Object.entries(SHAPED)) {
   const v = CONFIG[field];
   if (v == null) continue;
   const bad =
     typeof v !== "object" ||
     Array.isArray(v) ||
-    parts.some((p) => v[p] == null);
+    parts.some((p) => v[p] == null || !partOk(p, v[p]));
   if (!bad) continue;
   console.log("=== НАСТРОЙКА ЗАДАНА НЕВЕРНО ===");
   console.log("  поле:    " + field);
-  console.log("  ожидали: объект с частями " + parts.join(", "));
+  console.log(
+    "  ожидали: объект с частями " +
+      parts.map((p) => p + " — " + (PART_LISTS.has(p) ? PART_LISTS.get(p)[0] : "строка")).join(", "),
+  );
   console.log("  стоит:   " + JSON.stringify(v));
   console.log("  Править: .context/graph.config.mjs");
   process.exit(2);
@@ -6074,6 +6093,18 @@ const outOfScope = (arg) => {
       ` назван. Где назван сам документ — поиском по его имени.`
     );
   const here = [path.join(BASE, "..", arg), path.join(ROOT, argPath(arg))];
+  // Внутри исходников адрес в области: пустая папка и файл не кода — свой
+  // ответ. «Вне области разбора» вело искать причину в полке.
+  const inSource = here.find((one) => existsSync(one) && norm(one).startsWith(norm(ROOT) + "/"));
+  if (inSource !== undefined)
+    return statSync(inSource).isDirectory()
+      ? `${tick}${arg}${tick} — папка исходников без файлов кода и стилей: разбирать в ней нечего.` +
+          ` Спрашивать надо про файл кода либо про папку, где он лежит.`
+      : isStylePath(norm(inSource))
+        ? `${tick}${arg}${tick} — лист стилей: в граф импортов он не входит, и радиуса у него нет.` +
+            ` Кто его подключает, печатают ${tick}graph.mjs plan${tick} и ${tick}brief${tick} — по тексту.`
+        : `${tick}${arg}${tick} — не код и не стиль: в граф импортов он не входит, и` +
+            ` досье, радиуса и уровней у него нет. Где он назван — поиском по его имени.`;
   if (here.some((one) => existsSync(one)))
     return (
       `${tick}${arg}${tick} — файл есть, но он вне области разбора:` +
@@ -8154,6 +8185,8 @@ if (mode === "cycles") {
     color.set(f, 1);
     stack.push(f);
     for (const d of importsOf.get(f) ?? []) {
+      // Ребро к тесту — не цикл кода: правило то же, что у модели уровней.
+      if (isTest(d)) continue;
       if (color.get(d) === 1) found.push([...stack.slice(stack.indexOf(d)), d]);
       else if (!color.has(d)) visit(d);
     }
@@ -13942,7 +13975,9 @@ const cycleThrough = (f, edgesOf = (x) => importsOf.get(x) ?? new Set()) => {
   const prev = new Map();
   const queue = [];
   for (const d of edgesOf(f)) {
-    if (d === f || isTest(d) || prev.has(d)) continue;
+    // Импорт самого себя — цикл, как и у режима `cycles`.
+    if (d === f) return [f, f];
+    if (isTest(d) || prev.has(d)) continue;
     prev.set(d, f);
     queue.push(d);
   }
@@ -20646,6 +20681,17 @@ if (mode === "brief") {
         // Зависимости — по ИМЕНАМ, сквозь бочки: узел, берущий всё из
         // публичного входа, иначе называл одну зависимость — сам вход.
         const { uses: via, unresolved } = usesWithVia(target);
+        // Относительный импорт, которого нет на диске, граф отбрасывает: без
+        // строки о нём досье отвечало «импортирует ничего своего».
+        const missing = [...(specsOf.get(target) ?? [])].filter((spec) => {
+          if (!spec.startsWith(".")) return false;
+          const at = path.resolve(path.dirname(target), spec);
+          return ![
+            "",
+            ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"],
+            ...["ts", "tsx", "js", "jsx"].map((e) => path.sep + "index." + e),
+          ].some((tail) => existsSync(at + tail));
+        });
         const down = [...via.keys()]
           .sort((x, y) => (rel(x) < rel(y) ? -1 : 1))
           .map((d) =>
@@ -20707,8 +20753,10 @@ if (mode === "brief") {
             "--- импортирует (что надо понять, чтобы понять его) ---",
           );
           console.log(
-            down.length ? "  " + down.join(NEWLINE + "  ") : "  ничего своего",
+            down.length ? "  " + down.join(NEWLINE + "  ") : missing.length ? "  своего в графе нет" : "  ничего своего",
           );
+          for (const spec of missing)
+            console.log("  импорт не найден на диске: " + spec + " — компилятор назовёт его ошибкой");
 
           const upCode = [...dependentsOf(target)]
             .filter((f) => !isTest(f))

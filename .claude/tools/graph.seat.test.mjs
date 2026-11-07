@@ -1594,6 +1594,46 @@ it("у каждого режима инструмента своя статья 
   expect([...entries].filter((one) => !modes.has(one)), "статья без режима").toEqual([]);
 });
 
+// Пустой перехват превращает сбой в «ничего не случилось», и без строки причины
+// не видно, исход ли это или забытая ветка. Тест держит вид: тело перехвата
+// без кода несёт строку, что этот исход значит.
+it("каждый пустой перехват ошибки в инструменте называет свой исход строкой", () => {
+  const bare = [];
+  let empty = 0;
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {
+    const lines = fs.readFileSync(path.join(TOOL_DIR, file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      const m = /\} catch(?: \(\w+\))? \{(.*)$/.exec(line);
+      if (m === null) return;
+      let depth = 1 + (m[1].match(/\{/g) ?? []).length - (m[1].match(/\}/g) ?? []).length;
+      const body = m[1].trim() === "" ? [] : [m[1]];
+      for (let j = i + 1; j < lines.length && depth > 0; j += 1) {
+        depth += (lines[j].match(/\{/g) ?? []).length - (lines[j].match(/\}/g) ?? []).length;
+        body.push(lines[j]);
+      }
+      const inner = body.map((one) => one.trim()).filter((one) => one !== "" && one !== "}");
+      if (inner.some((one) => !one.startsWith("//"))) return;
+      empty += 1;
+      if (inner.length === 0) bare.push(file + ":" + (i + 1));
+    });
+  }
+  expect(empty).toBeGreaterThan(10);
+  expect(bare, "пустой перехват без строки причины").toEqual([]);
+});
+
+// Режим, который не зовёт ни один тест, меняет ответ без признака: `sizes` и
+// `twins` не звал никто, и `sizes` отвечал нулём на адрес, где файл есть.
+it("каждый режим инструмента зовёт хоть один тест", () => {
+  const modes = [...fs.readFileSync(path.join(TOOL_DIR, "graph.md"), "utf8").matchAll(/^### `([\w-]+)/gm)].map((m) => m[1]);
+  const tests = fs
+    .readdirSync(TOOL_DIR)
+    .filter((f) => f.endsWith(".test.mjs"))
+    .map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8"))
+    .join("\n");
+  expect(modes.length).toBeGreaterThan(20);
+  expect(modes.filter((m) => !tests.includes('"' + m + '"')), "режим без теста").toEqual([]);
+});
+
 // Отказ, до которого не доходит ни один тест, меняет текст и код возврата без
 // признака, а человек получает его как ответ инструмента. Тест держит вид
 // целиком: новый отказ без теста роняет набор, пока его не назовут тестом либо
@@ -1773,7 +1813,7 @@ it("каждое чтение среды и платформы в инструм
     ["graph.seat.mjs", "tmpdir()", "systemTemp: настоящее имя временной папки, найдено набором на Windows; держит тест systemTemp"],
     ["graph.seat.mjs", 'process.platform === "win32" ? "TEMP" : "TMPDIR"', "текст отказа systemTemp"],
     ["graph.seat.mjs", "platform = process.platform", "runTool: платформа доводом, тест подставляет win32"],
-    ["hook.mjs", "tmpdir()", "запись клапана хука вне git — ветка без теста, вид семейства «ветка, в которую не входят»"],
+    ["hook.mjs", "tmpdir()", "запись клапана хука вне git — тест «без git клапан конца хода пишет запись во временную папку»"],
   ];
   const ENV_EXEMPT = new Map([
     ["PATH", "обёртки долга дописывают .bin; npm run уже кладёт его сам, а Node на Windows берёт первый ключ по сортировке — PATH раньше Path"],

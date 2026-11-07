@@ -1752,6 +1752,21 @@ describe("вид поля настройки — у чисел, строк и с
       expect(unknown.code).toBe(2);
       expect(unknown.out).toContain("=== ВИД ПОЛЯ НАСТРОЙКИ НЕ ОБЪЯВЛЕН ===");
       expect(unknown.out).toContain("поле:  zzUnknown");
+      // Элемент списка — своего вида: пара форков без второй половины давала
+      // `twins` «правка форков не касается», а сверке — стек из `node:path`.
+      for (const [line, kind] of [
+        ['  forks: [{ from: "app" }],', "список пар { from, to } строками"],
+        ['  pathShortcuts: ["app/"],', "список пар [префикс, основа] строками"],
+        ["  starBarrels: [3],", "список строк"],
+        ["  adr: { dir: 7 },", "объект с частями dir — строка"],
+      ]) {
+        const field = line.trim().split(":")[0];
+        fs.writeFileSync(at, seed.replace(new RegExp("^  " + field + ": .*,$", "m"), line));
+        const spoiled = run();
+        expect(spoiled.code, field).toBe(2);
+        expect(spoiled.out, field).toContain("поле:    " + field);
+        expect(spoiled.out, field).toContain("ожидали: " + kind);
+      }
       // Поле, которое инструмент читает в двух видах, принимает оба: деревьев
       // исходников несколько — список, и прогон доходит до сверки деревьев.
       expect(seed).toMatch(/^ {2}src: "\.\.\/src",$/m);
