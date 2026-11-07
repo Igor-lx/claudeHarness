@@ -1644,6 +1644,42 @@ it("каждый экспорт модуля инструмента где-то 
   expect(unused, "экспорт без единого использования").toEqual([]);
 });
 
+// Проза называет сверку именем, по которому её ищут в выводе и в таблице:
+// «числа в прозе базы» строчной не находился поиском заголовка. Тест держит
+// вид: имя сверки в прозе полки — заголовок существующей сверки.
+it("каждое имя сверки в прозе полки — заголовок существующей сверки", () => {
+  const EXEMPT = new Map([
+    ["…", "заполнитель в описании формы, а не имя"],
+    ["якорь → пометка", "отклонённый вариант: сверка, которая «краснела бы», не заведена"],
+  ]);
+  const shelf = path.join(TOOL_DIR, "..");
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  const names = new Set(
+    [...fs.readFileSync(path.join(TOOL_DIR, "checks.md"), "utf8").matchAll(/^\| ([^|]+?) \|/gm)].map((m) =>
+      norm(m[1]).replace(/ \([^)]*\)$/, ""),
+    ),
+  );
+  const prose = [
+    ...["rules", "rationale", "tools", "seat"].flatMap((dir) =>
+      fs.readdirSync(path.join(shelf, dir)).filter((f) => f.endsWith(".md")).map((f) => path.join(dir, f)),
+    ),
+    ...fs.readdirSync(path.join(shelf, "skills")).filter((d) => fs.existsSync(path.join(shelf, "skills", d, "SKILL.md"))).map((d) => path.join("skills", d, "SKILL.md")),
+    "README.md",
+    path.join("skills", "README.md"),
+  ];
+  const used = new Set();
+  const unknown = [];
+  for (const rel of prose)
+    for (const m of fs.readFileSync(path.join(shelf, rel), "utf8").matchAll(/сверк\p{L}*\s+«([^»«]+)»/gu)) {
+      const name = norm(m[1]);
+      if (EXEMPT.has(name)) used.add(name);
+      else if (!names.has(name)) unknown.push(rel + ": " + name);
+    }
+  expect(names.size).toBeGreaterThan(100);
+  expect(unknown, "имя сверки, которой нет").toEqual([]);
+  expect([...EXEMPT.keys()].filter((k) => !used.has(k)), "исключение, которому нечего исключать").toEqual([]);
+});
+
 // Пустой перехват превращает сбой в «ничего не случилось», и без строки причины
 // не видно, исход ли это или забытая ветка. Тест держит вид: тело перехвата
 // без кода несёт строку, что этот исход значит.
