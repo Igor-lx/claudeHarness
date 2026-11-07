@@ -2649,6 +2649,20 @@ describe("база о своём: документы узла, сторона т
       expect(broken).toContain("импорт не найден на диске: ./zzNope");
       expect(broken).not.toContain("ничего своего");
       expect(brief("src/app/zzReads.ts")).not.toContain("импорт не найден на диске");
+      // Короткий адрес, объявленный компилятору, — тот же путь от своей основы.
+      const tsAt = path.join(box, "tsconfig.json");
+      const ts = JSON.parse(fs.readFileSync(tsAt, "utf8"));
+      ts.compilerOptions.paths = { "~/*": ["./src/*"] };
+      fs.writeFileSync(tsAt, JSON.stringify(ts, null, 2));
+      fs.writeFileSync(path.join(box, "src", "app", "zzAlias.ts"), 'import { zzGone } from "~/shared/zzGone";\nimport { zzMissing } from "zz-package";\nexport const zzUses = () => [zzGone, zzMissing];\n');
+      const aliased = brief("src/app/zzAlias.ts");
+      expect(aliased).toContain("импорт не найден на диске: ~/shared/zzGone");
+      expect(aliased).not.toContain("zz-package");
+      // Импорт с адресом-выражением без известной цели — та же отброшенная связь.
+      fs.writeFileSync(path.join(box, "src", "app", "zzDyn.ts"), "export const zzLoad = (name: string) => import(`./zzPages/${name}`);\n");
+      const dynamic = brief("src/app/zzDyn.ts");
+      expect(dynamic).toContain("импорт с адресом-выражением, под которым на диске нет ни одного файла: app/zzDyn.ts:1");
+      expect(dynamic).not.toContain("ничего своего");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

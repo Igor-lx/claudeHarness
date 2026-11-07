@@ -4753,6 +4753,8 @@ const computedTargets = (fromFile, one) => {
 };
 /** Импорты во время работы, чьих целей граф не знает: «файл:строка». */
 const unresolvedComputed = [];
+/** Импорты во время работы, под чьим адресом на диске нет ни одного файла. */
+const emptyComputed = [];
 /** Расширение выходного файла → расширения исходника, как их сопоставляет
  * компилятор при разрешении модуля. */
 const TS_OF_JS = {
@@ -5002,6 +5004,8 @@ for (const f of files) {
       );
       continue;
     }
+    if (targets.length === 0)
+      emptyComputed.push(rel(f) + ":" + code.slice(0, one.at).split(/\r?\n/).length);
     for (const target of targets) {
       importsOf.get(f).add(target);
       if (!importedNames.has(target)) importedNames.set(target, new Set());
@@ -20684,8 +20688,14 @@ if (mode === "brief") {
         // Относительный импорт, которого нет на диске, граф отбрасывает: без
         // строки о нём досье отвечало «импортирует ничего своего».
         const missing = [...(specsOf.get(target) ?? [])].filter((spec) => {
-          if (!spec.startsWith(".")) return false;
-          const at = path.resolve(path.dirname(target), spec);
+          // Короткий адрес компилятора — тот же относительный путь, только от
+          // объявленной основы; прочее без точки — пакет.
+          const alias = spec.startsWith(".") ? undefined : aliasOf(target, spec);
+          if (!spec.startsWith(".") && alias === undefined) return false;
+          const at =
+            alias === undefined
+              ? path.resolve(path.dirname(target), spec)
+              : path.join(alias.to, spec.slice(alias.head.length));
           return ![
             "",
             ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"],
@@ -20752,11 +20762,24 @@ if (mode === "brief") {
           console.log(
             "--- импортирует (что надо понять, чтобы понять его) ---",
           );
+          // Импорт с адресом-выражением, цели которого граф не знает, — та же
+          // отброшенная связь: строкой, а не «ничего своего».
+          const here = (one) => one.startsWith(rel(target) + ":");
+          const computedHere = unresolvedComputed.filter(here);
+          const emptyHere = emptyComputed.filter(here);
           console.log(
-            down.length ? "  " + down.join(NEWLINE + "  ") : missing.length ? "  своего в графе нет" : "  ничего своего",
+            down.length
+              ? "  " + down.join(NEWLINE + "  ")
+              : missing.length || computedHere.length || emptyHere.length
+                ? "  своего в графе нет"
+                : "  ничего своего",
           );
           for (const spec of missing)
             console.log("  импорт не найден на диске: " + spec + " — компилятор назовёт его ошибкой");
+          for (const at of computedHere)
+            console.log("  импорт с адресом-выражением, цели которого граф не знает: " + at);
+          for (const at of emptyHere)
+            console.log("  импорт с адресом-выражением, под которым на диске нет ни одного файла: " + at);
 
           const upCode = [...dependentsOf(target)]
             .filter((f) => !isTest(f))
