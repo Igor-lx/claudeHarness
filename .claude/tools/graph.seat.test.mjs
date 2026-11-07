@@ -2044,6 +2044,42 @@ describe("README мастерской называет проверенную с
   });
 });
 
+// Команду с переменной оболочки среда сессии спрашивает при любом списке
+// разрешений, и задача без присмотра встаёт. Команда — строка блока либо
+// фрагмент с пробелом; голое `${…}` — имя предмета. Обоснование не учит.
+describe("проза полки не даёт сессии команду с переменной оболочки", () => {
+  const RUN_BY_GIT = new Set(['node .claude/tools/graph.mjs gate --message "$1"']);
+  it("ни в норме, ни в скилле, ни в справочнике", () => {
+    const shelf = path.join(TOOL_DIR, "..");
+    const files = [];
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const at = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!(dir === shelf && ["rationale", "state", "node_modules"].includes(e.name))) walk(at);
+        } else if (e.name.endsWith(".md")) files.push(at);
+      }
+    };
+    walk(shelf);
+    expect(files.length).toBeGreaterThan(10);
+    const VARIABLE = /\$(\?|\{|[A-Za-z_]|[0-9])/;
+    const asks = [];
+    const used = new Set();
+    for (const at of files) {
+      const text = fs.readFileSync(at, "utf8");
+      const commands = [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].flatMap((m) => m[1].split("\n"));
+      for (const m of text.replace(/```[\s\S]*?```/g, "").matchAll(/`([^`]+)`/g))
+        if (/\s/.test(m[1].trim())) commands.push(m[1]);
+      for (const one of commands.map((c) => c.trim()))
+        if (VARIABLE.test(one))
+          if (RUN_BY_GIT.has(one)) used.add(one);
+          else asks.push(path.relative(shelf, at) + ": " + one);
+    }
+    expect(asks).toEqual([]);
+    expect([...RUN_BY_GIT].filter((one) => !used.has(one)), "исключение, которому нечего исключать").toEqual([]);
+  });
+});
+
 // Что ломается только на Windows, здесь не видно ничем, кроме конвейера, а
 // конвейер видит лишь то, что он гоняет и на что он запускается.
 describe("полка не несёт того, что ломается на другой системе молча", () => {

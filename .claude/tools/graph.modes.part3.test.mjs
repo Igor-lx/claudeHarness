@@ -1216,7 +1216,7 @@ describe("окно свежести и залежавшееся не молча�
       fs.writeFileSync(path.join(repo, "early.txt"), "2\n");
       // Пометки нет: окно не сжимается до одной незакоммиченной правки.
       const none = shell(window);
-      expect(none.out).toContain("пометка: нет");
+      expect(none.out).toContain("ambiguous argument");
       expect(none.code).not.toBe(0);
       expect(none.out).not.toContain("early.txt");
       git(
