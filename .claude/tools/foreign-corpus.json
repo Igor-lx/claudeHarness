@@ -427,6 +427,67 @@
         "src/sum.ts": "export const sum = (a: number, b: number): number => a + b\n",
         "src/sum.test.ts": "import { expect, it } from 'vitest'\nimport { sum } from './sum'\n\nit('adds', () => {\n  expect(sum(2, 3)).toBe(5)\n})\n"
       }
+    },
+    {
+      "name": "app-root",
+      "scenario": "familiar",
+      "axis": "корень исходников `app`, а не `src`; тесты в `app/__tests__`; конфиги `vite.config.mts` и `eslint.config.mjs`; версии связки без диапазонов",
+      "files": {
+        "package.json": "{\n  \"name\": \"tip-split\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint .\"\n  },\n  \"devDependencies\": {\n    \"@eslint/js\": \"10.0.1\",\n    \"eslint\": \"10.13.0\",\n    \"typescript\": \"6.0.3\",\n    \"typescript-eslint\": \"8.72.0\",\n    \"vite\": \"8.3.5\",\n    \"vitest\": \"4.1.11\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"app\",\n    \"vite.config.mts\"\n  ]\n}\n",
+        "vite.config.mts": "import { defineConfig } from \"vite\";\n\nexport default defineConfig({ test: { include: [\"app/**/*.test.ts\"] } });\n",
+        "eslint.config.mjs": "import js from \"@eslint/js\";\nimport tseslint from \"typescript-eslint\";\n\nexport default tseslint.config(js.configs.recommended, ...tseslint.configs.recommended);\n",
+        "app/tipShare.ts": "export const tipShare = (bill: number, people: number): number => Math.round((bill * 0.1 * 100) / people) / 100;\n",
+        "app/__tests__/tipShare.test.ts": "import { expect, it } from \"vitest\";\nimport { tipShare } from \"../tipShare\";\n\nit(\"splits a tenth of the bill\", () => {\n  expect(tipShare(100, 4)).toBe(2.5);\n});\n"
+      }
+    },
+    {
+      "name": "no-runner",
+      "scenario": "familiar",
+      "axis": "React на Vite с кодом, но без раннера тестов, без линтера, формата и мутаций",
+      "files": {
+        "package.json": "{\n  \"name\": \"clock-face\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"@vitejs/plugin-react\": \"^6.1.2\",\n    \"typescript\": \"~6.0.0\",\n    \"vite\": \"^8.3.4\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "index.html": "<!doctype html>\n<html lang=\"en\">\n  <body>\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/src/main.tsx\"></script>\n  </body>\n</html>\n",
+        "src/main.tsx": "import { createRoot } from \"react-dom/client\";\nimport { Dial } from \"./Dial\";\n\ncreateRoot(document.getElementById(\"root\")!).render(<Dial hours={9} />);\n",
+        "src/Dial.tsx": "type DialProps = { hours: number };\n\nexport function Dial({ hours }: DialProps) {\n  return <output>{hours}:00</output>;\n}\n"
+      }
+    },
+    {
+      "name": "tests-root",
+      "scenario": "familiar",
+      "axis": "плоская `src`, тесты в корневой папке `tests`, а не своего слоя; глобальный CSS из `main.tsx`",
+      "files": {
+        "package.json": "{\n  \"name\": \"word-count\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\",\n    \"tests\"\n  ]\n}\n",
+        "src/main.tsx": "import \"./global.css\";\nimport { createRoot } from \"react-dom/client\";\nimport { wordCount } from \"./wordCount\";\n\ncreateRoot(document.getElementById(\"root\")!).render(<p className=\"count\">{wordCount(\"one two\")}</p>);\n",
+        "src/global.css": ".count {\n  font-weight: 600;\n}\n",
+        "src/wordCount.ts": "export const wordCount = (text: string): number => text.split(/\\s+/).filter(Boolean).length;\n",
+        "tests/wordCount.test.ts": "import { expect, it } from \"vitest\";\nimport { wordCount } from \"../src/wordCount\";\n\nit(\"counts words\", () => {\n  expect(wordCount(\"  a  b c \")).toBe(3);\n});\n"
+      }
+    },
+    {
+      "name": "emotion",
+      "scenario": "familiar",
+      "axis": "стили кодом другой библиотекой: `@emotion/react`, свойство `css`; листов стилей нет",
+      "files": {
+        "package.json": "{\n  \"name\": \"note-chip\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"@emotion/react\": \"^11.14.0\",\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"jsxImportSource\": \"@emotion/react\"\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/MemoBadge.tsx": "import { css } from \"@emotion/react\";\n\nconst chip = css({ borderRadius: 12, padding: \"2px 8px\" });\n\nexport function MemoBadge({ text }: { text: string }) {\n  return <span css={chip}>{text}</span>;\n}\n",
+        "src/noteText.ts": "export const noteText = (n: number): string => (n === 1 ? \"1 note\" : n + \" notes\");\n",
+        "src/noteText.test.ts": "import { expect, it } from \"vitest\";\nimport { noteText } from \"./noteText\";\n\nit(\"names the count\", () => {\n  expect(noteText(1)).toBe(\"1 note\");\n  expect(noteText(3)).toBe(\"3 notes\");\n});\n"
+      }
+    },
+    {
+      "name": "ts-above",
+      "scenario": "familiar",
+      "axis": "TypeScript `7.0.2` — на старшую версию выше связки `6.0.3`: план стека опускает его к связке",
+      "files": {
+        "package.json": "{\n  \"name\": \"unit-convert\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^7.0.2\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/toKm.ts": "export const toKm = (miles: number): number => miles * 1.609344;\n",
+        "src/toKm.test.ts": "import { expect, it } from \"vitest\";\nimport { toKm } from \"./toKm\";\n\nit(\"converts a mile\", () => {\n  expect(toKm(1)).toBeCloseTo(1.609344);\n});\n"
+      }
     }
   ]
 }
