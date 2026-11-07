@@ -5946,6 +5946,18 @@ export const PREDICATE_CASES = [
   ["sandboxEscape", { file: "docs/a.md", rename: "../b.md" }, "../b.md"],
   ["sandboxEscape", { edits: [{ file: "docs/a.md", rename: "../b.md" }] }, ""],
   ["sandboxEscape", { edits: [{ file: "a.md", rename: "../b.md" }] }, "../b.md"],
+  // --- shellVariableOf: переменная оболочки в команде ---
+  ["shellVariableOf", "npm run check", ""],
+  ["shellVariableOf", 'npm run check 2>&1 | tail -60; echo "EXIT ${PIPESTATUS[0]}"', "${PIPESTATUS[0]}"],
+  ["shellVariableOf", "npm run check > out.txt 2>&1; echo EXIT $?", "$?"],
+  ["shellVariableOf", 'f=a; echo "$f"', "$f"],
+  ["shellVariableOf", 'D=/tmp/x\nprintf a > $D/a.txt', "$D"],
+  ["shellVariableOf", 'echo "x$(git rev-parse --show-prefix)y"', ""],
+  ["shellVariableOf", "node -e 'console.log(`${a}`, $b)'", ""],
+  ["shellVariableOf", 'echo "\\$HOME"', ""],
+  ["shellVariableOf", "git commit -m 'costs $5'", ""],
+  ["shellVariableOf", "cat > a.txt <<'EOF'\n$HOME\nEOF", ""],
+  ["shellVariableOf", "cat > a.txt <<EOF\n$HOME\nEOF", "$HOME"],
   // --- gitHookBypass: обход ворот git в команде оболочки ---
   ["gitHookBypass", "git commit -m \"fix\"", ""],
   ["gitHookBypass", "git commit --no-verify -m fix", "commit --no-verify"],
@@ -7234,6 +7246,48 @@ export const pageReadByShell = (command) =>
       .split("/")
       .some((part) => part === BAR_PAGES_DIR),
   );
+
+/** Переменная оболочки в команде — её запись, иначе пустая строка.
+ *
+ * Такую команду среда сессии спрашивает подтверждением при любом списке
+ * разрешений, и задача без присмотра встаёт; страж отказывает раньше и
+ * говорит, что делать вместо. Внутри одинарных кавычек, за обратной косой и
+ * в теле встроенного документа с кавычками у метки подстановки нет;
+ * подстановка команды `$(…)` переменной не считается: её среда пропускает
+ * по частям. Выведено: работники посадки `2026-11-07`. */
+export const shellVariableOf = (command) => {
+  const kept = [];
+  let until = null;
+  let literal = false;
+  for (const line of String(command).split(NEWLINE)) {
+    if (until !== null) {
+      if (line.trim() === until) until = null;
+      else if (!literal) kept.push(line);
+      continue;
+    }
+    kept.push(line);
+    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
+    if (doc !== null) {
+      until = doc[2];
+      literal = doc[1] !== "";
+    }
+  }
+  const body = kept.join(NEWLINE);
+  let quote = null;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+    } else if (ch === "\\") i += 1;
+    else if (ch === "'" && quote === null) quote = "'";
+    else if (ch === '"') quote = quote === '"' ? null : '"';
+    else if (ch === "$") {
+      const found = /^\$(\{[^}]*\}?|[?#@*!$0-9-]|[A-Za-z_][A-Za-z0-9_]*)/.exec(body.slice(i));
+      if (found !== null) return found[0];
+    }
+  }
+  return "";
+};
 
 /** Заголовок записи, помеченной закрытой, — пункта отложенного либо вопроса
  * разработчику: пометка заглавными, в конце, в начале обычным регистром,

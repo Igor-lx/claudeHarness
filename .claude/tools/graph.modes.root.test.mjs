@@ -519,6 +519,19 @@ describe("страж обхода ворот", () => {
     expect(ask(home, 'git commit -m "x"').status).toBe(0);
   }, 180000);
 
+  // Работники посадки `2026-11-07` встали на отказе среды: переменную
+  // оболочки она спрашивает при любом списке разрешений.
+  it("останавливает команду с переменной оболочки, называя, что делать вместо", () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    const stopped = ask(home, "npm run check > out.txt 2>&1; echo EXIT $?");
+    expect(stopped.status).toBe(2);
+    expect(stopped.stderr).toContain("переменная оболочки `$?`");
+    expect(stopped.stderr).toContain("проверку запускают голой командой");
+    expect(stopped.stderr).toContain("environment.md`, раздел «Что списком не снимается»");
+    for (const fine of ["npm run check", 'echo "x$(git rev-parse --show-prefix)y"', "node -e 'console.log(`${a}`)'"])
+      expect(ask(home, fine).status, fine).toBe(0);
+  }, 180000);
+
   it("останавливает чтение страницы свода оболочкой, называя Read, и пропускает остальное", () => {
     const home = path.join(TOOL_DIR, "..", "..");
     // Страница и файл ключей лежат в одной папке, и отказ называет, откуда

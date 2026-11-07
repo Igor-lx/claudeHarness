@@ -39,6 +39,7 @@ import {
   recipeIdleByDesign,
   recipeStepFromSeed,
   gitHookBypass,
+  shellVariableOf,
   pageReadByShell,
   protocolReadByShell,
   BAR_PROTOCOL_FILE,
@@ -661,9 +662,10 @@ if (mode === "guard") {
   // критериев в контекст не придут.
   const page = pageReadByShell(command);
   const protocol = await protocolFault(read, command);
+  const variable = shellVariableOf(command);
   if (hook) {
     const stale = rulesFreshnessStep(said);
-    if (why === "" && page === "" && protocol === "") {
+    if (why === "" && page === "" && protocol === "" && variable === "") {
       if (stale !== "")
         console.log(
           JSON.stringify({
@@ -691,7 +693,15 @@ if (mode === "guard") {
           "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанный оболочкой файл её не приносит, и свод судил бы по заголовкам.\n" +
           "Страницы перечисляет `node .claude/tools/graph.mjs bar-read`, путь к файлу ключей печатает `bar`; открыть — Read.\n",
       );
-    else process.stderr.write(protocol);
+    else if (protocol !== "") process.stderr.write(protocol);
+    else
+      process.stderr.write(
+        "Обвязка: в команде переменная оболочки `" +
+          variable +
+          "` — такую команду среда спрашивает подтверждением при любом списке разрешений, и задача встаёт.\n" +
+          "Код возврата среда печатает сама: проверку запускают голой командой. Значение, которое подставили бы, берут из вывода отдельного вызова либо считает инструмент; файл пишут инструментом Write.\n" +
+          "Порядок — `.claude/rules/environment.md`, раздел «Что списком не снимается».\n",
+      );
     process.exit(2);
   }
   console.log("=== Страж обхода ворот ===");
@@ -708,7 +718,12 @@ if (mode === "guard") {
       : "    чтение протокола свода: " +
           protocol.split(String.fromCharCode(10))[0],
   );
-  process.exit(why === "" && page === "" && protocol === "" ? 0 : 1);
+  console.log(
+    variable === ""
+      ? "  переменной оболочки нет"
+      : "    переменная оболочки: " + variable,
+  );
+  process.exit(why === "" && page === "" && protocol === "" && variable === "" ? 0 : 1);
 }
 
 // Посадка и стенд проб собираются до настройки проекта: в мастерской обвязки
