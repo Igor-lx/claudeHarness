@@ -35,6 +35,18 @@ export const localDay = (at = new Date()) =>
  * букв задаёт `TEMP` коротким именем (`RUNNER~1`), а git и сборщик видят ту
  * же папку длинным: `vitest` в песочнице не находил файл подготовки, суд
  * пробы не узнавал свою песочницу. Найдено прогоном на Windows. */
+/** Имя коммитов посадки, когда у машины своего нет: один ответ на обе посадки. */
+export const seatIdentity = (asked) =>
+  asked(["config", "user.email"]) ? [] : ["-c", "user.name=seat", "-c", "user.email=seat@local"];
+
+/** Проекты корпуса и ящики тестов кладут файлы без истории; живой проект
+ * свою историю несёт, и счёт коммитов берётся у git. */
+export const commitsIn = (root, git) => {
+  if (!existsSync(path.join(root, ".git"))) return 0;
+  const said = git(["rev-list", "--count", "HEAD"]);
+  return Number(said) || 0;
+};
+
 export const systemTemp = () => {
   const dir = tmpdir();
   try {
@@ -1167,9 +1179,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
       return "";
     }
   };
-  const commits = existsSync(gitDir)
-    ? Number(asked(["rev-list", "--count", "HEAD"]) || 0)
-    : 0;
+  const commits = commitsIn(target, asked);
   const read = (rel) => {
     const at = path.join(target, rel);
     return existsSync(at) && statSync(at).isFile() ? readFileSync(at, "utf8") : null;
@@ -1356,8 +1366,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
   let identity = [];
   try {
     if (!hadGit) execFileSync("git", ["init", "-q"], quiet);
-    identity =
-      asked(["config", "user.email"]) === "" ? ["-c", "user.name=seat", "-c", "user.email=seat@local"] : [];
+    identity = seatIdentity(asked);
     const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
     const configAt = path.join(target, ".context", "graph.config.mjs");
     // Сценарий посадки — ответ одной команды на всю обвязку (`graph.profile.mjs`).

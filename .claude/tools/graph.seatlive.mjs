@@ -29,6 +29,7 @@ import {
   sandboxPackages,
   systemTemp,
   localDay,
+  seatIdentity,
   tailOf,
   testCountsOf,
   tiersFrom,
@@ -787,7 +788,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   }
 
   // 8. Коммиты, основания, ворота.
-  const identity = asked(["config", "user.email"]) ? [] : ["-c", "user.name=seat", "-c", "user.email=seat@local"];
+  const identity = seatIdentity(asked);
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
   if (identity.length > 0) report.push(IDENTITY_NOTICE.join(" "));
   // Свои ворота проекта посадка не обходит: не пустили коммит — отказ, и

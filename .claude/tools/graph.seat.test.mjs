@@ -1594,6 +1594,56 @@ it("у каждого режима инструмента своя статья 
   expect([...entries].filter((one) => !modes.has(one)), "статья без режима").toEqual([]);
 });
 
+// Одно знание двумя списками расходится без признака: места конвейера жили
+// тремя копиями, и `.circleci` знали две. Тест держит вид: один и тот же
+// набор строк в двух местах кода инструмента стоит исключением с причиной.
+it("один набор строк не стоит в коде инструмента дважды без причины", () => {
+  const EXEMPT = new Map([
+    ["ignore|pipe", "опции stdio дочернего процесса, а не знание"],
+    ["--verify|-q|HEAD|rev-parse", "доводы одной команды git, а не перечень"],
+    ["dir|heading|table", "части двух разных полей настройки, совпавшие составом"],
+    ["allow|ask|deny", "в graph.mjs — порядок старшинства видов разрешений, в посадке — проверка их состава"],
+  ]);
+  const LINT_SHARED = "@eslint-react/web-api-no-leaked-event-listener";
+  const seen = new Map();
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.includes(".test.") && f !== "graph.modes.shared.mjs")) {
+    const text = fs.readFileSync(path.join(TOOL_DIR, file), "utf8");
+    for (const m of text.matchAll(/\[((?:\s*"[^"\n]{1,60}"\s*,){2,}\s*"[^"\n]{1,60}"\s*,?\s*)\]/g)) {
+      const key = [...new Set([...m[1].matchAll(/"([^"\n]{1,60})"/g)].map((x) => x[1]))].sort().join("|");
+      const at = file + ":" + text.slice(0, m.index).split("\n").length;
+      if (!seen.has(key)) seen.set(key, []);
+      seen.get(key).push(at);
+    }
+  }
+  const used = new Set();
+  const twice = [];
+  for (const [key, at] of seen) {
+    if (at.length < 2) continue;
+    // Одно правило линта держит несколько критериев: строка на критерий.
+    if (key.includes(LINT_SHARED)) continue;
+    if (EXEMPT.has(key)) used.add(key);
+    else twice.push(at.join(" ") + " — " + key);
+  }
+  expect(twice, "один набор строк дважды").toEqual([]);
+  expect([...EXEMPT.keys()].filter((key) => !used.has(key)), "исключение, которому нечего исключать").toEqual([]);
+});
+
+// Экспорт, которого не берёт никто, — спящая копия: `SCENARIOS` повторял
+// ключи `SCENARIO_NAMES` и не читался ни одним файлом. Тест держит вид.
+it("каждый экспорт модуля инструмента где-то используется", () => {
+  const all = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs")).map((f) => [f, fs.readFileSync(path.join(TOOL_DIR, f), "utf8")]);
+  const unused = [];
+  for (const [file, text] of all) {
+    if (file.includes(".test.")) continue;
+    for (const m of text.matchAll(/^export (?:const|function|async function|class) (\w+)/gm)) {
+      const name = new RegExp("\\b" + m[1] + "\\b", "g");
+      const uses = all.reduce((n, [, other]) => n + (other.match(name) ?? []).length, 0);
+      if (uses <= 1) unused.push(file + ": " + m[1]);
+    }
+  }
+  expect(unused, "экспорт без единого использования").toEqual([]);
+});
+
 // Пустой перехват превращает сбой в «ничего не случилось», и без строки причины
 // не видно, исход ли это или забытая ветка. Тест держит вид: тело перехвата
 // без кода несёт строку, что этот исход значит.
@@ -1927,6 +1977,19 @@ describe("README мастерской называет проверенную с
       const text = fs.readFileSync(path.join(workshop, rel), "utf8");
       expect(folders.filter((one) => !text.includes(one)), rel).toEqual([]);
     }
+  });
+
+  // Команды установки стоят в трёх файлах: в двух README мастерской и в
+  // памятке полки. Правка одного оставляла два других с прежней командой.
+  it.skipIf(!hasReadme)("команды установки одни и те же в обоих README и в памятке полки", () => {
+    const install = (rel) => {
+      const text = fs.readFileSync(path.join(workshop, rel), "utf8");
+      const block = [...text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]).find((b) => b.includes("git clone"));
+      return (block ?? "").trim().replace(/<[^>]*>/g, "<>");
+    };
+    const at = ["README.md", "README.ru.md", ".claude/README.md"];
+    expect(install(at[0])).toContain("git clone");
+    for (const rel of at.slice(1)) expect(install(rel), rel).toBe(install(at[0]));
   });
 
   // Перевод правят в одном файле, а второй отстаёт без признака. Фрагмент

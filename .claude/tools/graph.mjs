@@ -118,6 +118,7 @@ import {
   BAR_PAGES_DIR,
   OUT_OF_TREE,
   CODE_EXTENSIONS,
+  BAR_FATES,
   CODE_FILE,
   TS_FILE,
   CODE_OR_STYLE,
@@ -4028,6 +4029,34 @@ const gitIgnored = (full) =>
   GIT_IGNORED.files.has(full) ||
   GIT_IGNORED.dirs.some((d) => (full + "/").startsWith(d));
 
+/** Пакет уходит потребителю: не закрыт полем `private` и объявляет вход либо
+ * состав. Один признак на сверки поставки и витрины пакета. */
+const isPublishedManifest = (pkg) =>
+  pkg.private !== true && ["exports", "main", "module", "files"].some((k) => pkg[k] != null);
+
+/** Где проект описывает конвейер: папки описаний и файлы в корне. Один список
+ * на три вопроса — тексты для шага выкладки, свидетель раздела U и сверку
+ * «Конвейер зовёт проверки»: копий было три, и `.circleci` знали две. */
+const CI_DIRS = [".github/workflows", ".circleci"];
+const CI_FILES = [
+  ".gitlab-ci.yml",
+  ".drone.yml",
+  "azure-pipelines.yml",
+  "Jenkinsfile",
+  "bitbucket-pipelines.yml",
+  ".woodpecker.yml",
+];
+/** Файлы описания конвейера от корня репозитория; из папок — YAML. */
+const ciFilesOf = () => {
+  const at = (one) => path.join(BASE, "..", one);
+  const out = CI_FILES.filter((one) => existsSync(at(one)) && statSync(at(one)).isFile());
+  for (const dir of CI_DIRS)
+    if (existsSync(at(dir)) && statSync(at(dir)).isDirectory())
+      for (const name of readdirSync(at(dir)))
+        if (/\.ya?ml$/.test(name) && statSync(path.join(at(dir), name)).isFile()) out.push(dir + "/" + name);
+  return out;
+};
+
 const outOfTree = (name, full) =>
   OUT_OF_TREE.has(name) ||
   insideShelf(norm(full)) ||
@@ -5433,9 +5462,7 @@ const publicEntries = () => {
     }
   } else if (CONFIG.manifest != null) {
     const pkg = readJson(path.join(BASE, CONFIG.manifest), {});
-    const published =
-      pkg.private !== true &&
-      ["exports", "main", "module", "files"].some((k) => pkg[k] != null);
+    const published = isPublishedManifest(pkg);
     if (published) {
       const specs = new Set();
       const walk = (v) => {
@@ -15203,7 +15230,7 @@ const BAR_ORIGIN = {
 const BAR_LEVEL_HEAD = "| уровень | предмет | что на уровне | держится | опора |";
 // Открытая находка — та, что не починена: предложена, отложена, задана
 // вопросом, записана долгом перехода.
-const BAR_OPEN = new Set(["предложено", "отложено", "вопрос", "долг"]);
+const BAR_OPEN = new Set(BAR_FATES.filter((fate) => fate !== "починено"));
 const barLevelTitle = (level) => level.charAt(0).toUpperCase() + level.slice(1);
 const barSubjectText = (s) => (s === "" ? BAR_NO_SUBJECT : barQuoted(s));
 const barWho = (id, subject) =>
@@ -20698,8 +20725,8 @@ if (mode === "brief") {
               : path.join(alias.to, spec.slice(alias.head.length));
           return ![
             "",
-            ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"],
-            ...["ts", "tsx", "js", "jsx"].map((e) => path.sep + "index." + e),
+            ...[...CODE_EXTENSIONS, "json"].map((e) => "." + e),
+            ...CODE_EXTENSIONS.map((e) => path.sep + "index." + e),
           ].some((tail) => existsSync(at + tail));
         });
         const down = [...via.keys()]
@@ -25013,27 +25040,8 @@ if (mode === "verify") {
         }).filter((d) => !shelfDeps.has(d));
         // Выкладка видна не только скриптом: конфигом площадки, контейнером
         // и шагом конвейера. Скрипта `start` у семени на сборщике нет вовсе.
-        const ciTexts = () => {
-          const out = [];
-          const wf = path.join(BASE, "..", ".github", "workflows");
-          if (walkable(wf))
-            for (const n of readdirSync(wf))
-              if (/\.ya?ml$/.test(n))
-                out.push(readFileSync(path.join(wf, n), "utf8"));
-          for (const p of [
-            ".gitlab-ci.yml",
-            "bitbucket-pipelines.yml",
-            "azure-pipelines.yml",
-            ".drone.yml",
-            ".woodpecker.yml",
-            "Jenkinsfile",
-          ]) {
-            const at = path.join(BASE, "..", p);
-            if (existsSync(at) && statSync(at).isFile())
-              out.push(readFileSync(at, "utf8"));
-          }
-          return out;
-        };
+        const ciTexts = () =>
+          ciFilesOf().map((one) => readFileSync(path.join(BASE, "..", one), "utf8"));
         const deployedBy = () => {
           const at = [
             "vercel.json",
@@ -25143,16 +25151,7 @@ if (mode === "verify") {
             if (script(s)) note("S", `скрипт \`${s}\` в манифесте`);
           const deploy = deployedBy();
           if (deploy !== null) note("S", deploy);
-          const ci = [
-            ".github/workflows",
-            ".gitlab-ci.yml",
-            ".circleci",
-            ".drone.yml",
-            "azure-pipelines.yml",
-            "Jenkinsfile",
-            "bitbucket-pipelines.yml",
-            ".woodpecker.yml",
-          ].find((p) => existsSync(path.join(BASE, "..", p)));
+          const ci = [...CI_DIRS, ...CI_FILES].find((p) => existsSync(path.join(BASE, "..", p)));
           if (ci !== undefined) note("U", `описание конвейера \`${ci}\``);
           return witnesses.get(id);
         };
@@ -26056,28 +26055,7 @@ if (mode === "verify") {
           //
           // Замерено посадкой стенда с описанием на сервере: единственный шаг
           // конвейера — сборка, и прогон об этом молчал.
-          const ciFiles = [];
-          {
-            const roots = [".github/workflows", ".circleci"];
-            const loose = [
-              ".gitlab-ci.yml",
-              ".drone.yml",
-              "azure-pipelines.yml",
-              "Jenkinsfile",
-              "bitbucket-pipelines.yml",
-              ".woodpecker.yml",
-            ];
-            const at = (one) => path.join(BASE, "..", one);
-            for (const one of loose) if (existsSync(at(one))) ciFiles.push(one);
-            for (const dir of roots) {
-              if (!existsSync(at(dir))) continue;
-              for (const name of readdirSync(at(dir))) {
-                const full = path.join(at(dir), name);
-                if (statSync(full).isDirectory()) continue;
-                ciFiles.push(dir + "/" + name);
-              }
-            }
-          }
+          const ciFiles = ciFilesOf();
           const ciMute = [];
           const ciAside = [];
           // Описание, которое не зовёт менеджер пакетов проекта, проекта не
@@ -33026,9 +33004,7 @@ if (mode === "verify") {
     if (CONFIG.manifest != null) {
       const at = path.join(BASE, CONFIG.manifest);
       const pkg = readJson(at, {});
-      const published =
-        pkg.private !== true &&
-        ["exports", "main", "module", "files"].some((k) => pkg[k] != null);
+      const published = isPublishedManifest(pkg);
       if (published) {
         const imported = new Set();
         for (const specs of specsOf.values())

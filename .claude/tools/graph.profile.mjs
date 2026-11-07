@@ -25,9 +25,7 @@ export { manifestOf };
  * каждый своим признаком, и шаблон `create vite` выходил у одного пустым, у
  * другого «нашим, неполным»; монорепозиторий и свой менеджер хуков осмотр
  * считал нашими. Выведено замером корпуса, этап 0 плана трёх сценариев. */
-export const SCENARIOS = ["empty", "familiar", "foreign"];
-
-/** Имя сценария для человека. */
+/* Имя сценария для человека; ключи — сами сценарии. */
 export const SCENARIO_NAMES = {
   empty: "пустая папка",
   familiar: "знакомый проект",
@@ -122,10 +120,4 @@ export const foreignOffer = (foreign, shelfCall = "node .claude/tools/graph.mjs"
   ];
 };
 
-/** Проекты корпуса и ящики тестов кладут файлы без истории; живой проект
- * свою историю несёт, и счёт коммитов берётся у git. */
-export const commitsIn = (root, git) => {
-  if (!existsSync(path.join(root, ".git"))) return 0;
-  const said = git(["rev-list", "--count", "HEAD"]);
-  return Number(said) || 0;
-};
+export { commitsIn } from "./graph.seat.mjs";

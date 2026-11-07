@@ -3806,6 +3806,38 @@ describe("снимок внутри репозитория", () => {
 // затем `TMP`: тест, задавший чужую переменную, папку не подменял.
 const TEMP_VARS = process.platform === "win32" ? ["TEMP", "TMP"] : ["TMPDIR"];
 
+// Места описания конвейера — один список на три вопроса: тексты для шага
+// выкладки, свидетель раздела U и сверку «Конвейер зовёт проверки». Копий
+// было три, и `.circleci` знали две: выкладку из CircleCI не видел никто.
+describe("места конвейера — один список", () => {
+  it("шаг выкладки виден в каждом месте описания конвейера", () => {
+    const box = seatEmpty("ci-places-");
+    try {
+      const run = () =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], {
+          cwd: box,
+          encoding: "utf8",
+        }).stdout;
+      for (const [at, text] of [
+        [".github/workflows/ship.yml", "on: push\njobs:\n  ship:\n    steps:\n      - run: npx wrangler deploy\n"],
+        [".circleci/config.yml", "version: 2.1\njobs:\n  ship:\n    steps:\n      - run: npx wrangler deploy\n"],
+        [".gitlab-ci.yml", "ship:\n  script:\n    - npx wrangler deploy\n"],
+      ]) {
+        fs.mkdirSync(path.dirname(path.join(box, at)), { recursive: true });
+        fs.writeFileSync(path.join(box, at), text);
+        expect(run(), at).toContain("S — шаг выкладки в конвейере");
+        fs.rmSync(path.join(box, at.split("/")[0]), { recursive: true, force: true });
+      }
+      // Список один: второй копии в инструменте нет.
+      const tool = fs.readFileSync(path.join(TOOL_DIR, "graph.mjs"), "utf8");
+      expect(tool.split('".gitlab-ci.yml"').length - 1).toBe(1);
+      expect(tool.split('".circleci"').length - 1).toBe(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 describe("снимок без временной папки", () => {
   it("не собран, назван причиной и удалён, а не оставлен непроверенным", () => {
     const box = seatEmpty("handoff-no-tmp-");

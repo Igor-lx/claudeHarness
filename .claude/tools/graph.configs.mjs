@@ -148,13 +148,15 @@ const tsconfigText = (at, seen = new Set()) => {
   // и считается от папки того конфига, где записана: строгая копия поверх
   // файла-решения видит его `files: []`. Выведено восьмой посадкой.
   const area = {};
+  // Ключи области компилятора: что наследует `extends` и что проект перекрывает своим.
+  const AREA_KEYS = ["files", "include", "exclude"];
   for (const ext of [raw.extends ?? []].flat()) {
     if (!String(ext).startsWith(".")) continue;
     let to = path.resolve(path.dirname(at), ext);
     if (!existsSync(to) && existsSync(to + ".json")) to += ".json";
     const parent = tsconfigText(tsconfigAt(to), seen);
     options = { ...options, ...(parent?.options ?? {}) };
-    for (const key of ["files", "include", "exclude"])
+    for (const key of AREA_KEYS)
       if (Array.isArray(parent?.raw?.[key]))
         area[key] = parent.raw[key].map((one) =>
           path
@@ -163,7 +165,7 @@ const tsconfigText = (at, seen = new Set()) => {
             .join("/"),
         );
   }
-  for (const key of ["files", "include", "exclude"])
+  for (const key of AREA_KEYS)
     if (raw[key] === undefined && area[key] !== undefined) raw[key] = area[key];
   const own = { ...(raw.compilerOptions ?? {}) };
   if (typeof own.baseUrl === "string")
