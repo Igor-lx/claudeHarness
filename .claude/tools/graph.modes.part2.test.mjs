@@ -2207,6 +2207,50 @@ describe("проба планки удалением и в соседе", () => 
       if (markAt !== null) fs.rmSync(markAt, { force: true });
     }
   }, 240000);
+
+  // Три посадки в соседе одной пачки взяли первое прикрытие пула, и одна
+  // функция легла в три файла — повтор, которого никто не сажал. Выведено
+  // пачкой проб `2026-11-07`.
+  it("в пачке каждое прикрытие ложится в песочницу не больше одного раза", () => {
+    const box = project("probaprikr-");
+    let sandbox = null;
+    let markAt = null;
+    try {
+      for (const [rel, text] of [
+        ["src/shared/zzP/zzP.ts", "export const zzP = (n: number): number => n + 2;\n"],
+        ["src/shared/zzQ/zzQ.ts", 'import { zzP } from "../zzP/zzP";\n\nexport const zzQ = (n: number): number => zzP(n) * 2;\n'],
+      ]) {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      }
+      const second = {
+        ...neighbour,
+        criterion: "B5",
+        into: [{ role: "виновник", file: "модуль", text: "export const zzNounish = (text) => text.length === 0;", ts: "export const zzNounish = (text: string): boolean => text.length === 0;" }],
+      };
+      const coverTwo = { file: "модуль", text: "export const zzCoverTwo = () => 2;", ts: "export const zzCoverTwo = (): number => 2;" };
+      fs.writeFileSync(
+        path.join(box, ".claude", "tools", "bar-probes.json"),
+        JSON.stringify({ plants: [neighbour, second], covers: [cover, coverTwo] }),
+      );
+      const one = planted(box, "--batch=1,2", "--seed=2");
+      ({ sandbox, markAt } = one);
+      expect(one.mark.plants).toHaveLength(2);
+      const files = [];
+      const walk = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true }))
+          if (e.isDirectory()) walk(path.join(dir, e.name));
+          else if (/\.tsx?$/.test(e.name)) files.push(fs.readFileSync(path.join(dir, e.name), "utf8"));
+      };
+      walk(path.join(sandbox, "src"));
+      for (const name of ["zzCover = ()", "zzCoverTwo = ()"])
+        expect(files.filter((text) => text.includes(name)).length, name).toBeLessThanOrEqual(1);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      if (sandbox !== null) fs.rmSync(sandbox, { recursive: true, force: true });
+      if (markAt !== null) fs.rmSync(markAt, { force: true });
+    }
+  }, 240000);
 });
 
 /**

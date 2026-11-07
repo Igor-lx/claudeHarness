@@ -10355,12 +10355,18 @@ if (mode === "bar-probe") {
     // узла: нарушение в соседе она назвала «вне правки».
     const blamedOf = (p) =>
       p.culprits ?? (p.into ?? []).map((one) => one.role ?? "виновник");
+    // Прикрытие ложится в песочницу один раз: одно и то же в трёх файлах —
+    // уже повтор, которого никто не сажал, и свод судит его вместо
+    // посаженного. Выведено пачкой проб `2026-11-07`: три посадки в соседе
+    // взяли первое прикрытие пула.
+    const usedCovers = new Set();
     const nearCoverOf = (f, taken) => {
       const near = new Set([
         ...usesWithVia(f).uses.keys(),
         ...dependentsOf(f),
       ]);
       for (const one of covers) {
+        if (usedCovers.has(one)) continue;
         const x = freeFor(one, taken, (y) => near.has(y));
         if (x !== undefined) return [one, x];
       }
@@ -10482,6 +10488,7 @@ if (mode === "bar-probe") {
         const plant = options[Math.floor(random() * options.length)];
         const roles = fits(plant, busy, made);
         busy = roles.taken;
+        if (roles.near !== undefined) usedCovers.add(roles.near[0]);
         for (const one of createsOf(plant)) made.add(one.path);
         for (const m of plant.move ?? []) made.add(m.to);
         chosen.push({ plant, roleFile: roles.roleFile, near: roles.near });
@@ -10780,6 +10787,7 @@ if (mode === "bar-probe") {
       const coverFiles = [];
       for (const one of covers) {
         if (coverFiles.length === wanted) break;
+        if (usedCovers.has(one)) continue;
         const f = freeFor(one, busy);
         if (f === undefined) continue;
         busy.add(f);
