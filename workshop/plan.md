@@ -707,14 +707,21 @@ npx vitest run --config .claude/tools/vitest.config.mjs > <лог> 2>&1; echo "e
 node -e 'const fs=require("fs"),p=require("path");const c=JSON.parse(fs.readFileSync(".claude/tools/foreign-corpus.json","utf8").replace(/^﻿/,""));const pr=c.projects.find(x=>x.name===process.argv[1]);for(const [f,t] of Object.entries(pr.files)){const at=p.join(process.argv[2],f);fs.mkdirSync(p.dirname(at),{recursive:true});fs.writeFileSync(at,t)}' composite <папка>
 ```
 
-**Сессия-работник** — из папки площадки, в фоне, по одной за раз:
+**Сессия-работник** — из папки площадки, в фоне, по одной за раз. Площадка
+вне доверенных папок, и `claude -p` список разрешений проекта не берёт: отказы
+в выводе мерили бы обвязку наблюдения, а не посадку. Поэтому работнику флагом
+`--settings` дают раздел `permissions` семени настройки — тот же список, что
+кладёт посадка; хуки идут из проекта и без флага. Пометить площадку
+доверенной правкой `~/.claude.json` среда облачной сессии не даёт.
 
 ```
+node -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync(".claude/seat/templates/settings.json","utf8").replace(/^﻿/,""));fs.writeFileSync(process.argv[1],JSON.stringify({permissions:t.permissions},null,2))' <папка вне площадки>/worker-permissions.json
 cd <площадка> && env -u CLAUDE_CODE_CHILD_SESSION claude -p "<задание>" \
-  --session-id <uuid> --permission-mode acceptEdits \
-  --allowedTools "Bash(cd *)" "Bash(env *)" "Bash(node *)" "Bash(git *)" "Bash(npm *)" "Bash(npx *)" \
-  --output-format json > <папка вне площадки>/<имя>.json
+  --session-id <uuid> --settings <папка вне площадки>/worker-permissions.json \
+  --permission-mode acceptEdits --output-format json > <папка вне площадки>/<имя>.json
 ```
+
+Первая команда — из корня мастерской.
 
 Номер для `--session-id` — `node -e 'console.log(crypto.randomUUID())'`.
 Журнал: `~/.claude/projects/<путь площадки, косые черты заменены
@@ -852,6 +859,7 @@ stryker.tool.config.json; команда оттуда — `npx stryker run stryk
 | Ловушка | Признак | Что делать |
 | --- | --- | --- |
 | кончилось место на диске | `ENOSPC` в выводе; полный набор падает на корпусе и на тесте словаря | `df -h /` до сборки площадки; песочницы прошлых сессий удалить явными именами; папки прогонов тестов снимаются сами с `4028205` |
+| площадка работника не помечена доверенной | в выводе ошибок `claude -p` строка «Ignoring … permissions.allow entries … not been trusted»; `permission_denials` не пуст на командах, которые список посадки разрешает | дать работнику список разрешений семени флагом `--settings` — справка «Сессия-работник»; хуки идут и без него |
 | сплошная чистка `/tmp` | среда отказывает в команде даже по слову разработчика | удалять по названным путям |
 | посадка не в пустую папку либо внутри другого репозитория | отказ `seat` до любой правки | папка пустая и вне любого репозитория; повторный вызов той же командой на ту же папку обновляет полку |
 | пакеты | установка `npm` идёт по сети и медленно | ключ `--packages <папка с пакетами>` берёт их ссылкой, если там стоит каждый пакет манифеста посадки |
