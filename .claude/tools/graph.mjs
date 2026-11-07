@@ -33413,8 +33413,24 @@ if (mode === "verify") {
         .join("\n");
       const calledByScript = (name) =>
         new RegExp("(?:^|[\\s/&|;])" + name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&") + "(?:\\s|$)", "m").test(scriptBodies);
+      // Пакет, который берёт свой конфиг проекта в корне, — в работе: библиотека
+      // на vitest с конфигом vite. Конфиг, совпавший с семенем, положила
+      // посадка, и выбором проекта он не является. Выведено корпусом посадок.
+      const ownConfigs = (() => {
+        const root = path.join(BASE, "..");
+        return readdirSync(root)
+          .filter((n) => /\.config\.[cm]?[jt]s$/.test(n))
+          .filter((n) => {
+            const seed = shelfAt("seat/templates/" + n);
+            return seed === null || !existsSync(seed) || readFileSync(seed, "utf8") !== readFileSync(path.join(root, n), "utf8");
+          })
+          .map((n) => readFileSync(path.join(root, n), "utf8"))
+          .join("\n");
+      })();
+      const importedByOwnConfig = (name) =>
+        ownConfigs.includes('from "' + name + '"') || ownConfigs.includes("from '" + name + "'");
       if (!projectHasUi() && !projectHasForeignUi())
-        for (const one of ui.filter((n) => held.has(n) && !calledByScript(n)))
+        for (const one of ui.filter((n) => held.has(n) && !calledByScript(n) && !importedByOwnConfig(n)))
           secondAnswers.push(
             one +
               " — пакет интерфейса, а интерфейса у проекта нет: ни файла `.tsx`, `.jsx`, `.vue` либо `.svelte`, ни импорта React. Снять: проекту без интерфейса слияние его не дописывает (`seat/seat.md`, шаг 1-бис)",

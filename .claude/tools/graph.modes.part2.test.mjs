@@ -6256,6 +6256,13 @@ describe("предмет под другим именем и форматом", 
       for (const one of ["react", "react-dom", "vite", "@vitejs/plugin-react", "@types/react", "@types/react-dom"])
         expect(platform).toContain(one + " — пакет интерфейса, а интерфейса у проекта нет");
       expect(said("Семя с условием не лежит без условия")).toContain("mergeStyleMaps");
+      // Свой конфиг проекта берёт пакет — пакет в работе: библиотека на vitest
+      // с конфигом vite. Семенной конфиг под это не идёт: его положила посадка.
+      put(box, "vite.lib.config.mts", 'import { defineConfig } from "vite";\n\nexport default defineConfig({});\n');
+      const owned = said("Пакет платформы не второй ответ");
+      expect(owned).not.toContain("vite — пакет интерфейса");
+      expect(owned).toContain("@vitejs/plugin-react — пакет интерфейса");
+      fs.rmSync(path.join(box, "vite.lib.config.mts"));
       // Импорт React в файле `.ts` — интерфейс есть.
       put(box, "src/app/zzHook.ts", 'import { useState } from "react";\n\nexport const useZz = () => useState(0);\n');
       expect(said("Пакет платформы не второй ответ")).toBe("");
