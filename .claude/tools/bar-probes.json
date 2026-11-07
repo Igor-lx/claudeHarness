@@ -2757,12 +2757,12 @@
     },
     {
       "criterion": "C13",
-      "why": "повторный вызов ставит ту же заметку в очередь сохранения второй раз",
+      "why": "повторный вызов ставит ту же заметку в очередь сохранения второй раз, и второй запрос уйдёт",
       "into": [
         {
           "role": "виновник",
-          "text": "export const queueSave = (queue, note) => [...queue, note];",
-          "ts": "export const queueSave = <T extends { id: string }>(\n  queue: readonly T[],\n  note: T,\n): T[] => [...queue, note];",
+          "text": "const pendingSaves = [];\n\nexport const enqueueSave = (noteId) => {\n  pendingSaves.push(noteId);\n  return pendingSaves.length;\n};",
+          "ts": "const pendingSaves: string[] = [];\n\nexport const enqueueSave = (noteId: string): number => {\n  pendingSaves.push(noteId);\n  return pendingSaves.length;\n};",
           "file": "модуль"
         }
       ]
