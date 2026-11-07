@@ -2703,6 +2703,412 @@
           "to": "shared/paging/pageIndex.ts"
         }
       ]
+    },
+    {
+      "criterion": "A1",
+      "why": "узел считает срок напоминания и сам же записывает его в хранилище",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "const DAY_MS = 86_400_000;\n\nexport const reminderAt = (createdAt, id) => {\n  const at = createdAt + DAY_MS;\n  localStorage.setItem(\"reminder:\" + id, String(at));\n  return at;\n};",
+          "ts": "const DAY_MS = 86_400_000;\n\nexport const reminderAt = (createdAt: number, id: string): number => {\n  const at = createdAt + DAY_MS;\n  localStorage.setItem(\"reminder:\" + id, String(at));\n  return at;\n};",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "A9",
+      "why": "модуль держит две несвязанные половины, и каждый из двух потребителей берёт свою",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "const PERCENT = 100;\n\nexport const slugOf = (title) =>\n  title.trim().toLowerCase().replace(/\\s+/g, \"-\");\n\nexport const percentOf = (part, total) =>\n  total === 0 ? 0 : Math.round((part / total) * PERCENT);",
+          "ts": "const PERCENT = 100;\n\nexport const slugOf = (title: string): string =>\n  title.trim().toLowerCase().replace(/\\s+/g, \"-\");\n\nexport const percentOf = (part: number, total: number): number =>\n  total === 0 ? 0 : Math.round((part / total) * PERCENT);",
+          "file": "модуль"
+        },
+        {
+          "role": "первый",
+          "text": "import { slugOf } from \"{{from:виновник}}\";\n\nexport const noteAnchor = (title) => \"#\" + slugOf(title);",
+          "ts": "import { slugOf } from \"{{from:виновник}}\";\n\nexport const noteAnchor = (title: string): string => \"#\" + slugOf(title);",
+          "file": "модуль"
+        },
+        {
+          "role": "второй",
+          "text": "import { percentOf } from \"{{from:виновник}}\";\n\nexport const doneShare = (done, all) => String(percentOf(done, all)) + \"%\";",
+          "ts": "import { percentOf } from \"{{from:виновник}}\";\n\nexport const doneShare = (done: number, all: number): string =>\n  String(percentOf(done, all)) + \"%\";",
+          "file": "модуль"
+        }
+      ],
+      "culprits": [
+        "виновник"
+      ]
+    },
+    {
+      "criterion": "C8",
+      "why": "загрузка описана тремя флагами, которые каждое событие выставляет заново",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const nextUpload = (state, event) => ({\n  ...state,\n  isUploading: event === \"start\",\n  isPaused: event === \"pause\",\n  isDone: event === \"finish\",\n});",
+          "ts": "type UploadFlags = { isUploading: boolean; isPaused: boolean; isDone: boolean };\n\nexport const nextUpload = (\n  state: UploadFlags,\n  event: \"start\" | \"pause\" | \"finish\",\n): UploadFlags => ({\n  ...state,\n  isUploading: event === \"start\",\n  isPaused: event === \"pause\",\n  isDone: event === \"finish\",\n});",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "C13",
+      "why": "повторный вызов ставит ту же заметку в очередь сохранения второй раз",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const queueSave = (queue, note) => [...queue, note];",
+          "ts": "export const queueSave = <T extends { id: string }>(\n  queue: readonly T[],\n  note: T,\n): T[] => [...queue, note];",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "B14",
+      "why": "узел достаёт страну через три чужих объекта подряд",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const shippingZone = (order) =>\n  order.customer.address.country.code === \"DE\" ? \"home\" : \"abroad\";",
+          "ts": "type Order = {\n  customer: { address: { country: { code: string } } };\n};\n\nexport const shippingZone = (order: Order): \"home\" | \"abroad\" =>\n  order.customer.address.country.code === \"DE\" ? \"home\" : \"abroad\";",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "G9",
+      "why": "поиск по второму массиву на каждом элементе первого: рост — произведение длин, предела нет",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const sharedIds = (mine, theirs) =>\n  mine.filter((id) => theirs.includes(id));",
+          "ts": "export const sharedIds = (\n  mine: readonly string[],\n  theirs: readonly string[],\n): string[] => mine.filter((id) => theirs.includes(id));",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "E7",
+      "why": "отказ сервера выдаётся пустым списком: ни повтора, ни сообщения, ни остановки",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const tagsOrNone = async (url) => {\n  const reply = await fetch(url);\n  if (!reply.ok) return [];\n  return reply.json();\n};",
+          "ts": "export const tagsOrNone = async (url: string): Promise<string[]> => {\n  const reply = await fetch(url);\n  if (!reply.ok) return [];\n  return (await reply.json()) as string[];\n};",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "E3",
+      "why": "неверный размер страницы из адреса молча заменяется умолчанием, вызывающий не узнает",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "const DEFAULT_PAGE_SIZE = 20;\n\nexport const pageSizeOf = (raw) => {\n  const size = Number(raw);\n  return Number.isInteger(size) && size > 0 ? size : DEFAULT_PAGE_SIZE;\n};",
+          "ts": "const DEFAULT_PAGE_SIZE = 20;\n\nexport const pageSizeOf = (raw: string | null): number => {\n  const size = Number(raw);\n  return Number.isInteger(size) && size > 0 ? size : DEFAULT_PAGE_SIZE;\n};",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "B7",
+      "why": "единственный потребитель удалён, а владелец по-прежнему отдаёт префикс ключа наружу",
+      "held": "вопрос модели",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "text": "export const PIN_KEY_PREFIX = \"pin:\";",
+          "ts": "export const PIN_KEY_PREFIX = \"pin:\";",
+          "file": "модуль"
+        }
+      ],
+      "create": {
+        "path": "app/pinKey.ts",
+        "text": "import { PIN_KEY_PREFIX } from \"{{from:владелец}}\";\n\nexport const pinKey = (id: string): string => PIN_KEY_PREFIX + id;\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "H4",
+      "why": "потребитель таблицы подписей удалён, таблица осталась мёртвой",
+      "held": "вопрос модели",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "text": "export const SORT_LABELS = { newest: \"Newest first\", oldest: \"Oldest first\" };",
+          "ts": "export const SORT_LABELS: Record<\"newest\" | \"oldest\", string> = {\n  newest: \"Newest first\",\n  oldest: \"Oldest first\",\n};",
+          "file": "модуль"
+        }
+      ],
+      "create": {
+        "path": "app/sortLabel.ts",
+        "text": "import { SORT_LABELS } from \"{{from:владелец}}\";\n\nexport const sortLabel = (order: \"newest\" | \"oldest\"): string =>\n  SORT_LABELS[order];\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "A15",
+      "why": "сосед правленого сам строит себе форматтер дат внутри функции",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const stampOf = (time) => {\n  const format = new Intl.DateTimeFormat(\"en-GB\", { dateStyle: \"short\" });\n  return format.format(time);\n};",
+          "ts": "export const stampOf = (time: number): string => {\n  const format = new Intl.DateTimeFormat(\"en-GB\", { dateStyle: \"short\" });\n  return format.format(time);\n};",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "C4",
+      "why": "сосед правленого переставляет элементы в переданном массиве на месте",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const pinFirst = (ids, id) => {\n  const at = ids.indexOf(id);\n  if (at > 0) ids.unshift(...ids.splice(at, 1));\n  return ids;\n};",
+          "ts": "export const pinFirst = (ids: string[], id: string): string[] => {\n  const at = ids.indexOf(id);\n  if (at > 0) ids.unshift(...ids.splice(at, 1));\n  return ids;\n};",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "B2",
+      "why": "сосед правленого требует от вызывающего сначала задать названия месяцев",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "let months = [];\n\nexport const setMonths = (names) => {\n  months = names;\n};\n\n// call setMonths before monthName, otherwise every name is empty\nexport const monthName = (index) => months[index] ?? \"\";",
+          "ts": "let months: readonly string[] = [];\n\nexport const setMonths = (names: readonly string[]): void => {\n  months = names;\n};\n\n// call setMonths before monthName, otherwise every name is empty\nexport const monthName = (index: number): string => months[index] ?? \"\";",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "I4",
+      "why": "помощник переехал в общий слой, но знает страницы, которые его зовут",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "app/countLine.ts",
+          "text": "export const countLine = (count: number, page: \"notes\" | \"drafts\"): string =>\n  page === \"notes\"\n    ? String(count) + \" notes on this page\"\n    : String(count) + \" drafts waiting\";\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "app/countLine.ts",
+          "to": "shared/text/countLine.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "D4",
+      "why": "в переносе сохранились два идентификатора одного типа строки, их перепутают",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "app/linkKey.ts",
+          "text": "export const linkKey = (noteId: string, folderId: string): string =>\n  folderId + \"/\" + noteId;\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "app/linkKey.ts",
+          "to": "shared/notes/linkKey.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "A11",
+      "why": "правило «есть ли черновик» берёт хранилище черновиков конкретной реализацией и зовёт его",
+      "create": {
+        "path": "shared/notes/hasDraft.ts",
+        "text": "import { readDraft } from \"../storage/draftStorage\";\n\nexport const hasDraft = (): boolean => {\n  const draft = readDraft();\n  return draft !== null && draft.body.trim() !== \"\";\n};\n"
+      }
+    },
+    {
+      "criterion": "C1",
+      "why": "состояние выборки — три необязательных поля, и данные с ошибкой могут стоять разом",
+      "create": {
+        "path": "shared/notes/fetchState.ts",
+        "text": "export type FetchState = {\n  loading: boolean;\n  data?: readonly string[];\n  error?: string;\n};\n\nexport const fetchStarted = (): FetchState => ({ loading: true });\n\nexport const fetchFailed = (state: FetchState, error: string): FetchState => ({\n  ...state,\n  loading: false,\n  error,\n});\n"
+      }
+    },
+    {
+      "criterion": "E12",
+      "why": "переименование — удаление старой записи и запись новой; сбой второго шага теряет заметку",
+      "create": {
+        "path": "shared/storage/renameNote.ts",
+        "text": "export const renameNote = async (\n  url: string,\n  oldId: string,\n  newId: string,\n): Promise<void> => {\n  await fetch(url + \"/\" + oldId, { method: \"DELETE\" });\n  await fetch(url + \"/\" + newId, { method: \"PUT\" });\n};\n"
+      }
+    },
+    {
+      "criterion": "L6",
+      "why": "две незавершённые операции читают счётчик, ждут и пишут его: вторая затирает первую",
+      "create": {
+        "path": "shared/notes/viewCounter.ts",
+        "text": "let views = 0;\n\nexport const countView = async (send: () => Promise<void>): Promise<number> => {\n  const seen = views;\n  await send();\n  views = seen + 1;\n  return views;\n};\n"
+      }
+    },
+    {
+      "criterion": "K4",
+      "why": "«ещё не загружено» и «загрузка упала» отданы одним и тем же null",
+      "create": {
+        "path": "shared/api/tagsCache.ts",
+        "text": "let tags: string[] | null = null;\n\nexport const loadTags = async (url: string): Promise<void> => {\n  const reply = await fetch(url);\n  tags = reply.ok ? ((await reply.json()) as string[]) : null;\n};\n\nexport const currentTags = (): string[] | null => tags;\n"
+      }
+    },
+    {
+      "criterion": "E10",
+      "why": "из трёх загрузок часть упала, а итог объявлен полным успехом",
+      "create": {
+        "path": "shared/api/loadAll.ts",
+        "text": "export const loadAll = async (\n  urls: readonly string[],\n): Promise<{ ok: true; texts: string[] }> => {\n  const settled = await Promise.allSettled(urls.map((url) => fetch(url)));\n  const texts: string[] = [];\n  for (const one of settled)\n    if (one.status === \"fulfilled\") texts.push(await one.value.text());\n  return { ok: true, texts };\n};\n"
+      }
+    },
+    {
+      "criterion": "A14",
+      "why": "правило выбора режима само читает сеть браузера и адрес страницы",
+      "create": {
+        "path": "shared/notes/syncMode.ts",
+        "text": "export const syncMode = (): \"live\" | \"offline\" | \"preview\" => {\n  if (new URLSearchParams(window.location.search).has(\"preview\"))\n    return \"preview\";\n  return navigator.onLine ? \"live\" : \"offline\";\n};\n"
+      }
+    },
+    {
+      "criterion": "A10",
+      "why": "тема проходит насквозь через рамку, которой она не нужна",
+      "create": [
+        {
+          "path": "app/ThemeButton.tsx",
+          "text": "export const ThemeButton = ({ theme }: { theme: \"light\" | \"dark\" }) => (\n  <button type=\"button\" data-theme={theme}>\n    Save\n  </button>\n);\n"
+        },
+        {
+          "path": "app/ThemeFrame.tsx",
+          "text": "import { ThemeButton } from \"./ThemeButton\";\n\nexport const ThemeFrame = ({ theme }: { theme: \"light\" | \"dark\" }) => (\n  <section>\n    <ThemeButton theme={theme} />\n  </section>\n);\n"
+        },
+        {
+          "path": "app/ThemeShell.tsx",
+          "text": "import { ThemeFrame } from \"./ThemeFrame\";\n\nexport const ThemeShell = ({ theme }: { theme: \"light\" | \"dark\" }) => (\n  <main>\n    <ThemeFrame theme={theme} />\n  </main>\n);\n"
+        }
+      ],
+      "culprits": [
+        "app/ThemeFrame.tsx"
+      ]
+    },
+    {
+      "criterion": "A7-бис",
+      "why": "одна функция решает порядок публикации и сама шьёт запрос и чистит хранилище",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const publish = async (id, body) => {\n  const reply = await fetch(\"/api/notes/\" + id, { method: \"PUT\", body });\n  if (!reply.ok) return false;\n  localStorage.removeItem(\"draft:\" + id);\n  document.title = \"Saved\";\n  return true;\n};",
+          "ts": "export const publish = async (id: string, body: string): Promise<boolean> => {\n  const reply = await fetch(\"/api/notes/\" + id, { method: \"PUT\", body });\n  if (!reply.ok) return false;\n  localStorage.removeItem(\"draft:\" + id);\n  document.title = \"Saved\";\n  return true;\n};",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "C8-тер",
+      "why": "каждое событие замка решает свой переход отдельной функцией",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const lockAfterOpen = (state) => (state === \"closed\" ? \"open\" : state);\n\nexport const lockAfterLock = (state) => (state === \"open\" ? \"locked\" : state);\n\nexport const lockAfterUnlock = (state) =>\n  state === \"locked\" ? \"closed\" : state;",
+          "ts": "type Lock = \"closed\" | \"open\" | \"locked\";\n\nexport const lockAfterOpen = (state: Lock): Lock =>\n  state === \"closed\" ? \"open\" : state;\n\nexport const lockAfterLock = (state: Lock): Lock =>\n  state === \"open\" ? \"locked\" : state;\n\nexport const lockAfterUnlock = (state: Lock): Lock =>\n  state === \"locked\" ? \"closed\" : state;",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "E11",
+      "why": "строка меток для пустого списка — пустая строка, пустое состояние не задумано",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const tagLine = (tags) => tags.map((tag) => \"#\" + tag).join(\" \");",
+          "ts": "export const tagLine = (tags: readonly string[]): string =>\n  tags.map((tag) => \"#\" + tag).join(\" \");",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "H8",
+      "why": "фабрика выборки поля заведена ради одного вызова и добавляет слой без пользы",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "export const pickField = (key) => (record) => record[key];\n\nexport const titleOfNote = pickField(\"title\");",
+          "ts": "export const pickField =\n  <K extends string>(key: K) =>\n  <T extends Record<K, unknown>>(record: T): T[K] =>\n    record[key];\n\nexport const titleOfNote = pickField(\"title\");",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "B13",
+      "why": "потребитель различает реализации источника проверкой класса ради особого случая",
+      "into": [
+        {
+          "role": "виновник",
+          "text": "class LiveSource {\n  read() {\n    return \"live\";\n  }\n}\n\nclass CachedSource extends LiveSource {\n  peek() {\n    return \"cached\";\n  }\n}\n\nexport const sourceText = (source) =>\n  source instanceof CachedSource ? source.peek() : source.read();\n\nexport const cachedSource = () => new CachedSource();",
+          "ts": "class LiveSource {\n  read(): string {\n    return \"live\";\n  }\n}\n\nclass CachedSource extends LiveSource {\n  peek(): string {\n    return \"cached\";\n  }\n}\n\nexport const sourceText = (source: LiveSource): string =>\n  source instanceof CachedSource ? source.peek() : source.read();\n\nexport const cachedSource = (): LiveSource => new CachedSource();",
+          "file": "модуль"
+        }
+      ]
+    },
+    {
+      "criterion": "I2",
+      "why": "потребитель читает внутреннюю таблицу индекса мимо его способа ответить",
+      "into": [
+        {
+          "role": "владелец",
+          "text": "export const titleIndex = {\n  byId: new Map(),\n  add(id, title) {\n    this.byId.set(id, title);\n  },\n};",
+          "ts": "export const titleIndex = {\n  byId: new Map<string, string>(),\n  add(id: string, title: string): void {\n    this.byId.set(id, title);\n  },\n};",
+          "file": "модуль"
+        },
+        {
+          "role": "виновник",
+          "text": "import { titleIndex } from \"{{from:владелец}}\";\n\nexport const titleFor = (id) => titleIndex.byId.get(id) ?? \"Untitled\";",
+          "ts": "import { titleIndex } from \"{{from:владелец}}\";\n\nexport const titleFor = (id: string): string =>\n  titleIndex.byId.get(id) ?? \"Untitled\";",
+          "file": "модуль"
+        }
+      ],
+      "culprits": [
+        "виновник"
+      ]
+    },
+    {
+      "criterion": "F1",
+      "why": "опрос заводит один узел, а снимает другой: у таймера два владельца",
+      "into": [
+        {
+          "role": "владелец",
+          "text": "const POLL_MS = 5000;\n\nexport const polling = { id: 0 };\n\nexport const startPolling = (tick) => {\n  polling.id = window.setInterval(tick, POLL_MS);\n};",
+          "ts": "const POLL_MS = 5000;\n\nexport const polling = { id: 0 };\n\nexport const startPolling = (tick: () => void): void => {\n  polling.id = window.setInterval(tick, POLL_MS);\n};",
+          "file": "модуль"
+        },
+        {
+          "role": "виновник",
+          "text": "import { polling } from \"{{from:владелец}}\";\n\nexport const stopEverything = () => {\n  window.clearInterval(polling.id);\n};",
+          "ts": "import { polling } from \"{{from:владелец}}\";\n\nexport const stopEverything = (): void => {\n  window.clearInterval(polling.id);\n};",
+          "file": "модуль"
+        }
+      ],
+      "culprits": [
+        "виновник",
+        "владелец"
+      ]
     }
   ],
   "covers": [
