@@ -594,6 +594,16 @@ describe("обёртка хуков держит, когда инструмен�
         fs.writeFileSync(cfgAt, cfg);
       }
 
+      // Порченая запись клапана — «отказа в этом запросе ещё не было»: ход
+      // держится снова, а не пропускается.
+      fs.writeFileSync(
+        graphAt,
+        graph.replace("const mode = process.argv[2];", 'const mode = process.argv[2];\nthrow new Error("проба порчи записи");'),
+      );
+      fs.writeFileSync(recordAt, '{"turn": "порча');
+      expect(ask(box, ["stop", "--hook"], { hook_event_name: "Stop", prompt_id: "порча" }).status).toBe(2);
+      fs.writeFileSync(graphAt, graph);
+
       // Отработавший инструмент снимает запись клапана: следующий отказ в
       // том же запросе снова держит ход.
       expect(fs.existsSync(recordAt)).toBe(true);

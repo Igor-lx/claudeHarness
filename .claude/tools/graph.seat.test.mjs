@@ -1811,6 +1811,45 @@ it("каждое чтение среды и платформы в инструм
   expect(stale, "исключение, которому нечего исключать").toEqual([]);
 });
 
+// Файл состояния, который обвязка пишет сама, рвётся посреди записи и правится
+// руками. Читатель обязан назвать порчу либо сделать работы больше, а не
+// меньше. Тест держит вид: новый файл состояния не пройдёт, пока его не
+// назовут здесь вместе с тем, как его читатель переживает порчу.
+it("каждый файл состояния обвязки назван вместе с тем, как читатель переживает порчу", () => {
+  const STATE = new Map([
+    ["claude-harness-stop.json", "readOwn: порчу называет сверка «Файл, написанный обвязкой, читается»"],
+    ["claude-harness-rules.json", "readOwn: то же"],
+    ["claude-harness-rules-", "readOwn: то же, вне git — во временной папке"],
+    ["claude-harness-guard.json", "readJson: то же; след без команды — хуки названы неисполняемыми"],
+    ["claude-harness-hook.json", "порча — «отказа ещё не было»: ход держится снова; тест обёртки хуков"],
+    ["claude-harness-hook-", "то же, вне git"],
+    ["graph-series.json", "порча — пустые отметки: серия гоняет цепочку заново; проверка ниже"],
+    ["graph-series-", "временные файлы серии — индекс части, песочница, журнал части: обратно их не читают"],
+  ]);
+  const used = new Set();
+  const bare = [];
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")))
+    for (const m of fs.readFileSync(path.join(TOOL_DIR, file), "utf8").matchAll(/"((?:claude-harness|graph-series)[a-z-]*(?:\.json)?)"/g))
+      if (STATE.has(m[1])) used.add(m[1]);
+      else bare.push(file + ": " + m[1]);
+  expect(bare, "файл состояния без названного читателя").toEqual([]);
+  expect([...STATE.keys()].filter((k) => !used.has(k)), "исключение, которому нечего исключать").toEqual([]);
+  // Порченые отметки серии читаются пустыми, а не роняют её.
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "series-spoiled-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: box });
+    fs.writeFileSync(path.join(box, ".git", "graph-series.json"), '{"base": "abc", "trees": {');
+    const series = pathToFileURL(path.join(TOOL_DIR, "graph.series.mjs")).href;
+    const said = execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", `import { readMarks } from ${JSON.stringify(series)}; console.log(JSON.stringify(readMarks(process.argv[1])));`, box],
+      { encoding: "utf8" },
+    );
+    expect(said.trim()).toBe('{"base":null,"trees":{}}');
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true });
+  }
+});
 
 // README мастерской переписывают проверенную связку прозой для человека:
 // подъём связки в семени обязан поднять и их. Мастерскую испытательная
