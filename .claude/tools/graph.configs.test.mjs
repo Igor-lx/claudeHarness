@@ -339,6 +339,32 @@ describe("блокировки менеджеров — в семени искл
   });
 });
 
+describe("файлы стенда проб — в форме форматтера семени", () => {
+  // Конфиг стенда ушёл с двумя строками вне формата, и ворота стенда
+  // называли поломкой формата посадку, правившую этот конфиг. Найдено
+  // воротами стенда `2026-11-07` на старой посадке.
+  it("каждый файл стенда, который видит форматтер, отформатирован", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "zz-stand-format-"));
+    try {
+      const stand = JSON.parse(
+        fs.readFileSync(path.join(TOOL_DIR_OF_TEST, "bar-stand.json"), "utf8").replace(/^﻿/, ""),
+      );
+      for (const [file, text] of Object.entries(stand.files)) {
+        fs.mkdirSync(path.dirname(path.join(box, file)), { recursive: true });
+        fs.writeFileSync(path.join(box, file), text);
+      }
+      for (const seed of [".prettierrc.json", ".prettierignore"])
+        fs.copyFileSync(path.join(TOOL_DIR_OF_TEST, "..", "seat", "templates", seed), path.join(box, seed));
+      const prettier = path.join(SEAT, "node_modules", "prettier", "bin", "prettier.cjs");
+      const listed = spawnSync(process.execPath, [prettier, "--list-different", "."], { cwd: box, encoding: "utf8" });
+      expect(listed.stderr).toBe("");
+      expect(listed.stdout.split("\n").filter(Boolean)).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("память компилятора — в семени игнорирования git", () => {
   // Строгий конфиг звена типов продолжает проектный с `incremental` и пишет
   // свою память рядом с ним: файл, которого посадка не заказывала.
