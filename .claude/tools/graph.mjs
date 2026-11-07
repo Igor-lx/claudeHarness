@@ -7074,6 +7074,14 @@ if (mode === "falsify") {
    * умолчания, а не про этот проект. */
   const stepsFromSeed = (r) => (r.edits ?? []).some(stepFromSeed);
   const foreign = [];
+  // Сверка — отдельным полем: её имя само бывает с « — », и деление строки
+  // обратно резало его, и перенацеленный рецепт не засчитывался. Замерено
+  // переходом чужого проекта: «Чужое окружение — не проверено…».
+  const unplaced = (r, fromSeed, why) => {
+    const line = r.section + " — " + why;
+    if (r.project !== true && (r.own === true || fromSeed(r))) foreign.push({ section: r.section, line });
+    else broken.push(line);
+  };
   // Рецепт написан, а предмета у сверки в ЭТОМ проекте не заводится вовсе:
   // поле настройки пусто. Это не «перенацелить на свои файлы» — цели нет, и
   // печатать такую строку вместе с проектными значило бы советовать работу,
@@ -7433,9 +7441,7 @@ if (mode === "falsify") {
       if (Array.isArray(r.edits)) {
         const { failed, after } = runSteps(r);
         if (failed !== undefined) {
-          (r.project !== true && (r.own === true || stepsFromSeed(r)) ? foreign : broken).push(
-            r.section + " — " + failed,
-          );
+          unplaced(r, stepsFromSeed, failed);
           continue;
         }
         record(r.section, after);
@@ -7461,9 +7467,7 @@ if (mode === "falsify") {
       }
       const at = path.join(tmp, r.file);
       if (!existsSync(at)) {
-        (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
-          r.section + " — файла нет: " + r.file,
-        );
+        unplaced(r, stepFromSeed, "файла нет: " + r.file);
         continue;
       }
       const before = readFileSync(at, "utf8");
@@ -7498,9 +7502,7 @@ if (mode === "falsify") {
           const lines = before.split(NEWLINE);
           const at0 = lines.findIndex((l) => l.trim() === r.after);
           if (at0 < 0) {
-            (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
-              r.section + " — якорь дописывания не найден: " + r.after,
-            );
+            unplaced(r, stepFromSeed, "якорь дописывания не найден: " + r.after);
             continue;
           }
           lines.splice(at0 + 1, 0, text);
@@ -7515,9 +7517,7 @@ if (mode === "falsify") {
           replace: r.replace.split("\n").join(NEWLINE),
         });
         if (edited === null) {
-          (r.project !== true && (r.own === true || stepFromSeed(r)) ? foreign : broken).push(
-            r.section + " — рецепт не находит своего места",
-          );
+          unplaced(r, stepFromSeed, "рецепт не находит своего места");
           continue;
         }
         writeFileSync(at, edited);
@@ -7590,7 +7590,7 @@ if (mode === "falsify") {
   // Рецепт обвязки, чью сверку проект уже держит СВОИМ рецептом, перенацелен:
   // долгом он больше не является.
   const foreignLeft = foreign.filter(
-    (f) => !retargeted.has(f.split(" — ")[0]),
+    (f) => !retargeted.has(f.section),
   );
   // Идёт переход — прогон оставляет итог в его файле: закрыть шаг знания
   // «Рецепты фальсификации», не прогнав, не даёт сверка, читающая эту строку.
@@ -7599,7 +7599,7 @@ if (mode === "falsify") {
   const planAt =
     CONFIG.transition?.file == null ? null : path.join(BASE, CONFIG.transition.file);
   if (planAt !== null && existsSync(planAt)) {
-    const sections = [...new Set(foreignLeft.map((f) => f.split(" — ")[0]))];
+    const sections = [...new Set(foreignLeft.map((f) => f.section))];
     const next = withFalsifyTrace(
       readFileSync(planAt, "utf8"),
       falsifyTraceLine(localDay(), sections),
@@ -7615,7 +7615,7 @@ if (mode === "falsify") {
         foreignLeft.length +
         ": ломают файлы того проекта, где написаны, и в этом места не нашли.",
     );
-    for (const f of foreignLeft) console.log("    " + f);
+    for (const f of foreignLeft) console.log("    " + f.line);
     console.log(
       "  Это не порча: перенацелить — записать рецепт под свои файлы в",
     );

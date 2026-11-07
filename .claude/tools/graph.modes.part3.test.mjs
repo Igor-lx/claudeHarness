@@ -4342,6 +4342,7 @@ describe("`falsify` в посаженном проекте", () => {
       withTransitionDebt(box, []);
       const planAt = path.join(box, ".context", "15-transition.md");
       const section = "Рецепты фальсификации перенацелены переходом";
+      const DASHED = "Чужое окружение — не проверено (предупреждение, прогон не роняет)";
       expect(fs.readFileSync(planAt, "utf8")).toContain("| `graph.mjs falsify` |");
       expect(verifyIn(box).get(section) ?? []).toEqual([]);
       const withStep = fs.readFileSync(planAt, "utf8");
@@ -4368,8 +4369,15 @@ describe("`falsify` в посаженном проекте", () => {
           recipes: [
             ...own,
             { section: "Звено цепочки не задвоено", own: true, file: "package.json", find: "места нет", replace: "x" },
+            { section: DASHED, own: true, file: "package.json", find: "места нет", replace: "x" },
           ],
         }),
+      );
+      // Имя сверки само с « — »: перенацеленный проектом рецепт засчитан, а
+      // не назван обрезком имени.
+      fs.writeFileSync(
+        path.join(box, ".context", "falsify.json"),
+        JSON.stringify({ recipes: [{ section: DASHED, file: "package.json", find: "места нет", replace: "x" }] }),
       );
       const run = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "falsify"], {
         cwd: box,
@@ -4378,7 +4386,7 @@ describe("`falsify` в посаженном проекте", () => {
       });
       // Рецепт на открытый шаг ловит, на закрытый простаивает по устройству —
       // и сверка не печатается «предмета нет»: её предмет есть.
-      expect(run.stdout).toContain("  поймали поломку: 1 из 3");
+      expect(run.stdout).toContain("  поймали поломку: 1 из 5");
       expect(run.stdout).not.toContain(section + " — предмета в этом проекте нет");
       expect(run.stdout).toContain("шаг знания «Рецепты фальсификации»");
       expect(fs.readFileSync(planAt, "utf8")).toMatch(
