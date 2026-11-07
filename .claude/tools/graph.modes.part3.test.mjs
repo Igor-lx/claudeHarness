@@ -4480,6 +4480,11 @@ describe("внешнюю команду запускает один помощн
     expect(
       runTool(process.execPath, ["-e", script, 'a "b" (c)', "d&e"], {}, "win32").stdout.trim(),
     ).toBe(JSON.stringify(['a "b" (c)', "d&e"]));
+    // Через оболочку довод с пробелом приходит целым: оболочка делит строку
+    // по пробелам, и путь с пробелом разламывался на два довода.
+    expect(runTool("node", ["-p", "process.argv[1]", "src/My Button/x.tsx"], {}, "win32").stdout.trim()).toBe(
+      "src/My Button/x.tsx",
+    );
     const none = runTool("zz-no-such-tool", ["x"]);
     expect(none.status).toBe(null);
     expect(none.error).toBe("не запустилась: zz-no-such-tool (ENOENT)");
@@ -4498,8 +4503,8 @@ describe("внешнюю команду запускает один помощн
       for (const d of [own, plain, dotted]) fs.mkdirSync(d);
       fs.writeFileSync(path.join(own, "tool.CMD"), "");
       fs.writeFileSync(path.join(plain, "tool.BAT"), "");
-      const count = path.join(dotted, "count");
-      fs.writeFileSync(count, "#!/bin/sh\necho $#\n", { mode: 0o755 });
+      const first = path.join(dotted, "first");
+      fs.writeFileSync(first, '#!/bin/sh\necho "$1"\n', { mode: 0o755 });
       const shellOnly = Object.fromEntries(
         Object.entries(process.env).filter(([k]) => !/^(path|pathext)$/i.test(k)),
       );
@@ -4521,10 +4526,12 @@ describe("внешнюю команду запускает один помощн
       expect(found(runTool("./tool", [], { cwd: own, env: withExt }, "win32"))).toEqual([true, null]);
       expect(runTool(path.join(own, "nope"), [], { env: withExt }, "win32").status).toBe(null);
       // Точка с `com` в имени папки исполняемым файлом команду не делает:
-      // она идёт через оболочку, и та делит довод по пробелу. Сценарий со
-      // строкой `#!` исполняет только оболочка POSIX.
+      // она идёт через оболочку, и та раскрывает переменную в доводе.
+      // Сценарий со строкой `#!` исполняет только оболочка POSIX.
       if (process.platform !== "win32")
-        expect(runTool(count, ["a b"], {}, "win32").stdout.trim()).toBe("2");
+        expect(runTool(first, ["$ZZ_MARK"], { env: { ...process.env, ZZ_MARK: "раскрыто" } }, "win32").stdout.trim()).toBe(
+          "раскрыто",
+        );
       // Вывод больше `64` КБ приходит целиком.
       const big = runTool(process.execPath, ["-e", "process.stdout.write('x'.repeat(100000))"]);
       expect([big.status, big.stdout.length]).toEqual([0, 100000]);

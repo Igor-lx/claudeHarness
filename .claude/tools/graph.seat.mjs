@@ -18,6 +18,14 @@ import path from "node:path";
 
 import { OUT_OF_TREE } from "./graph.predicates.mjs";
 
+/** Сегодняшняя дата для человека — `ГГГГ-ММ-ДД` по часам машины. Срез
+ * `toISOString` берёт день по UTC, и в поясе UTC+3 посадка после полуночи
+ * получала вчерашний. */
+export const localDay = (at = new Date()) =>
+  [at.getFullYear(), at.getMonth() + 1, at.getDate()]
+    .map((n, i) => String(n).padStart(i === 0 ? 4 : 2, "0"))
+    .join("-");
+
 /** Временная папка системы, годная для записи, — либо ошибка, которая её
  * называет. Режимы, заводящие там песочницу, брали её каждый сам и при
  * негодной папке падали сырым стеком, а `handoff` оставлял непроверенный
@@ -57,7 +65,10 @@ export const runTool = (
     platform === "win32" &&
     command !== process.execPath &&
     !/\.(?:exe|com)$/i.test(command);
-  const run = spawnSync(command, args, {
+  // Оболочка делит строку по пробелам: довод с пробелом идёт в кавычках, иначе
+  // путь с пробелом приходил двумя доводами.
+  const said = shell ? args.map((a) => (/\s/.test(a) && !/^".*"$/.test(a) ? '"' + a + '"' : a)) : args;
+  const run = spawnSync(command, said, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     shell,
@@ -1329,7 +1340,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
         readFileSync(factsAt, "utf8"),
         rows,
         tiersFrom(tiersRun.out),
-        new Date().toISOString().slice(0, 10),
+        localDay(),
       ),
     );
   } catch (e) {

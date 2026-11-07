@@ -1700,6 +1700,118 @@ it("каждый отказ инструмента назван тестом л�
   expect(EXEMPT.map(([key]) => key).filter((key) => !used.has(key)), "исключение, которому нечего исключать").toEqual([]);
 });
 
+// Адрес режима, прочитанный мимо общего разбора, не узнаёт формы, которые
+// узнают прочие режимы: `sizes` отвечал «файлов: 0» с кодом 0 на `src/app/App`
+// и на путь с обратной косой Windows. Тест держит вид: каждое чтение довода
+// режима идёт через общий разбор либо стоит исключением с причиной.
+it("каждый довод режима из командной строки приводится общим разбором либо исключён с причиной", () => {
+  const EXEMPT = [
+    ['command = process.argv.slice(3).join(" ")', "команда стража — строка оболочки, а не адрес"],
+    ["const rest = process.argv.slice(3);", "путь журнала расхода — файл системы, его читает existsSync как есть"],
+    ["const projectAt = process.argv[3]", "папка посадки — путь системы, её разрешает path.resolve посадки"],
+    ["unknownFlagsOf(process.argv.slice(3)", "ключи посадки, не адрес"],
+    ["const asked = process.argv[3] ?? null;", "папка снимка handoff — путь системы"],
+    ["const judged = process.argv.slice(3)", "номер посадки пробы планки, не адрес"],
+    ['process.argv[3] === "--fired"', "ключ режима, не адрес"],
+    ['const logAt = process.argv[4] ?? ""', "журнал срабатываний — файл системы"],
+    ['"  `" + process.argv[3] + "`', "адрес, напечатанный человеку как он его дал"],
+  ];
+  const lines = fs.readFileSync(path.join(TOOL_DIR, "graph.mjs"), "utf8").split("\n");
+  const SHARED = /argPath\(|canonicalList\(|canonical\(|path\.resolve\(/;
+  const used = new Set();
+  const bare = [];
+  let reads = 0;
+  lines.forEach((line, i) => {
+    if (!/process\.argv\[[3-9]\]|process\.argv\.slice\([3-9]\)/.test(line)) return;
+    reads += 1;
+    const hit = EXEMPT.find(([key]) => line.includes(key));
+    if (hit !== undefined) return void used.add(hit[0]);
+    if (!SHARED.test(lines.slice(i, i + 5).join("\n"))) bare.push(i + 1 + ": " + line.trim());
+  });
+  expect(reads).toBeGreaterThan(15);
+  expect(bare, "довод режима мимо общего разбора").toEqual([]);
+  expect(EXEMPT.map(([key]) => key).filter((key) => !used.has(key)), "исключение, которому нечего исключать").toEqual([]);
+});
+
+// Дата, которую инструмент пишет человеку, — день его часов. Срез `toISOString`
+// даёт день по UTC: посадка в поясе UTC+3 после полуночи получала вчерашний.
+it("дата для человека — по местным часам в любом поясе, а не срез UTC", () => {
+  const seatAt = pathToFileURL(path.join(TOOL_DIR, "graph.seat.mjs")).href;
+  const dayIn = (zone, instant) =>
+    execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", `import { localDay } from ${JSON.stringify(seatAt)}; console.log(localDay(new Date(${JSON.stringify(instant)})))`],
+      { encoding: "utf8", env: { ...process.env, TZ: zone } },
+    ).trim();
+  expect(dayIn("Europe/Moscow", "2026-03-01T22:30:00Z")).toBe("2026-03-02");
+  expect(dayIn("America/Los_Angeles", "2026-03-02T03:30:00Z")).toBe("2026-03-01");
+  expect(dayIn("UTC", "2026-12-31T23:59:00Z")).toBe("2026-12-31");
+  const sliced = [];
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")))
+    fs.readFileSync(path.join(TOOL_DIR, file), "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        // Разбор даты из текста обратно в ту же форму — по UTC с обеих
+        // сторон, и он законен: строку проверки даты пропускают.
+        if (/Date\.parse\(d \+ "T00:00:00Z"\)|new Date\(t\)\.toISOString\(\)\.slice\(0, 10\) !== d/.test(line)) return;
+        // День для человека срезом метки ISO — в любой записи: от `new Date()`
+        // и от сохранённой метки `at` паузы и следа.
+        if (/toISOString\(\)\.slice\(0, ?10\)|\b(iso|at)\b[^;]*\.slice\(0, ?10\)/.test(line)) sliced.push(file + ":" + (i + 1));
+      });
+  expect(sliced, "дата для человека срезом UTC").toEqual([]);
+});
+
+// Чтение среды и платформы ведёт себя по-разному на другой машине, а другая
+// машина проверяется только набором на Windows: место, до которого не доходит
+// тест, там не проверено ничем. Тест держит вид: переменная среды названа
+// тестом, обращение к платформе — исключением с причиной.
+it("каждое чтение среды и платформы в инструменте названо тестом либо исключением с причиной", () => {
+  const PLATFORM_EXEMPT = [
+    ["graph.mjs", 'process.platform !== "win32"', "бит исполнения хука git на Windows не читается; сверку хуков гоняет набор на Windows"],
+    ["graph.mjs", "homedir()", "папка журналов по умолчанию; тест расхода задаёт CLAUDE_CONFIG_DIR"],
+    ["graph.modes.shared.mjs", "os.tmpdir()", "оснастка тестов"],
+    ["graph.seat.mjs", "tmpdir()", "systemTemp: настоящее имя временной папки, найдено набором на Windows; держит тест systemTemp"],
+    ["graph.seat.mjs", 'process.platform === "win32" ? "TEMP" : "TMPDIR"', "текст отказа systemTemp"],
+    ["graph.seat.mjs", "platform = process.platform", "runTool: платформа доводом, тест подставляет win32"],
+    ["hook.mjs", "tmpdir()", "запись клапана хука вне git — ветка без теста, вид семейства «ветка, в которую не входят»"],
+  ];
+  const ENV_EXEMPT = new Map([
+    ["PATH", "обёртки долга дописывают .bin; npm run уже кладёт его сам, а Node на Windows берёт первый ключ по сортировке — PATH раньше Path"],
+    ["GRAPH_BAR_CHECKS", "метка вложенного verify свода — ставит и читает сам инструмент, её проходит любой тест bar"],
+    ["GRAPH_SEAT_FACTS", "файл фактов посадки — ставит посадка, её проходит корпусный тест"],
+    ["GRAPH_SERIES_PART", "номер части серии — ставит серия, её проходят тесты series"],
+  ]);
+  const tools = ["graph.mjs", "graph.modes.shared.mjs", "graph.seat.mjs", "graph.seatlive.mjs", "graph.profile.mjs", "graph.configs.mjs", "graph.series.mjs", "hook.mjs"];
+  const tests = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".test.mjs")).map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8")).join("\n");
+  const bareEnv = [];
+  const barePlatform = [];
+  const used = new Set();
+  const texts = new Map(tools.map((file) => [file, fs.readFileSync(path.join(TOOL_DIR, file), "utf8")]));
+  // Имя переменной стоит константой и в соседнем модуле: разрешают по всем.
+  const consts = new Map([...[...texts.values()].join("\n").matchAll(/const (\w+) = "([A-Z_]+)";/g)].map((m) => [m[1], m[2]]));
+  for (const [file, text] of texts) {
+    for (const m of text.matchAll(/process\.env\.([A-Z_]+)|process\.env\[(\w+)\]/g)) {
+      const name = m[1] ?? consts.get(m[2]) ?? m[2];
+      if (ENV_EXEMPT.has(name)) used.add("env:" + name);
+      else if (!tests.includes(name)) bareEnv.push(file + ": " + name);
+    }
+    text.split("\n").forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line) || !/process\.platform|tmpdir\(\)|homedir\(\)/.test(line)) return;
+      const hit = PLATFORM_EXEMPT.find(([f, key]) => f === file && line.includes(key));
+      if (hit === undefined) barePlatform.push(file + ":" + (i + 1) + ": " + line.trim());
+      else used.add(hit[0] + hit[1]);
+    });
+  }
+  expect(bareEnv, "переменная среды без теста и без исключения").toEqual([]);
+  expect(barePlatform, "обращение к платформе без исключения").toEqual([]);
+  const stale = [
+    ...PLATFORM_EXEMPT.filter(([f, key]) => !used.has(f + key)).map(([f, key]) => f + ": " + key),
+    ...[...ENV_EXEMPT.keys()].filter((name) => !used.has("env:" + name)),
+  ];
+  expect(stale, "исключение, которому нечего исключать").toEqual([]);
+});
+
+
 // README мастерской переписывают проверенную связку прозой для человека:
 // подъём связки в семени обязан поднять и их. Мастерскую испытательная
 // посадка знает по своей метке — в ней путь полки, с которой посажена.

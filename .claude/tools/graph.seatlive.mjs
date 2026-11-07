@@ -28,6 +28,7 @@ import {
   saidBy,
   sandboxPackages,
   systemTemp,
+  localDay,
   tailOf,
   testCountsOf,
   tiersFrom,
@@ -780,7 +781,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   }
   const tiersRun = runTool(process.execPath, [at(".claude/tools/graph.mjs"), "tiers"], { cwd: target, env });
   try {
-    write(".context/01-facts.md", factsWithBaseline(read(".context/01-facts.md"), rows, tiersFrom(tiersRun.out), new Date().toISOString().slice(0, 10)));
+    write(".context/01-facts.md", factsWithBaseline(read(".context/01-facts.md"), rows, tiersFrom(tiersRun.out), localDay()));
   } catch (e) {
     fail("Базовая линия не записалась: " + e.message, ...tailOf(tiersRun.out));
   }

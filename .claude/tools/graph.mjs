@@ -167,6 +167,7 @@ import {
 import {
   envLowOf,
   ENV_BOOTSTRAP,
+  localDay,
   gitPathOf,
   unknownFlagsOf,
   layShelf,
@@ -7539,7 +7540,7 @@ if (mode === "falsify") {
     const sections = [...new Set(foreignLeft.map((f) => f.split(" — ")[0]))];
     const next = withFalsifyTrace(
       readFileSync(planAt, "utf8"),
-      falsifyTraceLine(new Date().toISOString().slice(0, 10), sections),
+      falsifyTraceLine(localDay(), sections),
       CONFIG.transition.heading,
     );
     if (next !== null) writeFileSync(planAt, next);
@@ -7795,7 +7796,7 @@ if (mode === "handoff") {
   // Памятка получателю лежит РЯДОМ с папкой, а не внутри неё. Внутри она
   // сделала бы обвязку не той же самой, и сверка состава краснела бы на файле,
   // которого в обвязке быть не должно.
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = localDay();
   // Требования к машине берутся из проверенной связки СЕМЕНИ настройки:
   // написать их числом здесь значило бы завести второй список, и он разошёлся
   // бы с первым при первом же обновлении связки.
@@ -8546,7 +8547,7 @@ if (mode === "stop") {
       : barDigest("на чтение " + (body === null ? "" : (barHeaderOf(body).address ?? "")));
   const holdFiles = want.length > 0 ? named : [String(CONFIG.barProtocol ?? "")];
   const paused = state.pause?.digest === holdDigest && holdFault !== "";
-  const day = (iso) => String(iso ?? "").slice(0, 10);
+  const day = (iso) => (Number.isNaN(Date.parse(iso)) ? "" : localDay(new Date(iso)));
 
   if (flag === "--pause") {
     const reason = process.argv
@@ -10861,7 +10862,7 @@ if (mode === "bar-probe") {
         criterion: plant.criterion,
         verdict,
         kind: plant.kind ?? "новым файлом",
-        when: new Date().toISOString().slice(0, 10),
+        when: localDay(),
         ...(entries.length > 1 ? { batch: entries.length } : {}),
         ...(found === null ? {} : { found, atPlant }),
       });
@@ -20909,7 +20910,10 @@ if (mode === "sizes") {
     readFileSync(f, "utf8")
       .split(NEWLINE)
       .filter((l) => l.trim() !== "").length;
-  const arg = process.argv[3];
+  // Адрес — в форме прочих режимов: от корня репозитория либо исходников, с
+  // косой любой системы. Корень исходников сам по себе — весь код.
+  const given = argPath(process.argv[3]);
+  const arg = given !== undefined && SRC_PREFIXES.includes(given + "/") ? "" : given;
   // Стили считаются НАРАВНЕ с кодом, а не пропускаются.
   //
   // Этот режим называет цену последнего шага плана перехода — сплошного чтения
@@ -20932,6 +20936,15 @@ if (mode === "sizes") {
   const testRows = pick(files.filter((f) => isTest(f)));
   const styleRows = pick(styleFiles);
   const sum = (rows) => rows.reduce((s, r) => s + r[1], 0);
+  // Ноль по адресу без файлов читается как «здесь ничего нет»: адрес назван.
+  if (arg && codeRows.length + testRows.length + styleRows.length === 0) {
+    console.log("=== Ничего не нашлось по адресу ===");
+    console.log(
+      "  `" + process.argv[3] + "` — под ним нет ни одного файла кода, стилей и тестов." +
+        " Адрес — часть пути от корня исходников либо репозитория: `components/Button`, `src/components/Button`.",
+    );
+    process.exit(1);
+  }
 
   console.log("=== Непустых строк на файл ===" + NEWLINE);
   for (const [f, n] of [...codeRows, ...styleRows, ...testRows])

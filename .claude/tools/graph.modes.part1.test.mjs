@@ -2513,6 +2513,33 @@ describe("база о своём: документы узла, сторона т
     }
   }, 300000);
 
+  // Адрес `sizes` — в той же форме, что у прочих режимов: от корня
+  // репозитория, от корня исходников, с обратной косой Windows. Сравнение
+  // подстрокой без приведения отвечало «файлов: 0» с кодом 0 на файл, который
+  // есть, — и ноль читался как «здесь ничего нет».
+  it("sizes находит файл по адресу в любой форме режимов, а на адрес без файлов кончается кодом 1", () => {
+    const box = seatEmpty("sizes-");
+    try {
+      const run = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "sizes", ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+      for (const address of ["app/App", "src/app/App", "app\\App", "src\\app\\App.tsx", "./src/app"]) {
+        const r = run(address);
+        expect(r.status, address).toBe(0);
+        expect(r.stdout, address).toMatch(/^\s+\d+ {2}app\/App\.tsx$/m);
+      }
+      expect(run("src").stdout).toMatch(/^\s+\d+ {2}app\/App\.tsx$/m);
+      const none = run("zzNowhere");
+      expect(none.status).toBe(1);
+      expect(none.stdout).toContain("=== Ничего не нашлось по адресу ===");
+      expect(none.stdout).toContain("`zzNowhere`");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
   it("файл объявленной папки тестов — сторона тестов, а не код карты", () => {
     const box = seatEmpty("testdir-");
     try {
