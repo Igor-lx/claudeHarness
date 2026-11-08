@@ -32005,6 +32005,17 @@ if (mode === "verify") {
   let frameLaid = 0;
   let frameOwn = 0;
   let frameLives = true;
+  // Свой код, который весь — семена, лёгшие прежней редакцией: проект их не
+  // писал, а сверки базы требовали описать его как свой. Выведено
+  // обновлением испытательной посадки `2026-11-08`: правка семени помощника
+  // слияния объявила пустой проект живым.
+  let driftedOwn = [];
+  const driftHint = () =>
+    driftedOwn.length === 0
+      ? null
+      : "  свой код — только семена, лёгшие прежней редакцией: " +
+        driftedOwn.join(", ") +
+        ". Не правили сами — заменить редакцией полки; правили — это свой код";
   checkStep(() => {
     {
       const mapAt = shelfAt("seat/map.json");
@@ -32109,6 +32120,10 @@ if (mode === "verify") {
         const frameTo = new Set(frame.map((e) => norm(path.join(REPO, e.to))));
         const ownOutsideFrame = own.filter((f) => !frameTo.has(f));
         frameLives = ownOutsideFrame.length === 0;
+        driftedOwn =
+          ownOutsideFrame.length > 0 && ownOutsideFrame.every((f) => seedAt.has(f))
+            ? ownOutsideFrame.map((f) => norm(path.relative(REPO, f)))
+            : [];
         // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
         // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
         // с текстом. Признак тот же, что у каркаса: свой код вне каркаса.
@@ -32541,6 +32556,7 @@ if (mode === "verify") {
     console.log("  молчат о своём коде: " + codeMute.length);
     for (const g of codeMute)
       console.log("    " + g + ". Прочитать код и написать, что в нём есть");
+    if (codeMute.length > 0 && driftHint() !== null) console.log(driftHint());
   });
   // Раздел планки объявлен по СВОЕМУ замеру, а не словом семени.
   //
@@ -32619,6 +32635,7 @@ if (mode === "verify") {
           g +
           " — обоснование приехало семенем и не переписано. Прочитать код и написать, что замерено",
       );
+    if (scopeSeeded.length > 0 && driftHint() !== null) console.log(driftHint());
   });
   checkStep(() => {
     checkHead("Каркас обвязки не лежит в живом проекте", () => ({

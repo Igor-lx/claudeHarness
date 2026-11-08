@@ -5821,6 +5821,39 @@ describe("витрина называет код номером гарантии
   }, 180000);
 });
 
+// Правка семени на полке делала лёгшую копию «своим кодом», и сверки базы
+// требовали описать код, которого проект не писал. Выведено обновлением
+// испытательной посадки `2026-11-08`.
+describe("семя прежней редакции названо причиной", () => {
+  it("правка семени на полке называет лёгшую копию под сверкой базы", () => {
+    const box = seatEmpty("seed-drift-");
+    try {
+      const run = () => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const hint = "свой код — только семена, лёгшие прежней редакцией: src/shared/styles/mergeStyleMaps.ts";
+      expect(run()).not.toContain(hint);
+      fs.appendFileSync(
+        path.join(box, ".claude", "seat", "templates", "src", "shared", "styles", "mergeStyleMaps.ts"),
+        "\nexport const zzEdition = 2;\n",
+      );
+      const said = run();
+      expect(said).toContain("=== Файл базы о живом коде назвал его адрес ===");
+      expect(said.split("=== Файл базы о живом коде назвал его адрес ===")[1].split("\n===")[0]).toContain(hint);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 /**
  * Третья посадка в живой проект: своя папка `.claude/` проекта, тесты вне
  * корня исходников, висячее имя класса и свой файл правил проекта. Каждое
