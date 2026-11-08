@@ -3021,25 +3021,35 @@
     },
     {
       "criterion": "C8-тер",
-      "why": "каждое событие замка решает свой переход отдельной функцией",
+      "why": "переходы одного замка решают два модуля: один открывает, другой сам запирает",
       "into": [
         {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const doorLock = { state: \"closed\" };\n\nexport const openDoorLock = () => {\n  if (doorLock.state === \"closed\") doorLock.state = \"open\";\n};",
+          "ts": "export const doorLock: { state: \"closed\" | \"open\" | \"locked\" } = {\n  state: \"closed\",\n};\n\nexport const openDoorLock = (): void => {\n  if (doorLock.state === \"closed\") doorLock.state = \"open\";\n};"
+        },
+        {
           "role": "виновник",
-          "text": "export const lockAfterOpen = (state) => (state === \"closed\" ? \"open\" : state);\n\nexport const lockAfterLock = (state) => (state === \"open\" ? \"locked\" : state);\n\nexport const lockAfterUnlock = (state) =>\n  state === \"locked\" ? \"closed\" : state;",
-          "ts": "type Lock = \"closed\" | \"open\" | \"locked\";\n\nexport const lockAfterOpen = (state: Lock): Lock =>\n  state === \"closed\" ? \"open\" : state;\n\nexport const lockAfterLock = (state: Lock): Lock =>\n  state === \"open\" ? \"locked\" : state;\n\nexport const lockAfterUnlock = (state: Lock): Lock =>\n  state === \"locked\" ? \"closed\" : state;",
-          "file": "модуль"
+          "file": "модуль",
+          "text": "import { doorLock } from \"{{from:владелец}}\";\n\nexport const lockAfterUse = () => {\n  if (doorLock.state === \"open\") doorLock.state = \"locked\";\n};",
+          "ts": "import { doorLock } from \"{{from:владелец}}\";\n\nexport const lockAfterUse = (): void => {\n  if (doorLock.state === \"open\") doorLock.state = \"locked\";\n};"
         }
+      ],
+      "culprits": [
+        "виновник",
+        "владелец"
       ]
     },
     {
       "criterion": "E11",
-      "why": "строка меток для пустого списка — пустая строка, пустое состояние не задумано",
+      "why": "список меток без меток рисуется пустым перечнем: пустое состояние не задумано",
       "into": [
         {
           "role": "виновник",
-          "text": "export const tagLine = (tags) => tags.map((tag) => \"#\" + tag).join(\" \");",
-          "ts": "export const tagLine = (tags: readonly string[]): string =>\n  tags.map((tag) => \"#\" + tag).join(\" \");",
-          "file": "модуль"
+          "file": "разметка",
+          "text": "export function TagChips({ tags }) {\n  return (\n    <ul>\n      {tags.map((tag) => (\n        <li key={tag}>{tag}</li>\n      ))}\n    </ul>\n  );\n}",
+          "ts": "export function TagChips({ tags }: { readonly tags: readonly string[] }) {\n  return (\n    <ul>\n      {tags.map((tag) => (\n        <li key={tag}>{tag}</li>\n      ))}\n    </ul>\n  );\n}"
         }
       ]
     },
@@ -3085,7 +3095,8 @@
         }
       ],
       "culprits": [
-        "виновник"
+        "виновник",
+        "владелец"
       ]
     },
     {
