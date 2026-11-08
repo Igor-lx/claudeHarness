@@ -3239,9 +3239,12 @@ describe("запись карты не спорит с кодом", () => {
       fs.appendFileSync(code, "export const zzStep = 1;\n");
       // Спор записи с кодом назван сразу, до ответов: правка карты потом
       // сняла бы ответы, стоящие на модели.
-      expect(bar()).toContain(
+      const first = bar();
+      expect(first).toContain(
         "Сначала база: запись карты спорит с кодом — `app/zzCounter.ts`.",
       );
+      // Под ним — что именно спорит, словами сверки.
+      expect(first).toMatch(/Сначала база: запись карты спорит с кодом[^\n]*\n {4}\S[^\n]*zzCounter\.ts[^\n]*состояни/i);
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       const proto = fs.readFileSync(protoAt, "utf8");
       const row = /^\| `app\/zzCounter\.ts` \| {2}\| {2}\| {2}\|$/m;
