@@ -7,9 +7,7 @@ export function mergeStyleMaps<T extends StyleMap>(
   const result: StyleMap = {};
 
   for (const map of maps) {
-    if (!map) continue;
-    for (const key in map) {
-      const value = map[key];
+    for (const [key, value] of Object.entries<string | undefined>(map ?? {})) {
       if (!value) continue;
       result[key] = result[key] ? `${result[key]} ${value}` : value;
     }
