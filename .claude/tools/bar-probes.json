@@ -2859,14 +2859,14 @@
     },
     {
       "criterion": "A15",
-      "why": "сосед правленого сам строит себе форматтер дат внутри функции",
+      "why": "сосед правленого сам создаёт себе писателя меток внутри функции, а не получает его входом",
       "change": "сосед",
       "into": [
         {
           "role": "виновник",
-          "text": "export const stampOf = (time) => {\n  const format = new Intl.DateTimeFormat(\"en-GB\", { dateStyle: \"short\" });\n  return format.format(time);\n};",
-          "ts": "export const stampOf = (time: number): string => {\n  const format = new Intl.DateTimeFormat(\"en-GB\", { dateStyle: \"short\" });\n  return format.format(time);\n};",
-          "file": "модуль"
+          "file": "модуль",
+          "text": "class StampWriter {\n  write(time) {\n    return \"at \" + String(time);\n  }\n}\n\nexport const stampLine = (time) => {\n  const writer = new StampWriter();\n  return writer.write(time);\n};",
+          "ts": "class StampWriter {\n  write(time: number): string {\n    return \"at \" + String(time);\n  }\n}\n\nexport const stampLine = (time: number): string => {\n  const writer = new StampWriter();\n  return writer.write(time);\n};"
         }
       ]
     },
