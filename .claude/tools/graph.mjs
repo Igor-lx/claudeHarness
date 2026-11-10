@@ -7402,6 +7402,20 @@ if (mode === "falsify") {
         seatCopy,
         seedHolds: seedConditionHolds,
         hasUi: projectHasUi,
+        // Проект живёт каркасом — каждый файл каркаса лежит равным семени.
+        frameLives: () =>
+          seatCopy
+            .filter((e) => e.onlyWhenEmpty === true)
+            .every((e) => {
+              const own = path.join(tmp, e.to);
+              const seed = shelfAt(e.from);
+              return (
+                existsSync(own) &&
+                seed !== null &&
+                existsSync(seed) &&
+                sameAsSeed(readFileSync(own, "utf8"), readFileSync(seed, "utf8"))
+              );
+            }),
         exists: (rel) => existsSync(path.join(tmp, rel)),
         otherName,
         sectionLive: (letter) => qualityScopeDeclared()?.get(letter)?.live === true,

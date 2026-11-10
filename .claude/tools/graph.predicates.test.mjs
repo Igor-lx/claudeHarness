@@ -897,6 +897,7 @@ describe("рецепт без предмета по своему условию 
     ],
     seedHolds: (e) => e.to !== "src/test-setup.ts",
     hasUi: () => false,
+    frameLives: () => false,
     // Как `path.join` в режиме: адрес не строкой — ошибка, а не «нет файла».
     exists: (rel) => {
       if (typeof rel !== "string") throw new TypeError("адрес не строкой");
@@ -936,6 +937,7 @@ describe("рецепт без предмета по своему условию 
 
   it("интерфейс, файл под другим именем и живой раздел", () => {
     expect([idle({ whenUi: true }), idle({ whenUi: true }, { hasUi: () => true })]).toEqual([true, false]);
+    expect([idle({ whenFrame: true }), idle({ whenFrame: true }, { frameLives: () => true })]).toEqual([true, false]);
     expect([idle({ whenFile: "eslint.config.js" }), idle({ whenFile: ".eslintrc.json" })]).toEqual([false, true]);
     expect([idle({ whenSectionOff: "T" }), idle({ whenSectionOff: "K" })]).toEqual([false, true]);
   });

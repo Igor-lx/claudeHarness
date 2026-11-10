@@ -339,6 +339,53 @@ describe("блокировки менеджеров — в семени искл
   });
 });
 
+describe("запасной сопоставитель образцов отвечает как picomatch", () => {
+  // Без пакетов образец раннера по умолчанию не сопоставлял ни одного теста:
+  // запасной разбор не знал `?(…)` и `[…]`, и сверка области сбора краснела
+  // на здоровом проекте. Выведено `2026-11-08` на составном проекте.
+  it("образцы раннера и проектов — те же ответы на тех же путях", async () => {
+    const { globMatcher, RUNNER_DEFAULT_INCLUDE } = await import(path.join(TOOL_DIR_OF_TEST, "graph.configs.mjs"));
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "zz-glob-bare-"));
+    try {
+      const globs = [
+        RUNNER_DEFAULT_INCLUDE,
+        ["src/**/*.test.{ts,tsx}"],
+        ["src/**/__tests__/*.ts"],
+        ["**/tests/*.test.?(c|m)js"],
+        ["src/[ab]*/x.ts"],
+        ["src/?.ts"],
+        ["**/*.+(spec|test).ts", "!**/skip/**"],
+      ];
+      const paths = [
+        "src/app/tests/App.test.tsx",
+        "a.spec.cts",
+        "x.test.mjs",
+        "x.test.md",
+        "x.testx.ts",
+        "dir/x.spec.jsx",
+        "src/__tests__/days.ts",
+        "src/a/__tests__/days.ts",
+        "lib/tests/z.test.cjs",
+        "lib/tests/z.test.js",
+        "src/alpha/x.ts",
+        "src/gamma/x.ts",
+        "src/q.ts",
+        "src/qq.ts",
+        "src/skip/a.test.ts",
+        "src/keep/a.spectest.ts",
+      ];
+      for (const list of globs) {
+        const real = globMatcher(list, SEAT);
+        const fallback = globMatcher(list, bare);
+        expect(real.via, "picomatch испытательной посадки").not.toBe(fallback.via);
+        expect(paths.filter((p) => fallback(p) !== real(p)), list.join(" ")).toEqual([]);
+      }
+    } finally {
+      fs.rmSync(bare, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("файлы стенда проб — в форме форматтера семени", () => {
   // Конфиг стенда ушёл с двумя строками вне формата, и ворота стенда
   // называли поломкой формата посадку, правившую этот конфиг. Найдено

@@ -380,6 +380,7 @@
     },
     {
       "section": "Пакет платформы не второй ответ",
+      "whenFrame": true,
       "edits": [
         {
           "file": "src/app/App.tsx",

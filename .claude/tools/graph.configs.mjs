@@ -323,13 +323,57 @@ export const runnerRank = (name) => {
  * сбора не названа. */
 export const RUNNER_DEFAULT_INCLUDE = ["**/*.{test,spec}.?(c|m)[jt]s?(x)"];
 
-/** Запасной сопоставитель: звёзды и перечень в фигурных скобках. */
+/** Скобка, закрывающая открытую на `from`, с учётом вложенных; `-1` — нет. */
+const closingOf = (glob, from) => {
+  let depth = 0;
+  for (let i = from; i < glob.length; i += 1) {
+    if (glob[i] === "(") depth += 1;
+    else if (glob[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+};
+
+/** Запасной сопоставитель: звёзды, перечень в фигурных скобках, класс знаков
+ * в квадратных, одиночный `?` и расширенные образцы `?(…)`, `*(…)`, `+(…)`,
+ * `@(…)`. Без последних образец раннера по умолчанию не сопоставлял ни
+ * одного теста, и без пакетов сверка области сбора краснела на здоровом
+ * проекте — в песочнице фальсификации её рецепты молчали. Выведено
+ * `2026-11-08` на составном проекте. */
 const globsToTest = (globs) => {
   const toRe = (glob) => {
     let out = "";
     for (let i = 0; i < glob.length; i += 1) {
       const ch = glob[i];
-      if (ch === "*") {
+      const end = "?*+@".includes(ch) && glob[i + 1] === "(" ? closingOf(glob, i + 1) : -1;
+      if (end > 0) {
+        const parts = [];
+        let depth = 0;
+        let from = i + 2;
+        for (let j = from; j < end; j += 1) {
+          if (glob[j] === "(") depth += 1;
+          else if (glob[j] === ")") depth -= 1;
+          else if (glob[j] === "|" && depth === 0) {
+            parts.push(glob.slice(from, j));
+            from = j + 1;
+          }
+        }
+        parts.push(glob.slice(from, end));
+        out +=
+          "(?:" +
+          parts.map((part) => toRe(part).source.slice(1, -1)).join("|") +
+          ")" +
+          (ch === "@" ? "" : ch);
+        i = end;
+      } else if (ch === "[" && glob.indexOf("]", i + 1) > i + 1) {
+        const close = glob.indexOf("]", i + 1);
+        const body = glob.slice(i + 1, close).replace(/^!/, "^").replace(/\\/g, "\\\\");
+        out += "[" + body + "]";
+        i = close;
+      } else if (ch === "?") out += "[^/]";
+      else if (ch === "*") {
         if (glob[i + 1] === "*") {
           if (glob[i + 2] === "/") {
             out += "(?:[^/]*/)*";

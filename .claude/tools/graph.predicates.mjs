@@ -6789,8 +6789,8 @@ export const recipeStepFromSeed = (step, fromSeed) =>
  * шаг, чей файл в проекте не лежит, потому что его семя отложено, условно
  * либо держит неживое звено. Проект режим отдаёт вторым доводом:
  * `config`, `scripts`, `seatCopy` — данными, `linkLives`, `seedHolds`,
- * `hasUi`, `exists` (адрес от корня песочницы), `otherName`, `sectionLive`,
- * `stepIdle` — вопросами. */
+ * `hasUi`, `frameLives`, `exists` (адрес от корня песочницы), `otherName`,
+ * `sectionLive`, `stepIdle` — вопросами. */
 export const recipeIdleByDesign = (r, at) => {
   if (at.stepIdle(r)) return true;
   if (r.whenNull !== undefined && at.config[r.whenNull] != null) return true;
@@ -6814,6 +6814,11 @@ export const recipeIdleByDesign = (r, at) => {
   // на `jest` с конфигом линта, отложенным шагом 6.
   if (r.whenUi === true && !at.hasUi()) return true;
   if (r.whenFile !== undefined && !at.exists(at.otherName(r.whenFile))) return true;
+  // `whenFrame` — предмет рецепта есть, только пока проект живёт каркасом:
+  // по адресу каркаса у выросшего проекта лежит его свой корень, и рецепт,
+  // снимающий каркас ради «проекта без интерфейса», интерфейса не снимал.
+  // Выведено: составной проект после приведения раскладки, `2026-11-08`.
+  if (r.whenFrame === true && !at.frameLives()) return true;
   // `whenSectionOff` — раздел планки, который рецепт оживляет своим
   // предметом: объявленный живым, он оживлён и без рецепта, и поломку
   // принимает не он, а сверка нового файла. Выведено: третья посадка в
