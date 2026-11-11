@@ -303,7 +303,7 @@ describe("область конфига компилятора без компи
   it("область наследуется через `extends` и считается от папки, где записана", () => {
     const box = fs.mkdtempSync(path.join(without, "area-"));
     fs.mkdirSync(path.join(box, "base"));
-    fs.writeFileSync(path.join(box, "base", "tsconfig.json"), '{ "include": ["src"] }');
+    fs.writeFileSync(path.join(box, "base", "tsconfig.json"), '{ "include": ["src"], "exclude": ["src/gen"] }');
     fs.writeFileSync(path.join(box, "tsconfig.solution.json"), '{ "files": [], "references": [] }');
     fs.writeFileSync(path.join(box, "tsconfig.json"), '{ "extends": "./base/tsconfig.json" }');
     fs.writeFileSync(path.join(box, "tsconfig.strict.json"), '{ "extends": "./tsconfig.solution.json" }');
@@ -311,6 +311,7 @@ describe("область конфига компилятора без компи
     const read = (name) => tsconfigRead(path.join(box, name), box);
     expect(read("tsconfig.json").via).toBe(BY_TEXT);
     expect(read("tsconfig.json").raw.include).toEqual(["base/src"]);
+    expect(read("tsconfig.json").raw.exclude).toEqual(["base/src/gen"]);
     expect(read("tsconfig.strict.json").raw.files).toEqual([]);
     expect(read("tsconfig.own.json").raw.include).toEqual(["lib"]);
   });
@@ -355,6 +356,21 @@ describe("запасной сопоставитель образцов отве�
         ["src/[ab]*/x.ts"],
         ["src/?.ts"],
         ["**/*.+(spec|test).ts", "!**/skip/**"],
+        // Вложенный расширенный образец: черта внутри внутренних скобок
+        // перечня не делит, а `@(…)` повтора не несёт.
+        ["**/*.@(spec|test?(s|ing)).ts"],
+        // Два расширенных образца и два класса знаков подряд.
+        ["x.?(c|m)?(j|t)s"],
+        ["src/[ab][cd]x.ts"],
+        ["src/k[ab]*/x.ts"],
+        // Восклицательный знак в классе — знак, а не отрицание: так отвечает
+        // picomatch, и запасной разбор отрицал — найдено мутационным прогоном.
+        ["src/[!a]x.ts"],
+        ["src/[a!]x.ts"],
+        // Незакрытые скобка и класс, пустой класс — буквальный текст.
+        ["src/x?(a.ts"],
+        ["src/[ab"],
+        ["src/[]x.ts"],
       ];
       const paths = [
         "src/app/tests/App.test.tsx",
@@ -373,6 +389,31 @@ describe("запасной сопоставитель образцов отве�
         "src/qq.ts",
         "src/skip/a.test.ts",
         "src/keep/a.spectest.ts",
+        "a.tests.ts",
+        "a.testing.ts",
+        "a.specs.ts",
+        "a.s.ts",
+        "x.cjs",
+        "x.ts",
+        "x.mts",
+        "x.cs",
+        "x.s",
+        "src/acx.ts",
+        "src/bdx.ts",
+        "src/ax.ts",
+        "src/cx.ts",
+        "src/bx.ts",
+        "src/!x.ts",
+        "src/^x.ts",
+        "src/kk/x.ts",
+        "src/ka/x.ts",
+        "src/kb1/x.ts",
+        "src/x?(a.ts",
+        "src/xa.ts",
+        "src/[ab",
+        "src/a",
+        "src/[]x.ts",
+        "src/x.ts",
       ];
       for (const list of globs) {
         const real = globMatcher(list, SEAT);

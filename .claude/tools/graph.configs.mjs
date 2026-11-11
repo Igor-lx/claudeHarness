@@ -369,7 +369,7 @@ const globsToTest = (globs) => {
         i = end;
       } else if (ch === "[" && glob.indexOf("]", i + 1) > i + 1) {
         const close = glob.indexOf("]", i + 1);
-        const body = glob.slice(i + 1, close).replace(/^!/, "^").replace(/\\/g, "\\\\");
+        const body = glob.slice(i + 1, close).replace(/\\/g, "\\\\");
         out += "[" + body + "]";
         i = close;
       } else if (ch === "?") out += "[^/]";

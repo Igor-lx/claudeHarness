@@ -5967,6 +5967,13 @@ export const PREDICATE_CASES = [
   ["shellVariableOf", "git commit -m 'costs $5'", ""],
   ["shellVariableOf", "cat > a.txt <<'EOF'\n$HOME\nEOF", ""],
   ["shellVariableOf", "cat > a.txt <<EOF\n$HOME\nEOF", "$HOME"],
+  ["shellVariableOf", "cat > a.txt <<'EOF'\nx\nEOF\necho $b", "$b"],
+  ["shellVariableOf", "cat <<-'EOF'\n\tx\n\tEOF\necho $b", "$b"],
+  ["shellVariableOf", "echo 'a' $b", "$b"],
+  ["shellVariableOf", 'echo "it\'s $b"', "$b"],
+  ["shellVariableOf", "echo \"a\" 'x $b'", ""],
+  ["shellVariableOf", "echo $(date) 'costs $5'", ""],
+  ["shellVariableOf", "echo ${HOME", "${HOME"],
   // --- gitHookBypass: обход ворот git в команде оболочки ---
   ["gitHookBypass", "git commit -m \"fix\"", ""],
   ["gitHookBypass", "git commit --no-verify -m fix", "commit --no-verify"],
