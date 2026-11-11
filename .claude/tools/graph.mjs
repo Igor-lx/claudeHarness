@@ -8543,6 +8543,61 @@ const changedSinceBase = (repoRoot, base) => {
   }
 };
 
+/** Запись называет критерий планки обозначением-словом: «H4» либо
+ * `H4 «Заголовок»` пункта долга. Слово целиком: A5 не называет A5-бис. */
+const namesCriterion = (text, id) =>
+  new RegExp(
+    "(^|[^\\p{L}\\p{N}-])" +
+      escapeRe(id) +
+      "(?![\\p{L}\\p{N}-])",
+    "u",
+  ).test(text);
+
+/** Находки протокола свода с судьбой «предложено», которых не называет
+ * открытая строка реестра находок либо пункт долга. Один счёт на сверку
+ * базы и на ворота конца хода: сверка видит пропуск следующим прогоном, а
+ * ход, оставивший предложенное без записи, держат ворота. */
+const barProposedLoose = (body) => {
+  const proto = barRowsOf(body);
+  const proposed = proto.outcomes.filter(
+    (one) => one.outcome === "нашлось" && one.fate === "предложено",
+  );
+  const rows = proposed.length > 0 ? openFindingRows() : [];
+  const loose = [];
+  for (const one of proposed) {
+    // Строка реестра отвечает за находку, только если называет и
+    // критерий, и её файл. Прежде хватало критерия: одна открытая строка
+    // «E1» закрывала любую будущую находку E1 в любом файле — замерено на
+    // стенде, где строка об одном узле гасила находку о другом.
+    const file = one.addr
+      .split(BAR_TICK)
+      .join("")
+      .replace(/:[0-9]+$/, "");
+    const tail = file.slice(file.lastIndexOf("/") + 1);
+    // Критерий назван словом — «H4» реестра либо `H4 «Заголовок»` пункта
+    // долга: пункт долга и есть запись о находке, вторая ей не нужна.
+    // Известный дефект, записанный фактом, модель протокола называет
+    // пометкой сама — его держит пункт, называющий файлы факта.
+    const named =
+      rows.some(
+        (row) =>
+          namesCriterion(row, one.id) &&
+          (row.includes(file) ||
+            (row.includes(tail) &&
+              [...files, ...styleFiles].filter((f) => f.endsWith("/" + tail))
+                .length === 1)),
+      ) ||
+      proto.model.some(
+        (m) =>
+          barOwedOf(m.mark) !== "" &&
+          (BAR_FACT_CRITERIA[m.sort] ?? []).includes(one.id) &&
+          (m.where + " " + m.what).includes(tail),
+      );
+    if (!named) loose.push(one);
+  }
+  return { proposed: proposed.length, loose };
+};
+
 // --- stop: ворота конца хода -------------------------------------------------
 //
 // Ворота перед коммитом стоят там, где коммитят, а коммитит разработчик — по
@@ -8631,6 +8686,17 @@ if (mode === "stop") {
       return "свод чтения `" + (was.address ?? "") + "` начат и не запечатан";
     if (was.seal !== barSealOf(body))
       return "печать свода чтения не сходится: протокол правлен после неё";
+    // Запечатанный свод чтения ход ещё не закрывает: предложенное живёт
+    // только в протоколе, пока его не назвала открытая строка реестра.
+    // Выведено: работник ревью `2026-11-11` кончил ход с четырьмя
+    // предложенными находками без строки, и сверка базы осталась красной.
+    const loose = barProposedLoose(body).loose;
+    if (loose.length > 0)
+      return (
+        "предложенное сводом чтения не названо открытой строкой реестра находок с его файлом: " +
+        loose.map((one) => one.id + " — " + one.addr).join("; ") +
+        ". Записать находку в базу — не правка кода: строку заводят и на задаче «ничего не меняя»"
+      );
     return "";
   })();
   const holdFault = want.length > 0 ? fault : readFault;
@@ -13426,15 +13492,6 @@ const owedBy = (ends, names = []) => {
     return BAR_OWED[0];
   return openFindingRows().some(all) ? BAR_OWED[1] : null;
 };
-/** Запись называет критерий планки обозначением-словом: «H4» либо
- * `H4 «Заголовок»`. Слово целиком: A5 не называет A5-бис. */
-const namesCriterion = (text, id) =>
-  new RegExp(
-    "(^|[^\\p{L}\\p{N}-])" +
-      escapeRe(id) +
-      "(?![\\p{L}\\p{N}-])",
-    "u",
-  ).test(text);
 
 /** Архитектурные факты всего проекта: ребро против правила направления,
  * цикл, внутренность чужой единицы переноса мимо входа, второй писатель.
@@ -30702,48 +30759,14 @@ if (mode === "verify") {
       const at =
         CONFIG.barProtocol == null ? null : path.join(BASE, CONFIG.barProtocol);
       if (at !== null && existsSync(at)) {
-        // Разбор протокола общий с режимом: свой, делящий строку по любой
-        // черте, сбивался на экранированной черте внутри клетки.
-        const proto = barRowsOf(readFileSync(at, "utf8"));
-        for (const one of proto.outcomes) {
-          if (one.outcome !== "нашлось" || one.fate !== "предложено") continue;
-          barProposed += 1;
-          // Строка реестра отвечает за находку, только если называет и
-          // критерий, и её файл. Прежде хватало критерия: одна открытая строка
-          // «E1» закрывала любую будущую находку E1 в любом файле — замерено на
-          // стенде, где строка об одном узле гасила находку о другом.
-          const file = one.addr
-            .split(BAR_TICK)
-            .join("")
-            .replace(/:[0-9]+$/, "");
-          const tail = file.slice(file.lastIndexOf("/") + 1);
-          // Критерий назван словом — «H4» реестра либо `H4 «Заголовок»` пункта
-          // долга: пункт долга и есть запись о находке, вторая ей не нужна.
-          // Известный дефект, записанный фактом, модель протокола называет
-          // пометкой сама — его держит пункт, называющий файлы факта.
-          const named =
-            openFindingRows().some(
-              (row) =>
-                namesCriterion(row, one.id) &&
-                (row.includes(file) ||
-                  (row.includes(tail) &&
-                    [...files, ...styleFiles].filter((f) =>
-                      f.endsWith("/" + tail),
-                    ).length === 1)),
-            ) ||
-            proto.model.some(
-              (m) =>
-                barOwedOf(m.mark) !== "" &&
-                (BAR_FACT_CRITERIA[m.sort] ?? []).includes(one.id) &&
-                (m.where + " " + m.what).includes(tail),
-            );
-          if (!named)
-            barLoose.push(
-              one.id +
-                " — предложено сводом и не названо открытой строкой реестра с его файлом: адрес " +
-                one.addr,
-            );
-        }
+        const said = barProposedLoose(readFileSync(at, "utf8"));
+        barProposed = said.proposed;
+        for (const one of said.loose)
+          barLoose.push(
+            one.id +
+              " — предложено сводом и не названо открытой строкой реестра с его файлом: адрес " +
+              one.addr,
+          );
       }
     }
   });

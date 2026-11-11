@@ -95,6 +95,63 @@ describe("ворота конца хода", () => {
     }
   }, 300000);
 
+  // Работник ревью `2026-11-11` кончил ход с запечатанным сводом и четырьмя
+  // предложенными находками без строки реестра: красное видел только
+  // следующий прогон сверки базы.
+  it("запечатанный свод чтения с предложенным без строки реестра держит ход; строка реестра отпускает", () => {
+    const box = seatEmpty("stop-loose-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=stop", "-c", "user.email=stop@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [graph, ...args], { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const hook = () => spawnSync(process.execPath, [graph, "stop", "--hook"], { cwd: box, encoding: "utf8", input: "{}" });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/App.tsx");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { H7: "нашлось | `src/app/App.tsx:1` | проба: число без имени | предложено" },
+      });
+      expect(tool("bar", "app/App.tsx")).toContain("печать поставлена");
+      const held = hook();
+      expect(held.status).toBe(2);
+      expect(held.stderr).toContain("предложенное сводом чтения не названо открытой строкой реестра находок");
+      expect(held.stderr).toContain("H7 — ");
+      expect(JSON.parse(tool("stop", "--session")).systemMessage).toContain("предложенное сводом чтения не названо");
+      const regAt = path.join(box, ".context", "16-findings.md");
+      const head =
+        "| № | Что найдено | Где нашли | Чем закрыто | Чем держится | Состояние |\n| --- | --- | --- | --- | --- | --- |\n";
+      const reg = fs.readFileSync(regAt, "utf8");
+      expect(reg).toContain(head);
+      const row = (where) =>
+        fs.writeFileSync(regAt, reg.replace(head, head + "| 1 | «H7» в `" + where + "` | проба | — | нечем | открыта |\n"));
+      // Строка о том же критерии в другом файле хода не отпускает.
+      row("src/app/main.tsx");
+      expect(hook().status).toBe(2);
+      // Пауза отпускает так же, как у незаконченного свода.
+      tool("stop", "--pause", "жду, записывать ли находки");
+      expect(hook().status).toBe(0);
+      row("src/app/App.tsx");
+      expect(hook().status).toBe(0);
+      expect(tool("stop", "--session")).toBe("");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("отказ, пауза на вид правки, клапан со следом, печать снимает всё", () => {
     const box = seatEmpty("stop-");
     try {
