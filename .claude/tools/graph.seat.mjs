@@ -126,6 +126,14 @@ export const runTool = (
  * блокировке `pnpm` без `pnpm`. */
 export const saidBy = (run) => run.error ?? run.out;
 
+/** Знак пути, на котором стек не работает: сборщик и раннер читают путь
+ * адресом, где `#` начинает якорь, а `?` — строку запроса. Остальные знаки
+ * пути проверены пробой `2026-11-12` и проходят. */
+export const stackBreakingCharOf = (at) => {
+  const hit = /[#?]/.exec(String(at));
+  return hit === null ? null : hit[0];
+};
+
 /** Строки `git status --porcelain -z`: состояние, путь и, у переименования и
  * копии, прежний путь — он идёт следующим полем. Без `-z` git берёт путь не в
  * ASCII в кавычки с восьмеричными кодами, и такого пути на диске нет. */
@@ -1602,6 +1610,16 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
   const target = path.resolve(dest);
   if (existsSync(target) && !statSync(target).isDirectory())
     refuse("Это файл, а не папка: " + norm(target));
+  // Сборщик и раннер стека читают путь адресом, где `#` — начало якоря, и
+  // файлов проекта в таком пути не находят: посадка падала на «Cannot find
+  // module '/src/tests/setup.ts'», не называя причины. Это чужое окружение —
+  // отсечение до работы. Выведено: проба холодной оси `2026-11-12`.
+  const breaking = stackBreakingCharOf(target);
+  if (breaking !== null)
+    refuse(
+      "В пути папки есть «" + breaking + "»: сборщик и раннер тестов стека (Vite, Vitest) в таком пути не находят файлов, и цепочка проверок не соберётся: " + norm(target),
+      "Перенести папку в путь без «" + breaking + "» и позвать снова. Папка не тронута.",
+    );
   // Полка — это `.claude` самой папки: посадка на месте, фаза 1 целиком.
   if (!stand && path.resolve(target, ".claude") === path.resolve(shelf)) {
     if (shop) refuse("Магазин кладут на посадку в отдельную папку, а не на месте.");

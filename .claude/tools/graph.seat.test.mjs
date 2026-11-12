@@ -25,6 +25,7 @@ import {
   gitBusyOf,
   gitPathOf,
   SEAT_MARKER,
+  stackBreakingCharOf,
   statusEntries,
   unknownFlagsOf,
   verifiedOf,
@@ -1031,6 +1032,21 @@ describe("посадка на месте одной командой", () => {
     }
   }, 300000);
 
+  it("путь с «#» — отказ до работы с причиной: стек в таком пути файлов не находит", () => {
+    const box = boxWithShelf("seat-hash#-");
+    try {
+      const said = seatHere(box, "--packages", ROOT);
+      expect(said.status, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toContain("В пути папки есть «#»");
+      expect(said.stdout).toContain("Перенести папку в путь без «#»");
+      expect(fs.readdirSync(box)).toEqual([".claude"]);
+      // `?` на Windows в пути запрещён, на Linux допустим: признак — одной функцией.
+      expect(["/a/b#c", "/a/b?c", "/a/b c/д%e&f(g)!h"].map(stackBreakingCharOf)).toEqual(["#", "?", null]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
   it("ключ, назвавший не то, — отказ до работы: --with= не ось-инструмент, --packages без папки", () => {
     const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
     expect(withToolsOf(["seat", ".", "--with=раннер тестов,линтер"], map)).toMatchObject({ tools: ["раннер тестов", "линтер"], unknown: [] });
@@ -2025,6 +2041,10 @@ it("каждый запуск внешней программы в инстру�
   }
   expect(launches).toBeGreaterThan(50);
   expect(bare, "запуск мимо git, Node и runTool").toEqual([]);
+  // Обёртка хуков инструмент не импортирует и держит предел своей копией.
+  const limitOf = (file) => /const CHILD_OUTPUT_BYTES = ([^;]+);/.exec(fs.readFileSync(path.join(TOOL_DIR, file), "utf8"))?.[1];
+  expect(limitOf("hook.mjs"), "предел обёртки хуков").toBe(limitOf("graph.seat.mjs"));
+  expect(limitOf("graph.seat.mjs")).toBeDefined();
   expect(EXEMPT.filter(([f, key]) => !used.has(f + key)).map(([f, key]) => f + ": " + key), "исключение, которому нечего исключать").toEqual([]);
 });
 
