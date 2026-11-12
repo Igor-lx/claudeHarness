@@ -10161,8 +10161,8 @@ if (mode === "bar-probe") {
       }
       const box = path.join(systemTemp(), "bar-probe-" + id);
       const mark = box + ".plant.json";
-      const record = JSON.parse(readFileSync(mark, "utf8"));
-      const placed = new Set(record.plants.map((one) => one.number));
+      const record = readJson(mark, { plants: [] });
+      const placed = new Set((record.plants ?? []).map((one) => one.number));
       for (const one of batch)
         if (!placed.has(one.number))
           if (batch.length > 1) pending.push({ ...one, alone: true });
@@ -10263,9 +10263,7 @@ if (mode === "bar-probe") {
         ["run", "--reporter=json", "--outputFile=" + out],
         { cwd: box },
       );
-      const tests = existsSync(out)
-        ? JSON.parse(readFileSync(out, "utf8"))
-        : null;
+      const tests = readJson(out, null);
       if (tests === null)
         failed.push(
           theBatch +
@@ -10930,7 +10928,14 @@ if (mode === "bar-probe") {
     console.log("  Ожидалась запись: " + norm(mark));
     process.exit(1);
   }
-  const record = JSON.parse(readFileSync(mark, "utf8"));
+  // Запись оборвалась посреди — суд называет порчу, а не падает стеком.
+  const record = readJson(mark, null);
+  if (record === null || typeof record.box !== "string") {
+    console.log("=== Запись пробы испорчена ===");
+    console.log("  " + (SPOILED[0] ?? norm(mark) + " — нет поля box"));
+    console.log("  Посадить пробу заново: bar-probe --batch=<номера>.");
+    process.exit(1);
+  }
   const entries = record.plants ?? [record];
   // Суд одной машины — без печати и без следа: посадку критерия, который
   // решает машина, проверяет не сессия, а скелет свода, и его строку машина

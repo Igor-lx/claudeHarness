@@ -1103,6 +1103,12 @@ describe("посадка на месте одной командой", () => {
       const loose = seatHere(bare, "--packages", ROOT);
       expect(loose.status, loose.stdout).toBe(1);
       expect(loose.stdout).toContain("Убрать из папки всё, кроме .claude");
+      // Вход мастерской — посадка в папку с полки снаружи — опознаёт обрыв так же.
+      fs.rmSync(path.join(bare, ".claude"), { recursive: true, force: true });
+      const outside = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "seat", bare], { cwd: ROOT, encoding: "utf8" });
+      expect(outside.status, outside.stdout).toBe(1);
+      expect(outside.stdout).toContain("Прошлую посадку оборвали до её коммита");
+      expect(outside.stdout).toContain("Убрать из папки всё, кроме .claude");
     } finally {
       for (const one of [box, bare, box + "-shelf"]) fs.rmSync(one, { recursive: true, force: true });
     }
@@ -2097,6 +2103,24 @@ it("каждое поле семени настройки читается ко�
   expect([...kinds[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(debtSeed.sort());
 });
 
+// Временная папка, которую не сняли, копится от прогона к прогону: двенадцать
+// песочниц по `600M` заполнили диск облачной сессии. Тест держит вид: каждая
+// папка, заведённая инструментом, снимается в том же модуле по своему имени.
+it("каждая временная папка инструмента снимается по своему имени", () => {
+  const bare = [];
+  let made = 0;
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {
+    const text = fs.readFileSync(path.join(TOOL_DIR, file), "utf8");
+    for (const m of text.matchAll(/(?:const|let)\s+(?:(\{\s*at(?::\s*(\w+))?[^}]*\})|(\w+))\s*=\s*(?:mkdtempSync|claimSandbox)\(|(\w+)\s*=\s*(?:mkdtempSync\(|claimSandbox\([^)]*\)\.at)/g)) {
+      const name = m[1] !== undefined ? (m[2] ?? "at") : (m[3] ?? m[4]);
+      made += 1;
+      if (!new RegExp("rmSync\\(\\s*(?:record\\.)?" + name + "\\b").test(text.slice(m.index))) bare.push(file + ":" + text.slice(0, m.index).split("\n").length + " " + name);
+    }
+  }
+  expect(made).toBeGreaterThan(7);
+  expect(bare, "временная папка без снятия").toEqual([]);
+});
+
 // Конфиг семени — код, и его «почему» лежит заметкой на полке, а в конфиге
 // стоит её адрес. Семя `tsconfig.json` уезжало без заметки вовсе. Тест держит
 // вид: семя в корне проекта называет существующую заметку либо исключено.
@@ -2140,11 +2164,13 @@ it("каждый файл состояния обвязки назван вме�
     ["claude-harness-hook-", "то же, вне git"],
     ["graph-series.json", "порча — пустые отметки: серия гоняет цепочку заново; проверка ниже"],
     ["graph-series-", "временные файлы серии — индекс части, песочница, журнал части: обратно их не читают"],
+    [".plant.json", "readJson: суд на порче отказывает «Запись пробы испорчена»; проверка ниже"],
+    [".tests.json", "readJson: отчёт раннера стенда, оборванный падением, — «тесты не отработали», а не стек"],
   ]);
   const used = new Set();
   const bare = [];
   for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")))
-    for (const m of fs.readFileSync(path.join(TOOL_DIR, file), "utf8").matchAll(/"((?:claude-harness|graph-series)[a-z-]*(?:\.json)?)"/g))
+    for (const m of fs.readFileSync(path.join(TOOL_DIR, file), "utf8").matchAll(/"((?:claude-harness|graph-series)[a-z-]*(?:\.json)?|\.(?:plant|tests)\.json)"/g))
       if (STATE.has(m[1])) used.add(m[1]);
       else bare.push(file + ": " + m[1]);
   expect(bare, "файл состояния без названного читателя").toEqual([]);
@@ -2161,6 +2187,12 @@ it("каждый файл состояния обвязки назван вме�
       { encoding: "utf8" },
     );
     expect(said.trim()).toBe('{"base":null,"trees":{}}');
+    // Оборванная запись посадки пробы: суд называет порчу, а не падает стеком.
+    fs.writeFileSync(path.join(box, "bar-probe-777002.plant.json"), '{"box": "x", "pla');
+    const judged = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "bar-probe", "777002"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, TMPDIR: box, TEMP: box, TMP: box } });
+    expect(judged.status, judged.stdout + judged.stderr).toBe(1);
+    expect(judged.stdout).toContain("=== Запись пробы испорчена ===");
+    expect(judged.stdout).toContain("не разбирается как JSON");
   } finally {
     fs.rmSync(box, { recursive: true, force: true });
   }

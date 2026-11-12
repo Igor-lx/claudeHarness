@@ -1156,6 +1156,28 @@ export const unexpectedRolledBack = (work) => {
 
 const runSeatHere = (args) => unexpectedRolledBack((box) => seatHere(args, box));
 
+/** Настройка посадки в папке: нет её, она в истории либо лежит
+ * незакоммиченной — тогда посадку оборвали до её коммита. */
+const seatConfigState = (target) => {
+  if (!existsSync(path.join(target, ".context", "graph.config.mjs"))) return "none";
+  if (!existsSync(path.join(target, ".git"))) return "uncommitted";
+  try {
+    execFileSync("git", ["ls-files", "--error-unmatch", ".context/graph.config.mjs"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: target, stdio: "ignore" });
+    return "committed";
+  } catch {
+    return "uncommitted";
+  }
+};
+
+/** Отказ на оборванной посадке — с путём дальше, один у обоих входов: вход
+ * мастерской отвечал «папка не пуста» и пути не давал. */
+const interruptedRefusal = (hasGit) => [
+  "Прошлую посадку оборвали до её коммита: настройка .context/graph.config.mjs лежит незакоммиченной.",
+  hasGit
+    ? "Вернуть проект к последнему коммиту — git checkout -- . и git clean -fd -e .claude — и позвать посадку снова; папку node_modules установка могла переставить: npm ci."
+    : "Убрать из папки всё, кроме .claude, и позвать посадку снова.",
+];
+
 const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, profileOf }, box) => {
   const say = (...lines) => {
     for (const one of lines) console.log(one);
@@ -1179,16 +1201,8 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
   // испытательной посадке: команда пошла сажать её как живой проект.
   // Настройка лежит, а в истории её нет и метки нет — посадку оборвали до её
   // коммита: «уже посажена» оставляло проект посаженным наполовину.
-  const configLies = existsSync(path.join(target, ".context", "graph.config.mjs"));
-  let configCommitted = false;
-  if (configLies && existsSync(gitDir))
-    try {
-      execFileSync("git", ["ls-files", "--error-unmatch", ".context/graph.config.mjs"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: target, stdio: "ignore" });
-      configCommitted = true;
-    } catch {
-      configCommitted = false;
-    }
-  if (existsSync(gitPathOf(target, SEAT_MARKER)) || configCommitted)
+  const configState = seatConfigState(target);
+  if (existsSync(gitPathOf(target, SEAT_MARKER)) || configState === "committed")
     refuse(
       "Обвязка здесь уже посажена: настройка проекта лежит в .context/graph.config.mjs.",
       "Обновить обвязку — скопировать полку поверх .claude/; испытательную посадку обновляет `seat <папка>` из мастерской.",
@@ -1201,13 +1215,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
     );
   const gitBusy = existsSync(gitDir) ? gitBusyOf(target) : null;
   if (gitBusy !== null) refuse(gitBusy[0].toUpperCase() + gitBusy.slice(1), "Папка не тронута.");
-  if (configLies)
-    refuse(
-      "Прошлую посадку оборвали до её коммита: настройка .context/graph.config.mjs лежит незакоммиченной.",
-      existsSync(gitDir)
-        ? "Вернуть проект к последнему коммиту — git checkout -- . и git clean -fd -e .claude — и позвать посадку снова; папку node_modules установка могла переставить: npm ci."
-        : "Убрать из папки всё, кроме .claude, и позвать посадку снова.",
-    );
+  if (configState === "uncommitted") refuse(...interruptedRefusal(existsSync(gitDir)));
   const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: CHILD_OUTPUT_BYTES };
   // Полка уже в истории, а настройки посадки нет — так выглядит мастерская:
   // у проекта перед посадкой полка новая и неотслеживаемая. Прежде `seat .`,
@@ -1624,6 +1632,8 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
   const marker = gitPathOf(target, SEAT_MARKER);
   if (busy && path.resolve(target, ".claude") === path.resolve(shelf))
     refuse("Полка сажается сама в себя: " + norm(target));
+  if (busy && !stand && !existsSync(marker) && seatConfigState(target) === "uncommitted")
+    refuse(...interruptedRefusal(existsSync(path.join(target, ".git"))));
   if (busy && (stand || !existsSync(marker)))
     refuse(
       "Папка не пуста" +
