@@ -1,3 +1,4 @@
+// Why these compiler settings: `.claude/seat/tsconfig-why.md`.
 {
   "compilerOptions": {
     "target": "ES2022",

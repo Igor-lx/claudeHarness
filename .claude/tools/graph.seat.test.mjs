@@ -2097,6 +2097,35 @@ it("каждое поле семени настройки читается ко�
   expect([...kinds[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(debtSeed.sort());
 });
 
+// Конфиг семени — код, и его «почему» лежит заметкой на полке, а в конфиге
+// стоит её адрес. Семя `tsconfig.json` уезжало без заметки вовсе. Тест держит
+// вид: семя в корне проекта называет существующую заметку либо исключено.
+it("каждое семя в корне проекта называет свою заметку «почему», и заметка лежит на полке", () => {
+  const EXEMPT = new Map([
+    ["CLAUDE.md", "само правила проекта"],
+    ["package.json", "манифест: формат без комментария, ключи читает менеджер пакетов; порядок — seat.md, шаг 1-бис"],
+    [".nvmrc", "одна строка версии, комментария формат не несёт"],
+    [".prettierrc.json", "формат без комментария, а неизвестный ключ prettier печатает предупреждением на каждом прогоне; заметку называет seat.md"],
+    ["index.html", "страница каркаса, не конфиг"],
+  ]);
+  const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
+  const bare = [];
+  const used = new Set();
+  for (const e of map.copy) {
+    if (e.to.includes("/")) continue;
+    if (EXEMPT.has(e.to)) {
+      used.add(e.to);
+      continue;
+    }
+    const why = /\.claude\/seat\/([\w.-]+-why\.md)/.exec(fs.readFileSync(path.join(SHELF, e.from.replace(/^\.claude\//, "")), "utf8"));
+    if (why === null) bare.push(e.to + " — без адреса заметки");
+    else if (!fs.existsSync(path.join(SHELF, "seat", why[1]))) bare.push(e.to + " — заметки " + why[1] + " нет");
+  }
+  expect(bare, "семя без заметки «почему»").toEqual([]);
+  expect([...EXEMPT.keys()].filter((k) => !used.has(k)), "исключение, которому нечего исключать").toEqual([]);
+  expect(fs.readFileSync(path.join(SHELF, "seat", "seat.md"), "utf8")).toContain(".prettierrc-why.md");
+});
+
 // Файл состояния, который обвязка пишет сама, рвётся посреди записи и правится
 // руками. Читатель обязан назвать порчу либо сделать работы больше, а не
 // меньше. Тест держит вид: новый файл состояния не пройдёт, пока его не
