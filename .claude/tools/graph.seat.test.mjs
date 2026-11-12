@@ -2265,6 +2265,45 @@ it("каждый файл состояния обвязки назван вме�
   }
 });
 
+// Правила мастерской и метод плана лежат вне полки, и сверка путей полки их не
+// читает: метод звал «справку «Сессия-работник»», которой нет. Тест держит
+// вид: каждый путь и каждая ссылка на раздел в них ведёт в существующее.
+describe("правила мастерской и метод плана называют существующее", () => {
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const shelfAt = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  const workshop = shelfAt === "" ? "" : path.dirname(shelfAt);
+  const has = workshop !== "" && fs.existsSync(path.join(workshop, "workshop", "plan.md"));
+  it.skipIf(!has)("пути и разделы `CLAUDE.md` мастерской и `workshop/plan.md`", () => {
+    const roots = [".", ".claude", ".claude/rules", ".claude/tools", ".claude/seat", ".claude/skills"].map((r) => path.join(workshop, r));
+    const find = (rel) => roots.map((r) => path.join(r, rel)).find((at) => fs.existsSync(at));
+    const headsOf = (at) => fs.readFileSync(at, "utf8").split("\n").filter((l) => /^#+ /.test(l)).map((l) => l.replace(/^#+\s*/, "").toLowerCase());
+    // О файлах площадки метод говорит, но в мастерской их нет.
+    const platform = (rel) => rel.startsWith(".context/") || rel === "tsconfig.json";
+    // Ссылка без пути называет файл словами — «скилл `probe`», «README мастерской»:
+    // её заголовок ищут по всей прозе мастерской.
+    const prose = [];
+    (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true }))
+        if (e.isDirectory() && e.name !== "node_modules" && e.name !== ".git") walk(path.join(dir, e.name));
+        else if (e.name.endsWith(".md")) prose.push(path.join(dir, e.name));
+    })(workshop);
+    const own = prose.flatMap(headsOf);
+    const bare = [];
+    for (const rel of ["CLAUDE.md", "workshop/plan.md"]) {
+      const flat = fs.readFileSync(path.join(workshop, rel), "utf8").replace(/\s+/g, " ");
+      for (const m of flat.matchAll(/`([\w./-]+\.(?:md|mjs|json|yml|sh|bundle))`/g))
+        if (!platform(m[1]) && find(m[1]) === undefined) bare.push(rel + ": путь " + m[1]);
+      for (const m of flat.matchAll(/(`([\w./-]+\.md)`,?\s+)?(?:справк[аеиу]|раздел[аеуы]?)\s+«([^»]+)»/g)) {
+        const name = m[3].toLowerCase();
+        const at = m[2] === undefined ? null : find(m[2]);
+        const heads = at === null ? own : at === undefined ? [] : headsOf(at);
+        if (!heads.some((h) => h.includes(name))) bare.push(rel + ": раздел «" + m[3] + "»" + (m[2] ? " в " + m[2] : ""));
+      }
+    }
+    expect(bare, "проза мастерской называет несуществующее").toEqual([]);
+  });
+});
+
 // README мастерской переписывают проверенную связку прозой для человека:
 // подъём связки в семени обязан поднять и их. Мастерскую испытательная
 // посадка знает по своей метке — в ней путь полки, с которой посажена.
