@@ -492,57 +492,66 @@ it, each with its own question:
 
 ## Status
 
-**v0.5.1: ready for work.** Everything described here is
-in place and checked on real runs rather than by description; the numbers
-below were measured on 2026-11-04:
+**Ready for work.** The latest release is v0.5.1; the numbers below were
+measured on `main` after it, in the acceptance run of 2026-11-06 to
+2026-11-12, each with its own date, and are not tagged yet:
 
-- the full self-test suite passes, 2,137 of 2,137 on Linux, and on Windows
-  in CI;
+- the full self-test suite passes, 2,198 of 2,198 on Linux (2026-11-12),
+  and on Windows in CI (run 111, 2026-11-12);
 - every check that has its subject on the test stand catches its planted
   breakage: 182 of 206 recipes, the other 24 have nothing to break there,
-  and no check is left without a recipe;
+  and no check is left without a recipe (2026-11-12);
 - seating works in one command in all three scenarios: the self-tests seat
-  a corpus of 24 small projects - 2 empty, 13 familiar, 9 foreign - one for
-  every form the seating code tells apart;
+  a corpus of 27 small projects - 2 empty, 16 familiar, 9 foreign - one for
+  every form the seating code tells apart (2026-11-12);
 - a familiar project with its own folder layout and three foreign styling
   forms went through the transition and then, session by session, was
   brought to the harness defaults until a machine check found it no
-  different from a project written from scratch;
-- the bar pass caught all 37 defects planted into existing code over four
-  passes: that bounds the miss rate at 8 % with 95 % confidence, without a
-  correction for dependence inside one pass;
-- six fresh sessions, one per kind of task, and seven probes of the daily
-  loop went through the order of work: every step is held by the machine
-  or was seen done, and two steps that no machine can see are held by
-  attention with the reason written down;
-- the parts the daily loop never runs were probed twice, 49 probes each;
-  neither run was clean - 14 and then 9 classes of defects were found and
-  fixed - so no bound on what is still undetected there is claimed. Every
-  class those runs ever found, 50 in all, now has a named holder: 44 a test,
-  a check, the seating corpus or CI, which fire on each edit of the
-  harness; 6 are prose kept true by a date or a single place.
+  different from a project written from scratch: 131 checks against 131
+  (2026-11-10);
+- the bar pass on 30 new planted defects, one per criterion, over four
+  passes: 21 were caught at first; the misses went to the holders of their
+  criteria, three plants were rewritten, and the recheck caught the rest -
+  30 of 30 (2026-11-08). Because the first passes missed, no bound on the
+  miss rate is claimed;
+- six fresh sessions, one per kind of task not covered by the transition,
+  and a session on the hooks went through the order of work: every step is
+  held by the machine or was seen done; two steps no machine can see -
+  reading files and searching through the shell, running the chain through
+  a pipe - are held by attention with the reason written down (2026-11-11);
+- the parts the daily loop never runs: 12 kinds of defect were enumerated
+  whole and each is held by a test; a sample of 34 probes found 7 more
+  kinds, all fixed and held by tests the same way. The sample was not
+  clean, so no bound on what is still undetected there is claimed
+  (2026-11-12).
 
 The architecture and the concept are settled. Next comes writing real
 projects on it; details of the rules, the checks and the tool's output may
 still change between versions.
 
-What changed since v0.5.0:
+What changed since v0.5.1:
 
-- **whole kinds of defects are held by test, not by probes**: every
-  command, flag, script and shelf path the prose names exists; every tool
-  mode has its entry in the reference; every refusal of the tool and of
-  seating is named by a test or by an exemption with its reason; the tool
-  constants the reference quotes match the code;
-- **seating installs with the npm of the verified set**: it used a floating
-  `npm@11`, so a raise of the set would have left installs behind and two
-  machines could install with two versions;
-- **a flag that takes no value refuses one**: `--apply=no` was read as
-  `--apply` and seating applied the plan;
-- **`blast` answers an address without a radius** as `plan` does, instead
-  of a bare "nothing found", which reads as "no risk";
-- **tests fixed that were green for the wrong reason**: a type-debt case
-  passed on "more by 16" for "more by 1", and a match window counted an
-  untested refusal as tested; both were found by planting the defect.
+- **seating refuses files hidden from git** by an ignore rule of the
+  project or of the machine, naming the rule: it used to report success
+  and commit without the harness, so a clone came without it and without
+  the commit gate;
+- **an interrupted seating is named with the way on** from both entries
+  of the command, not only from the project folder;
+- **another machine and another project**: paths from git are read
+  NUL-separated, so a file named in Cyrillic is named readably; every
+  child process has an output limit, so a history of 12,000 commits (probe
+  of 2026-11-12) no longer reads as "no history"; no check step throws on a
+  machine without git;
+- **project settings live in a folder named `config`**, where the tool
+  finds them and asks for a document per constant;
+- **the end of a turn holds a read-only review** until every finding it
+  proposes is recorded;
+- **the compiler seed explains its settings** in a note it names, like
+  the other config seeds;
+- **whole kinds are held by tests**, not by probes: every launch of an
+  external program, every temporary folder, every field and script of the
+  seeds and every copy of the verified versions, every condition of a
+  falsification recipe, every path and section the workshop rules name.
 
 Earlier releases and what each brought -
 [GitHub releases](https://github.com/Igor-lx/claudeHarness/releases).
