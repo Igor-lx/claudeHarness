@@ -37,6 +37,7 @@ import {
   HELD_BY_WAITING_SEED,
   localiseRecipe,
   recipeIdleByDesign,
+  stepIdleOf,
   recipeStepFromSeed,
   gitHookBypass,
   shellVariableOf,
@@ -2332,8 +2333,11 @@ const barQuoted = (x) => BAR_TICK + x + BAR_TICK;
  * прогон оставался зелёным. Выведено пробой по холодному контуру. */
 const baseInHistory = (hash, cwd) => {
   const ask = (args) => spawnSync("git", args, { maxBuffer: CHILD_OUTPUT_BYTES, cwd, encoding: "utf8" });
-  if (ask(["merge-base", "--is-ancestor", hash, "HEAD"]).status === 0) return "есть";
-  return ask(["rev-parse", "--is-shallow-repository"]).stdout.trim() === "true" ? "мелкая" : "вне";
+  const ancestor = ask(["merge-base", "--is-ancestor", hash, "HEAD"]);
+  // Незапустившийся git — не «вне истории»: у него нет вывода, и ответ неизвестен.
+  if (ancestor.error !== undefined) return "без git";
+  if (ancestor.status === 0) return "есть";
+  return String(ask(["rev-parse", "--is-shallow-repository"]).stdout ?? "").trim() === "true" ? "мелкая" : "вне";
 };
 /** Строка находки об основании вне истории ветки: поле и что объявить. */
 const baseOutside = (field, hash) =>
@@ -7390,14 +7394,7 @@ if (mode === "falsify") {
     // окончание — печатал «рецепт устарел». Замерено переходом стенда.
     // `unlessStepOpen` — сверка, которая краснеет всегда, кроме открытого
     // шага: проект без перехода ей не мешает, в отличие от `whenStepClosed`.
-    const stepIdle = (r) => {
-      const pattern = r.whenStepOpen ?? r.whenStepClosed ?? r.unlessStepOpen;
-      if (pattern === undefined) return false;
-      const steps = transitionOpen();
-      const open = (steps ?? []).some((one) => new RegExp(pattern).test(one.line));
-      if (r.unlessStepOpen !== undefined) return open;
-      return r.whenStepOpen !== undefined ? !open : steps === null || open;
-    };
+    const stepIdle = (r) => stepIdleOf(r, transitionOpen);
     const idleByDesign = (r) =>
       recipeIdleByDesign(r, {
         stepIdle,

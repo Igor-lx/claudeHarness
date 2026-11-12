@@ -955,6 +955,30 @@ describe("рецепт без предмета по своему условию 
     expect(idle({ edits: [{ file: "src/a.ts" }, { file: "index.html" }] })).toBe(true);
     expect(idle({ edits: [{ create: { path: "x" } }] })).toBe(false);
   });
+
+  it("шаг знания: открыт, закрыт и перехода нет — у каждого из трёх условий", () => {
+    const open = () => [{ line: "| Рецепты фальсификации | открыт |" }];
+    const closed = () => [];
+    const none = () => null;
+    const step = (r, stepsOf) => vocabulary.stepIdleOf({ ...r }, stepsOf);
+    const P = "Рецепты фальсификации";
+    expect([step({ whenStepOpen: P }, open), step({ whenStepOpen: P }, closed), step({ whenStepOpen: P }, none)]).toEqual([false, true, true]);
+    expect([step({ whenStepClosed: P }, closed), step({ whenStepClosed: P }, open), step({ whenStepClosed: P }, none)]).toEqual([false, true, true]);
+    expect([step({ unlessStepOpen: P }, closed), step({ unlessStepOpen: P }, none), step({ unlessStepOpen: P }, open)]).toEqual([false, false, true]);
+    // Без образца файл перехода не читается вовсе.
+    expect(step({}, () => { throw new Error("читали шаги без образца"); })).toBe(false);
+  });
+
+  // Условие рецепта, которого этот тест не проходит, решает фальсификацию
+  // одной своей ветки: вторая не исполняется нигде. Держит вид: каждое поле
+  // условия, которое несут рецепты, названо в тестах условий.
+  it("каждое поле условия рецептов названо в тестах условий", () => {
+    const here = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const recipes = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "falsify.json"), "utf8")).recipes;
+    const keys = [...new Set(recipes.flatMap((r) => Object.keys(r)).filter((k) => /^(?:when|unless)[A-Z]/.test(k)))];
+    expect(keys.length).toBeGreaterThan(10);
+    expect(keys.filter((k) => !here.includes("{ " + k + ":")), "условие без теста").toEqual([]);
+  });
 });
 
 /**

@@ -2103,6 +2103,24 @@ it("каждое поле семени настройки читается ко�
   expect([...kinds[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(debtSeed.sort());
 });
 
+// Незапустившаяся программа отдаёт вывод `undefined`, и шаг, читавший его
+// строкой, падал исключением: без git на машине так падали два шага сверок.
+// Тест держит вид разом по всем шагам. На Windows `PATH` в среде ребёнка
+// двоится по регистру имени — там вид держит тот же код, проверенный здесь.
+it.skipIf(process.platform === "win32")("без git на машине ни один шаг сверок не падает исключением", () => {
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "no-git-path-"));
+  try {
+    const env = { ...process.env, PATH: empty };
+    delete env.CLAUDE_CODE_CHILD_SESSION;
+    const run = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "verify", "--full"], { cwd: ROOT, encoding: "utf8", env });
+    const steps = /=== Шаги сверок исполнились ===\n([\s\S]*?)(?:\n===|$)/.exec(run.stdout);
+    expect(steps, run.stdout.slice(-400)).not.toBeNull();
+    expect(steps[1]).not.toContain("упал исключением");
+  } finally {
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
+}, 300000);
+
 // Скрипт манифеста семени исполняется у принимающей стороны: программа,
 // которой нет среди зависимостей семени, находится только там, где её
 // поставили вручную. Тест держит вид: программа скрипта — из `bin` пакета

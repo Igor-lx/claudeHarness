@@ -6798,6 +6798,20 @@ export const recipeStepFromSeed = (step, fromSeed) =>
  * `config`, `scripts`, `seatCopy` — данными, `linkLives`, `seedHolds`,
  * `hasUi`, `frameLives`, `exists` (адрес от корня песочницы), `otherName`,
  * `sectionLive`, `stepIdle` — вопросами. */
+/** Шаг знания, чья строка подходит под образец рецепта: `whenStepOpen` —
+ * предмет есть, пока шаг открыт; `whenStepClosed` — когда закрыт, а без
+ * перехода предмета нет; `unlessStepOpen` — есть всегда, кроме открытого
+ * шага. Шаги спрашиваются, только если образец есть: `stepsOf` читает файл
+ * перехода. */
+export const stepIdleOf = (r, stepsOf) => {
+  const pattern = r.whenStepOpen ?? r.whenStepClosed ?? r.unlessStepOpen;
+  if (pattern === undefined) return false;
+  const steps = stepsOf();
+  const open = (steps ?? []).some((one) => new RegExp(pattern).test(one.line));
+  if (r.unlessStepOpen !== undefined) return open;
+  return r.whenStepOpen !== undefined ? !open : steps === null || open;
+};
+
 export const recipeIdleByDesign = (r, at) => {
   if (at.stepIdle(r)) return true;
   if (r.whenNull !== undefined && at.config[r.whenNull] != null) return true;
