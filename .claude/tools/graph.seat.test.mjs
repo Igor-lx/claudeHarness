@@ -2121,6 +2121,30 @@ it.skipIf(process.platform === "win32")("без git на машине ни од�
   }
 }, 300000);
 
+// Связка записана в настройке семени, а её вторые копии — в манифесте и
+// `.nvmrc` семени, в конвейерах мастерской. Разошедшись, копия видна лишь
+// предупреждением «Версии установленного», которое прогон не роняет. Тест
+// держит вид: каждая копия равна связке либо читает её из семени.
+it("версии среды в семенах и конвейерах — те же, что проверенная связка", () => {
+  const verified = verifiedOf(fs.readFileSync(path.join(SHELF, "seat", "templates", "graph.config.mjs"), "utf8"));
+  const seed = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "package.json"), "utf8").replace(/^﻿/, ""));
+  const declared = { ...seed.dependencies, ...seed.devDependencies };
+  const apart = Object.entries(verified)
+    .filter(([name, v]) => declared[name] !== undefined && declared[name] !== v)
+    .map(([name, v]) => name + ": семя " + declared[name] + ", связка " + v);
+  expect(Object.keys(verified).length).toBeGreaterThan(20);
+  expect(apart, "пакет семени не той версией").toEqual([]);
+  expect(fs.readFileSync(path.join(SHELF, "seat", "templates", ".nvmrc"), "utf8").trim()).toBe(verified.node);
+  expect(seed.engines).toEqual({ node: ">=" + verified.node, npm: ">=" + verified.npm });
+  // Конвейеры мастерской берут Node и npm из семени, а не своим числом.
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const workshopShelf = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  const workshopFlows = path.join(path.dirname(workshopShelf), ".github", "workflows");
+  if (workshopShelf !== "" && fs.existsSync(workshopFlows))
+    for (const f of fs.readdirSync(workshopFlows))
+      expect(fs.readFileSync(path.join(workshopFlows, f), "utf8"), f).not.toMatch(/node-version:\s*['"]?\d|npm@\d/);
+});
+
 // Скрипт манифеста семени исполняется у принимающей стороны: программа,
 // которой нет среди зависимостей семени, находится только там, где её
 // поставили вручную. Тест держит вид: программа скрипта — из `bin` пакета
