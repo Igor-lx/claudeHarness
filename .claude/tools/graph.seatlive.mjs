@@ -14,11 +14,14 @@ import path from "node:path";
 import { composeLive } from "./graph.configs.mjs";
 import { SCENARIO_NAMES, foreignOffer } from "./graph.profile.mjs";
 import {
+  CHILD_OUTPUT_BYTES,
   IDENTITY_NOTICE,
   SEAT_HERE_MARKER,
   claimSandbox,
   factsWithBaseline,
   gitPathOf,
+  hiddenRefusal,
+  ignoredOf,
   unexpectedRolledBack,
   manifestOf,
   mergedLines,
@@ -364,7 +367,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   const familiar = profile.scenario === "familiar";
   const at = (rel) => path.join(target, rel);
   const read = (rel) => (existsSync(at(rel)) && statSync(at(rel)).isFile() ? readFileSync(at(rel), "utf8") : null);
-  const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] };
+  const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: CHILD_OUTPUT_BYTES };
   const asked = (args) => {
     try {
       return execFileSync("git", args, quiet).trim();
@@ -388,6 +391,17 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       ...dirty.slice(0, 6).map((l) => "  " + l),
       "Закоммитить либо убрать и позвать посадку снова.",
     );
+  const ownInside = map.projectOwnedInsideHarness ?? [];
+  const hidden = ignoredOf(target, [
+    ...walkFiles(at(".claude"))
+      .map((r) => norm(r))
+      .filter((r) => !ownInside.includes(r.split("/")[0]))
+      .map((r) => ".claude/" + r),
+    ...(map.copy ?? [])
+      .filter((e) => e.notAtSeating === undefined && e.onlyWhenEmpty !== true && e.onlyWith === undefined)
+      .map((e) => e.to),
+  ]);
+  if (hidden.length > 0) refuse(...hiddenRefusal(hidden));
   const plan = profile.survey?.plan ?? [];
   if (familiar && plan.length > 0 && !apply) {
     say(
@@ -409,6 +423,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   const seedOf = (rel) => readFileSync(path.join(seedDir, rel), "utf8");
   // Откат: всё, что положила посадка до первого коммита, снимается.
   const undo = [];
+  const laid = [];
   // Файл проекта посадка пишет поверх, только если перенесла его рядом либо
   // он из объявленного короткого списка: прежде занятое имя — свой
   // `CLAUDE.project.md`, свой `eslint.project.config.js` — затиралось без
@@ -425,6 +440,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
     for (let dir = path.dirname(at(rel)); !existsSync(dir); dir = path.dirname(dir)) made = dir;
     mkdirSync(path.dirname(at(rel)), { recursive: true });
     writeFileSync(at(rel), text);
+    laid.push(rel);
     undo.push(() => {
       if (was === null) rmSync(at(rel), { force: true });
       else writeFileSync(at(rel), was);
@@ -803,6 +819,9 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   }
 
   // 8. Коммиты, основания, ворота.
+  // Составленные конфиги ранняя проверка не знала: та же проверка — по всему записанному.
+  const hiddenLate = ignoredOf(target, laid);
+  if (hiddenLate.length > 0) fail(...hiddenRefusal(hiddenLate));
   const identity = seatIdentity(asked);
   const git = (...args) => execFileSync("git", [...identity, ...args], quiet).trim();
   if (identity.length > 0) report.push(IDENTITY_NOTICE.join(" "));

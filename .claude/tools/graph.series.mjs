@@ -25,6 +25,7 @@ import path from "node:path";
 
 import { applyParts } from "./graph.parts.mjs";
 import {
+  CHILD_OUTPUT_BYTES,
   claimSandbox,
   runTool,
   saidBy,
@@ -41,6 +42,7 @@ export const gitDirOf = (repoRoot) =>
   path.resolve(
     repoRoot,
     execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      maxBuffer: CHILD_OUTPUT_BYTES,
       cwd: repoRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -80,7 +82,7 @@ export const partTreesOf = ({ repoRoot, base, count, whole, splits }) => {
       env,
       encoding: "utf8",
       input,
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: CHILD_OUTPUT_BYTES,
     }).trim();
   const relOf = (abs) => norm(path.relative(repoRoot, abs));
   const blobOf = (text) => git(["hash-object", "-w", "--stdin"], text);
@@ -152,6 +154,7 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
   delete env.GIT_INDEX_FILE;
   const git = (args, cwd = repoRoot) =>
     execFileSync("git", args, {
+      maxBuffer: CHILD_OUTPUT_BYTES,
       cwd,
       env,
       encoding: "utf8",
@@ -207,10 +210,11 @@ export const runSeries = ({ repoRoot, base, trees, command, packagesFrom }) => {
 
 /** Индекс проекта — ровно дерево части. */
 export const stageTree = (repoRoot, tree) =>
-  execFileSync("git", ["read-tree", tree], { cwd: repoRoot, encoding: "utf8" });
+  execFileSync("git", ["read-tree", tree], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: repoRoot, encoding: "utf8" });
 
 const gitOut = (repoRoot, args) =>
   execFileSync("git", args, {
+    maxBuffer: CHILD_OUTPUT_BYTES,
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],

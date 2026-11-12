@@ -60,6 +60,11 @@ export const systemTemp = () => {
   return realpathSync.native(dir);
 };
 
+/** Предел вывода дочернего процесса. Умолчание Node — `1` МиБ: журнал git
+ * проекта в `12 000` коммитов его переходит, вызов падал, и сверка читала
+ * отказ как «истории нет». */
+export const CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
+
 /** Запуск внешней команды — один на инструмент. На Windows менеджер пакетов
  * и их бинарники — файлы `.cmd`, и без оболочки их не найти. Исполняемому
  * файлу оболочка только мешает: `cmd.exe` разбирает его доводы заново, и
@@ -82,7 +87,7 @@ export const runTool = (
   const said = shell ? args.map((a) => (/\s/.test(a) && !/^".*"$/.test(a) ? '"' + a + '"' : a)) : args;
   const run = spawnSync(command, said, {
     encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: CHILD_OUTPUT_BYTES,
     shell,
     ...opts,
   });
@@ -136,6 +141,34 @@ export const statusEntries = (out) => {
   }
   return entries;
 };
+
+/** Файлы посадки, которые правило игнорирования проекта либо машины прячет
+ * от git: коммит посадки проходил без них, отчёт говорил «лежат в .claude/»,
+ * а клон приходил без обвязки и без ворот. Строки — путь и правило; отказ
+ * посадки печатает их до записи. Код `1` у `check-ignore` — «ничего не
+ * скрыто»; правило с `!` путь возвращает, а не прячет. */
+export const ignoredOf = (root, rels) => {
+  const run = spawnSync("git", ["check-ignore", "--no-index", "-v", "-z", "--stdin"], {
+    cwd: root,
+    encoding: "utf8",
+    input: rels.join("\0") + "\0",
+    maxBuffer: CHILD_OUTPUT_BYTES,
+  });
+  if (run.status !== 0) return [];
+  const f = String(run.stdout).split("\0");
+  const hidden = [];
+  for (let i = 0; i + 3 < f.length; i += 4)
+    if (!f[i + 2].startsWith("!")) hidden.push(f[i + 3] + " — правило " + f[i] + ":" + f[i + 1] + " `" + f[i + 2] + "`");
+  return hidden;
+};
+
+/** Отказ посадки на скрытых файлах — один текст у пустой и живой. */
+export const hiddenRefusal = (hidden) => [
+  "Файлы посадки скрыты от git правилом игнорирования: коммит прошёл бы без них, и клон проекта пришёл бы без обвязки:",
+  ...hidden.slice(0, 6).map((one) => "  " + one),
+  ...(hidden.length > 6 ? ["  и ещё " + (hidden.length - 6)] : []),
+  "Снять правило либо дописать исключение вида `!.claude/`, закоммитить и позвать посадку снова.",
+];
 
 /** Есть ли файл команды там, где его ищет `cmd.exe`: по пути, а голое имя —
  * в папке запуска и в `PATH`, с каждым расширением `PATHEXT`. */
@@ -765,7 +798,7 @@ export const SEAT_HERE_MARKER = "claude-seat-here";
  * иначе назвал бы папку репозитория выше. */
 export const gitPathOf = (root, name) => {
   if (!existsSync(path.join(root, ".git"))) return path.join(root, ".git", name);
-  const r = spawnSync("git", ["rev-parse", "--git-path", name], { cwd: root, encoding: "utf8" });
+  const r = spawnSync("git", ["rev-parse", "--git-path", name], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: root, encoding: "utf8" });
   return r.status === 0 && r.stdout.trim() !== "" ? path.resolve(root, r.stdout.trim()) : path.join(root, ".git", name);
 };
 
@@ -1044,7 +1077,7 @@ export const tailOf = (text, n = 6) =>
  * ляжет посреди чужой операции, — причина отказа; иначе `null`. Посадка на
  * отсоединённой вершине проходила, и её коммиты повисали вне ветки. */
 export const gitBusyOf = (root) => {
-  const ask = (args) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  const ask = (args) => spawnSync("git", args, { maxBuffer: CHILD_OUTPUT_BYTES, cwd: root, encoding: "utf8" });
   if (ask(["rev-parse", "--git-dir"]).status !== 0) return null;
   const at = (name) => {
     const one = ask(["rev-parse", "--git-path", name]).stdout.trim();
@@ -1070,7 +1103,7 @@ export const gitBusyOf = (root) => {
  * разработчиком `2026-10-31`: отказ обоим, одними словами. */
 export const enclosingRepoOf = (root) => {
   if (existsSync(path.join(root, ".git"))) return null;
-  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: root, encoding: "utf8" });
   return r.status === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : null;
 };
 
@@ -1150,7 +1183,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
   let configCommitted = false;
   if (configLies && existsSync(gitDir))
     try {
-      execFileSync("git", ["ls-files", "--error-unmatch", ".context/graph.config.mjs"], { cwd: target, stdio: "ignore" });
+      execFileSync("git", ["ls-files", "--error-unmatch", ".context/graph.config.mjs"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: target, stdio: "ignore" });
       configCommitted = true;
     } catch {
       configCommitted = false;
@@ -1175,7 +1208,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
         ? "Вернуть проект к последнему коммиту — git checkout -- . и git clean -fd -e .claude — и позвать посадку снова; папку node_modules установка могла переставить: npm ci."
         : "Убрать из папки всё, кроме .claude, и позвать посадку снова.",
     );
-  const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] };
+  const quiet = { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: CHILD_OUTPUT_BYTES };
   // Полка уже в истории, а настройки посадки нет — так выглядит мастерская:
   // у проекта перед посадкой полка новая и неотслеживаемая. Прежде `seat .`,
   // позванный в клоне мастерской, сажал обвязку в её же репозиторий.
@@ -1387,6 +1420,12 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
     const configAt = path.join(target, ".context", "graph.config.mjs");
     // Сценарий посадки — ответ одной команды на всю обвязку (`graph.profile.mjs`).
     writeFileSync(configAt, readFileSync(configAt, "utf8").replace(/^ {2}scenario: null,$/m, '  scenario: "empty",'));
+    // Глобальное правило игнорирования машины прячет и файлы пустой посадки.
+    const hidden = ignoredOf(target, [
+      ...walkFiles(path.join(target, ".claude")).map((r) => ".claude/" + norm(r)),
+      ...(map.copy ?? []).map((e) => e.to).filter((rel) => existsSync(path.join(target, rel))),
+    ]);
+    if (hidden.length > 0) throw Object.assign(new Error("hidden"), { refusal: hiddenRefusal(hidden) });
     git("add", "-A");
     git("commit", "-qm", "chore: seat the harness");
     // Метка — после коммита: оборванная до него посадка иначе отвечала бы
@@ -1405,8 +1444,10 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
       asked(["reset", "-q"]);
     }
     fail(
-      "Коммит посадки не прошёл — git отказал:",
-      ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? "") || String(e.message), 8),
+      ...(e.refusal ?? [
+        "Коммит посадки не прошёл — git отказал:",
+        ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? "") || String(e.message), 8),
+      ]),
     );
   }
   box.fail = null;
@@ -1604,7 +1645,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     execFileSync(
       "git",
       ["-c", "user.name=seat", "-c", "user.email=seat@local", ...args],
-      { cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] },
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: target, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] },
     ).trim();
 
   if (busy) {
@@ -1711,7 +1752,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
   const verify = spawnSync(
     process.execPath,
     [path.join(target, ".claude", "tools", "graph.mjs"), "verify"],
-    { cwd: target, encoding: "utf8", env },
+    { maxBuffer: CHILD_OUTPUT_BYTES, cwd: target, encoding: "utf8", env },
   );
   const ok = verify.status === 0;
   console.log(

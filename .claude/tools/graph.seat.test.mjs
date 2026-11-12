@@ -995,6 +995,42 @@ describe("посадка на месте одной командой", () => {
     }
   }, 300000);
 
+  it("файлы посадки под правилом игнорирования — отказ с правилом: пустая под глобальным, живая под своим", () => {
+    const dest = boxWithShelf("seat-hidden-");
+    const live = boxWithShelf("seat-hidden-live-");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "seat-hidden-home-"));
+    const global = path.join(home, "gitconfig");
+    try {
+      fs.writeFileSync(path.join(home, "ignore"), ".claude/\n");
+      fs.writeFileSync(global, "[user]\n\tname = t\n\temail = t@local\n[core]\n\texcludesFile = " + path.join(home, "ignore").replace(/\\/g, "/") + "\n");
+      const run = spawnSync(
+        process.execPath,
+        [path.join(dest, ".claude", "tools", "graph.mjs"), "seat", dest, "--packages", ROOT],
+        { cwd: dest, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: "1" } },
+      );
+      expect(run.status, run.stdout + run.stderr).toBe(1);
+      expect(run.stdout).toContain("Файлы посадки скрыты от git правилом игнорирования");
+      expect(run.stdout).toMatch(/\.claude\/\S+ — правило .*ignore:1 `\.claude\/`/);
+      expect(fs.readdirSync(dest)).toEqual([".claude"]);
+      // Живой проект: своё правило в .gitignore, отказ до записи — проект как был.
+      fs.writeFileSync(path.join(live, ".gitignore"), "node_modules/\n.claude/\n");
+      fs.mkdirSync(path.join(live, "src"));
+      fs.writeFileSync(path.join(live, "src", "main.ts"), "export const x = 1;\n");
+      fs.writeFileSync(path.join(live, "package.json"), JSON.stringify({ type: "module", devDependencies: { typescript: "~5.6.3", vitest: "^2.1.8" } }));
+      gitIn(live, "init", "-q");
+      gitIn(live, "add", "-A");
+      gitIn(live, "commit", "-qm", "project");
+      const said = seatHere(live, "--apply", "--packages", ROOT);
+      expect(said.status, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toContain("Файлы посадки скрыты от git правилом игнорирования");
+      expect(said.stdout).toContain("правило .gitignore:2 `.claude/`");
+      expect(gitIn(live, "status", "--porcelain")).toBe("");
+      expect(gitIn(live, "log", "--format=%s").trim()).toBe("project");
+    } finally {
+      for (const one of [dest, live, home]) fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("ключ, назвавший не то, — отказ до работы: --with= не ось-инструмент, --packages без папки", () => {
     const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
     expect(withToolsOf(["seat", ".", "--with=раннер тестов,линтер"], map)).toMatchObject({ tools: ["раннер тестов", "линтер"], unknown: [] });
@@ -1957,9 +1993,23 @@ it("каждый запуск внешней программы в инстру�
     for (const m of text.matchAll(/import\s*(\{[^}]*\}|\*\s*as\s+\w+|\w+)\s*from\s*"(?:node:)?child_process"|import\(\s*"(?:node:)?child_process"\s*\)/g))
       if (m[1] === undefined || !/^\{\s*(?:execFileSync|spawnSync)(?:\s*,\s*(?:execFileSync|spawnSync))?\s*\}$/.test(m[1]))
         bare.push(file + ":" + lineOf(m.index) + " импорт мимо execFileSync и spawnSync: " + m[0]);
+    // Предел вывода — одна постоянная инструмента и её копия в обёртке хуков.
+    if (!["graph.seat.mjs", "hook.mjs"].includes(file) && /\d+ \* 1024 \* 1024/.test(text)) bare.push(file + " предел вывода числом, а не CHILD_OUTPUT_BYTES");
     for (const m of text.matchAll(/(?<![.\w])(execFileSync|spawnSync)\(\s*([^,]*?)\s*,/gs)) {
       if (/^\s*(\/\/|\*)/.test(text.split("\n")[lineOf(m.index) - 1])) continue;
       launches += 1;
+      // Умолчание Node — `1` МиБ вывода: журнал большой истории его переходит,
+      // и отказ читался как «истории нет». Предел несёт каждый запуск — в
+      // самом вызове либо в объекте настроек, названном рядом.
+      let depth = 0;
+      let end = m.index;
+      for (; end < text.length; end += 1)
+        if (text[end] === "(") depth += 1;
+        else if (text[end] === ")" && (depth -= 1) === 0) break;
+      const call = text.slice(m.index, end);
+      const named = /,\s*(\w+)\s*,?\s*$/.exec(call);
+      const held = /maxBuffer/.test(call) || (named !== null && new RegExp("const " + named[1] + " = \\{[^}]*maxBuffer").test(text));
+      if (!held) bare.push(file + ":" + lineOf(m.index) + " без maxBuffer");
       if (DIRECT.has(m[2].replace(/\s+/g, " "))) continue;
       const hit = EXEMPT.find(([f, key]) => f === file && text.startsWith(key, m.index));
       if (hit === undefined) bare.push(file + ":" + lineOf(m.index) + " " + m[1] + "(" + m[2].slice(0, 60));
@@ -2005,6 +2055,46 @@ it("каждый вызов git, печатающий пути, читает и�
     { xy: "C ", path: "c2.ts", from: "c.ts" },
   ]);
   expect(statusEntries(null)).toEqual([]);
+});
+
+// Семя настройки едет в каждый проект, и сверка «Настройка проекта знает все
+// поля семени» требует переписать каждое его поле. Поле, которое код не
+// читает, проект ведёт впустую, и признака этого нет нигде. Тест держит вид:
+// поле семени читается кодом инструмента.
+it("каждое поле семени настройки читается кодом инструмента", () => {
+  const seed = fs.readFileSync(path.join(SHELF, "seat", "templates", "graph.config.mjs"), "utf8");
+  const code = fs
+    .readdirSync(TOOL_DIR)
+    .filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))
+    .map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8"))
+    .join("\n");
+  const unread = [];
+  let top = null;
+  let fields = 0;
+  const debtSeed = [];
+  for (const line of seed.split("\n")) {
+    if (/^\s*(\/\/|\*)/.test(line)) continue;
+    const outer = /^ {2}([A-Za-z_]\w*)\s*:/.exec(line);
+    if (outer !== null) {
+      top = outer[1];
+      fields += 1;
+      if (!new RegExp("CONFIG\\??\\." + top + "\\b").test(code)) unread.push(top);
+      continue;
+    }
+    const inner = /^ {4}"?([A-Za-z_][\w-]*)"?\s*:/.exec(line);
+    // Связка — данные: имена пакетов читают перебором, а не по одному.
+    if (inner === null || top === "verifiedVersions") continue;
+    fields += 1;
+    if (top === "debt") debtSeed.push(inner[1]);
+    else if (!new RegExp("\\.\\??" + inner[1] + "\\b|\"" + inner[1] + "\"|\\{[^}]*\\b" + inner[1] + "\\b[^}]*\\}\\s*=").test(code))
+      unread.push(top + "." + inner[1]);
+  }
+  expect(fields).toBeGreaterThan(90);
+  expect(unread, "поле семени, которого код не читает").toEqual([]);
+  // Виды долга читают по имени строкой: список видов в коде — тот же, что в семени.
+  const kinds = /const DEBT_KINDS = \[([^\]]*)\]/.exec(code);
+  expect(kinds).not.toBeNull();
+  expect([...kinds[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(debtSeed.sort());
 });
 
 // Файл состояния, который обвязка пишет сама, рвётся посреди записи и правится

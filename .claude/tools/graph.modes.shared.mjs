@@ -17,7 +17,7 @@ import {
   crossCandidatesOf,
   crossWordsOf,
 } from "./graph.predicates.mjs";
-import { layShelf } from "./graph.seat.mjs";
+import { CHILD_OUTPUT_BYTES, layShelf } from "./graph.seat.mjs";
 
 /**
  * Дымовой набор на РЕЖИМЫ инструмента.
@@ -107,6 +107,7 @@ export const modes = (() => {
   let said = "";
   try {
     execFileSync(process.execPath, [TOOL], {
+      maxBuffer: CHILD_OUTPUT_BYTES,
       cwd: path.join(TOOL_DIR, "..", ".."),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -183,7 +184,7 @@ export const verifyIn = (box) => {
     out = execFileSync(
       process.execPath,
       [path.join(box, ".claude", "tools", "graph.mjs"), "verify"],
-      { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
   } catch (e) {
     out = String(e.stdout ?? "");
@@ -270,7 +271,7 @@ export const pageWordsOf = (protoAt) => {
         protoAt,
         "--print",
       ],
-      { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
   } catch (e) {
     out = String(e.stdout ?? "");
@@ -461,7 +462,7 @@ export const seriesStaged = (box) => {
     spawnSync(
       process.execPath,
       [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
-      { cwd: box, encoding: "utf8" },
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, encoding: "utf8" },
     );
   const ran = tool("series");
   const staged = tool("series", "--stage", "1");

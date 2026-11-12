@@ -19,6 +19,9 @@ const ROOT = path.join(HERE, "..", "..");
  * `600` с по умолчанию, — и снятый хук хода не держит: зависание обязана
  * назвать обёртка раньше среды. */
 const LIMIT_S = 120;
+/** Предел вывода режима и git, как `CHILD_OUTPUT_BYTES` инструмента: умолчание
+ * Node `1` МиБ, а инструмент обёртка не импортирует. */
+const CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const args = process.argv.slice(2);
 const isStop = args[0] === "stop" && args.includes("--hook");
@@ -47,6 +50,7 @@ try {
 const gitDir = () => {
   try {
     const dir = execFileSync("git", ["rev-parse", "--git-dir"], {
+      maxBuffer: CHILD_OUTPUT_BYTES,
       cwd: ROOT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -110,7 +114,7 @@ const run = spawnSync(process.execPath, [TOOL, ...args], {
   input,
   encoding: "utf8",
   timeout: LIMIT_S * 1000,
-  maxBuffer: 64 * 1024 * 1024,
+  maxBuffer: CHILD_OUTPUT_BYTES,
 });
 
 if (run.error === undefined && (run.status === 0 || run.status === 2)) {

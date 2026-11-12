@@ -185,6 +185,7 @@ import {
   ownSandbox,
   sweepDeadSandboxes,
   runTool,
+  CHILD_OUTPUT_BYTES,
   saidBy,
   SEAT_MARKER,
   statusEntries,
@@ -603,6 +604,7 @@ const rulesFreshnessStep = (said) => {
   let at;
   try {
     const dir = execFileSync("git", ["rev-parse", "--git-dir"], {
+      maxBuffer: CHILD_OUTPUT_BYTES,
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -866,7 +868,7 @@ if (mode === "env") {
     const manifest = manifestOrStop(root);
     const gitIn = (args) => {
       try {
-        return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        return execFileSync("git", args, { maxBuffer: CHILD_OUTPUT_BYTES, cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
       } catch {
         return "";
       }
@@ -2329,7 +2331,7 @@ const barQuoted = (x) => BAR_TICK + x + BAR_TICK;
  * Сверка по истории тогда читала не те коммиты либо выключалась заметкой, и
  * прогон оставался зелёным. Выведено пробой по холодному контуру. */
 const baseInHistory = (hash, cwd) => {
-  const ask = (args) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  const ask = (args) => spawnSync("git", args, { maxBuffer: CHILD_OUTPUT_BYTES, cwd, encoding: "utf8" });
   if (ask(["merge-base", "--is-ancestor", hash, "HEAD"]).status === 0) return "есть";
   return ask(["rev-parse", "--is-shallow-repository"]).stdout.trim() === "true" ? "мелкая" : "вне";
 };
@@ -3393,6 +3395,7 @@ const withoutFormatOnly = async (abs, repoRoot) => {
     let head = null;
     try {
       head = execFileSync("git", ["show", workBaseOf(repoRoot) + ":./" + one], {
+        maxBuffer: CHILD_OUTPUT_BYTES,
         cwd: repoRoot,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -4027,7 +4030,7 @@ const GIT_IGNORED = (() => {
         cwd: REPO_AT,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
-        maxBuffer: 64 * 1024 * 1024,
+        maxBuffer: CHILD_OUTPUT_BYTES,
       },
     );
   } catch {
@@ -6965,6 +6968,7 @@ if (mode === "falsify") {
         process.execPath,
         [path.join(cwd, ".claude/tools/graph.mjs"), "verify", "--full"],
         {
+          maxBuffer: CHILD_OUTPUT_BYTES,
           encoding: "utf8",
           cwd,
           env: { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1" },
@@ -6988,12 +6992,12 @@ if (mode === "falsify") {
   // сверка, то есть врал бы в худшую сторону. Найдено первым же рецептом к
   // сверке, читающей правку.
   try {
-    execFileSync("git", ["init", "-q"], { cwd: tmp, stdio: "ignore" });
+    execFileSync("git", ["init", "-q"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: tmp, stdio: "ignore" });
     // Песочница — копия того же проекта, и метку посадки несёт тоже.
     const marker = gitPathOf(REPO_ROOT, SEAT_MARKER);
     if (existsSync(marker))
       writeFileSync(path.join(tmp, ".git", SEAT_MARKER), readFileSync(marker));
-    execFileSync("git", ["add", "-A"], { cwd: tmp, stdio: "ignore" });
+    execFileSync("git", ["add", "-A"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: tmp, stdio: "ignore" });
     execFileSync(
       "git",
       [
@@ -7005,7 +7009,7 @@ if (mode === "falsify") {
         "-qm",
         "base",
       ],
-      { cwd: tmp, stdio: "ignore" },
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: tmp, stdio: "ignore" },
     );
     freshTrace();
   } catch {
@@ -7239,7 +7243,7 @@ if (mode === "falsify") {
           spawnSync(
             process.execPath,
             [path.join(tmp, ".claude/tools/graph.mjs"), "bar"],
-            { cwd: tmp, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+            { cwd: tmp, encoding: "utf8", maxBuffer: CHILD_OUTPUT_BYTES },
           );
           if (!existsSync(protoAt))
             return give("режим `bar` протокола не напечатал");
@@ -8009,7 +8013,7 @@ if (mode === "handoff") {
     execFileSync(
       process.execPath,
       [path.join(probe, ".claude/tools/graph.mjs"), "verify"],
-      { encoding: "utf8", cwd: probe },
+      { maxBuffer: CHILD_OUTPUT_BYTES, encoding: "utf8", cwd: probe },
     );
     console.log("  проверка:  посажен в пустую папку, сверка базы — код 0");
     console.log("");
@@ -8424,6 +8428,7 @@ const guardTraceFault = (needCommit) => {
     dir = path.resolve(
       REPO_AT,
       execFileSync("git", ["rev-parse", "--git-dir"], {
+        maxBuffer: CHILD_OUTPUT_BYTES,
         cwd: REPO_AT,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -8459,6 +8464,7 @@ const gitPrefixOf = (repoRoot) => {
     GIT_PREFIX.set(
       repoRoot,
       execFileSync("git", ["rev-parse", "--show-prefix"], {
+        maxBuffer: CHILD_OUTPUT_BYTES,
         cwd: repoRoot,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -8491,7 +8497,7 @@ const changedPathsNow = (repoRoot) => {
         encoding: "utf8",
         // stderr гасим: про недоступность git режим говорит сам.
         stdio: ["ignore", "pipe", "ignore"],
-        maxBuffer: 64 * 1024 * 1024,
+        maxBuffer: CHILD_OUTPUT_BYTES,
       },
     );
     prefix = gitPrefixOf(repoRoot);
@@ -8516,7 +8522,7 @@ const changedSinceBase = (repoRoot, base) => {
       cwd: repoRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: CHILD_OUTPUT_BYTES,
     };
     const tracked = zList(
       execFileSync(
@@ -8624,6 +8630,7 @@ if (mode === "stop") {
     gitDir = path.resolve(
       REPO_AT,
       execFileSync("git", ["rev-parse", "--git-dir"], {
+        maxBuffer: CHILD_OUTPUT_BYTES,
         cwd: REPO_AT,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -8665,6 +8672,7 @@ if (mode === "stop") {
     let dirty = "";
     try {
       dirty = execFileSync("git", ["status", "--porcelain", "--", protoAt], {
+        maxBuffer: CHILD_OUTPUT_BYTES,
         cwd: REPO_AT,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -10141,7 +10149,7 @@ if (mode === "bar-probe") {
           "--batch=" + batch.map((one) => one.number).join(","),
           "--seed=1",
         ],
-        { cwd: projectRoot, encoding: "utf8", env },
+        { maxBuffer: CHILD_OUTPUT_BYTES, cwd: projectRoot, encoding: "utf8", env },
       );
       const id = /bar-probe ([0-9]+)/.exec(planted.stdout)?.[1];
       if (id === undefined) {
@@ -10192,7 +10200,7 @@ if (mode === "bar-probe") {
             spawnSync(
               "git",
               ["status", "--porcelain", "-z", "--untracked-files=all"],
-              { cwd: box, encoding: "utf8" },
+              { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, encoding: "utf8" },
             ).stdout,
           )
             .filter((e) => !e.xy.includes("D"))
@@ -10727,8 +10735,8 @@ if (mode === "bar-probe") {
     const placedOf = new Map();
     for (const one of settled) placedOf.set(one, plantOne(one));
     try {
-      execFileSync("git", ["init", "-q"], { cwd: box, stdio: "ignore" });
-      execFileSync("git", ["add", "-A"], { cwd: box, stdio: "ignore" });
+      execFileSync("git", ["init", "-q"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, stdio: "ignore" });
+      execFileSync("git", ["add", "-A"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, stdio: "ignore" });
       execFileSync(
         "git",
         [
@@ -10740,7 +10748,7 @@ if (mode === "bar-probe") {
           "-qm",
           "base",
         ],
-        { cwd: box, stdio: "ignore" },
+        { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, stdio: "ignore" },
       );
       // Ворота и основание ревизии — как у посаженного проекта: без них
       // песочница краснела сверками ворот, к посаженному не относящимися.
@@ -10757,6 +10765,7 @@ if (mode === "bar-probe") {
         existsSync(configAt)
       ) {
         const first = execFileSync("git", ["rev-parse", "HEAD"], {
+          maxBuffer: CHILD_OUTPUT_BYTES,
           cwd: box,
           encoding: "utf8",
         }).trim();
@@ -10784,12 +10793,12 @@ if (mode === "bar-probe") {
               "-qam",
               "gates",
             ],
-            { cwd: box, stdio: "ignore" },
+            { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, stdio: "ignore" },
           );
           execFileSync(
             "git",
             ["config", "core.hooksPath", ".claude/hooks/git"],
-            { cwd: box, stdio: "ignore" },
+            { maxBuffer: CHILD_OUTPUT_BYTES, cwd: box, stdio: "ignore" },
           );
         }
       }
@@ -13353,7 +13362,7 @@ const headTextOf = (abs) => {
     text = execFileSync(
       "git",
       ["show", workBaseOf(REPO_AT) + ":./" + norm(path.relative(REPO_AT, abs))],
-      { cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
   } catch {
     text = null;
@@ -15777,7 +15786,7 @@ const barLintOf = (repoRoot, list) => {
   const run = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", BAR_LINT_SCRIPT, entry, ...files],
-    { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: CHILD_OUTPUT_BYTES },
   );
   let report = null;
   if (run.status === 0) {
@@ -15934,7 +15943,7 @@ const barChecksOf = (repoRoot) => {
     {
       cwd: repoRoot,
       encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: CHILD_OUTPUT_BYTES,
       env: { ...process.env, [BAR_NESTED]: "1" },
     },
   );
@@ -18455,7 +18464,7 @@ const partDiffOf = (abs, repoRoot) => {
           "--",
           norm(path.relative(repoRoot, abs)),
         ],
-        { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        { cwd: repoRoot, encoding: "utf8", maxBuffer: CHILD_OUTPUT_BYTES },
       ),
     );
   return { before, after, oldLines, newLines, hunks };
@@ -18870,6 +18879,7 @@ if (mode === "gate") {
   const NEWLINE = String.fromCharCode(10);
   const git = (args) =>
     execFileSync("git", args, {
+      maxBuffer: CHILD_OUTPUT_BYTES,
       cwd: REPO_AT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -19790,6 +19800,7 @@ if (mode === "series") {
   const base =
     workBaseOf(REPO_AT) === "HEAD"
       ? execFileSync("git", ["rev-parse", "HEAD"], {
+          maxBuffer: CHILD_OUTPUT_BYTES,
           cwd: REPO_AT,
           encoding: "utf8",
         }).trim()
@@ -19876,7 +19887,7 @@ if (mode === "series") {
       const made = spawnSync(
         "git",
         ["commit", "-q", "-m", table[t.part - 1].what],
-        { cwd: REPO_AT, encoding: "utf8" },
+        { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8" },
       );
       if (made.status !== 0) {
         console.log("  Коммит части " + t.part + " не прошёл:");
@@ -23861,6 +23872,7 @@ if (mode === "verify") {
           "git",
           ["-c", "core.quotePath=false", "diff", "-U0", "HEAD", "--", ".context"],
           {
+            maxBuffer: CHILD_OUTPUT_BYTES,
             cwd: REPO,
             encoding: "utf8",
             // stderr гасим: про недоступность git мы говорим сами, а его
@@ -23874,7 +23886,7 @@ if (mode === "verify") {
         const fresh = execFileSync(
           "git",
           ["ls-files", "--others", "--exclude-standard", "-z", "--", ".context"],
-          { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+          { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
         );
         for (const one of zList(fresh)) {
           const added = readFileSync(path.join(REPO, one), "utf8").split(
@@ -24857,6 +24869,7 @@ if (mode === "verify") {
           "git",
           ["log", "--oneline", "--format=%s", "-n", "200"],
           {
+            maxBuffer: CHILD_OUTPUT_BYTES,
             cwd: path.join(BASE, ".."),
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
@@ -24979,6 +24992,7 @@ if (mode === "verify") {
       const git = (args) => {
         try {
           return execFileSync("git", args, {
+            maxBuffer: CHILD_OUTPUT_BYTES,
             cwd: REPO_AT,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
@@ -29380,6 +29394,7 @@ if (mode === "verify") {
           "git",
           ["check-ignore", "--no-index", "--stdin"],
           {
+            maxBuffer: CHILD_OUTPUT_BYTES,
             cwd: REPO_AT,
             encoding: "utf8",
             input: list.join(NEWLINE) + NEWLINE,
@@ -29405,6 +29420,7 @@ if (mode === "verify") {
         for (const dir of [".проба-сверок", ".stryker-tmp"]) {
           try {
             execFileSync("git", ["check-ignore", "--no-index", "-q", dir], {
+              maxBuffer: CHILD_OUTPUT_BYTES,
               cwd: REPO_AT,
               stdio: ["ignore", "ignore", "ignore"],
             });
@@ -29449,7 +29465,7 @@ if (mode === "verify") {
         cwd: REPO_AT,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
-        maxBuffer: 64 * 1024 * 1024,
+        maxBuffer: CHILD_OUTPUT_BYTES,
       }).split("\0");
       for (const row of rows) {
         const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\/(.*?)\t(.+)$/.exec(row);
@@ -30982,6 +30998,7 @@ if (mode === "verify") {
       else {
         const git = (args) =>
           execFileSync("git", args, {
+            maxBuffer: CHILD_OUTPUT_BYTES,
             cwd: REPO_AT,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
@@ -31258,6 +31275,7 @@ if (mode === "verify") {
         const gitSays = (args) => {
           try {
             return execFileSync("git", args, {
+              maxBuffer: CHILD_OUTPUT_BYTES,
               cwd: REPO_AT,
               encoding: "utf8",
               stdio: ["ignore", "pipe", "ignore"],
@@ -34250,6 +34268,7 @@ if (mode === "verify") {
             // коротким журналом полное основание не находилось никогда —
             // выведено десятой посадкой.
             log = execFileSync("git", ["log", "--format=%H %s"], {
+              maxBuffer: CHILD_OUTPUT_BYTES,
               cwd: REPO,
               encoding: "utf8",
               stdio: ["ignore", "pipe", "ignore"],
