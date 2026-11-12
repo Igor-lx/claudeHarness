@@ -2103,6 +2103,31 @@ it("каждое поле семени настройки читается ко�
   expect([...kinds[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(debtSeed.sort());
 });
 
+// Скрипт манифеста семени исполняется у принимающей стороны: программа,
+// которой нет среди зависимостей семени, находится только там, где её
+// поставили вручную. Тест держит вид: программа скрипта — из `bin` пакета
+// зависимостей семени либо сам Node и менеджер пакетов.
+it("каждый скрипт манифеста семени зовёт программу из зависимостей семени", () => {
+  const seed = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "package.json"), "utf8").replace(/^﻿/, ""));
+  const bins = new Set(["node", "npm", "npx"]);
+  for (const dep of Object.keys({ ...seed.dependencies, ...seed.devDependencies })) {
+    const at = path.join(ROOT, "node_modules", dep, "package.json");
+    if (!fs.existsSync(at)) continue;
+    const bin = JSON.parse(fs.readFileSync(at, "utf8")).bin;
+    if (typeof bin === "string") bins.add(dep.split("/").pop());
+    else for (const name of Object.keys(bin ?? {})) bins.add(name);
+  }
+  const bare = [];
+  for (const [name, body] of Object.entries(seed.scripts ?? {}))
+    for (const part of body.split(/&&|\|\||;/)) {
+      const words = part.trim().split(/\s+/);
+      const program = words[0] === "npx" ? words[1] : words[0];
+      if (!bins.has(program)) bare.push(name + ": " + program);
+    }
+  expect(bins.size).toBeGreaterThan(8);
+  expect(bare, "скрипт семени зовёт программу не из зависимостей").toEqual([]);
+});
+
 // Временная папка, которую не сняли, копится от прогона к прогону: двенадцать
 // песочниц по `600M` заполнили диск облачной сессии. Тест держит вид: каждая
 // папка, заведённая инструментом, снимается в том же модуле по своему имени.
