@@ -8882,14 +8882,8 @@ if (mode === "stop") {
 // «Область гарантий»), и выход из него — одно согласие: без `--apply` план,
 // с ним — замена. Правленое с посадки не трогается никогда.
 if (mode === "refresh") {
-  const args = process.argv.slice(3);
-  const extra = args.filter((a) => a !== "--apply");
-  if (extra.length > 0) {
-    console.log("=== Ключ режиму неизвестен ===");
-    console.log("  " + extra.join(", ") + " — режим знает только --apply");
-    process.exit(1);
-  }
-  const apply = args.includes("--apply");
+  const refreshArgs = process.argv.slice(3);
+  const apply = refreshArgs.includes("--apply");
   const NEWLINE = String.fromCharCode(10);
   const mapAt = shelfAt("seat/map.json");
   const seeds = (mapAt === null ? {} : readJson(mapAt, {})).copy ?? [];
@@ -8916,6 +8910,12 @@ if (mode === "refresh") {
   const notCode = /^(?:\.claude|\.context|docs)\//;
   const code = seeds.filter((e) => e.to.includes("/") && !notCode.test(e.to) && (CODE_FILE.test(e.to) || isStylePath(e.to)));
   sayLooked("заготовок кода в карте посадки", code.length);
+  const extra = refreshArgs.filter((one) => one !== "--apply");
+  if (extra.length > 0) {
+    console.log("=== Ключ режиму неизвестен ===");
+    console.log("  " + extra.join(", ") + " — режим знает только --apply");
+    process.exit(1);
+  }
   const stale = [];
   const kept = [];
   for (const e of code) {

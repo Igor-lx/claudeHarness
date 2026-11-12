@@ -1884,6 +1884,7 @@ it("каждый довод режима из командной строки п
     ["unknownFlagsOf(process.argv.slice(3)", "ключи посадки, не адрес"],
     ["const asked = process.argv[3] ?? null;", "папка снимка handoff — путь системы"],
     ["const judged = process.argv.slice(3)", "номер посадки пробы планки, не адрес"],
+    ["const refreshArgs = process.argv.slice(3);", "ключ согласия refresh, не адрес"],
     ['process.argv[3] === "--fired"', "ключ режима, не адрес"],
     ['const logAt = process.argv[4] ?? ""', "журнал срабатываний — файл системы"],
     ['"  `" + process.argv[3] + "`', "адрес, напечатанный человеку как он его дал"],
@@ -2295,6 +2296,8 @@ describe("правила мастерской и метод плана назы�
         if (!platform(m[1]) && find(m[1]) === undefined) bare.push(rel + ": путь " + m[1]);
       for (const m of flat.matchAll(/(`([\w./-]+\.md)`,?\s+)?(?:справк[аеиу]|раздел[аеуы]?)\s+«([^»]+)»/g)) {
         const name = m[3].toLowerCase();
+        // Раздел прогона в todo заводят на прогон и снимают по его концу.
+        if (name === "прогон плана приёмки") continue;
         const at = m[2] === undefined ? null : find(m[2]);
         const heads = at === null ? own : at === undefined ? [] : headsOf(at);
         if (!heads.some((h) => h.includes(name))) bare.push(rel + ": раздел «" + m[3] + "»" + (m[2] ? " в " + m[2] : ""));
