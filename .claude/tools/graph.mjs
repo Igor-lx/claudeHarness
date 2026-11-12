@@ -187,6 +187,7 @@ import {
   runTool,
   saidBy,
   SEAT_MARKER,
+  statusEntries,
   systemTemp,
   toolVersion,
   uncolored,
@@ -8497,17 +8498,11 @@ const changedPathsNow = (repoRoot) => {
   } catch {
     return null;
   }
-  const out = [];
-  const rows = said.split("\0");
-  for (let i = 0; i < rows.length; i += 1) {
-    if (rows[i] === "") continue;
-    out.push(rows[i].slice(3));
-    // За новым путём переименования идёт прежний — его на диске больше нет, и
-    // в правке он удалённый, как после `mv`. Прежний путь копии на месте.
-    const xy = rows[i].slice(0, 2);
-    if (xy.includes("R")) out.push(rows[i + 1] ?? "");
-    if (/[RC]/.test(xy)) i += 1;
-  }
+  // Прежний путь переименования на диске больше нет, и в правке он
+  // удалённый, как после `mv`. Прежний путь копии на месте.
+  const out = statusEntries(said).flatMap((e) =>
+    e.xy.includes("R") ? [e.path, e.from] : [e.path],
+  );
   return out
     .filter((one) => one !== "" && one.startsWith(prefix))
     .map((one) => one.slice(prefix.length));
@@ -10193,14 +10188,15 @@ if (mode === "bar-probe") {
       // линт и формат берут её файлы по записи посадки.
       const changed = [
         ...new Set([
-          ...spawnSync(
-            "git",
-            ["status", "--porcelain", "--untracked-files=all"],
-            { cwd: box, encoding: "utf8" },
+          ...statusEntries(
+            spawnSync(
+              "git",
+              ["status", "--porcelain", "-z", "--untracked-files=all"],
+              { cwd: box, encoding: "utf8" },
+            ).stdout,
           )
-            .stdout.split("\n")
-            .filter((line) => line !== "" && !/^(?:D.|.D) /.test(line))
-            .map((line) => line.slice(3)),
+            .filter((e) => !e.xy.includes("D"))
+            .map((e) => e.path),
           ...[...owner.keys()]
             .filter((f) => existsSync(f))
             .map((f) => norm(path.relative(box, f))),
@@ -18872,7 +18868,6 @@ const barRefusalOf = async (was, repoRoot, checks = null) => {
 // без свода, а ревизия — свод, которого в коммите нет.
 if (mode === "gate") {
   const NEWLINE = String.fromCharCode(10);
-  const { execFileSync } = await import("node:child_process");
   const git = (args) =>
     execFileSync("git", args, {
       cwd: REPO_AT,
@@ -23860,11 +23855,11 @@ if (mode === "verify") {
       const NEW_ANCHOR = /`([\w./{}-]*):(\d+)(?:-\d+)?`/g;
       let diff = null;
       try {
-        const { execSync } = await import("node:child_process");
         // `core.quotePath=false`: иначе имя не в ASCII приходит в заголовке
         // кавычками с восьмеричными кодами и не сходится с путём протокола.
-        diff = execSync(
-          "git -c core.quotePath=false diff -U0 HEAD -- .context",
+        diff = execFileSync(
+          "git",
+          ["-c", "core.quotePath=false", "diff", "-U0", "HEAD", "--", ".context"],
           {
             cwd: REPO,
             encoding: "utf8",
@@ -23876,8 +23871,9 @@ if (mode === "verify") {
         // Дифф против HEAD не видит файлов, ещё не взятых в git: новый файл
         // базы проходил с якорями без цитат целиком. Его строки — тоже
         // добавленные, и они дописываются к диффу в той же форме.
-        const fresh = execSync(
-          "git ls-files --others --exclude-standard -z -- .context",
+        const fresh = execFileSync(
+          "git",
+          ["ls-files", "--others", "--exclude-standard", "-z", "--", ".context"],
           { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
         );
         for (const one of zList(fresh)) {
@@ -30984,7 +30980,6 @@ if (mode === "verify") {
         barPastNote =
           "коммит-основание сводов не объявлено — история не сверяется";
       else {
-        const { execFileSync } = await import("node:child_process");
         const git = (args) =>
           execFileSync("git", args, {
             cwd: REPO_AT,
@@ -31260,7 +31255,6 @@ if (mode === "verify") {
         // «Репозитория нет» и «настройка не задана» — разные ответы, и обе
         // команды падают одинаково. Проект без git коммитов не делает, дыры у
         // него нет, и краснеть тут не на что: сверка это НАЗЫВАЕТ, а не молчит.
-        const { execFileSync } = await import("node:child_process");
         const gitSays = (args) => {
           try {
             return execFileSync("git", args, {

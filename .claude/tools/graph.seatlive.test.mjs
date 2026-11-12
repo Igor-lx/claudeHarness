@@ -92,8 +92,8 @@ describe("живая посадка: своё проекта внутри пол
     expect(shelfUntracked("?? .claude/tools/graph.mjs", {})).toBe(true);
   });
 
-  it("неотслеживаемое полки — любой формой строки git; своё проекта внутри полки и вне её — нет", () => {
-    for (const one of ["?? .claude/", "?? .claude", "?? .claude/README.md", "?? .claude/rules/", "?? .claude/hooks/", "?? .claude/hooks/git/", '?? ".claude/rules/a b.md"'])
+  it("неотслеживаемое полки — любой формой строки `status -z`; своё проекта внутри полки и вне её — нет", () => {
+    for (const one of ["?? .claude/", "?? .claude", "?? .claude/README.md", "?? .claude/rules/", "?? .claude/hooks/", "?? .claude/hooks/git/", "?? .claude/rules/a b.md", "?? .claude/rules/заметка.md"])
       expect(shelfUntracked(one, map), one).toBe(true);
     for (const one of ["?? .claude/commands/x.md", "?? .claude/settings.local.json", "?? .claude/hooks/own.sh", " M .claude/README.md", "?? notes.txt", "?? src/.claude/x"])
       expect(shelfUntracked(one, map), one).toBe(false);

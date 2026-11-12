@@ -27,6 +27,7 @@ import {
   runTool,
   saidBy,
   sandboxPackages,
+  statusEntries,
   systemTemp,
   localDay,
   seatIdentity,
@@ -55,13 +56,13 @@ const LISTS = new Set([".gitignore", ".gitattributes", ".prettierignore"]);
 /** Скрипты звеньев, которые посадка пишет живому проекту. */
 const LIVE_SCRIPTS = ["typecheck", "lint", "format:check", "test", "test:coverage", "mutate", "check"];
 
-/** Строка `git status --porcelain` — неотслеживаемый файл самой полки, а не
+/** Строка `git status --porcelain -z` — неотслеживаемый файл самой полки, а не
  * работа проекта. Проект, уже державший своё в `.claude/`, видит полку не
  * одной строкой `?? .claude/`, а по файлу, и посадка отказывала ему вовсе.
  * Своё проекта внутри полки — `projectOwnedInsideHarness` и `harnessInside`
  * карты. */
 export const shelfUntracked = (line, map) => {
-  const m = /^\?\? "?(\.claude(?:\/[^"]*)?)"?$/.exec(line);
+  const m = /^\?\? (\.claude(?:\/.*)?)$/.exec(line);
   if (m === null) return false;
   const parts = m[1].split("/").slice(1).filter(Boolean);
   if (parts.length === 0) return true;
@@ -378,9 +379,9 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       "Завести репозиторий, закоммитить проект и позвать посадку снова.",
     );
   const map = readJson(path.join(shelf, "seat", "map.json"));
-  const dirty = (asked(["status", "--porcelain"]) ?? "")
-    .split("\n")
-    .filter((l) => l.trim() !== "" && !shelfUntracked(l, map));
+  const dirty = statusEntries(asked(["status", "--porcelain", "-z"]))
+    .map((e) => e.xy + " " + e.path)
+    .filter((l) => !shelfUntracked(l, map));
   if (dirty.length > 0)
     refuse(
       "Незакоммиченное в проекте — посадка его не смешивает со своим:",

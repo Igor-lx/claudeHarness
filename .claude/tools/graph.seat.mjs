@@ -121,6 +121,22 @@ export const runTool = (
  * блокировке `pnpm` без `pnpm`. */
 export const saidBy = (run) => run.error ?? run.out;
 
+/** Строки `git status --porcelain -z`: состояние, путь и, у переименования и
+ * копии, прежний путь — он идёт следующим полем. Без `-z` git берёт путь не в
+ * ASCII в кавычки с восьмеричными кодами, и такого пути на диске нет. */
+export const statusEntries = (out) => {
+  const rows = String(out ?? "").split("\0");
+  const entries = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rows[i] === "") continue;
+    const xy = rows[i].slice(0, 2);
+    const moved = /[RC]/.test(xy);
+    entries.push({ xy, path: rows[i].slice(3), from: moved ? (rows[i + 1] ?? "") : null });
+    if (moved) i += 1;
+  }
+  return entries;
+};
+
 /** Есть ли файл команды там, где его ищет `cmd.exe`: по пути, а голое имя —
  * в папке запуска и в `PATH`, с каждым расширением `PATHEXT`. */
 const onWindowsPath = (command, { cwd = process.cwd(), env = process.env } = {}) => {

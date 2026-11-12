@@ -25,6 +25,7 @@ import {
   gitBusyOf,
   gitPathOf,
   SEAT_MARKER,
+  statusEntries,
   unknownFlagsOf,
   verifiedOf,
   walkFiles,
@@ -954,9 +955,12 @@ describe("посадка на месте одной командой", () => {
         fs.renameSync(box + "-shelf", path.join(box, ".claude"));
       }
       fs.writeFileSync(path.join(dirty, "src", "main.ts"), "export const x = 2;\n");
+      fs.writeFileSync(path.join(dirty, "заметка.md"), "x\n");
       const busy = seatHere(dirty, "--packages", ROOT);
       expect(busy.status).toBe(1);
       expect(busy.stdout).toContain("Незакоммиченное в проекте");
+      // Имя не в ASCII отказ называет как есть, а не кодами git.
+      expect(busy.stdout).toContain("?? заметка.md");
       const plan = seatHere(asked, "--packages", ROOT);
       expect(plan.status).toBe(1);
       expect(plan.stdout).toContain("=== Посадка ждёт слова: стек приводится к связке ===");
@@ -1935,6 +1939,72 @@ it("каждое чтение среды и платформы в инструм
     ...[...ENV_EXEMPT.keys()].filter((name) => !used.has("env:" + name)),
   ];
   expect(stale, "исключение, которому нечего исключать").toEqual([]);
+});
+
+// На Windows менеджер пакетов и его бинарники — файлы `.cmd`: без оболочки их
+// не найти, а строку оболочки `cmd.exe` разбирает по-своему. Набор на Windows
+// видит только то, до чего дошёл тест. Тест держит вид: запуск внешней
+// программы — `git` либо сам Node напрямую (оба `.exe`) или общий `runTool`.
+it("каждый запуск внешней программы в инструменте идёт напрямую к git и Node либо общим запуском", () => {
+  const DIRECT = new Set(['"git"', "process.execPath"]);
+  const EXEMPT = [["graph.seat.mjs", "spawnSync(command, said", "runTool — сам общий запуск; платформу держат его тесты с win32"]];
+  const used = new Set();
+  const bare = [];
+  let launches = 0;
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {
+    const text = fs.readFileSync(path.join(TOOL_DIR, file), "utf8");
+    const lineOf = (at) => text.slice(0, at).split("\n").length;
+    for (const m of text.matchAll(/import\s*(\{[^}]*\}|\*\s*as\s+\w+|\w+)\s*from\s*"(?:node:)?child_process"|import\(\s*"(?:node:)?child_process"\s*\)/g))
+      if (m[1] === undefined || !/^\{\s*(?:execFileSync|spawnSync)(?:\s*,\s*(?:execFileSync|spawnSync))?\s*\}$/.test(m[1]))
+        bare.push(file + ":" + lineOf(m.index) + " импорт мимо execFileSync и spawnSync: " + m[0]);
+    for (const m of text.matchAll(/(?<![.\w])(execFileSync|spawnSync)\(\s*([^,]*?)\s*,/gs)) {
+      if (/^\s*(\/\/|\*)/.test(text.split("\n")[lineOf(m.index) - 1])) continue;
+      launches += 1;
+      if (DIRECT.has(m[2].replace(/\s+/g, " "))) continue;
+      const hit = EXEMPT.find(([f, key]) => f === file && text.startsWith(key, m.index));
+      if (hit === undefined) bare.push(file + ":" + lineOf(m.index) + " " + m[1] + "(" + m[2].slice(0, 60));
+      else used.add(hit[0] + hit[1]);
+    }
+  }
+  expect(launches).toBeGreaterThan(50);
+  expect(bare, "запуск мимо git, Node и runTool").toEqual([]);
+  expect(EXEMPT.filter(([f, key]) => !used.has(f + key)).map(([f, key]) => f + ": " + key), "исключение, которому нечего исключать").toEqual([]);
+});
+
+// Без `-z` git берёт путь не в ASCII в кавычки с восьмеричными кодами: отказ
+// посадки называл файл `"\320\267..."`, а такого пути на диске нет. Тест держит
+// вид: каждый список доводов git, печатающий пути, несёт `-z`.
+it("каждый вызов git, печатающий пути, читает их через -z либо назван исключением", () => {
+  const EXEMPT = [
+    ["graph.mjs", '["status", "--porcelain", "--", protoAt]', "читает только пустоту вывода, путь не разбирает"],
+    ["graph.seat.mjs", '["ls-files", "--error-unmatch",', "только код возврата, вывод погашен"],
+  ];
+  const used = new Set();
+  const bare = [];
+  let lists = 0;
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {
+    const text = fs.readFileSync(path.join(TOOL_DIR, file), "utf8");
+    for (const m of text.matchAll(/\[\s*(?:"-c",\s*"[^"]*",\s*)?"(?:status|ls-files|diff)"[^\]]*\]/g)) {
+      const flat = m[0].replace(/\s+/g, " ").replace(/\[ /, "[").replace(/,? \]$/, "]");
+      if (!/"(?:status|ls-files)"|"--name-(?:only|status)"/.test(flat)) continue;
+      lists += 1;
+      if (flat.includes('"-z"')) continue;
+      const hit = EXEMPT.find(([f, key]) => f === file && flat.startsWith(key));
+      if (hit === undefined) bare.push(file + ":" + text.slice(0, m.index).split("\n").length + " " + flat);
+      else used.add(hit[0] + hit[1]);
+    }
+  }
+  expect(lists).toBeGreaterThan(8);
+  expect(bare, "путь из вывода git без -z").toEqual([]);
+  expect(EXEMPT.filter(([f, key]) => !used.has(f + key)).map(([f, key]) => f + ": " + key), "исключение, которому нечего исключать").toEqual([]);
+  // Разбор: путь как есть, прежний путь переименования и копии — своим полем.
+  expect(statusEntries("?? заметка.md\0R  new.ts\0old.ts\0 M a b.md\0C  c2.ts\0c.ts\0")).toEqual([
+    { xy: "??", path: "заметка.md", from: null },
+    { xy: "R ", path: "new.ts", from: "old.ts" },
+    { xy: " M", path: "a b.md", from: null },
+    { xy: "C ", path: "c2.ts", from: "c.ts" },
+  ]);
+  expect(statusEntries(null)).toEqual([]);
 });
 
 // Файл состояния, который обвязка пишет сама, рвётся посреди записи и правится
