@@ -4595,3 +4595,53 @@ describe("внешнюю команду запускает один помощн
     }
   });
 });
+
+// Обновление посаженного проекта копированием `.claude/` оставляет заготовку
+// кода прежней версии, и сверки читают её своим кодом. Режим `refresh`
+// предлагает замену планом и заменяет по согласию, правленое не трогает.
+describe("refresh: заготовки кода прежней версии", () => {
+  it("план без --apply ничего не пишет, --apply заменяет неправленое, правленое и чужой ключ — нет", () => {
+    const box = seatEmpty("refresh-");
+    const git = (...args) =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@local", ...args], { cwd: box, encoding: "utf8" }).trim();
+    const run = (...args) => spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "refresh", ...args], { cwd: box, encoding: "utf8" });
+    try {
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "seat");
+      const cfg = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(cfg, fs.readFileSync(cfg, "utf8").replace(/^ {2}barSince: null,$/m, '  barSince: "' + git("rev-parse", "HEAD") + '",'));
+      // Правленая проектом заготовка — своя, её режим не трогает.
+      const setup = path.join(box, "src", "tests", "setup.ts");
+      fs.appendFileSync(setup, "// own line\n");
+      git("commit", "-qam", "own");
+      // Полка обновлена: обе заготовки на ней новой версии.
+      const helperRel = "src/shared/styles/mergeStyleMaps.ts";
+      const fresh = (rel) => path.join(box, ".claude", "seat", "templates", rel);
+      fs.appendFileSync(fresh(helperRel), "// fresh edition\n");
+      fs.appendFileSync(fresh("src/tests/setup.ts"), "// fresh edition\n");
+      const before = fs.readFileSync(path.join(box, helperRel), "utf8");
+      const plan = run();
+      expect(plan.status, plan.stdout + plan.stderr).toBe(0);
+      expect(plan.stdout).toContain("с посадки не правлены, заменить свежими: 1");
+      expect(plan.stdout).toContain(helperRel + " — свежая: .claude/seat/templates/" + helperRel);
+      expect(plan.stdout).toContain("правлены с посадки, оставлены как свой код: 1");
+      expect(plan.stdout).toContain("node .claude/tools/graph.mjs refresh --apply");
+      expect(fs.readFileSync(path.join(box, helperRel), "utf8")).toBe(before);
+      // Подсказка сверок ведёт сюда.
+      const verify = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], { cwd: box, encoding: "utf8" });
+      expect(verify.stdout).toContain("graph.mjs refresh");
+      const done = run("--apply");
+      expect(done.stdout).toContain("заменено: 1");
+      expect(fs.readFileSync(path.join(box, helperRel), "utf8")).toBe(fs.readFileSync(fresh(helperRel), "utf8"));
+      expect(fs.readFileSync(setup, "utf8")).toContain("// own line");
+      expect(fs.readFileSync(setup, "utf8")).not.toContain("fresh edition");
+      expect(run().stdout).toContain("с посадки не правлены, заменить свежими: 0");
+      const wrong = run("--yes");
+      expect(wrong.status).toBe(1);
+      expect(wrong.stdout).toContain("режим знает только --apply");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

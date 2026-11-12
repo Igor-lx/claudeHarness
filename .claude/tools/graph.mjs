@@ -8876,6 +8876,75 @@ if (mode === "stop") {
 // виден только в диффе, а не в дереве: файлы законно расходятся там, где
 // одиночной библиотеке и фасаду нужно по-разному. Поэтому не сверка
 // содержимого, а вопрос в нужный момент: тронул одну копию — вот её близнец.
+// Заготовки кода прежней версии. Обвязку в посаженном проекте обновляют
+// копированием `.claude/`, и заготовка вне неё остаётся прежней: сверки
+// читают её своим кодом и краснеют. Это исключение (правила мастерской,
+// «Область гарантий»), и выход из него — одно согласие: без `--apply` план,
+// с ним — замена. Правленое с посадки не трогается никогда.
+if (mode === "refresh") {
+  const args = process.argv.slice(3);
+  const extra = args.filter((a) => a !== "--apply");
+  if (extra.length > 0) {
+    console.log("=== Ключ режиму неизвестен ===");
+    console.log("  " + extra.join(", ") + " — режим знает только --apply");
+    process.exit(1);
+  }
+  const apply = args.includes("--apply");
+  const NEWLINE = String.fromCharCode(10);
+  const mapAt = shelfAt("seat/map.json");
+  const seeds = (mapAt === null ? {} : readJson(mapAt, {})).copy ?? [];
+  const base = CONFIG.barSince ?? CONFIG.seriesSince ?? CONFIG.findings?.since ?? null;
+  const flat = (text) => String(text).split(String.fromCharCode(13) + NEWLINE).join(NEWLINE);
+  const atSeating = (rel) => {
+    if (base === null) return null;
+    try {
+      return execFileSync("git", ["show", base + ":./" + rel], {
+        maxBuffer: CHILD_OUTPUT_BYTES,
+        cwd: REPO_AT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      // Не было в коммите посадки либо git недоступен: доказать «не правили»
+      // нечем, и файл остаётся как есть — назван своим.
+      return null;
+    }
+  };
+  // Предмет тот же, что у сверок: заготовки кода и стилей не в корне — их
+  // сверки читают своим кодом. Конфиг корня своим кодом не считается.
+  // Обвязка, база и документация кодом проекта не являются — как у сверок.
+  const notCode = /^(?:\.claude|\.context|docs)\//;
+  const code = seeds.filter((e) => e.to.includes("/") && !notCode.test(e.to) && (CODE_FILE.test(e.to) || isStylePath(e.to)));
+  sayLooked("заготовок кода в карте посадки", code.length);
+  const stale = [];
+  const kept = [];
+  for (const e of code) {
+    const to = path.join(REPO_AT, e.to);
+    const from = shelfAt(e.from);
+    if (from === null || !existsSync(from) || !existsSync(to)) continue;
+    const now = flat(readFileSync(to, "utf8"));
+    if (now === flat(readFileSync(from, "utf8"))) continue;
+    const was = atSeating(e.to);
+    if (was !== null && flat(was) === now) stale.push({ to: e.to, from });
+    else kept.push(e.to);
+  }
+  console.log("=== Заготовки прежней версии ===");
+  console.log("  с посадки не правлены, заменить свежими: " + stale.length);
+  for (const one of stale)
+    console.log("    " + one.to + " — свежая: " + norm(path.relative(REPO_AT, one.from)));
+  console.log("  правлены с посадки, оставлены как свой код: " + kept.length);
+  for (const one of kept) console.log("    " + one);
+  if (base === null)
+    console.log("  основание посадки в настройке не названо — «не правили» доказать нечем");
+  if (stale.length > 0 && !apply)
+    console.log("  ничего не записано; заменить: node .claude/tools/graph.mjs refresh --apply");
+  if (stale.length > 0 && apply) {
+    for (const one of stale) writeFileSync(path.join(REPO_AT, one.to), readFileSync(one.from));
+    console.log("  заменено: " + stale.length);
+  }
+  process.exit(0);
+}
+
 if (mode === "twins") {
   sayLooked("объявленных пар форков", (CONFIG.forks ?? []).length);
   const NEWLINE = String.fromCharCode(10);
@@ -32066,7 +32135,7 @@ if (mode === "verify") {
       ? null
       : "  свой код — только семена, лёгшие прежней редакцией: " +
         driftedOwn.join(", ") +
-        ". Не правили сами — заменить редакцией полки; правили — это свой код";
+        ". Не правили сами — заменить свежими: план `node .claude/tools/graph.mjs refresh`, замена — с `--apply`; правили — это свой код";
   checkStep(() => {
     {
       const mapAt = shelfAt("seat/map.json");
