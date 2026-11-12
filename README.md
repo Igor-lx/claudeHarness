@@ -492,12 +492,13 @@ it, each with its own question:
 
 ## Status
 
-**Ready for work.** The latest release is v0.5.1; the numbers below were
-measured on `main` after it, in the acceptance run of 2026-11-06 to
-2026-11-12, each with its own date, and are not tagged yet:
+**v0.5.2: ready for work.** Everything described here is in place and
+checked on real runs rather than by description; the numbers below were
+measured in the acceptance run of 2026-11-06 to 2026-11-12, each with its
+own date:
 
-- the full self-test suite passes, 2,198 of 2,198 on Linux (2026-11-12),
-  and on Windows in CI (run 111, 2026-11-12);
+- the full self-test suite passes, 2,201 of 2,201 on Linux, and on
+  Windows in CI (2026-11-12);
 - every check that has its subject on the test stand catches its planted
   breakage: 182 of 206 recipes, the other 24 have nothing to break there,
   and no check is left without a recipe (2026-11-12);
@@ -521,9 +522,9 @@ measured on `main` after it, in the acceptance run of 2026-11-06 to
   a pipe - are held by attention with the reason written down (2026-11-11);
 - the parts the daily loop never runs: 12 kinds of defect were enumerated
   whole and each is held by a test; a sample of 34 probes found 7 more
-  kinds, all fixed and held by tests the same way. The sample was not
-  clean, so no bound on what is still undetected there is claimed
-  (2026-11-12).
+  kinds, all fixed and held by tests the same way; a repeated sample of 24
+  probes found 1 more kind, also fixed. Neither sample was clean, so no
+  bound on what is still undetected there is claimed (2026-11-12).
 
 The architecture and the concept are settled. Next comes writing real
 projects on it; details of the rules, the checks and the tool's output may
@@ -535,13 +536,21 @@ What changed since v0.5.1:
   project or of the machine, naming the rule: it used to report success
   and commit without the harness, so a clone came without it and without
   the commit gate;
+- **a path the stack cannot run in is refused up front**: in a folder
+  whose path holds `#` or `?`, Vite and Vitest find no files, and seating
+  failed midway on an unrelated "cannot find module"; now it names the
+  character and the way on;
 - **an interrupted seating is named with the way on** from both entries
   of the command, not only from the project folder;
 - **another machine and another project**: paths from git are read
   NUL-separated, so a file named in Cyrillic is named readably; every
-  child process has an output limit, so a history of 12,000 commits (probe
-  of 2026-11-12) no longer reads as "no history"; no check step throws on a
-  machine without git;
+  child process has an output limit, so a long history no longer reads as
+  "no history"; no check step throws on a machine without git;
+- **`refresh` offers to replace stale code seeds**: after the harness is
+  updated in a seated project by copying `.claude/`, a code seed left in
+  its earlier edition is named by the checks with the command - the plan
+  without `--apply`, the replacement with it; files the project edited are
+  never touched;
 - **project settings live in a folder named `config`**, where the tool
   finds them and asks for a document per constant;
 - **the end of a turn holds a read-only review** until every finding it
@@ -551,7 +560,10 @@ What changed since v0.5.1:
 - **whole kinds are held by tests**, not by probes: every launch of an
   external program, every temporary folder, every field and script of the
   seeds and every copy of the verified versions, every condition of a
-  falsification recipe, every path and section the workshop rules name.
+  falsification recipe, every path and section the workshop rules name;
+- **the hot probe run goes holders first**: the `probe` skill checks every
+  machine holder by a list and puts probes only where a rule or attention
+  holds, so the number of probes follows from what is left to check.
 
 Earlier releases and what each brought -
 [GitHub releases](https://github.com/Igor-lx/claudeHarness/releases).
