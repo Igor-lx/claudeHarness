@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { parseJsonc } from "./graph.configs.mjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SEAT_PACKAGES, seatEmpty } from "./graph.modes.shared.mjs";
 
@@ -23,7 +24,7 @@ const edit = (file, fn) => (box) => {
   fs.writeFileSync(at, fn(fs.readFileSync(at, "utf8"), box));
 };
 const json = (file, fn) =>
-  edit(file, (text) => JSON.stringify(fn(JSON.parse(text))));
+  edit(file, (text) => JSON.stringify(fn(parseJsonc(text))));
 const script = (name, body) =>
   json("package.json", (pkg) => ({
     ...pkg,
@@ -45,7 +46,7 @@ const SPELLINGS = [
     "опции компилятора — в базовом конфиге по `extends`",
     (box) => {
       const at = path.join(box, "tsconfig.json");
-      const t = JSON.parse(fs.readFileSync(at, "utf8"));
+      const t = parseJsonc(fs.readFileSync(at, "utf8"));
       fs.writeFileSync(
         path.join(box, "tsconfig.base.json"),
         JSON.stringify({ compilerOptions: t.compilerOptions }, null, 2) + "\n",

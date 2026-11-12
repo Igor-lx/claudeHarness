@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseJsonc } from "./graph.configs.mjs";
 import { describe, expect, it } from "vitest";
 import { bareCodeOf } from "./graph.predicates.mjs";
 import { stepsOutline } from "./graph.steps.mjs";
@@ -5523,7 +5524,7 @@ describe("решение, названное после `tsc -b`", () => {
       const at = (rel) => path.join(box, rel);
       const json = (rel, value) =>
         fs.writeFileSync(at(rel), JSON.stringify(value, null, 2) + "\n");
-      const seed = JSON.parse(fs.readFileSync(at("tsconfig.json"), "utf8"));
+      const seed = parseJsonc(fs.readFileSync(at("tsconfig.json"), "utf8"));
       const loose = { ...seed.compilerOptions, strict: false, noUncheckedIndexedAccess: false };
       json("tsconfig.app.json", { compilerOptions: loose, include: seed.include });
       json("tsconfig.json", { files: [], references: [{ path: "./tsconfig.app.json" }] });
@@ -5557,7 +5558,7 @@ describe("решение, названное после `tsc -b`", () => {
       const at = (rel) => path.join(box, rel);
       const json = (rel, value) =>
         fs.writeFileSync(at(rel), JSON.stringify(value, null, 2) + "\n");
-      const seed = JSON.parse(fs.readFileSync(at("tsconfig.json"), "utf8"));
+      const seed = parseJsonc(fs.readFileSync(at("tsconfig.json"), "utf8"));
       json("tsconfig.app.json", { compilerOptions: seed.compilerOptions, include: seed.include });
       json("tsconfig.json", { files: [], references: [{ path: "./tsconfig.app.json" }] });
       json("tsconfig.strict.json", {

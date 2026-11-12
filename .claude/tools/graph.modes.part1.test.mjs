@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { parseJsonc } from "./graph.configs.mjs";
 import { describe, expect, it } from "vitest";
 import { BAR_CHECK_KINDS, isRulesState, isStopState } from "./graph.predicates.mjs";
 import {
@@ -2708,7 +2709,7 @@ describe("база о своём: документы узла, сторона т
       expect(brief("src/app/zzReads.ts")).not.toContain("импорт не найден на диске");
       // Короткий адрес, объявленный компилятору, — тот же путь от своей основы.
       const tsAt = path.join(box, "tsconfig.json");
-      const ts = JSON.parse(fs.readFileSync(tsAt, "utf8"));
+      const ts = parseJsonc(fs.readFileSync(tsAt, "utf8"));
       ts.compilerOptions.paths = { "~/*": ["./src/*"] };
       fs.writeFileSync(tsAt, JSON.stringify(ts, null, 2));
       fs.writeFileSync(path.join(box, "src", "app", "zzAlias.ts"), 'import { zzGone } from "~/shared/zzGone";\nimport { zzMissing } from "zz-package";\nexport const zzUses = () => [zzGone, zzMissing];\n');
