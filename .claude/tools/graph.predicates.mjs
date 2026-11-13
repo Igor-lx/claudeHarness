@@ -5297,6 +5297,7 @@ export const PREDICATE_CASES = [
   ["parseJson", '"a"', "a"],
   ["parseJson", '\uFEFF"\uFEFFb"', "\uFEFFb"],
   ["parseJson", '\uFEFF""', ""],
+  ["parseJson", '"a\uFEFF"', "a\uFEFF"],
   ["pathUnder", "/repo/src/x.test.ts\n/repo/src/", true],
   ["pathUnder", "/repo/srcx/a.test.ts\n/repo/src", false],
   ["pathUnder", "/repo/src\n/repo/src", false],

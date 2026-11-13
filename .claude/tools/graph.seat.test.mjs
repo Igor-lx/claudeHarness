@@ -395,6 +395,35 @@ describe("осмотр окружения проекта по осям карт�
     }
   });
 
+  // Вопрос 21: диапазон среды выше связки спорил с файлом версии посадки.
+  it("диапазон среды, не пускающий связку, — строка плана; --apply пишет диапазон семени, прочие поля не трогает", () => {
+    const engines = { node: ">=22.23.2", npm: ">=11.21.1" };
+    const withEngines = (declared) =>
+      stackSurveyOf({ manifest: { devDependencies: { ...OURS }, engines: declared }, files: ["src/App.tsx"], axes: AXES, verified: OURS, ui: PLATFORM.ui, alternatives: PLATFORM.alternatives, engines });
+    const above = withEngines({ node: ">=24", npm: ">=11" });
+    expect(above.plan).toEqual([{ name: "engines.node", from: ">=24", to: ">=22.23.2", section: "engines" }]);
+    expect(above.verdict).toBe("наше, неполное");
+    // Пускающий связку диапазон, необъявленный и неразобранный — не трогаются.
+    expect(withEngines({ node: ">=20 <23", npm: "11.x" }).plan).toEqual([]);
+    expect(withEngines(undefined).plan).toEqual([]);
+    expect(withEngines({ node: "lts/*" }).plan).toEqual([]);
+    expect(withEngines({ node: 24 }).plan).toEqual([]);
+    // Нижняя граница семени — только из формы `>=x.y.z`, с пробелами по краям.
+    const seedForm = (range) =>
+      stackSurveyOf({ manifest: { devDependencies: { ...OURS }, engines: { node: ">=24" } }, files: ["src/App.tsx"], axes: AXES, verified: OURS, ui: PLATFORM.ui, alternatives: PLATFORM.alternatives, engines: { node: range } }).plan.length;
+    expect([" >=22.23.2 ", "x>=22.23.2", ">=22.23.2 junk", "^22.0.0"].map(seedForm)).toEqual([1, 0, 0, 0]);
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-engines-"));
+    try {
+      fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify({ devDependencies: { ...OURS }, engines: { node: ">=24", npm: ">=11" } }));
+      expect(stackApply(dest, above, {}, () => ran(0, "", "")).ok).toBe(true);
+      const written = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
+      expect(written.engines).toEqual({ node: ">=22.23.2", npm: ">=11" });
+      expect(written.devDependencies["engines.node"]).toBeUndefined();
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
   it("пустая папка — «пусто», плана нет: посадка ставит всё сама", () => {
     const s = survey(null, []);
     expect(s.verdict).toBe("пусто");
@@ -1103,6 +1132,8 @@ describe("посадка на месте одной командой", () => {
       const via = path.join(at, "link");
       fs.symlinkSync(shelf, via);
       expect([shelf, path.join(shelf, "a", "b"), path.join(via, "new"), path.join(at, ".claude-x"), at, path.join(at, "..")].map((one) => insideOf(one, shelf))).toEqual([true, true, true, false, false, false]);
+      // Оба конца не существуют: ответ по недостающему хвосту, а не по общему предку.
+      expect([insideOf(path.join(at, "ghost", "x"), path.join(at, "ghost")), insideOf(path.join(at, "other"), path.join(at, "ghost"))]).toEqual([true, false]);
     } finally {
       fs.rmSync(at, { recursive: true, force: true });
     }
@@ -1138,6 +1169,7 @@ describe("посадка на месте одной командой", () => {
       expect(systemTemp()).toBe(fs.realpathSync.native(inner));
       keepTempOutside(box);
       expect(() => systemTemp()).toThrow("временная папка системы лежит внутри проекта");
+      expect(() => systemTemp()).toThrow(process.platform === "win32" ? "задать TEMP вне " + box : "задать TMPDIR вне " + box);
     } finally {
       names.forEach((one, i) => {
         if (had[i] === undefined) delete process.env[one];
@@ -1152,6 +1184,11 @@ describe("посадка на месте одной командой", () => {
     expect(reasonLineOf(node)).toBe("Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@eslint/js'");
     expect(reasonLineOf("\n  warn: one\nTypeError: bad\n")).toBe("TypeError: bad");
     expect(reasonLineOf("\n  plain reason\nsecond\n")).toBe("plain reason");
+    // Строка исходника с `Error` в середине — не строка ошибки.
+    expect(reasonLineOf("  throw new Error(why);\nError: real\n")).toBe("Error: real");
+    // Без строки ошибки — «не найдено» либо код ошибки Node, а не первая строка.
+    expect(reasonLineOf("at frame\nCannot find module 'x'\n")).toBe("Cannot find module 'x'");
+    expect(reasonLineOf("noise\ncode ERR_FOO_BAR: boom\n")).toBe("code ERR_FOO_BAR: boom");
     expect([reasonLineOf(""), reasonLineOf(undefined)]).toEqual(["", ""]);
   });
 
@@ -2849,4 +2886,56 @@ describe("таблица хуков доктрины", () => {
     expect(called.size).toBeGreaterThan(3);
     expect([...told].sort()).toEqual([...called].sort());
   });
+});
+
+describe("хуки ворот зовут свой хук проекта", () => {
+  // Вопрос 22: `core.hooksPath` уводил git к хукам обвязки, и свой хук
+  // проекта в служебной папке git переставал исполняться без признака.
+  it("отказ своего хука останавливает коммит до ворот, согласие пропускает к воротам, в worktree — тот же хук", () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "own-hooks-"));
+    const tree = box + "-wt";
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=p@p", "-c", "user.name=p", ...args], { cwd, encoding: "utf8" });
+      git(box, "init", "-q");
+      fs.cpSync(path.join(SHELF, "hooks", "git"), path.join(box, ".claude", "hooks", "git"), { recursive: true });
+      fs.mkdirSync(path.join(box, ".claude", "tools"), { recursive: true });
+      fs.writeFileSync(path.join(box, ".claude", "tools", "graph.mjs"), 'console.log("GATE " + process.argv.slice(2).join(" "));\n');
+      fs.writeFileSync(path.join(box, "a.txt"), "a\n");
+      git(box, "add", "-A");
+      git(box, "commit", "-qm", "base", "--no-verify");
+      git(box, "config", "core.hooksPath", ".claude/hooks/git");
+      const own = (name, body) => {
+        const at = path.join(box, ".git", "hooks", name);
+        fs.writeFileSync(at, "#!/bin/sh\n" + body + "\n");
+        fs.chmodSync(at, 0o755);
+      };
+      const commit = (cwd, msg) => {
+        fs.appendFileSync(path.join(cwd, "a.txt"), msg + "\n");
+        git(cwd, "add", "a.txt");
+        return git(cwd, "commit", "-m", msg);
+      };
+      const none = commit(box, "no own hook");
+      expect(none.status, none.stdout + none.stderr).toBe(0);
+      expect(none.stdout + none.stderr).toContain("GATE gate");
+      own("pre-commit", 'echo OWN-PRE; exit 3');
+      const refused = commit(box, "own refuses");
+      expect(refused.status).not.toBe(0);
+      expect(refused.stdout + refused.stderr).toContain("OWN-PRE");
+      expect(refused.stdout + refused.stderr).not.toContain("GATE gate");
+      git(box, "reset", "-q");
+      own("pre-commit", "echo OWN-PRE; exit 0");
+      own("prepare-commit-msg", 'echo OWN-MSG >> "$1"');
+      const passed = commit(box, "own passes");
+      expect(passed.status, passed.stdout + passed.stderr).toBe(0);
+      expect(passed.stdout + passed.stderr).toMatch(/OWN-PRE[\s\S]*GATE gate/);
+      expect(git(box, "log", "-1", "--format=%B").stdout).toContain("OWN-MSG");
+      git(box, "worktree", "add", "-q", tree, "-b", "wt");
+      const inTree = commit(tree, "in worktree");
+      expect(inTree.status, inTree.stdout + inTree.stderr).toBe(0);
+      expect(inTree.stdout + inTree.stderr).toContain("OWN-PRE");
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
 });

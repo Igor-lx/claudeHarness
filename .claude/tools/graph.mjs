@@ -6497,6 +6497,7 @@ const CHECK_SECTIONS = [
   "Закомментированного кода нет",
   "Комментарий не перерос в прозу",
   "Доля комментариев в файле",
+  "Пометка каркаса снята при правке",
   "Новые якоря — с цитатой",
   "Найденное — исправлено, а не отложено",
   "Ссылки на разделы",
@@ -8976,34 +8977,46 @@ if (mode === "stop") {
 // читают её своим кодом и краснеют. Это исключение (правила мастерской,
 // «Область гарантий»), и выход из него — одно согласие: без `--apply` план,
 // с ним — замена. Правленое с посадки не трогается никогда.
+/** Коммит посадки и текст файла в нём: им доказывают «с посадки не правили»
+ * — `refresh` и сверка пометки каркаса. `null` — основания нет, файла в
+ * коммите не было либо git недоступен. */
+const SEAT_BASE = CONFIG.barSince ?? CONFIG.seriesSince ?? CONFIG.findings?.since ?? null;
+const flatText = (text) => String(text).split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));
+const seatedTextOf = (rel) => {
+  if (SEAT_BASE === null) return null;
+  try {
+    return execFileSync("git", ["show", SEAT_BASE + ":./" + rel], {
+      maxBuffer: CHILD_OUTPUT_BYTES,
+      cwd: REPO_AT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
+};
+/** Заготовки кода и стилей карты посадки. Конфиг корня, обвязка, база и
+ * документация кодом проекта не являются — как у сверок. */
+const seedCodeEntries = () => {
+  const mapAt = shelfAt("seat/map.json");
+  const notCode = /^(?:\.claude|\.context|docs)\//;
+  return ((mapAt === null ? {} : readJson(mapAt, {})).copy ?? []).filter(
+    (e) => e.to.includes("/") && !notCode.test(e.to) && (CODE_FILE.test(e.to) || isStylePath(e.to)),
+  );
+};
+/** Пометка, которой каркас снимает строку точки входа с мутаций до первой
+ * правки файла. Решено разработчиком `2026-11-13`, вопрос 23. */
+const SEED_MUTATION_MARK = "Stryker disable next-line all: seeded entry point";
+
 if (mode === "refresh") {
   const refreshArgs = process.argv.slice(3);
   const apply = refreshArgs.includes("--apply");
-  const NEWLINE = String.fromCharCode(10);
-  const mapAt = shelfAt("seat/map.json");
-  const seeds = (mapAt === null ? {} : readJson(mapAt, {})).copy ?? [];
-  const base = CONFIG.barSince ?? CONFIG.seriesSince ?? CONFIG.findings?.since ?? null;
-  const flat = (text) => String(text).split(String.fromCharCode(13) + NEWLINE).join(NEWLINE);
-  const atSeating = (rel) => {
-    if (base === null) return null;
-    try {
-      return execFileSync("git", ["show", base + ":./" + rel], {
-        maxBuffer: CHILD_OUTPUT_BYTES,
-        cwd: REPO_AT,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-    } catch {
-      // Не было в коммите посадки либо git недоступен: доказать «не правили»
-      // нечем, и файл остаётся как есть — назван своим.
-      return null;
-    }
-  };
-  // Предмет тот же, что у сверок: заготовки кода и стилей не в корне — их
-  // сверки читают своим кодом. Конфиг корня своим кодом не считается.
-  // Обвязка, база и документация кодом проекта не являются — как у сверок.
-  const notCode = /^(?:\.claude|\.context|docs)\//;
-  const code = seeds.filter((e) => e.to.includes("/") && !notCode.test(e.to) && (CODE_FILE.test(e.to) || isStylePath(e.to)));
+  const base = SEAT_BASE;
+  const flat = flatText;
+  // Не было в коммите посадки либо git недоступен: доказать «не правили»
+  // нечем, и файл остаётся как есть — назван своим.
+  const atSeating = seatedTextOf;
+  const code = seedCodeEntries();
   sayLooked("заготовок кода в карте посадки", code.length);
   const extra = refreshArgs.filter((one) => one !== "--apply");
   if (extra.length > 0) {
@@ -23824,6 +23837,32 @@ if (mode === "verify") {
     if (overComments > 0 && seedDriftNote(chattyFiles) !== "")
       console.log(seedDriftNote(chattyFiles));
   });
+  // Пометка каркаса снимает строку с мутаций, пока файл — привезённый и
+  // проверенный в мастерской. Правленый файл — код проекта: пометка уходит,
+  // файл получает тест. Без сверки пометка пережила бы правку без признака.
+  const seedMarkLeft = [];
+  checkStep(() => {
+    checkHead("Пометка каркаса снята при правке", () => {
+      let marked = 0;
+      for (const e of seedCodeEntries()) {
+        const to = path.join(REPO_AT, e.to);
+        if (!existsSync(to)) continue;
+        const now = flatText(readFileSync(to, "utf8"));
+        if (!now.includes(SEED_MUTATION_MARK)) continue;
+        marked++;
+        // Не правлен — совпадает с нынешним семенем (посадка либо `refresh`)
+        // или с собой в коммите посадки.
+        const from = shelfAt(e.from);
+        const seed = from !== null && existsSync(from) ? flatText(readFileSync(from, "utf8")) : null;
+        const was = seatedTextOf(e.to);
+        if (now !== seed && (was === null || flatText(was) !== now)) seedMarkLeft.push(e.to);
+      }
+      return { n: marked, unit: "файлов каркаса с пометкой" };
+    });
+    console.log("  изменены после посадки, пометка на месте: " + seedMarkLeft.length);
+    for (const one of seedMarkLeft)
+      console.log("    " + one + " — снять пометку `Stryker disable` каркаса и покрыть файл тестом");
+  });
   checkStep(() => {
     checkHead("Якоря на документацию в коде", () => ({
       n: anchorCount,
@@ -25639,7 +25678,7 @@ if (mode === "verify") {
             : low !== null && nvmCmp(low) < 0
               ? `${nvmName} называет ${nvmLine}, ниже «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
               : high !== null && nvmCmp(high) >= 0
-                ? `.nvmrc называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
+                ? `${nvmName} называет ${nvmLine}, выше «${want}» в манифесте. Привести к одной версии: правится то, что не сходится с проверенной связкой`
                 : null;
         const say =
           want === null

@@ -4729,3 +4729,41 @@ describe("JSON с меткой порядка байтов", () => {
     for (const file of own.keys()) expect(fs.readFileSync(path.join(TOOL_DIR, file), "utf8"), file).toContain("JSON.parse(");
   });
 });
+
+describe("пометка каркаса снята при правке", () => {
+  // Вопрос 23: точка входа каркаса снята с мутаций, пока её не правили.
+  it("нетронутая заготовка с пометкой — чисто; правленая с пометкой — названа; без пометки — не предмет", () => {
+    const box = seatEmpty("seed-mark-");
+    try {
+      const title = "Пометка каркаса снята при правке";
+      const main = path.join(box, "src", "app", "main.tsx");
+      const seeded = fs.readFileSync(main, "utf8");
+      expect(seeded).toContain("Stryker disable next-line all: seeded entry point");
+      const run = () => spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], { cwd: box, encoding: "utf8" }).stdout;
+      const section = (out) => out.slice(out.indexOf("=== " + title + " ==="), out.indexOf("\n===", out.indexOf("=== " + title + " ===") + 4));
+      expect(section(run())).toContain("изменены после посадки, пометка на месте: 0");
+      fs.writeFileSync(main, seeded + "export const zzTouched = 1;\n");
+      const touched = section(run());
+      expect(touched).toContain("изменены после посадки, пометка на месте: 1");
+      expect(touched).toContain("src/app/main.tsx — снять пометку");
+      fs.writeFileSync(main, seeded.split("\n").filter((line) => !line.includes("Stryker disable")).join("\n"));
+      expect(section(run())).toContain("изменены после посадки, пометка на месте: 0");
+      // С коммитом посадки: свой вид при посадке и свежее семя после `refresh` — не правка.
+      const older = seeded + "// older seed edition\n";
+      fs.writeFileSync(main, older);
+      const git = (...args) => spawnSync("git", ["-c", "user.email=p@p", "-c", "user.name=p", ...args], { cwd: box, encoding: "utf8" }).stdout.trim();
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "seat");
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(cfgAt, fs.readFileSync(cfgAt, "utf8").replace("  barSince: null,", '  barSince: "' + git("rev-parse", "HEAD") + '",'));
+      expect(section(run())).toContain("изменены после посадки, пометка на месте: 0");
+      fs.writeFileSync(main, seeded);
+      expect(section(run())).toContain("изменены после посадки, пометка на месте: 0");
+      fs.writeFileSync(main, older + "export const zzTouched = 1;\n");
+      expect(section(run())).toContain("изменены после посадки, пометка на месте: 1");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

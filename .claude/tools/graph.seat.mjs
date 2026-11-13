@@ -432,6 +432,7 @@ export const stackSurveyOf = ({
   withTools = [],
   ui = [],
   alternatives = {},
+  engines = {},
 }) => {
   const ext = (re) => files.filter((f) => re.test(f) && !/\.d\.ts$/.test(f));
   const tsFiles = ext(/\.(?:ts|tsx|mts|cts)$/);
@@ -544,6 +545,16 @@ export const stackSurveyOf = ({
         : { axis: axis.axis, state: "наше, не по связке", note: [...moves, ...notes].join("; ") },
     );
   }
+  // Диапазон среды проекта, не пускающий версию связки, спорил с файлом
+  // версии, который кладёт посадка, — красная сверка без подсказки, что
+  // править. Приводится тем же согласием, что и пакеты. Решено разработчиком
+  // `2026-11-13`, вопрос 21.
+  for (const [key, range] of Object.entries(engines)) {
+    const declared = m.engines?.[key];
+    const floor = /^>=\s*(\d+(?:\.\d+){0,2})$/.exec(String(range).trim())?.[1];
+    if (typeof declared !== "string" || floor === undefined) continue;
+    if (rangeAllows(declared, floor) === false) plan.push({ name: "engines." + key, from: declared, to: range, section: "engines" });
+  }
   const scripts = [];
   for (const axis of axes)
     if (axis.tool !== undefined && withTools.includes(axis.axis)) scripts.push(axis.tool);
@@ -628,6 +639,10 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
   const before = readFileSync(manifestAt, "utf8");
   const m = manifestOf(root);
   for (const one of survey.plan) {
+    if (one.section === "engines") {
+      m.engines = { ...(m.engines ?? {}), [one.name.slice("engines.".length)]: one.to };
+      continue;
+    }
     for (const section of ["dependencies", "devDependencies"])
       if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
     if (one.to === null) {
@@ -708,7 +723,7 @@ export const insideOf = (child, parent) => {
     return path.join(realpathSync(head), ...tail);
   };
   const rel = path.relative(real(parent), real(child));
-  return rel === "" || !(rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel));
+  return !(rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel));
 };
 export const seatRunningAt = (target) =>
   path.join(tmpdir(), "claude-harness-seat-" + createHash("sha1").update(path.resolve(target)).digest("hex").slice(0, 16) + ".pid");

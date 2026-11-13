@@ -67,6 +67,7 @@ export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => 
     withTools,
     ui: map.platformPackages?.ui ?? [],
     alternatives: map.platformPackages?.alternatives ?? {},
+    engines: seed.engines ?? {},
   });
   const foreign =
     manifest === null

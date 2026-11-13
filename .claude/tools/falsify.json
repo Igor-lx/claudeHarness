@@ -1181,6 +1181,12 @@
       }
     },
     {
+      "section": "Пометка каркаса снята при правке",
+      "whenFrame": true,
+      "file": "src/app/main.tsx",
+      "append": "\nexport const zzTouchedAfterSeating = 1;\n"
+    },
+    {
       "section": "Каркас не отстал от семени",
       "file": "src/app/App.tsx",
       "append": "// drift"

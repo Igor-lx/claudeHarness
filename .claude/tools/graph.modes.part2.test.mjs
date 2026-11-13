@@ -4197,6 +4197,13 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(range()).toEqual([expect.stringMatching(/^\.node-version называет 18,/)]);
       write(box, ".node-version", "22.23.2\n");
       expect(range()).toBeUndefined();
+      // Выше верхней границы — тоже своим именем, а не «.nvmrc».
+      const pkgAt = path.join(box, "package.json");
+      const pkg = fs.readFileSync(pkgAt, "utf8");
+      fs.writeFileSync(pkgAt, JSON.stringify({ ...JSON.parse(pkg), engines: { node: ">=22.23.2 <23" } }, null, 2) + "\n");
+      write(box, ".node-version", "24\n");
+      expect(range()).toEqual([expect.stringMatching(/^\.node-version называет 24, выше/)]);
+      fs.writeFileSync(pkgAt, pkg);
       fs.rmSync(path.join(box, ".node-version"));
       write(box, ".tool-versions", "python 3.12.1\nnodejs 18.0.0\n");
       expect(range()).toEqual([expect.stringMatching(/^\.tool-versions называет 18\.0\.0,/)]);
