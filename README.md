@@ -81,8 +81,8 @@ purpose, regularly, to see whether it notices.
 - **Economy by design.** Quality is not bought by rereading the whole
   project on every task: only the area the graph computes is read, the rules
   load when they are needed, and the bar asks only what applies.
-- **Made for frontend.** Tuned to React, TypeScript and Vite, on a set of
-  package versions it was verified with.
+- **Made for frontend.** Tuned to Claude Code, React, TypeScript and Vite,
+  on a set of package versions it was verified with.
 
 ## How it looks
 
@@ -324,7 +324,25 @@ size of the project:
   checks answer their rows of the protocol themselves; the agent spends its
   effort only where judgement is needed.
 
-## Stack: built for frontend
+## Stack: built for Claude Code and frontend
+
+**The agent is Claude Code, and only it.** The harness is not a set of
+prompts for any assistant: it is built on Claude Code's own machinery.
+
+- Hooks on Claude Code events - session start, every Bash, Read and edit
+  call, end of turn, context compaction - read its hook input JSON and
+  answer in its protocol: stop the call with a reason or add context.
+- Rules load the way Claude Code loads them: `CLAUDE.md`, `.claude/rules/`
+  with `paths:` headers that bring a rule in when a matching file is opened;
+  skills in `.claude/skills/`, permissions in `.claude/settings.json`.
+- The doctrine leans on its native tools - Read, Grep, Glob, Edit, Write -
+  and on how its permission checks behave.
+- Probes start fresh sessions with `claude -p` and price them from Claude
+  Code's session logs.
+
+The tool, the check chain and the git commit gate run anywhere Node.js and
+git do; everything that holds the agent inside a turn exists only in Claude
+Code.
 
 The harness was developed for practical work in a specific environment:
 frontend applications on **React + TypeScript + Vite**. Its guarantee of
