@@ -324,25 +324,7 @@ size of the project:
   checks answer their rows of the protocol themselves; the agent spends its
   effort only where judgement is needed.
 
-## Stack: built for Claude Code and frontend
-
-**The agent is Claude Code.** The harness is not a set of
-prompts for any assistant: it is built on Claude Code's own machinery.
-
-- Hooks on Claude Code events - session start, every Bash, Read and edit
-  call, end of turn, context compaction - read its hook input JSON and
-  answer in its protocol: stop the call with a reason or add context.
-- Rules load the way Claude Code loads them: `CLAUDE.md`, `.claude/rules/`
-  with `paths:` headers that bring a rule in when a matching file is opened;
-  skills in `.claude/skills/`, permissions in `.claude/settings.json`.
-- The doctrine leans on its native tools - Read, Grep, Glob, Edit, Write -
-  and on how its permission checks behave.
-- Probes start fresh sessions with `claude -p` and price them from Claude
-  Code's session logs.
-
-The tool, the check chain and the git commit gate run anywhere Node.js and
-git do; everything that holds the agent inside a turn exists only in Claude
-Code.
+## Stack: built for frontend
 
 The harness was developed for practical work in a specific environment:
 frontend applications on **React + TypeScript + Vite**. Its guarantee of
@@ -364,6 +346,24 @@ goal. Seating is tuned to the stack:
   than the project's, the harness's is set, and the report says so;
 - some checks know the stack: class names used in code must exist in the
   component's stylesheet.
+
+**The agent is Claude Code.** The harness is not a set of
+prompts for any assistant: it is built on Claude Code's own machinery.
+
+- Hooks on Claude Code events - session start, every Bash, Read and edit
+  call, end of turn, context compaction - read its hook input JSON and
+  answer in its protocol: stop the call with a reason or add context.
+- Rules load the way Claude Code loads them: `CLAUDE.md`, `.claude/rules/`
+  with `paths:` headers that bring a rule in when a matching file is opened;
+  skills in `.claude/skills/`, permissions in `.claude/settings.json`.
+- The doctrine leans on its native tools - Read, Grep, Glob, Edit, Write -
+  and on how its permission checks behave.
+- Probes start fresh sessions with `claude -p` and price them from Claude
+  Code's session logs.
+
+The tool, the check chain and the git commit gate run anywhere Node.js and
+git do; everything that holds the agent inside a turn exists only in Claude
+Code.
 
 **Best fit: a new project.** In an empty folder the whole stack comes out of
 the box: the packages, their configs, the check chain, git and the commit
