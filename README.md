@@ -326,7 +326,7 @@ size of the project:
 
 ## Stack: built for Claude Code and frontend
 
-**The agent is Claude Code, and only it.** The harness is not a set of
+**The agent is Claude Code.** The harness is not a set of
 prompts for any assistant: it is built on Claude Code's own machinery.
 
 - Hooks on Claude Code events - session start, every Bash, Read and edit
@@ -399,6 +399,12 @@ not see there - that list is where an agent starts. Moving the harness to
 another stack is not hard: the principles stay the same, only the templates and the
 stack-specific checks change. Take the ideas and the tools - an agent will adapt
 the rest, seat it and finish it.
+
+**Other agents.** The meaning core - the doctrine, the quality bar, the
+knowledge base, the order of work - does not depend on the agent. What does
+is technical: the hook events and their input, how rules load, the names of
+the tools, how a session starts. An agent adapts that layer to another
+assistant easily; the core stays as it is.
 
 ## Installation and setup
 
