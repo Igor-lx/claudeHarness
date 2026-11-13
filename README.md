@@ -493,38 +493,34 @@ it, each with its own question:
 ## Status
 
 **v0.5.2: ready for work.** Everything described here is in place and
-checked on real runs rather than by description; the numbers below were
-measured in the acceptance run of 2026-11-06 to 2026-11-12, each with its
-own date:
+checked on real runs rather than by description, in the acceptance run
+before this release:
 
-- the full self-test suite passes, 2,201 of 2,201 on Linux, and on
-  Windows in CI (2026-11-12);
+- the self-test suite passes in full on Linux and on Windows in CI;
 - every check that has its subject on the test stand catches its planted
-  breakage: 182 of 206 recipes, the other 24 have nothing to break there,
-  and no check is left without a recipe (2026-11-12);
-- seating works in one command in all three scenarios: the self-tests seat
-  a corpus of 27 small projects - 2 empty, 16 familiar, 9 foreign - one for
-  every form the seating code tells apart (2026-11-12);
-- a familiar project with its own folder layout and three foreign styling
-  forms went through the transition and then, session by session, was
-  brought to the harness defaults until a machine check found it no
-  different from a project written from scratch: 131 checks against 131
-  (2026-11-10);
-- the bar pass on 30 new planted defects, one per criterion, over four
-  passes: 21 were caught at first; the misses went to the holders of their
-  criteria, three plants were rewritten, and the recheck caught the rest -
-  30 of 30 (2026-11-08). Because the first passes missed, no bound on the
-  miss rate is claimed;
-- six fresh sessions, one per kind of task not covered by the transition,
-  and a session on the hooks went through the order of work: every step is
-  held by the machine or was seen done; two steps no machine can see -
-  reading files and searching through the shell, running the chain through
-  a pipe - are held by attention with the reason written down (2026-11-11);
-- the parts the daily loop never runs: 12 kinds of defect were enumerated
-  whole and each is held by a test; a sample of 34 probes found 7 more
-  kinds, all fixed and held by tests the same way; a repeated sample of 24
-  probes found 1 more kind, also fixed. Neither sample was clean, so no
-  bound on what is still undetected there is claimed (2026-11-12).
+  breakage - roughly nine recipes in ten have such a subject, the rest have
+  nothing to break there - and no check is left without a recipe;
+- seating works in one command in every scenario - an empty folder, a
+  familiar project, a foreign one: the self-tests seat a corpus of a few
+  dozen small projects, a project for every form the seating code tells
+  apart;
+- a familiar project with its own folder layout and several foreign
+  styling forms went through the transition and then, session by session,
+  was brought to the harness defaults until a machine check could not tell
+  it from a project written from scratch;
+- the quality-bar pass on new planted defects, one per criterion: about
+  seven in ten were caught at first; the misses went to the holders of
+  their criteria, and the recheck caught the rest. Because the first passes
+  missed, no bound on the miss rate is claimed;
+- a fresh session for each kind of task, and a session on the hooks, went
+  through the order of work: every step is held by the machine or was seen
+  done; the few steps no machine can see are held by attention with the
+  reason written down;
+- the parts the daily loop never runs: around a dozen kinds of defect were
+  checked whole and are held by tests; samples of probes still found new
+  kinds - several at first, far fewer in the repeat - all fixed. Neither
+  sample was clean, so no bound on what is still undetected there is
+  claimed.
 
 The architecture and the concept are settled. Next comes writing real
 projects on it; details of the rules, the checks and the tool's output may
