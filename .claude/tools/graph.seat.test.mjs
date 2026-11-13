@@ -25,6 +25,11 @@ import {
   gitBusyOf,
   gitPathOf,
   SEAT_MARKER,
+  insideOf,
+  keepTempOutside,
+  reasonLineOf,
+  seatRunningAt,
+  systemTemp,
   stackBreakingCharOf,
   statusEntries,
   unknownFlagsOf,
@@ -326,6 +331,15 @@ describe("осмотр окружения проекта по осям карт�
 
   // Выведено корпусом: `js-configs` без интерфейса оставался на Vite `5` при
   // согласии на приведение, а Vitest поднимался до `4`.
+  it("пустой список рабочих пространств — не монорепозиторий, непустой и поле packages — да", () => {
+    const strange = (workspaces) =>
+      survey({ dependencies: { react: "^19.0.0" }, workspaces }, ["src/App.tsx"]).foreign.map((f) => f.what).join(" ");
+    expect(strange([])).not.toContain("рабочие пространства");
+    expect(strange({ packages: [] })).not.toContain("рабочие пространства");
+    expect(strange(["apps/*"])).toContain("рабочие пространства");
+    expect(strange({ packages: ["libs/*"] })).toContain("рабочие пространства");
+  });
+
   it("проект без интерфейса: объявленный пакет оси интерфейса приводится к связке, недостающий не дописывается", () => {
     const s = survey({ devDependencies: { vite: "^5.4.11", vitest: "^2.1.8", typescript: "~5.6.3" } }, ["src/clamp.ts"]);
     const plan = planOf(s);
@@ -1032,6 +1046,22 @@ describe("посадка на месте одной командой", () => {
     }
   }, 300000);
 
+  // Бит исполнения у файла есть только вне Windows: там git его не пишет.
+  it.skipIf(process.platform === "win32")("обвязка без битов исполнения садится с исполняемыми хуками ворот — и в истории тоже", () => {
+    const box = boxWithShelf("seat-no-exec-");
+    try {
+      const hooks = path.join(box, ".claude", "hooks", "git");
+      for (const name of fs.readdirSync(hooks)) fs.chmodSync(path.join(hooks, name), 0o644);
+      const said = seatHere(box, "--packages", ROOT);
+      expect(said.stdout, said.stdout + said.stderr).not.toContain("не исполняемый");
+      const modes = gitIn(box, "ls-files", "-s", ".claude/hooks/git").trim().split("\n").map((line) => line.split(" ")[0]);
+      expect(modes.length).toBeGreaterThan(1);
+      expect(modes.every((one) => one === "100755"), modes.join(", ")).toBe(true);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("путь с «#» — отказ до работы с причиной: стек в таком пути файлов не находит", () => {
     const box = boxWithShelf("seat-hash#-");
     try {
@@ -1040,12 +1070,95 @@ describe("посадка на месте одной командой", () => {
       expect(said.stdout).toContain("В пути папки есть «#»");
       expect(said.stdout).toContain("Перенести папку в путь без «#»");
       expect(fs.readdirSync(box)).toEqual([".claude"]);
-      // `?` на Windows в пути запрещён, на Linux допустим: признак — одной функцией.
-      expect(["/a/b#c", "/a/b?c", "/a/b c/д%e&f(g)!h"].map(stackBreakingCharOf)).toEqual(["#", "?", null]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 120000);
+
+  it("вторая посадка в ту же папку при живой первой — отказ «уже идёт», папка не тронута", () => {
+    const box = boxWithShelf("seat-running-");
+    const at = seatRunningAt(box);
+    try {
+      // Живой процесс — сам раннер тестов: так выглядит первая посадка, которая ещё идёт.
+      fs.writeFileSync(at, String(process.pid));
+      const said = seatHere(box, "--packages", ROOT);
+      expect(said.status, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toContain("В этой папке уже идёт посадка — процесс " + process.pid);
+      expect(fs.readdirSync(box)).toEqual([".claude"]);
+      expect(fs.readFileSync(at, "utf8")).toBe(String(process.pid));
+      // Порча записи — «посадки нет»: отказа «уже идёт» нет.
+      fs.writeFileSync(at, "не номер");
+      expect(seatHere(box, "--bogus").stdout).not.toContain("уже идёт посадка");
+    } finally {
+      fs.rmSync(at, { force: true });
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("insideOf: сама папка и путь под ней — внутри, сосед с тем же началом имени и родитель — нет", () => {
+    const at = fs.mkdtempSync(path.join(os.tmpdir(), "inside-of-"));
+    try {
+      const shelf = path.join(at, ".claude");
+      fs.mkdirSync(shelf);
+      const via = path.join(at, "link");
+      fs.symlinkSync(shelf, via);
+      expect([shelf, path.join(shelf, "a", "b"), path.join(via, "new"), path.join(at, ".claude-x"), at, path.join(at, "..")].map((one) => insideOf(one, shelf))).toEqual([true, true, true, false, false, false]);
+    } finally {
+      fs.rmSync(at, { recursive: true, force: true });
+    }
+  });
+
+  it("посадка в папку внутри обвязки — отказ, обвязка не тронута", () => {
+    const box = boxWithShelf("seat-inside-");
+    try {
+      const before = fs.readdirSync(path.join(box, ".claude")).sort();
+      const said = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "seat", path.join(box, ".claude", "inner")], { cwd: box, encoding: "utf8" });
+      expect(said.status, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toContain("Папка лежит внутри обвязки, с которой сажают");
+      expect(fs.readdirSync(path.join(box, ".claude")).sort()).toEqual(before);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("временная папка внутри проекта — посадка отказывает до работы, systemTemp называет причину", () => {
+    const box = boxWithShelf("seat-temp-inside-");
+    const inner = path.join(box, ".tmp");
+    fs.mkdirSync(inner);
+    const names = ["TMPDIR", "TEMP", "TMP"];
+    const had = names.map((one) => process.env[one]);
+    try {
+      const said = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "seat", box], { cwd: box, encoding: "utf8", env: { ...process.env, TMPDIR: inner, TEMP: inner, TMP: inner } });
+      expect(said.status, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toContain("временная папка системы лежит внутри проекта");
+      expect(fs.readdirSync(box).sort()).toEqual([".claude", ".tmp"]);
+      expect(fs.readdirSync(inner)).toEqual([]);
+      // Тот же признак у самой функции: корень объявлен — папка внутри него отказана.
+      for (const one of names) process.env[one] = inner;
+      expect(systemTemp()).toBe(fs.realpathSync.native(inner));
+      keepTempOutside(box);
+      expect(() => systemTemp()).toThrow("временная папка системы лежит внутри проекта");
+    } finally {
+      names.forEach((one, i) => {
+        if (had[i] === undefined) delete process.env[one];
+        else process.env[one] = had[i];
+      });
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it("reasonLineOf: строка ошибки, а не служебный кадр Node; без ошибки — первая строка", () => {
+    const node = "node:internal/modules/esm/resolve:873\n  throw new ERR_MODULE_NOT_FOUND(packageName, base, null);\n        ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find package '@eslint/js'\n    at x (y.js:1:1)\n";
+    expect(reasonLineOf(node)).toBe("Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@eslint/js'");
+    expect(reasonLineOf("\n  warn: one\nTypeError: bad\n")).toBe("TypeError: bad");
+    expect(reasonLineOf("\n  plain reason\nsecond\n")).toBe("plain reason");
+    expect([reasonLineOf(""), reasonLineOf(undefined)]).toEqual(["", ""]);
+  });
+
+  it("stackBreakingCharOf: `#` и `?` ломают стек, прочие знаки пути — нет", () => {
+    // `?` на Windows в пути запрещён, на Linux допустим: признак — одной функцией.
+    expect(["/a/b#c", "/a/b?c", "/a/b c/д%e&f(g)!h", "#", ""].map(stackBreakingCharOf)).toEqual(["#", "?", null, "#", null]);
+  });
 
   it("ключ, назвавший не то, — отказ до работы: --with= не ось-инструмент, --packages без папки", () => {
     const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
@@ -2074,7 +2187,9 @@ it("каждый вызов git, печатающий пути, читает и�
   expect(lists).toBeGreaterThan(8);
   expect(bare, "путь из вывода git без -z").toEqual([]);
   expect(EXEMPT.filter(([f, key]) => !used.has(f + key)).map(([f, key]) => f + ": " + key), "исключение, которому нечего исключать").toEqual([]);
-  // Разбор: путь как есть, прежний путь переименования и копии — своим полем.
+});
+
+it("statusEntries: путь как есть, прежний путь переименования и копии — своим полем", () => {
   expect(statusEntries("?? заметка.md\0R  new.ts\0old.ts\0 M a b.md\0C  c2.ts\0c.ts\0")).toEqual([
     { xy: "??", path: "заметка.md", from: null },
     { xy: "R ", path: "new.ts", from: "old.ts" },
@@ -2082,6 +2197,9 @@ it("каждый вызов git, печатающий пути, читает и�
     { xy: "C ", path: "c2.ts", from: "c.ts" },
   ]);
   expect(statusEntries(null)).toEqual([]);
+  expect(statusEntries("")).toEqual([]);
+  // Вывод оборван на переименовании: прежнего пути нет — пустая строка, а не undefined.
+  expect(statusEntries("R  only.ts")).toEqual([{ xy: "R ", path: "only.ts", from: "" }]);
 });
 
 // Семя настройки едет в каждый проект, и сверка «Настройка проекта знает все
@@ -2253,6 +2371,7 @@ it("каждый файл состояния обвязки назван вме�
     ["graph-series.json", "порча — пустые отметки: серия гоняет цепочку заново; проверка ниже"],
     ["graph-series-", "временные файлы серии — индекс части, песочница, журнал части: обратно их не читают"],
     [".plant.json", "readJson: суд на порче отказывает «Запись пробы испорчена»; проверка ниже"],
+    ["claude-harness-seat-", "seatRunningPid: не число либо мёртвый процесс — «посадки нет»; тест «вторая посадка в ту же папку»"],
     [".tests.json", "readJson: отчёт раннера стенда, оборванный падением, — «тесты не отработали», а не стек"],
   ]);
   const used = new Set();
@@ -2380,7 +2499,7 @@ describe("README мастерской называет проверенную с
 
   // Перевод правят в одном файле, а второй отстаёт без признака. Фрагмент
   // кода переводом не меняется, кроме слов в заполнителе `<путь>`.
-  it.skipIf(!hasReadme)("README на двух языках несут одни и те же фрагменты кода", () => {
+  it.skipIf(!hasReadme)("README на двух языках несут одни и те же фрагменты кода и разделы в том же порядке", () => {
     const spans = (rel) =>
       new Set(
         [...fs.readFileSync(path.join(workshop, rel), "utf8").replace(/```[\s\S]*?```/g, "").matchAll(/`([^`\n]+)`/g)].map((m) =>
@@ -2391,6 +2510,10 @@ describe("README мастерской называет проверенную с
     const ru = spans("README.ru.md");
     expect([...en].filter((one) => !ru.has(one)), "только в README.md").toEqual([]);
     expect([...ru].filter((one) => !en.has(one)), "только в README.ru.md").toEqual([]);
+    // Раздел без фрагментов кода отставал без признака: порядок заголовков — тот же.
+    const levels = (rel) =>
+      fs.readFileSync(path.join(workshop, rel), "utf8").replace(/```[\s\S]*?```/g, "").split("\n").filter((line) => /^#+ /.test(line)).map((line) => line.indexOf(" "));
+    expect(levels("README.ru.md"), "порядок разделов README на двух языках").toEqual(levels("README.md"));
   });
 });
 
@@ -2706,5 +2829,24 @@ describe("пакеты песочницы под pnpm", () => {
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
+  });
+});
+
+describe("таблица хуков доктрины", () => {
+  // Таблица описывает хуки прозой, а сверка держит только сами хуки: режим,
+  // переименованный в семени, в таблице оставался прежним без признака.
+  it("режимы в таблице «Хуки обвязки» — те же, что зовёт семя настроек", () => {
+    const text = fs.readFileSync(path.join(SHELF, "rules", "environment.md"), "utf8");
+    const section = text.slice(text.indexOf("## Хуки обвязки"), text.indexOf("\n## ", text.indexOf("## Хуки обвязки") + 1));
+    const told = new Set(
+      section
+        .split("\n")
+        .filter((line) => /^\| [^-|]/.test(line) && !line.startsWith("| Событие"))
+        .flatMap((line) => [...line.split("|")[2].matchAll(/`([^`]+)`/g)].map((m) => m[1])),
+    );
+    const seed = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "settings.json"), "utf8")).hooks;
+    const called = new Set(Object.values(seed).flatMap((groups) => groups.flatMap((g) => g.hooks.map((h) => h.args.slice(1).join(" ")))));
+    expect(called.size).toBeGreaterThan(3);
+    expect([...told].sort()).toEqual([...called].sort());
   });
 });

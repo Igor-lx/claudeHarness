@@ -4645,3 +4645,87 @@ describe("refresh: заготовки кода прежней версии", () 
     }
   }, 300000);
 });
+
+// Ошибка чтения папки вместо файла пути не несёт: шаги падали, не называя
+// причины. Падение шага называет папку, стоящую на месте файла.
+describe("папка на месте файла базы", () => {
+  it("падение шага и режима вне verify называет папку с именем файла", () => {
+    const box = seatEmpty("folder-for-file-");
+    try {
+      const at = path.join(box, ".context", "03-graph.md");
+      fs.rmSync(at, { force: true });
+      fs.mkdirSync(at);
+      const said = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], { cwd: box, encoding: "utf8" });
+      expect(said.stdout).toContain("EISDIR");
+      expect(said.stdout).toContain("на месте файла папка: .context/03-graph.md");
+      const brief = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "brief", "src/app/App.tsx"], { cwd: box, encoding: "utf8" });
+      expect(brief.status).toBe(1);
+      expect(brief.stderr).toContain("=== Папка на месте файла ===");
+      expect(brief.stderr).toContain("на месте файла папка: .context/03-graph.md");
+      expect(brief.stderr).not.toContain("node:fs");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("переменные git, ведущие не в репозиторий проекта", () => {
+  it("чужие GIT_DIR, GIT_WORK_TREE и GIT_COMMON_DIR названы и сняты на прогон, свои — нет", () => {
+    const box = seatEmpty("foreign-git-dir-");
+    const foreign = fs.mkdtempSync(path.join(os.tmpdir(), "foreign-repo-"));
+    try {
+      spawnSync("git", ["init", "-q"], { cwd: foreign });
+      spawnSync("git", ["init", "-q"], { cwd: box });
+      // Ворота заданы только у проекта: видны, только если переменную сняли.
+      spawnSync("git", ["config", "core.hooksPath", ".claude/hooks/git"], { cwd: box });
+      const run = (name, value) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+          cwd: box,
+          encoding: "utf8",
+          env: { ...process.env, [name]: value },
+        }).stdout;
+      const viaDir = run("GIT_DIR", path.join(foreign, ".git"));
+      expect(viaDir).toContain("=== Переменная GIT_DIR ведёт не в репозиторий проекта ===");
+      expect(viaDir).not.toContain("`core.hooksPath` не задан");
+      expect(run("GIT_WORK_TREE", foreign)).toContain("=== Переменная GIT_WORK_TREE ведёт не в репозиторий проекта ===");
+      expect(run("GIT_COMMON_DIR", path.join(foreign, ".git"))).toContain("=== Переменная GIT_COMMON_DIR ведёт не в репозиторий проекта ===");
+      expect(run("GIT_COMMON_DIR", path.join(box, ".git"))).not.toContain("=== Переменная GIT_COMMON_DIR");
+      expect(run("GIT_DIR", path.join(box, ".git"))).not.toContain("=== Переменная GIT_DIR");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(foreign, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
+describe("JSON с меткой порядка байтов", () => {
+  it("манифест и конфиг компилятора с BOM — ни один шаг сверки не падает", () => {
+    const box = seatEmpty("bom-json-");
+    try {
+      for (const name of ["package.json", "tsconfig.json"]) {
+        const at = path.join(box, name);
+        fs.writeFileSync(at, "\uFEFF" + fs.readFileSync(at, "utf8"));
+      }
+      const said = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], { cwd: box, encoding: "utf8" }).stdout;
+      expect(said).toContain("=== Версии зависимостей закреплены ===");
+      expect(said).not.toContain("упал исключением");
+      expect(said).not.toContain("шаг упал раньше заголовка");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  // Голый разбор возвращал падение на BOM в любое новое место чтения.
+  it("исходники инструмента разбирают JSON через parseJson, кроме названных", () => {
+    const own = new Map([
+      ["graph.cost.mjs", "строки журнала сессии пишет среда, без BOM"],
+      ["hook.mjs", "обёртка не берёт модулей инструмента: ввод среды и свой след, без BOM"],
+      ["graph.predicates.mjs", "определение parseJson и образец кода в данных"],
+    ]);
+    const bare = [];
+    for (const file of fs.readdirSync(TOOL_DIR).filter((one) => one.endsWith(".mjs") && !one.endsWith(".test.mjs") && one !== "graph.modes.shared.mjs"))
+      if (!own.has(file) && fs.readFileSync(path.join(TOOL_DIR, file), "utf8").includes("JSON.parse(")) bare.push(file);
+    expect(bare).toEqual([]);
+    for (const file of own.keys()) expect(fs.readFileSync(path.join(TOOL_DIR, file), "utf8"), file).toContain("JSON.parse(");
+  });
+});

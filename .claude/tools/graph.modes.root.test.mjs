@@ -209,6 +209,24 @@ describe("снимок обвязки собирается", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  it("handoff в папку внутри обвязки — отказ до копирования, обвязка не тронута", () => {
+    const shelf = path.join(TOOL_DIR, "..");
+    const before = fs.readdirSync(shelf).sort();
+    // Сломанный отказ копирует обвязку в себя: след снимается и на красном.
+    const strays = [path.join(shelf, "claudeHandoff"), path.join(shelf, "tools", "deeper")];
+    try {
+      for (const inside of [shelf, strays[1]]) {
+        const said = spawnSync(process.execPath, [TOOL, "handoff", inside], { cwd: path.join(shelf, ".."), encoding: "utf8" });
+        expect(said.status, said.stdout + said.stderr).toBe(1);
+        expect(said.stdout).toContain("Папка снимка лежит внутри обвязки, которую копируют");
+      }
+      expect(fs.readdirSync(shelf).sort()).toEqual(before);
+      expect(fs.existsSync(strays[1])).toBe(false);
+    } finally {
+      for (const one of strays) fs.rmSync(one, { recursive: true, force: true });
+    }
+  }, 60000);
 });
 
 /**

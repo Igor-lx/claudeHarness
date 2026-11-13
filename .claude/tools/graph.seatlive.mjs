@@ -12,10 +12,12 @@ import {
 import path from "node:path";
 
 import { composeLive } from "./graph.configs.mjs";
+import { parseJson } from "./graph.predicates.mjs";
 import { SCENARIO_NAMES, foreignOffer } from "./graph.profile.mjs";
 import {
   CHILD_OUTPUT_BYTES,
   IDENTITY_NOTICE,
+  armGitHooks,
   SEAT_HERE_MARKER,
   claimSandbox,
   factsWithBaseline,
@@ -347,7 +349,7 @@ export const testDirsOf = (files, roots) =>
 
 const readJson = (at) => {
   try {
-    return JSON.parse(readFileSync(at, "utf8"));
+    return parseJson(readFileSync(at, "utf8"));
   } catch {
     return null;
   }
@@ -571,13 +573,13 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       else {
         let parsed;
         try {
-          parsed = JSON.parse(own);
+          parsed = parseJson(own);
         } catch (err) {
           fail("Свой .claude/settings.json проекта не разбирается: " + err.message, "Поправить файл и позвать посадку снова.");
         }
         const fault = settingsShapeFault(parsed);
         if (fault !== null) fail("Свой .claude/settings.json проекта не той формы: " + fault + ".", "Поправить файл и позвать посадку снова.");
-        write(e.to, JSON.stringify(settingsMerged(parsed, JSON.parse(seed)), null, 2) + "\n");
+        write(e.to, JSON.stringify(settingsMerged(parsed, parseJson(seed)), null, 2) + "\n");
         report.push("Свой .claude/settings.json проекта сохранён; разрешения и хуки обвязки дописаны в него.");
       }
       continue;
@@ -837,6 +839,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
     fail("Коммит посадки не прошёл — ворота проекта либо git:", ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? "") || String(e.message), 8));
   };
   try {
+    armGitHooks(target, shelf);
     git("add", "-A");
     git("commit", "-qm", "chore: seat the harness");
   } catch (e) {
@@ -932,7 +935,7 @@ export const trialLiveLinks = (target, env, roots, files, scripts, mutate = true
       const run = runTool("npm", ["run", "-s", "mutate", "--", "--mutate", unit, "--reporters", "json"], { cwd: box, env });
       const report = path.join(box, "reports", "mutation", "mutation.json");
       const mutants = existsSync(report)
-        ? Object.values(JSON.parse(readFileSync(report, "utf8")).files ?? {}).flatMap((f) => f.mutants ?? [])
+        ? Object.values(parseJson(readFileSync(report, "utf8")).files ?? {}).flatMap((f) => f.mutants ?? [])
         : [];
       const killed = mutants.filter((m) => m.status === "Killed").length;
       out.push({ name: "mutate", caught: run.status === 0 && killed > 0, said: saidBy(run), killed, total: mutants.length });

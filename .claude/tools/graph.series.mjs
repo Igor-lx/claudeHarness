@@ -24,6 +24,7 @@ import {
 import path from "node:path";
 
 import { applyParts } from "./graph.parts.mjs";
+import { parseJson } from "./graph.predicates.mjs";
 import {
   CHILD_OUTPUT_BYTES,
   claimSandbox,
@@ -59,7 +60,7 @@ const marksAt = (repoRoot) =>
   path.join(gitDirOf(repoRoot), "graph-series.json");
 export const readMarks = (repoRoot) => {
   try {
-    return JSON.parse(readFileSync(marksAt(repoRoot), "utf8"));
+    return parseJson(readFileSync(marksAt(repoRoot), "utf8"));
   } catch {
     return { base: null, trees: {} };
   }

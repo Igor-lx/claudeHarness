@@ -74,6 +74,10 @@ export const BAR_PAGES_DIR = "bar-pages";
 // краснели на собственном выводе режима — найдено посадкой по инструкции.
 /** Судьбы находки свода — словарь один: открытые судьбы выводятся из него. */
 export const BAR_FATES = ["починено", "предложено", "отложено", "вопрос", "долг"];
+/** Разбор JSON с меткой порядка байтов: редактор Windows ставит её в начало
+ * файла, npm её снимает, а голый `JSON.parse` падал на первом знаке. */
+export const parseJson = (text) => JSON.parse(String(text).replace(/^\uFEFF/, ""));
+
 export const OUT_OF_TREE = new Set([
   ".проба-сверок",
   BAR_PAGES_DIR,
@@ -5289,6 +5293,10 @@ export const PREDICATE_CASES = [
   ["pathUnder", "D:/a/wseat/src/app/tests/App.test.tsx\nD:\\a\\wseat", true],
   ["pathUnder", "D:/a/wseat/src/x.test.ts\nD:\\a\\wseat\\src\\", true],
   ["pathUnder", "D:/a/wseat2/x.test.ts\nD:\\a\\wseat", false],
+  ["parseJson", "\uFEFF7", 7],
+  ["parseJson", '"a"', "a"],
+  ["parseJson", '\uFEFF"\uFEFFb"', "\uFEFFb"],
+  ["parseJson", '\uFEFF""', ""],
   ["pathUnder", "/repo/src/x.test.ts\n/repo/src/", true],
   ["pathUnder", "/repo/srcx/a.test.ts\n/repo/src", false],
   ["pathUnder", "/repo/src\n/repo/src", false],

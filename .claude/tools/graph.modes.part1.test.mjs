@@ -2549,6 +2549,25 @@ describe("база о своём: документы узла, сторона т
     }
   }, 180000);
 
+  it("абсолютный путь и двойная косая — тот же файл в досье и в списочном режиме; путь вне проекта назван абсолютным", () => {
+    const box = seatEmpty("address-forms-");
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "address-outside-"));
+    try {
+      fs.writeFileSync(path.join(outside, "zz.txt"), "x\n");
+      const said = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], { cwd: box, encoding: "utf8" }).stdout;
+      for (const given of [path.join(box, "src", "app", "App.tsx"), "./src//app/App.tsx"]) {
+        expect(said("brief", given), given).toContain("=== app/App.tsx ===");
+        expect(said("tested", given), given).not.toContain("таких путей на диске нет");
+      }
+      const far = path.join(outside, "zz.txt").split(path.sep).join("/");
+      expect(said("brief", far)).toContain("`" + far + "` — файл есть, но он вне области разбора");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  }, 180000);
+
   // Адрес, на который режиму ответить нечем, — код 1 и ответ по роду адреса:
   // голое «ничего не нашлось» читается как «связей нет», то есть «рисков нет».
   it("режим с адресом на адрес без ответа кончается кодом 1 и называет, почему", () => {
@@ -2655,7 +2674,7 @@ describe("база о своём: документы узла, сторона т
 
   // Режим, который не зовёт ни один тест, меняет ответ без признака: `twins`
   // называл близнеца тронутого файла, а проверки этому не было никакой.
-  it("twins называет нетронутого близнеца, принимает пару в одной правке и молчит о файле без пары", () => {
+  it("twins называет нетронутого близнеца, принимает пару в одной правке, молчит о файле без пары и понимает пару от корня репозитория", () => {
     const box = seatEmpty("twins-");
     try {
       const cfgAt = path.join(box, ".context", "graph.config.mjs");
@@ -2672,6 +2691,11 @@ describe("база о своём: документы узла, сторона т
       expect(run("src/zzLib/zzPart.ts")).toContain("→ близнец не тронут: zzFacade/zzPart.ts");
       expect(run("src/zzLib/zzPart.ts", "src/zzFacade/zzPart.ts")).toContain("обе копии каждой пары в правке — ок");
       expect(run("src/zzLib/zzOwn.ts")).toContain("правка форков не касается");
+      // Пара, записанная от корня репозитория, — та же пара, а не «в никуда».
+      fs.writeFileSync(cfgAt, fs.readFileSync(cfgAt, "utf8").replace('{ from: "zzLib", to: "zzFacade" }', '{ from: "src/zzLib", to: "./src/zzFacade/" }'));
+      expect(run("src/zzLib/zzPart.ts")).toContain("→ близнец не тронут: zzFacade/zzPart.ts");
+      const verify = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], { cwd: box, encoding: "utf8" }).stdout;
+      expect(verify).not.toContain("пара форков:");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -4363,6 +4387,7 @@ describe("ответы свода файлом", () => {
         .split(" | ")[0];
       for (const [bad, why] of [
         ["Z99 | чисто |  |  | ", "ключа «Z99» в протоколе нет"],
+        [key + ": чисто", "нет разделителя `|` — форма строки: `ключ | клетка | …`"],
         [first + "\n" + first, "дважды"],
         [
           key + " | чисто | — | проба |  | лишняя",

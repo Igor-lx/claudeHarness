@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { parseJson } from "./graph.predicates.mjs";
 
 import {
   inPlaceKindOf,
@@ -34,7 +35,7 @@ export const SCENARIO_NAMES = {
 
 const readJson = (at) => {
   try {
-    return JSON.parse(readFileSync(at, "utf8"));
+    return parseJson(readFileSync(at, "utf8"));
   } catch {
     return null;
   }

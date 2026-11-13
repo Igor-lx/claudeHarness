@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   accessSync,
+  chmodSync,
   constants,
   cpSync,
   existsSync,
@@ -13,10 +14,11 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { OUT_OF_TREE } from "./graph.predicates.mjs";
+import { OUT_OF_TREE, parseJson } from "./graph.predicates.mjs";
 
 /** Сегодняшняя дата для человека — `ГГГГ-ММ-ДД` по часам машины. Срез
  * `toISOString` берёт день по UTC, и в поясе UTC+3 посадка после полуночи
@@ -47,6 +49,12 @@ export const commitsIn = (root, git) => {
   return Number(said) || 0;
 };
 
+/** Корни, в которые временная папка лежать не может: копия проекта в
+ * песочницу легла бы в саму себя — рекурсией без конца либо отказом копии. */
+const tempOutsideOf = [];
+export const keepTempOutside = (root) => {
+  tempOutsideOf.push(path.resolve(root));
+};
 export const systemTemp = () => {
   const dir = tmpdir();
   try {
@@ -57,7 +65,13 @@ export const systemTemp = () => {
       `временная папка системы недоступна: ${dir} (${e.code ?? e.message}) — задать ${process.platform === "win32" ? "TEMP" : "TMPDIR"}`,
     );
   }
-  return realpathSync.native(dir);
+  const real = realpathSync.native(dir);
+  const holder = tempOutsideOf.find((root) => insideOf(real, root));
+  if (holder !== undefined)
+    throw new Error(
+      `временная папка системы лежит внутри проекта: ${real} — копия проекта легла бы в саму себя; задать ${process.platform === "win32" ? "TEMP" : "TMPDIR"} вне ${holder}`,
+    );
+  return real;
 };
 
 /** Предел вывода дочернего процесса. Умолчание Node — `1` МиБ: журнал git
@@ -125,6 +139,13 @@ export const runTool = (
  * на машине нет. Выведено пробой холодного контура: `env --apply` при
  * блокировке `pnpm` без `pnpm`. */
 export const saidBy = (run) => run.error ?? run.out;
+
+/** Строка причины из вывода упавшей программы: строка ошибки, иначе первая.
+ * Первой у Node идёт служебный кадр — «node:internal/…:314», — а причина ниже. */
+export const reasonLineOf = (text) => {
+  const lines = String(text ?? "").split("\n").map((one) => one.trim()).filter((one) => one !== "");
+  return lines.find((one) => /^\w*Error\b/.test(one)) ?? lines.find((one) => /Cannot find|ERR_[A-Z_]+:/.test(one)) ?? lines[0] ?? "";
+};
 
 /** Знак пути, на котором стек не работает: сборщик и раннер читают путь
  * адресом, где `#` начинает якорь, а `?` — строку запроса. Остальные знаки
@@ -450,7 +471,10 @@ export const stackSurveyOf = ({
       if (files.some((f) => f.endsWith("." + one))) strange.push(one);
     for (const dir of axis.foreignDirs ?? [])
       if (files.some((f) => f.startsWith(dir + "/"))) strange.push(dir + "/");
-    if (axis.foreignWorkspaces === true && m.workspaces !== undefined) strange.push("рабочие пространства");
+    // Монорепозиторий — объявлен хотя бы один пакет: список либо поле `packages`,
+    // как их читает граф. Пустой список — остаток, а не монорепозиторий.
+    const workspaces = Array.isArray(m.workspaces) ? m.workspaces : (m.workspaces?.packages ?? []);
+    if (axis.foreignWorkspaces === true && workspaces.length > 0) strange.push("рабочие пространства");
     if (axis.foreignWithoutTs && tsFiles.length === 0 && jsFiles.length > 0 && !has("typescript"))
       strange.push("JavaScript без TypeScript");
     const chosen = axis.tool !== undefined && withTools.includes(axis.axis);
@@ -582,7 +606,7 @@ export const manifestOf = (root) => {
   if (!existsSync(at)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(at, "utf8").replace(/^\uFEFF/, ""));
+    parsed = parseJson(readFileSync(at, "utf8").replace(/^\uFEFF/, ""));
   } catch (e) {
     throw new Error("package.json проекта не разбирается как JSON: " + e.message);
   }
@@ -665,6 +689,36 @@ export const claimSandbox = (
 
 /** Жив ли процесс: сигнал ноль ничего не шлёт, а только спрашивает.
  * Чужой живой процесс отвечает отказом в праве — он тоже жив. */
+/** Запись о посадке, которая идёт в папке: номер её процесса. Лежит во
+ * временной папке системы, по хешу пути, — в самой папке она сделала бы её
+ * непустой для осмотра посадки. Вторая посадка в ту же папку читала
+ * незакоммиченную настройку первой как оборванную и советовала убрать всё,
+ * кроме `.claude`, — то есть снести работу живой. Порча — не число —
+ * читается как «посадки нет». */
+/** Лежит ли путь внутри папки либо совпадает с ней — по настоящим путям:
+ * несуществующий хвост достраивается к ближайшему существующему предку. */
+export const insideOf = (child, parent) => {
+  const real = (at) => {
+    let head = path.resolve(at);
+    const tail = [];
+    while (!existsSync(head) && path.dirname(head) !== head) {
+      tail.unshift(path.basename(head));
+      head = path.dirname(head);
+    }
+    return path.join(realpathSync(head), ...tail);
+  };
+  const rel = path.relative(real(parent), real(child));
+  return rel === "" || !(rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel));
+};
+export const seatRunningAt = (target) =>
+  path.join(tmpdir(), "claude-harness-seat-" + createHash("sha1").update(path.resolve(target)).digest("hex").slice(0, 16) + ".pid");
+export const seatRunningPid = (target, alive = pidAlive) => {
+  const at = seatRunningAt(target);
+  if (!existsSync(at)) return null;
+  const pid = Number(readFileSync(at, "utf8").trim());
+  return Number.isInteger(pid) && pid > 0 && pid !== process.pid && alive(pid) ? pid : null;
+};
+
 export const pidAlive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -831,8 +885,19 @@ const shelfFiles = (shelf, own) =>
  * каждый держал свою копию, пометка семени появилась данными, самопроверка
  * снимка её не узнала, и снимок перестал собираться. Отдаёт число файлов
  * полки. */
+/** Хуки ворот кладутся исполняемыми до первого коммита: копия обвязки без
+ * битов (архив, другая система) садилась с хуками, которые git пропускает, и
+ * в историю они уходили без бита — у каждого клона тоже. */
+export const armGitHooks = (target, shelf) => {
+  const hooks = parseJson(readFileSync(path.join(shelf, "seat", "map.json"), "utf8")).gitHooks;
+  for (const name of hooks?.hooks ?? []) {
+    const at = path.join(target, hooks.dir, name);
+    if (existsSync(at)) chmodSync(at, statSync(at).mode | 0o111);
+  }
+};
+
 export const layShelf = (shelf, target) => {
-  const map = JSON.parse(
+  const map = parseJson(
     readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),
   );
   const files = shelfFiles(shelf, new Set(map.projectOwnedInsideHarness ?? []));
@@ -1013,7 +1078,7 @@ const trialLinks = (target, env) => {
     });
     sandboxPackages(path.join(target, "node_modules"), path.join(box, "node_modules"));
     const scripts =
-      JSON.parse(readFileSync(path.join(box, "package.json"), "utf8")).scripts ?? {};
+      parseJson(readFileSync(path.join(box, "package.json"), "utf8")).scripts ?? {};
     const out = [];
     for (const t of SEAT_TRIALS) {
       if (scripts[t.name] === undefined) continue;
@@ -1036,7 +1101,7 @@ const trialLinks = (target, env) => {
       );
       const report = path.join(box, "reports", "mutation", "mutation.json");
       const mutants = existsSync(report)
-        ? Object.values(JSON.parse(readFileSync(report, "utf8")).files ?? {}).flatMap(
+        ? Object.values(parseJson(readFileSync(report, "utf8")).files ?? {}).flatMap(
             (f) => f.mutants ?? [],
           )
         : [];
@@ -1307,7 +1372,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
     });
   }
 
-  const map = JSON.parse(readFileSync(path.join(shelf, "seat", "map.json"), "utf8"));
+  const map = parseJson(readFileSync(path.join(shelf, "seat", "map.json"), "utf8"));
   const conflicts = [];
   let mergedIgnore = false;
   try {
@@ -1344,7 +1409,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
     fail("Семена не легли: " + e.message);
   }
 
-  const manifest = JSON.parse(readFileSync(path.join(target, "package.json"), "utf8"));
+  const manifest = parseJson(readFileSync(path.join(target, "package.json"), "utf8"));
   const needed = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
   const from = packagesFrom === null ? null : path.join(packagesFrom, "node_modules");
   undo.push(() => {
@@ -1442,6 +1507,7 @@ const seatHere = ({ shelf, target, env, packagesFrom, apply, withTools, live, pr
       ...(map.copy ?? []).map((e) => e.to).filter((rel) => existsSync(path.join(target, rel))),
     ]);
     if (hidden.length > 0) throw Object.assign(new Error("hidden"), { refusal: hiddenRefusal(hidden) });
+    armGitHooks(target, shelf);
     git("add", "-A");
     git("commit", "-qm", "chore: seat the harness");
     // Метка — после коммита: оборванная до него посадка иначе отвечала бы
@@ -1589,7 +1655,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     process.exit(1);
   };
   const own = new Set(
-    JSON.parse(readFileSync(path.join(shelf, "seat", "map.json"), "utf8"))
+    parseJson(readFileSync(path.join(shelf, "seat", "map.json"), "utf8"))
       .projectOwnedInsideHarness ?? [],
   );
   const onShelf = shelfFiles(shelf, own);
@@ -1614,12 +1680,34 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
   // файлов проекта в таком пути не находят: посадка падала на «Cannot find
   // module '/src/tests/setup.ts'», не называя причины. Это чужое окружение —
   // отсечение до работы. Выведено: проба холодной оси `2026-11-12`.
+  keepTempOutside(target);
+  try {
+    systemTemp();
+  } catch (e) {
+    refuse(String(e.message) + ".", "Папка не тронута.");
+  }
   const breaking = stackBreakingCharOf(target);
   if (breaking !== null)
     refuse(
       "В пути папки есть «" + breaking + "»: сборщик и раннер тестов стека (Vite, Vitest) в таком пути не находят файлов, и цепочка проверок не соберётся: " + norm(target),
       "Перенести папку в путь без «" + breaking + "» и позвать снова. Папка не тронута.",
     );
+  if (insideOf(target, shelf))
+    refuse(
+      "Папка лежит внутри обвязки, с которой сажают: " + norm(target),
+      "Посадка легла бы в саму обвязку и уехала бы с ней дальше. Назвать папку вне " + norm(shelf) + ". Папка не тронута.",
+    );
+  const running = seatRunningPid(target);
+  if (running !== null)
+    refuse(
+      "В этой папке уже идёт посадка — процесс " + running + ": " + norm(target),
+      "Дождаться её конца и позвать снова. Папка не тронута.",
+    );
+  if (!stand) {
+    const runningAt = seatRunningAt(target);
+    writeFileSync(runningAt, String(process.pid));
+    process.on("exit", () => rmSync(runningAt, { force: true }));
+  }
   // Полка — это `.claude` самой папки: посадка на месте, фаза 1 целиком.
   if (!stand && path.resolve(target, ".claude") === path.resolve(shelf)) {
     if (shop) refuse("Магазин кладут на посадку в отдельную папку, а не на месте.");
@@ -1631,7 +1719,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     const at = argv.indexOf("--packages");
     if (at >= 0 && (argv[at + 1] === undefined || argv[at + 1].startsWith("--")))
       refuse("Ключ --packages без папки: за ним идёт папка, где уже стоят пакеты.");
-    const withAsked = withToolsOf(argv, JSON.parse(readFileSync(path.join(shelf, "seat", "map.json"), "utf8")));
+    const withAsked = withToolsOf(argv, parseJson(readFileSync(path.join(shelf, "seat", "map.json"), "utf8")));
     const withWrong = withRefusal(withAsked);
     if (withWrong !== null) refuse(...withWrong);
     runSeatHere({
@@ -1697,7 +1785,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     layShelf(shelf, target);
     made.push("обвязка: с полки " + norm(shelf) + ", семена разложены");
     if (overlayAt !== null) {
-      const data = JSON.parse(readFileSync(overlayAt, "utf8"));
+      const data = parseJson(readFileSync(overlayAt, "utf8"));
       for (const [p, text] of Object.entries(data.files ?? {})) {
         mkdirSync(path.dirname(path.join(target, p)), { recursive: true });
         writeFileSync(path.join(target, p), text);
@@ -1713,7 +1801,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     // манифеста посадки; иначе установкой `npm` проверенной связки: `npm`
     // версии `10` падает на семени без lock-файла ошибкой `edgesOut`.
     const from = path.join(shelf, "..", "node_modules");
-    const manifest = JSON.parse(
+    const manifest = parseJson(
       readFileSync(path.join(target, "package.json"), "utf8"),
     );
     const needed = Object.keys({
@@ -1752,6 +1840,7 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
     }
     git("init", "-q");
     writeFileSync(marker, norm(shelf) + "\n");
+    armGitHooks(target, shelf);
     git("add", "-A");
     git("commit", "-qm", "chore: seat the harness");
     const base = git("rev-parse", "HEAD");

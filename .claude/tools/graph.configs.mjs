@@ -13,6 +13,7 @@ import { Module, createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compilerAt } from "./graph.parse.mjs";
+import { parseJson } from "./graph.predicates.mjs";
 
 export const BY_LOADER = "загрузчиком проекта";
 export const BY_TEXT = "разбором текста";
@@ -33,7 +34,7 @@ export const parseJsonc = (text) => {
   // Метку порядка байтов компилятор пропускает.
   const raw = text.replace(/^\uFEFF/, "");
   try {
-    return JSON.parse(raw);
+    return parseJson(raw);
   } catch {
     // Снимать комментарии образцом по всему тексту нельзя: маска вида `src`
     // со звёздами содержит последовательность, неотличимую от пустого
@@ -88,7 +89,7 @@ export const parseJsonc = (text) => {
       bare += c;
     }
     try {
-      return JSON.parse(bare);
+      return parseJson(bare);
     } catch {
       return null;
     }
@@ -665,7 +666,7 @@ export const composeLive = ({ exists, read, seed, map, roots, prettierInManifest
   if (lying(namesOf(format)) === null && !prettierInManifest) files[format.to] = seed(format.to);
   const ownMutate = lying(namesOf(mutate));
   if (ownMutate !== null) moves.push([ownMutate, projectConfigName(ownMutate)]);
-  const stryker = JSON.parse(seed(mutate.to));
+  const stryker = parseJson(seed(mutate.to));
   stryker.mutate = roots.flatMap((r) => [
     r + "/**/*.ts",
     r + "/**/*.tsx",

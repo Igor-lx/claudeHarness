@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   rmdirSync,
@@ -145,6 +146,7 @@ import {
   sectionsOf,
   selfCheck,
   touchesRuntime,
+  parseJson,
 } from "./graph.predicates.mjs";
 // Разбор модуля — что он берёт и что отдаёт — одной записью на текст: граф,
 // имена, поверхность и привязки читают её, а не каждый свой образец.
@@ -187,6 +189,9 @@ import {
   sweepDeadSandboxes,
   runTool,
   CHILD_OUTPUT_BYTES,
+  insideOf,
+  reasonLineOf,
+  keepTempOutside,
   saidBy,
   SEAT_MARKER,
   statusEntries,
@@ -447,7 +452,7 @@ const readJson = (at, fallback) => {
   if (!existsSync(at)) return fallback;
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(at, "utf8"));
+    parsed = parseJson(readFileSync(at, "utf8"));
   } catch (e) {
     SPOILED.push(
       at +
@@ -653,7 +658,7 @@ if (mode === "guard") {
   let said = null;
   if (hook && !process.stdin.isTTY)
     try {
-      said = JSON.parse(readFileSync(0, "utf8"));
+      said = parseJson(readFileSync(0, "utf8"));
       if (said?.tool_name === "Bash")
         command = String(said?.tool_input?.command ?? "");
       if (said?.tool_name === "Read") read = said?.tool_input ?? {};
@@ -1521,7 +1526,7 @@ const PACKAGE_MANAGER = (() => {
   const at = path.join(BASE, CONFIG.manifest);
   if (!existsSync(at)) return "npm";
   try {
-    const declared = JSON.parse(readFileSync(at, "utf8")).packageManager;
+    const declared = parseJson(readFileSync(at, "utf8")).packageManager;
     if (typeof declared !== "string" || declared === "") return "npm";
     return declared.split("@")[0];
   } catch {
@@ -1834,7 +1839,7 @@ const linkCalledAny = (e, chain, scripts) =>
 
 /** Рецепт с подставленными путями — глубокой заменой по всем строкам. */
 const recipeSubst = (recipe, vars) =>
-  JSON.parse(
+  parseJson(
     JSON.stringify(recipe, (_, v) =>
       typeof v === "string"
         ? Object.entries(vars).reduce((s, [k, to]) => s.split(k).join(to), v)
@@ -1873,6 +1878,32 @@ const SHELF_CHECKS_TABLE = SHELF === null ? null : path.join(SHELF, "tools/check
  * расходится; посчитанная в трёх — расходится быстрее.
  */
 const REPO_AT = path.join(BASE, "..");
+
+// `GIT_DIR`, `GIT_WORK_TREE` либо `GIT_COMMON_DIR`, ведущие не туда, куда git пришёл бы сам от
+// проекта, подменяли историю, и сверки звали это переписанной историей.
+// Такая переменная называется и снимается на прогон; совпавшая остаётся.
+const GIT_ASKS = { GIT_DIR: "--absolute-git-dir", GIT_WORK_TREE: "--show-toplevel", GIT_COMMON_DIR: "--git-common-dir" };
+for (const [name, ask] of Object.entries(GIT_ASKS)) {
+  const declared = process.env[name];
+  if (declared === undefined || declared === "") continue;
+  const env = { ...process.env };
+  for (const one of Object.keys(GIT_ASKS)) delete env[one];
+  const found = spawnSync("git", ["rev-parse", "--path-format=absolute", ask], { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, env, encoding: "utf8" });
+  const own = found.status === 0 ? found.stdout.trim() : "";
+  const same = (a, b) => {
+    try {
+      return realpathSync(a) === realpathSync(b);
+    } catch {
+      return false;
+    }
+  };
+  if (own !== "" && same(path.resolve(declared), own)) continue;
+  console.log("=== Переменная " + name + " ведёт не в репозиторий проекта ===");
+  console.log("    " + name + "=" + declared + (own === "" ? " — у проекта своего репозитория нет" : " — git проекта: " + own));
+  console.log("    снята на этот прогон: история и состояние читаются из репозитория проекта");
+  delete process.env[name];
+}
+keepTempOutside(REPO_AT);
 
 /** Конфиг мутационного прогона, прочитанный так, как его читает сам Stryker:
  * JSON — разбором, модуль — импортом. Прежде его разбирали как JSON всегда, и
@@ -2047,13 +2078,13 @@ const tableAfter = (lines, at) => {
 const subjectsDeclared = (() => {
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return [];
-  return JSON.parse(readFileSync(mapAt, "utf8")).onSubject ?? [];
+  return parseJson(readFileSync(mapAt, "utf8")).onSubject ?? [];
 })();
 
 const seedsDeclared = (() => {
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return [];
-  const m = JSON.parse(readFileSync(mapAt, "utf8"));
+  const m = parseJson(readFileSync(mapAt, "utf8"));
   return [...(m.copy ?? []), ...(m.onTransition ?? [])];
 })();
 const seedsDeferred = seedsDeclared.filter((c) => c.notAtSeating != null);
@@ -2144,7 +2175,7 @@ const shelfProse = () => {
 const chainDeclared = (() => {
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return [];
-  return JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
+  return parseJson(readFileSync(mapAt, "utf8")).chainScripts ?? [];
 })();
 
 /** Объявление применимости разделов политики: карта «раздел → живой ли и почему».
@@ -3350,8 +3381,8 @@ const manifestOnlySeedFields = (head, body) => {
   let before;
   let after;
   try {
-    before = JSON.parse(head);
-    after = JSON.parse(body);
+    before = parseJson(head);
+    after = parseJson(body);
   } catch {
     return false;
   }
@@ -3381,7 +3412,7 @@ const manifestOnlySeedFields = (head, body) => {
     const seedText = readFileSync(seedAt, "utf8");
     let seed;
     try {
-      seed = JSON.parse(seedText);
+      seed = parseJson(seedText);
     } catch {
       // Семя-текст — версия среды: поле держит её объектом `{ node }`.
       seed = { node: seedText.trim() };
@@ -4003,7 +4034,7 @@ const ROOT_SEEDS = (() => {
   if (mapAt === null || !existsSync(mapAt)) return out;
   let map = null;
   try {
-    map = JSON.parse(readFileSync(mapAt, "utf8"));
+    map = parseJson(readFileSync(mapAt, "utf8"));
   } catch {
     return out;
   }
@@ -5163,7 +5194,7 @@ const LF = String.fromCharCode(10);
 // объяснения узла был как раз тем местом, где ловушка срабатывает.
 const twinsOf = (r) => {
   const twins = [];
-  for (const { from, to } of CONFIG.forks) {
+  for (const { from, to } of forkPairs()) {
     if (r.startsWith(from + "/")) twins.push(to + r.slice(from.length));
     if (r.startsWith(to + "/")) twins.push(from + r.slice(to.length));
   }
@@ -6110,12 +6141,23 @@ if (predicateFailures.length > 0) {
 // Приставок столько, сколько деревьев: путь из отчёта может начинаться с
 // любого из них.
 const SRC_PREFIXES = SRC_ROOTS.map((one) => path.basename(one) + "/");
+/** Адрес из аргумента — от корня репозитория, косыми `/`. Абсолютный путь —
+ * так его отдаёт редактор — и `//` прежде читались как другой файл. */
+const repoPathOf = (a) => {
+  const s = a.split(String.fromCharCode(92)).join("/");
+  if (s === "") return s;
+  const fromRepo = path.isAbsolute(s) ? path.relative(REPO_AT, s).split(path.sep).join("/") : s;
+  // Вне репозитория адрес остаётся абсолютным: цепочка `../` его не называет.
+  const tidy = path.posix.normalize(path.isAbsolute(s) && fromRepo.startsWith("../") ? s : fromRepo);
+  return tidy === "." || tidy === "./" ? "" : tidy;
+};
+/** Пары форков — в той же форме адреса, что аргумент режима: от корня
+ * исходников. Пара с `src/` прежде вела «в никуда» при живой папке. */
+const forkPairs = () =>
+  (CONFIG.forks ?? []).map(({ from, to }) => ({ from: argPath(from).replace(/[/]+$/, ""), to: argPath(to).replace(/[/]+$/, "") }));
 const argPath = (a) => {
   if (a === undefined) return a;
-  const s = a
-    .split(String.fromCharCode(92))
-    .join("/")
-    .replace(/^[.][/]/, "");
+  const s = repoPathOf(a);
   const hit = SRC_PREFIXES.find((one) => s.startsWith(one));
   return hit === undefined ? s : s.slice(hit.length);
 };
@@ -6146,7 +6188,7 @@ const outOfScope = (arg) => {
       ` документы в обе стороны — и те, что файл объявляет сам, и те, где он` +
       ` назван. Где назван сам документ — поиском по его имени.`
     );
-  const here = [path.join(BASE, "..", arg), path.join(ROOT, argPath(arg))];
+  const here = [path.resolve(REPO_AT, repoPathOf(arg)), path.join(ROOT, argPath(arg))];
   // Внутри исходников адрес в области: пустая папка и файл не кода — свой
   // ответ. «Вне области разбора» вело искать причину в полке.
   const inSource = here.find((one) => existsSync(one) && norm(one).startsWith(norm(ROOT) + "/"));
@@ -6297,7 +6339,7 @@ const unknownGiven = (given) => given.filter((one) => canonical(one) === null);
  * который на диске один, и есть искомый; неоднозначный не разрешается вовсе,
  * и это правильный ответ, а не отказ. */
 const canonical = (one) => {
-  const s = one.split("\\").join("/").replace(/^\.\//, "");
+  const s = repoPathOf(one);
   if (existsSync(path.join(BASE, "..", s))) return s;
   // Форма ответа — от корня репозитория: именно её отдаёт git, и именно с ней
   // режимы сравнивают. `rel()` здесь не годится, он срезает корень исходников.
@@ -6664,6 +6706,50 @@ const crashLine = (crash) =>
   " — " +
   crash.message;
 
+/** Ошибка чтения папки вместо файла (`EISDIR`) пути не несёт, и шаги падали,
+ * не называя причины. Папки с именем файла — в базе, в полке и в корне
+ * проекта — называются строкой падения. Ищутся один раз, при такой ошибке. */
+let foldersNamedLikeFiles = null;
+const folderInPlaceOfFile = (error) => {
+  if (error?.code !== "EISDIR") return "";
+  if (foldersNamedLikeFiles === null) {
+    foldersNamedLikeFiles = [];
+    const walk = (dir, depth) => {
+      let kids = [];
+      try {
+        kids = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of kids) {
+        if (!e.isDirectory() || OUT_OF_TREE.has(e.name)) continue;
+        const at = path.join(dir, e.name);
+        if (/^[^.].*\.[A-Za-z]{1,5}$/.test(e.name)) foldersNamedLikeFiles.push(norm(path.relative(REPO_AT, at)));
+        else if (depth > 0) walk(at, depth - 1);
+      }
+    };
+    walk(REPO_AT, 0);
+    walk(BASE, 3);
+    if (SHELF !== null) walk(SHELF, 3);
+  }
+  return foldersNamedLikeFiles.length === 0
+    ? ""
+    : " — на месте файла папка: " + [...new Set(foldersNamedLikeFiles)].join(", ");
+};
+
+// Режимы вне `verify` падали на той же ошибке трассой стека; общий выход
+// называет папку. Прочая ошибка печатается, как печатала бы среда.
+const crashedOut = (error) => {
+  if (error?.code === "EISDIR") {
+    console.error("=== Папка на месте файла ===");
+    console.error("    " + String(error.message).split("\n")[0] + folderInPlaceOfFile(error));
+    console.error("    Дальше: вернуть файл на место папки и позвать снова.");
+  } else console.error(error?.stack ?? String(error));
+  process.exit(1);
+};
+process.on("uncaughtException", crashedOut);
+process.on("unhandledRejection", crashedOut);
+
 const stepFailed = (error) => {
   const stack = String(error?.stack ?? error);
   const frames = stack
@@ -6674,7 +6760,7 @@ const stepFailed = (error) => {
     step: stepNow,
     at: frames[0] ?? "место неизвестно",
     frames: frames.slice(0, 3),
-    message: String(error?.message ?? error).split("\n")[0],
+    message: String(error?.message ?? error).split("\n")[0] + folderInPlaceOfFile(error),
   };
   STEP_CRASHES.push(crash);
   // Шаг, уже печатавший в секцию, считал её: строка ложится туда же.
@@ -6893,7 +6979,7 @@ if (mode === "falsify") {
     console.log("  Ожидался файл: " + norm(recipesAt));
     process.exit(1);
   }
-  const recipes = JSON.parse(readFileSync(recipesAt, "utf8")).recipes ?? [];
+  const recipes = parseJson(readFileSync(recipesAt, "utf8")).recipes ?? [];
   // Условие семени читает конфиг раннера: рецепт на семени с условием
   // спрашивает его ниже.
   await runnerConfigsLoad();
@@ -7084,7 +7170,7 @@ if (mode === "falsify") {
   const fromSeed = (() => {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt === null || !existsSync(mapAt)) return () => false;
-    const m = JSON.parse(readFileSync(mapAt, "utf8"));
+    const m = parseJson(readFileSync(mapAt, "utf8"));
     const seeded = new Set(
       [...(m.copy ?? []), ...(m.deferred ?? [])].map((c) =>
         c.to.split("\\").join("/"),
@@ -7711,7 +7797,7 @@ if (mode === "transition") {
     let said = null;
     if (!process.stdin.isTTY)
       try {
-        said = JSON.parse(readFileSync(0, "utf8"));
+        said = parseJson(readFileSync(0, "utf8"));
         if (typeof said.hook_event_name === "string")
           event = said.hook_event_name;
       } catch {
@@ -7808,7 +7894,7 @@ if (mode === "handoff") {
   }
   const NEWLINE = String.fromCharCode(10);
   const CRLF = String.fromCharCode(13) + NEWLINE;
-  const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+  const seatMap = parseJson(readFileSync(mapAt, "utf8"));
   // Границу между «едет» и «не едет» проводит САМА СРЕДА, а не наша догадка.
   // Она читает два файла разрешений: общий коммитится и достаётся всем,
   // местный она держит вне git и именно в него пишет всё, что человек нажал
@@ -7867,6 +7953,15 @@ if (mode === "handoff") {
   const root =
     busy && asked !== null ? path.join(named, "claudeHandoff") : named;
   const claudeAt = path.join(root, ".claude");
+
+  // Снимок внутри обвязки копировал её в себя без конца и падал на длине
+  // пути, оставив вложенное дерево в самой обвязке.
+  if (SHELF !== null && insideOf(root, SHELF)) {
+    console.log("=== СНИМОК НЕ СОБРАН ===");
+    console.log("  Папка снимка лежит внутри обвязки, которую копируют: " + norm(root));
+    console.log("  Назовите папку вне " + norm(SHELF) + ". Ничего не тронуто.");
+    process.exit(1);
+  }
 
   // Цель осматривается ДО записи, и осматривается ЦЕЛИКОМ, а не только её
   // вложенная папка настроек. Правило то же, что у первой фазы посадки:
@@ -8946,7 +9041,7 @@ if (mode === "refresh") {
 }
 
 if (mode === "twins") {
-  sayLooked("объявленных пар форков", (CONFIG.forks ?? []).length);
+  sayLooked("объявленных пар форков", forkPairs().length);
   const NEWLINE = String.fromCharCode(10);
   let changed = process.argv.slice(3);
   if (changed.length) {
@@ -8973,7 +9068,7 @@ if (mode === "twins") {
     const lonely = [];
     let inPairs = 0;
     for (const f of touched) {
-      for (const pair of CONFIG.forks) {
+      for (const pair of forkPairs()) {
         const a = pair.from + "/";
         const b = pair.to + "/";
         const twin = f.startsWith(a)
@@ -9431,7 +9526,7 @@ if (mode === "tested") {
     // переносимой полке ссылаться нельзя. Список берётся из объявленных пар
     // форков — других способов узнать «это уедет к чужому потребителю» у
     // инструмента нет, и выдумывать их он не станет.
-    const shelfRoots = (CONFIG.forks ?? []).flatMap((p) => [p.from, p.to]);
+    const shelfRoots = forkPairs().flatMap((p) => [p.from, p.to]);
     // Путь правки приходит от корня репозитория, а пара форка объявлена от
     // корня исходников: сравнение идёт по вхождению сегмента, а не по префиксу.
     // Вопрос про контракт — значит про то, у чего он есть: у исполняемого
@@ -10056,7 +10151,7 @@ if (mode === "bar-probe") {
       ["--neighbour", "в соседе"],
       ["--move", "переносом"],
     ].find(([flag]) => process.argv.includes(flag))?.[1] ?? null;
-  const probeBook = JSON.parse(readFileSync(at, "utf8"));
+  const probeBook = parseJson(readFileSync(at, "utf8"));
   // Книга проверяется до выбора: неверная посадка выпала бы случайно, и
   // проба мерила бы не то. Посадка удалением снимает созданное ею, и
   // виновник среди снятого делал бы суд невозможным.
@@ -10153,7 +10248,7 @@ if (mode === "bar-probe") {
     );
     const lacking = existsSync(standAt)
       ? Object.keys(
-          JSON.parse(readFileSync(standAt, "utf8")).files ?? {},
+          parseJson(readFileSync(standAt, "utf8")).files ?? {},
         ).filter((f) => !existsSync(path.join(projectRoot, f)))
       : [];
     if (lacking.length > 0) {
@@ -10292,12 +10387,12 @@ if (mode === "bar-probe") {
         );
         let report = null;
         try {
-          report = JSON.parse(lint.stdout);
+          report = parseJson(lint.stdout);
         } catch {
           failed.push(
             theBatch +
               " — линт не отработал: " +
-              (lint.error ?? lint.stderr.trim().split("\n")[0]),
+              (lint.error ?? reasonLineOf(lint.stderr)),
           );
         }
         for (const one of report ?? [])
@@ -12441,7 +12536,7 @@ const manifestShiftsOf = () => {
   const now = readJson(at, {});
   let was = {};
   try {
-    was = JSON.parse(headTextOf(at) ?? "{}");
+    was = parseJson(headTextOf(at) ?? "{}");
   } catch {
     // Прежний манифест не разобрать — сдвиг считается от пустого: каждая
     // зависимость названа, и о каждой спросят.
@@ -14614,7 +14709,7 @@ const barModelOf = (
       if (measured !== null) add("мутации", where, measured.what, measured.mark);
     }
     // Парная копия: тронул одну — вот близнец.
-    for (const twin of want("близнец") && (CONFIG.forks ?? []).length > 0
+    for (const twin of want("близнец") && forkPairs().length > 0
       ? twinsOf(where)
       : [])
       add(
@@ -15841,7 +15936,7 @@ const barLintOf = (repoRoot, list) => {
   if (entry === null) {
     let declared = false;
     try {
-      const pkg = JSON.parse(readFileSync(manifestAt, "utf8"));
+      const pkg = parseJson(readFileSync(manifestAt, "utf8"));
       declared = ["dependencies", "devDependencies"].some(
         (part) => pkg[part]?.eslint !== undefined,
       );
@@ -15862,7 +15957,7 @@ const barLintOf = (repoRoot, list) => {
   let report = null;
   if (run.status === 0) {
     try {
-      report = JSON.parse(run.stdout);
+      report = parseJson(run.stdout);
     } catch {
       report = null;
     }
@@ -15870,7 +15965,7 @@ const barLintOf = (repoRoot, list) => {
   if (report === null || !Array.isArray(report.results))
     return none(
       "линт не отработал: " +
-        (String(run.stderr ?? "").trim().split(LF)[0] || "код " + run.status),
+        (reasonLineOf(run.stderr) || "код " + run.status),
     );
   const linted = new Set();
   const hits = new Map();
@@ -20394,7 +20489,13 @@ if (mode === "bar-fill") {
       continue;
     }
     if (row === undefined) {
-      faults.push("строка " + n + ": ключа «" + key + "» в протоколе нет");
+      // Строка без разделителя — ошибка формы, а не ключа: «ключа нет» вёл
+      // искать опечатку в ключе.
+      faults.push(
+        parts.length === 1
+          ? "строка " + n + ": нет разделителя `|` — форма строки: `ключ | клетка | …`"
+          : "строка " + n + ": ключа «" + key + "» в протоколе нет",
+      );
       continue;
     }
     seen.add(key);
@@ -21632,7 +21733,7 @@ if (mode === "verify") {
     if (script == null) return null;
     const mapAt = shelfAt("seat/map.json");
     if (mapAt === null || !existsSync(mapAt)) return null;
-    const chain = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
+    const chain = parseJson(readFileSync(mapAt, "utf8")).chainScripts ?? [];
     const one = chain.find((e) => e.name === script);
     if (one === undefined || one.recognise == null) return null;
     const patterns = linkPatterns(one, chain);
@@ -21657,7 +21758,7 @@ if (mode === "verify") {
     {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt))
-        for (const e of JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ??
+        for (const e of parseJson(readFileSync(mapAt, "utf8")).chainScripts ??
           [])
           if (Array.isArray(e.needsFiles)) linkNeeds.set(e.name, e.needsFiles);
     }
@@ -21697,7 +21798,7 @@ if (mode === "verify") {
   const linkTakenElsewhere = (script, scripts) => {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt === null || !existsSync(mapAt)) return false;
-    const chain = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [];
+    const chain = parseJson(readFileSync(mapAt, "utf8")).chainScripts ?? [];
     const one = chain.find((e) => e.name === script);
     if (one === undefined) return false;
     const called = (e) => linkCalledAny(e, chain, scripts);
@@ -22772,7 +22873,7 @@ if (mode === "verify") {
       if (CONFIG.manifest == null) return out;
       const at = path.join(BASE, CONFIG.manifest);
       if (!existsSync(at)) return out;
-      const j = JSON.parse(readFileSync(at, "utf8"));
+      const j = parseJson(readFileSync(at, "utf8"));
       for (const kind of [
         "dependencies",
         "devDependencies",
@@ -23226,7 +23327,7 @@ if (mode === "verify") {
       const kinds = ["deny", "ask", "allow"];
       const readAt = (at) => {
         if (!existsSync(at)) return null;
-        const parsed = JSON.parse(readFileSync(at, "utf8"));
+        const parsed = parseJson(readFileSync(at, "utf8"));
         return Object.fromEntries(
           kinds.map((k) => [k, (parsed?.permissions?.[k] ?? []).map(same)]),
         );
@@ -23270,7 +23371,7 @@ if (mode === "verify") {
         const at = path.join(BASE, CONFIG.settingsProject);
         let was = null;
         try {
-          was = JSON.parse(headTextOf(at) ?? "null");
+          was = parseJson(headTextOf(at) ?? "null");
         } catch {
           was = null;
         }
@@ -23291,7 +23392,7 @@ if (mode === "verify") {
                   `${kind}: ${entry} — было в файле проекта до посадки, слияние его сняло`,
                 );
           const hooksNow = new Set(
-            hooksOf(JSON.parse(readFileSync(at, "utf8"))),
+            hooksOf(parseJson(readFileSync(at, "utf8"))),
           );
           for (const hook of hooksOf(was))
             if (!hooksNow.has(hook))
@@ -23351,7 +23452,7 @@ if (mode === "verify") {
         if (name === "node" || name === "npm") return toolVersion(name);
         const at = path.join(BASE, "..", "node_modules", name, "package.json");
         if (!existsSync(at)) return null;
-        return JSON.parse(readFileSync(at, "utf8")).version;
+        return parseJson(readFileSync(at, "utf8")).version;
       };
       // Стороны называются ПОРОЗНЬ, потому что означают разное. Ниже связки
       // поведение неизвестно, и обвязка за него не отвечает. Выше — каждый пакет
@@ -23365,7 +23466,7 @@ if (mode === "verify") {
           if (name === "node" || name === "npm") continue;
           const at = path.join(one.dir, "node_modules", name, "package.json");
           if (!existsSync(at)) continue;
-          const have = JSON.parse(readFileSync(at, "utf8")).version;
+          const have = parseJson(readFileSync(at, "utf8")).version;
           const where = path.relative(REPO_AT, one.dir).split(path.sep).join("/");
           if (versionCmp(have, want) < 0)
             oldVersions.push(`${name} ${have} в ${where} — НИЖЕ проверенной связки (${want}): поведение неизвестно`);
@@ -25198,7 +25299,7 @@ if (mode === "verify") {
         const code = files.filter((f) => !isMachinery(f) && !isTest(f));
         const manifest = path.join(BASE, "..", "package.json");
         const pkg = existsSync(manifest)
-          ? JSON.parse(readFileSync(manifest, "utf8"))
+          ? parseJson(readFileSync(manifest, "utf8"))
           : {};
         const script = (n) => (pkg.scripts ?? {})[n] !== undefined;
         // Считается только то, что проект добавил САМ.
@@ -25477,7 +25578,7 @@ if (mode === "verify") {
           return "манифест не объявлен: поле `manifest` настройки пусто";
         const at = path.join(BASE, CONFIG.manifest);
         const want = existsSync(at)
-          ? (JSON.parse(readFileSync(at, "utf8")).engines?.node ?? null)
+          ? (parseJson(readFileSync(at, "utf8")).engines?.node ?? null)
           : null;
         const low =
           want === null
@@ -25511,7 +25612,7 @@ if (mode === "verify") {
         const pinned =
           pinField === undefined || !existsSync(at)
             ? null
-            : (JSON.parse(readFileSync(at, "utf8"))[pinField]?.node ?? null);
+            : (parseJson(readFileSync(at, "utf8"))[pinField]?.node ?? null);
         const nvmLine = existsSync(nvmAt)
           ? (readFileSync(nvmAt, "utf8")
               .split(NEWLINE)
@@ -25652,7 +25753,7 @@ if (mode === "verify") {
           return "манифест не объявлен: поле `manifest` настройки пусто";
         const at = path.join(BASE, CONFIG.manifest);
         const pkg = existsSync(at)
-          ? JSON.parse(readFileSync(at, "utf8"))
+          ? parseJson(readFileSync(at, "utf8"))
           : null;
         const scripts = pkg?.scripts ?? {};
         const declared = projectDeclared();
@@ -26464,7 +26565,7 @@ if (mode === "verify") {
           `команда смоука: ${CONFIG.smokeCommand} — скрипта ${smokeScript} в манифесте нет`,
         );
     }
-    for (const { from, to } of CONFIG.forks ?? []) {
+    for (const { from, to } of forkPairs()) {
       scopePaths += 2;
       if (!existsSync(path.join(ROOT, from)))
         goneScope.push(`пара форков: ${from}`);
@@ -27733,7 +27834,7 @@ if (mode === "verify") {
     if (CONFIG.toolchain != null) {
       const manifestAt = path.join(BASE, "..", "package.json");
       const pkg = existsSync(manifestAt)
-        ? JSON.parse(readFileSync(manifestAt, "utf8"))
+        ? parseJson(readFileSync(manifestAt, "utf8"))
         : {};
       const deps = Object.keys({
         ...(pkg.dependencies ?? {}),
@@ -27786,7 +27887,7 @@ if (mode === "verify") {
         seedsAt !== null &&
         existsSync(seedsAt)
       ) {
-        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const seatMap = parseJson(readFileSync(mapAt, "utf8"));
         const placed = new Set(
           [
             ...(seatMap.copy ?? []),
@@ -27995,7 +28096,7 @@ if (mode === "verify") {
       if (at === null || !existsSync(at))
         bannedSaid = "списка отвергнутых слов рядом нет";
       else {
-        const book = JSON.parse(readFileSync(at, "utf8"));
+        const book = parseJson(readFileSync(at, "utf8"));
         bannedTerms = (book.banned ?? []).length;
         // Корпус — вся проза полки и файлы базы: именно там термин и живёт;
         // исходники сюда не идут — в них говорят на языке кода. Прежде корпус
@@ -28569,7 +28670,7 @@ if (mode === "verify") {
           return "манифест не объявлен: поле `manifest` настройки пусто";
         const at = path.join(BASE, CONFIG.manifest);
         const pkg = existsSync(at)
-          ? JSON.parse(readFileSync(at, "utf8"))
+          ? parseJson(readFileSync(at, "utf8"))
           : null;
         const scripts = Object.keys(pkg?.scripts ?? {});
         if (scripts.length) {
@@ -32020,7 +32121,7 @@ if (mode === "verify") {
     {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt)) {
-        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const seatMap = parseJson(readFileSync(mapAt, "utf8"));
         for (const one of seatMap.onSubject ?? [])
           if (SUBJECTS[one.subject] === undefined)
             baseGap.push(
@@ -32140,7 +32241,7 @@ if (mode === "verify") {
     {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt)) {
-        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const seatMap = parseJson(readFileSync(mapAt, "utf8"));
         const frame = (seatMap.copy ?? []).filter((e) => e.onlyWhenEmpty);
         // Концы строк приводятся к одному виду: снимок едет между машинами, и на
         // машине с иной политикой побайтовое сравнение расходилось бы на каждой
@@ -32618,7 +32719,7 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt)) {
         const declared =
-          JSON.parse(readFileSync(mapAt, "utf8")).namesOwnCode ?? [];
+          parseJson(readFileSync(mapAt, "utf8")).namesOwnCode ?? [];
         const own = files.filter((f) => !isTest(f));
         const tokens = new Set();
         const GENERIC = new Set(["index", "main", "app", "types", "utils"]);
@@ -32704,7 +32805,7 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt) && CONFIG.qualityScope != null) {
         const tableAt = path.join(BASE, CONFIG.qualityScope.table);
-        const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+        const copy = parseJson(readFileSync(mapAt, "utf8")).copy ?? [];
         let seedAt = null;
         for (const e of copy) {
           if (norm(path.join(REPO, e.to)) !== norm(tableAt)) continue;
@@ -32787,7 +32888,7 @@ if (mode === "verify") {
     {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt)) {
-        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const seatMap = parseJson(readFileSync(mapAt, "utf8"));
         for (const e of seatMap.copy ?? []) {
           if (!Array.isArray(e.alsoKnownAs) || !e.alsoKnownAs.length) continue;
           // Места сравнивают между собой, а не с одним семенем: `.tool-versions`
@@ -32892,7 +32993,7 @@ if (mode === "verify") {
       if (mapAt === null || !existsSync(mapAt))
         seedAnchorSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
       else {
-        const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+        const copy = parseJson(readFileSync(mapAt, "utf8")).copy ?? [];
         const seedOf = new Map();
         for (const e of copy) {
           const from0 = shelfAt(e.from);
@@ -32970,7 +33071,7 @@ if (mode === "verify") {
     if (CONFIG.manifest != null) {
       const at = path.join(BASE, CONFIG.manifest);
       if (existsSync(at)) {
-        const pkg = JSON.parse(readFileSync(at, "utf8"));
+        const pkg = parseJson(readFileSync(at, "utf8"));
         for (const name of Object.keys(pkg.peerDependencies ?? {}))
           if (pkg.dependencies?.[name] !== undefined)
             peerDup.push(
@@ -33003,11 +33104,11 @@ if (mode === "verify") {
         seedAt !== null &&
         existsSync(seedAt)
       ) {
-        const seatMap = JSON.parse(readFileSync(mapAt, "utf8"));
+        const seatMap = parseJson(readFileSync(mapAt, "utf8"));
         const declared = seatMap.chainScripts;
         if (Array.isArray(declared)) {
           const seedScripts =
-            JSON.parse(readFileSync(seedAt, "utf8")).scripts ?? {};
+            parseJson(readFileSync(seedAt, "utf8")).scripts ?? {};
           const names = declared.map((e) => e.name);
           for (const one of names)
             if (seedScripts[one] === undefined)
@@ -33060,7 +33161,7 @@ if (mode === "verify") {
     if (CONFIG.manifest != null) {
       const at = path.join(BASE, CONFIG.manifest);
       if (existsSync(at)) {
-        const body = (JSON.parse(readFileSync(at, "utf8")).scripts ?? {}).check;
+        const body = (parseJson(readFileSync(at, "utf8")).scripts ?? {}).check;
         if (typeof body === "string") {
           const alien = /\b(npm|pnpm|yarn|bun)\s+(run\s+[\w:-]+|test\b)/.exec(
             body,
@@ -33119,9 +33220,9 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt) && CONFIG.manifest != null) {
         const at = path.join(BASE, CONFIG.manifest);
-        const declared = JSON.parse(readFileSync(mapAt, "utf8")).chainScripts;
+        const declared = parseJson(readFileSync(mapAt, "utf8")).chainScripts;
         if (existsSync(at) && Array.isArray(declared)) {
-          const scripts = linkScripts(JSON.parse(readFileSync(at, "utf8")).scripts ?? {});
+          const scripts = linkScripts(parseJson(readFileSync(at, "utf8")).scripts ?? {});
           for (const e of declared) {
             if (e.recognise == null) continue;
             const re = new RegExp(e.recognise);
@@ -33253,7 +33354,7 @@ if (mode === "verify") {
         if (CONFIG.manifest == null) return null;
         const mAt = path.join(BASE, CONFIG.manifest);
         if (!existsSync(mAt)) return null;
-        const scripts = JSON.parse(readFileSync(mAt, "utf8")).scripts ?? {};
+        const scripts = parseJson(readFileSync(mAt, "utf8")).scripts ?? {};
         const own = linkOwnName("lint", scripts);
         const body = scripts[own ?? "lint"];
         if (typeof body !== "string") return null;
@@ -33338,12 +33439,12 @@ if (mode === "verify") {
     if (CONFIG.toolchain != null && CONFIG.manifest != null) {
       const at = path.join(BASE, CONFIG.manifest);
       const scripts = existsSync(at)
-        ? (JSON.parse(readFileSync(at, "utf8")).scripts ?? {})
+        ? (parseJson(readFileSync(at, "utf8")).scripts ?? {})
         : {};
       const mapAt = shelfAt("seat/map.json");
       const chain =
         mapAt !== null && existsSync(mapAt)
-          ? (JSON.parse(readFileSync(mapAt, "utf8")).chainScripts ?? [])
+          ? (parseJson(readFileSync(mapAt, "utf8")).chainScripts ?? [])
           : [];
       const idleSaid = new Set();
       // Конфиг звена без предмета, нужный ЖИВОМУ звену, законен: его требует
@@ -33385,7 +33486,7 @@ if (mode === "verify") {
       // Замерено посадкой по инструкции.
       const seatCopy =
         mapAt !== null && existsSync(mapAt)
-          ? (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+          ? (parseJson(readFileSync(mapAt, "utf8")).copy ?? [])
           : [];
       for (const e of seatCopy) {
         if (e.neededBy == null || idleSaid.has(e.to)) continue;
@@ -33461,8 +33562,8 @@ if (mode === "verify") {
         mapAt !== null &&
         existsSync(mapAt)
       ) {
-        const seed = JSON.parse(readFileSync(seedAt, "utf8"));
-        const seatMapNow = JSON.parse(readFileSync(mapAt, "utf8"));
+        const seed = parseJson(readFileSync(seedAt, "utf8"));
+        const seatMapNow = parseJson(readFileSync(mapAt, "utf8"));
         const inSeed = new Set([
           ...Object.keys(seed.dependencies ?? {}),
           ...Object.keys(seed.devDependencies ?? {}),
@@ -33661,7 +33762,7 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt === null || !existsSync(mapAt)) return false;
       const seedOf = new Map();
-      for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
+      for (const e of parseJson(readFileSync(mapAt, "utf8")).copy ?? []) {
         const from0 = shelfAt(e.from);
         if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
       }
@@ -33694,7 +33795,7 @@ if (mode === "verify") {
     if (seatingIsUp()) {
       const mapAt = shelfAt("seat/map.json");
       if (mapAt !== null && existsSync(mapAt))
-        for (const e of JSON.parse(readFileSync(mapAt, "utf8")).copy ?? []) {
+        for (const e of parseJson(readFileSync(mapAt, "utf8")).copy ?? []) {
           if (e.notAtSeating === undefined) continue;
           const there = path.join(REPO, e.to);
           const seedFile = shelfAt(e.from);
@@ -33826,7 +33927,7 @@ if (mode === "verify") {
         // каркаса туда не кладётся вовсе — и ровно на этом расхождении звено
         // тестов и сломалось: адрес в карте был, файла в проекте не было.
         const addressed = new Set(
-          (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+          (parseJson(readFileSync(mapAt, "utf8")).copy ?? [])
             .filter(
               (c) =>
                 c.onlyWhenEmpty !== true &&
@@ -33884,7 +33985,7 @@ if (mode === "verify") {
       if (seedDir === null || mapAt === null || !existsSync(mapAt))
         wrapSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
       else {
-        const travels = (JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [])
+        const travels = (parseJson(readFileSync(mapAt, "utf8")).copy ?? [])
           .filter((c) => c.onlyWhenEmpty !== true)
           .map((c) => c.to);
         for (const name of readdirSync(seedDir)) {
@@ -34156,7 +34257,7 @@ if (mode === "verify") {
       if (mapAt === null || !existsSync(mapAt))
         lateSaid = "карты посадки рядом нет: полка не раздаётся отсюда";
       else {
-        const copy = JSON.parse(readFileSync(mapAt, "utf8")).copy ?? [];
+        const copy = parseJson(readFileSync(mapAt, "utf8")).copy ?? [];
         const deferred = copy.filter((e) => e.notAtSeating !== undefined);
         const ownTest = ownTestExists;
         if (!ownTest)
@@ -34305,7 +34406,7 @@ if (mode === "verify") {
           const scripts =
             pkgAt === null ? {} : (readJson(pkgAt, {}).scripts ?? {});
           if (mapAt !== null && existsSync(mapAt))
-            for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
+            for (const e of parseJson(readFileSync(mapAt, "utf8"))
               .chainScripts ?? []) {
               guards.add(e.name);
               const own = linkOwnName(e.name, scripts);
@@ -34699,7 +34800,7 @@ if (mode === "verify") {
           {
             const mapAt = shelfAt("seat/map.json");
             if (mapAt !== null && existsSync(mapAt))
-              for (const e of JSON.parse(readFileSync(mapAt, "utf8"))
+              for (const e of parseJson(readFileSync(mapAt, "utf8"))
                 .chainScripts ?? [])
                 measures.add(e.name);
           }
@@ -34819,7 +34920,7 @@ if (mode === "verify") {
       else {
         let parsed = null;
         try {
-          parsed = JSON.parse(readFileSync(at, "utf8"));
+          parsed = parseJson(readFileSync(at, "utf8"));
         } catch {
           hookOff.push(
             "файл разрешений не разбирается: " + CONFIG.settingsProject,
@@ -34895,7 +34996,7 @@ if (mode === "verify") {
         gateHooksOff.push("файла настроек среды нет: хуки ставить некуда");
       else
         try {
-          parsed = JSON.parse(readFileSync(at, "utf8"));
+          parsed = parseJson(readFileSync(at, "utf8"));
         } catch {
           gateHooksOff.push("файл настроек среды не разбирается: " + rel0(at));
         }
@@ -34986,7 +35087,7 @@ if (mode === "verify") {
         if (existsSync(localAt))
           try {
             if (
-              JSON.parse(readFileSync(localAt, "utf8"))?.disableAllHooks ===
+              parseJson(readFileSync(localAt, "utf8"))?.disableAllHooks ===
               true
             )
               gateHooksOff.push(
