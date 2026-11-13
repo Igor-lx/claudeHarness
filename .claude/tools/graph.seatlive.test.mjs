@@ -355,6 +355,30 @@ describe("живая посадка: отказ возвращает проек�
     expect(git(root, "status", "--porcelain").split("\n").filter((l) => l && !/^\?\? (?:\S+\/)?\.claude\/$/.test(l))).toEqual([]);
   };
 
+  it("свой хук проекта: план согласия его называет и при стеке по связке, --apply кладёт переадресацию в коммит посадки", () => {
+    // Пакеты уже по связке: остановить посадку может только вопрос о хуке.
+    const f = files();
+    const seed = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "package.json"), "utf8"));
+    const own = JSON.parse(f["package.json"]);
+    f["package.json"] = JSON.stringify({ ...own, dependencies: { ...own.dependencies, ...seed.dependencies }, devDependencies: { ...own.devDependencies, ...seed.devDependencies } }, null, 2) + "\n";
+    const { root, box } = plantLive(f);
+    try {
+      const hook = path.join(root, ".git", "hooks", "pre-push");
+      fs.writeFileSync(hook, "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(hook, 0o755);
+      const asked = seatIn(box, ["--packages", path.dirname(SEAT_PACKAGES)]);
+      expect(asked.status, asked.out).toBe(1);
+      expect(asked.out).toContain("=== Посадка ждёт слова: свои хуки проекта ===");
+      expect(asked.out).toContain("Свои хуки проекта перестанут запускаться: pre-push.");
+      const done = seatIn(box, apply);
+      expect(done.status, done.out).toBe(0);
+      expect(done.out).toContain("Свои хуки проекта переадресованы и запускаются, как прежде: pre-push.");
+      expect(git(root, "ls-files", "-s", ".claude/hooks/git/pre-push")).toMatch(process.platform === "win32" ? /pre-push/ : /^100755 /);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 600000);
+
   it("проект в подпапке репозитория: названа папка репозитория, а не его отсутствие", () => {
     const { root, box } = plantLive(files(), "app");
     try {

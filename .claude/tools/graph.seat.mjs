@@ -911,6 +911,41 @@ export const armGitHooks = (target, shelf) => {
   }
 };
 
+/** Доводы git, которые называют общую служебную папку: у worktree она одна на все копии. */
+export const COMMON_GIT_DIR_ARGS = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+
+/** Свои хуки проекта, которые git после посадки не зовёт: исполняемый файл
+ * в служебной папке git под именем из `forwardable` карты, без переадресации
+ * в папке хуков обвязки. Свои два хука обвязки зовут хук проекта сами.
+ * `commonDir` — общая служебная папка git, `null` — git нет. */
+export const ownHooksOff = (target, map, commonDir) => {
+  const hooks = map.gitHooks ?? {};
+  if (commonDir === null || hooks.dir === undefined) return [];
+  const runs = (at) => existsSync(at) && statSync(at).isFile() && (process.platform === "win32" || (statSync(at).mode & 0o111) !== 0);
+  return (hooks.forwardable ?? []).filter(
+    (name) => runs(path.join(commonDir, "hooks", name)) && !existsSync(path.join(target, hooks.dir, name)),
+  );
+};
+
+/** Переадресация к своему хуку проекта: ввод, доводы и код возврата — его. */
+export const forwarderOf = (name) =>
+  "#!/bin/sh\n" +
+  "# Переадресация посадки к своему хуку проекта: `core.hooksPath` уводит git сюда.\n" +
+  'own="$(git rev-parse --git-common-dir)/hooks/' + name + '"\n' +
+  '[ -x "$own" ] || exit 0\n' +
+  'exec "$own" "$@"\n';
+
+/** Пишет переадресации исполняемыми; отдаёт имена записанных. */
+export const writeForwarders = (target, map, names) => {
+  const dir = path.join(target, map.gitHooks.dir);
+  mkdirSync(dir, { recursive: true });
+  for (const name of names) {
+    writeFileSync(path.join(dir, name), forwarderOf(name));
+    chmodSync(path.join(dir, name), 0o755);
+  }
+  return names;
+};
+
 export const layShelf = (shelf, target) => {
   const map = parseJson(
     readFileSync(path.join(shelf, "seat", "map.json"), "utf8"),

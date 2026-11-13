@@ -189,7 +189,10 @@ import {
   sweepDeadSandboxes,
   runTool,
   CHILD_OUTPUT_BYTES,
+  COMMON_GIT_DIR_ARGS,
   insideOf,
+  ownHooksOff,
+  writeForwarders,
   reasonLineOf,
   keepTempOutside,
   saidBy,
@@ -2123,7 +2126,11 @@ const shelfProjectOwn = () => {
   const mapAt = shelfAt("seat/map.json");
   const map = mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {};
   // В смешанной папке обвязке принадлежит названное картой, прочее — проекту.
-  const mixed = Object.entries(map.harnessInside ?? {}).flatMap(([dir, mine]) => {
+  // Папка хуков git — тоже смешанная: переадресации к своим хукам проекта
+  // пишет посадка, а принадлежат они проекту.
+  const hooksAt = map.gitHooks?.dir?.replace(/^\.claude\//, "");
+  const inside = { ...(map.harnessInside ?? {}), ...(hooksAt === undefined ? {} : { [hooksAt]: map.gitHooks.hooks ?? [] }) };
+  const mixed = Object.entries(inside).flatMap(([dir, mine]) => {
     const at = SHELF === null ? null : path.join(SHELF, dir);
     return at === null || !existsSync(at)
       ? []
@@ -6498,6 +6505,7 @@ const CHECK_SECTIONS = [
   "Комментарий не перерос в прозу",
   "Доля комментариев в файле",
   "Пометка каркаса снята при правке",
+  "Свои хуки проекта запускаются",
   "Новые якоря — с цитатой",
   "Найденное — исправлено, а не отложено",
   "Ссылки на разделы",
@@ -6913,6 +6921,8 @@ const RECIPE_NEEDS = {
  * и рецепт невозможен по устройству. Проект с заполненным полем получал
  * долг, закрыть который не мог ничем, — замерено фальсификацией стенда. */
 const RECIPE_IMPOSSIBLE = {
+  "Свои хуки проекта запускаются":
+    "в песочнице нет ни настройки `core.hooksPath`, ни хуков в служебной папке git; здоровье держит тест «свои хуки проекта, которых git не зовёт»",
   "Коммит с кодом накрыт сводом":
     "в песочнице истории нет; здоровье держит тест режимов «ревизия сводов по истории»: коммит с кодом мимо свода обязан покраснеть",
 };
@@ -9008,6 +9018,21 @@ const seedCodeEntries = () => {
  * правки файла. Решено разработчиком `2026-11-13`, вопрос 23. */
 const SEED_MUTATION_MARK = "Stryker disable next-line all: seeded entry point";
 
+/** Свои хуки проекта, которых git не зовёт: `core.hooksPath` смотрит в
+ * папку хуков обвязки, а переадресации к хуку нет. Своё значение настройки —
+ * у husky, у чужого проекта — хуков проекта не отключает. */
+const hooksOffHere = () => {
+  const mapAt = shelfAt("seat/map.json");
+  const map = mapAt === null ? {} : readJson(mapAt, {});
+  const git = (args) => {
+    const done = spawnSync("git", args, { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8" });
+    return done.status === 0 ? done.stdout.trim() : null;
+  };
+  const dir = map.gitHooks?.dir;
+  if (dir === undefined || git(["config", "core.hooksPath"]) !== dir) return { map, names: [] };
+  return { map, names: ownHooksOff(REPO_AT, map, git(COMMON_GIT_DIR_ARGS)) };
+};
+
 if (mode === "refresh") {
   const refreshArgs = process.argv.slice(3);
   const apply = refreshArgs.includes("--apply");
@@ -9050,6 +9075,15 @@ if (mode === "refresh") {
     for (const one of stale) writeFileSync(path.join(REPO_AT, one.to), readFileSync(one.from));
     console.log("  заменено: " + stale.length);
   }
+  // Свой хук проекта, появившийся после посадки либо не переадресованный при
+  // ней, — та же замена: план без ключа, запись с ним.
+  const hooks = hooksOffHere();
+  console.log("=== Свои хуки проекта ===");
+  console.log("  git их не зовёт, переадресации нет: " + hooks.names.length + (hooks.names.length === 0 ? "" : " — " + hooks.names.join(", ")));
+  if (hooks.names.length > 0 && !apply)
+    console.log("  ничего не записано; переадресовать: node .claude/tools/graph.mjs refresh --apply");
+  if (hooks.names.length > 0 && apply)
+    console.log("  переадресовано: " + writeForwarders(REPO_AT, hooks.map, hooks.names).length);
   process.exit(0);
 }
 
@@ -23862,6 +23896,25 @@ if (mode === "verify") {
     console.log("  изменены после посадки, пометка на месте: " + seedMarkLeft.length);
     for (const one of seedMarkLeft)
       console.log("    " + one + " — снять пометку `Stryker disable` каркаса и покрыть файл тестом");
+  });
+  // Свой хук проекта в служебной папке git после посадки не запускается:
+  // `core.hooksPath` уводит git в папку обвязки. Пока нет ни переадресации,
+  // ни решения, называющего хук, прогон его называет. Решено разработчиком
+  // `2026-11-13`.
+  const hooksSilent = [];
+  checkStep(() => {
+    checkHead("Свои хуки проекта запускаются", () => {
+      const { names } = hooksOffHere();
+      const decisionsAt = path.join(BASE, CONFIG.decisions ?? "09-decisions.md");
+      const decided = existsSync(decisionsAt) ? readFileSync(decisionsAt, "utf8") : "";
+      for (const name of names) if (!decided.includes("`.git/hooks/" + name + "`")) hooksSilent.push(name);
+      return { n: names.length, unit: "своих хуков проекта без переадресации" };
+    });
+    console.log("  не запускаются, решения нет: " + hooksSilent.length);
+    for (const name of hooksSilent)
+      console.log(
+        "    " + name + " — переадресовать: `node .claude/tools/graph.mjs refresh --apply`; не нужен — решение, называющее `.git/hooks/" + name + "`",
+      );
   });
   checkStep(() => {
     checkHead("Якоря на документацию в коде", () => ({

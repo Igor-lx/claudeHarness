@@ -25,8 +25,11 @@ import {
   gitBusyOf,
   gitPathOf,
   SEAT_MARKER,
+  forwarderOf,
   insideOf,
   keepTempOutside,
+  ownHooksOff,
+  writeForwarders,
   reasonLineOf,
   seatRunningAt,
   systemTemp,
@@ -2112,6 +2115,7 @@ it("каждое чтение среды и платформы в инструм
     ["graph.seat.mjs", "tmpdir()", "systemTemp: настоящее имя временной папки, найдено набором на Windows; держит тест systemTemp"],
     ["graph.seat.mjs", 'process.platform === "win32" ? "TEMP" : "TMPDIR"', "текст отказа systemTemp"],
     ["graph.seat.mjs", "platform = process.platform", "runTool: платформа доводом, тест подставляет win32"],
+    ["graph.seat.mjs", 'process.platform === "win32" || (statSync(at).mode & 0o111)', "ownHooksOff: на Windows git зовёт хук без бита исполнения; тест хуков гоняет набор на Windows"],
     ["hook.mjs", "tmpdir()", "запись клапана хука вне git — тест «без git клапан конца хода пишет запись во временную папку»"],
   ];
   const ENV_EXEMPT = new Map([
@@ -2933,6 +2937,32 @@ describe("хуки ворот зовут свой хук проекта", () => 
       const inTree = commit(tree, "in worktree");
       expect(inTree.status, inTree.stdout + inTree.stderr).toBe(0);
       expect(inTree.stdout + inTree.stderr).toContain("OWN-PRE");
+      // Хук, которого у обвязки нет: найден как отключённый, переадресация его возвращает.
+      const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
+      const common = path.join(box, ".git");
+      own("commit-msg", 'echo OWN-MSG-CHECK; exit 4');
+      fs.writeFileSync(path.join(common, "hooks", "pre-push"), "#!/bin/sh\nexit 0\n");
+      fs.writeFileSync(path.join(common, "hooks", "post-merge.sample"), "#!/bin/sh\n", { mode: 0o755 });
+      expect(ownHooksOff(box, map, common)).toEqual(process.platform === "win32" ? ["commit-msg", "pre-push"] : ["commit-msg"]);
+      const unforwarded = commit(box, "own commit-msg ignored");
+      expect(unforwarded.status, unforwarded.stdout + unforwarded.stderr).toBe(0);
+      expect(writeForwarders(box, map, ["commit-msg"])).toEqual(["commit-msg"]);
+      expect(ownHooksOff(box, map, common)).toEqual(process.platform === "win32" ? ["pre-push"] : []);
+      const forwarded = commit(box, "own commit-msg refuses");
+      expect(forwarded.status).not.toBe(0);
+      expect(forwarded.stdout + forwarded.stderr).toContain("OWN-MSG-CHECK");
+      git(box, "reset", "-q");
+      // Своего хука нет — переадресация пропускает.
+      fs.rmSync(path.join(common, "hooks", "commit-msg"));
+      expect(commit(box, "no own commit-msg").status).toBe(0);
+      expect(ownHooksOff(box, map, null)).toEqual([]);
+      // Карта без папки хуков либо без списка — переадресовывать нечего.
+      own("pre-rebase", "exit 0");
+      expect(ownHooksOff(box, {}, common)).toEqual([]);
+      expect(ownHooksOff(box, { gitHooks: { forwardable: ["pre-rebase"] } }, common)).toEqual([]);
+      expect(ownHooksOff(box, { gitHooks: { dir: map.gitHooks.dir } }, common)).toEqual([]);
+      // Без строки оболочки Git на Windows хук не запускает.
+      expect(forwarderOf("pre-rebase").startsWith("#!/bin/sh\n")).toBe(true);
     } finally {
       fs.rmSync(tree, { recursive: true, force: true });
       fs.rmSync(box, { recursive: true, force: true });

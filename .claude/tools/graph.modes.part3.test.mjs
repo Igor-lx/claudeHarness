@@ -4767,3 +4767,50 @@ describe("пометка каркаса снята при правке", () => {
     }
   }, 300000);
 });
+
+describe("свои хуки проекта, которых git не зовёт", () => {
+  // Свой хук проекта в служебной папке git после посадки молчит:
+  // `core.hooksPath` уводит git в папку обвязки. Решено разработчиком `2026-11-13`.
+  it("проверка называет хук без переадресации; refresh --apply её кладёт; решение, называющее хук, снимает вопрос", () => {
+    const box = seatEmpty("own-hooks-off-");
+    try {
+      const git = (...args) => spawnSync("git", args, { cwd: box, encoding: "utf8" });
+      const tool = (...args) =>
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], { cwd: box, encoding: "utf8" }).stdout;
+      const title = "Свои хуки проекта запускаются";
+      const section = (out) => out.slice(out.indexOf("=== " + title + " ==="), out.indexOf("\n===", out.indexOf("=== " + title + " ===") + 4));
+      git("init", "-q");
+      const hook = path.join(box, ".git", "hooks", "pre-push");
+      fs.writeFileSync(hook, "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(hook, 0o755);
+      // Настройка не наша — хук проекта работает, вопроса нет.
+      expect(section(tool("verify", "--full"))).toContain("не запускаются, решения нет: 0");
+      git("config", "core.hooksPath", ".claude/hooks/git");
+      const named = section(tool("verify", "--full"));
+      expect(named).toContain("не запускаются, решения нет: 1");
+      expect(named).toContain("pre-push — переадресовать: `node .claude/tools/graph.mjs refresh --apply`");
+      const decisions = path.join(box, ".context", "09-decisions.md");
+      const was = fs.readFileSync(decisions, "utf8");
+      fs.appendFileSync(decisions, "\n**Свой хук `.git/hooks/pre-push` не переадресуется.**\n");
+      expect(section(tool("verify", "--full"))).toContain("не запускаются, решения нет: 0");
+      fs.writeFileSync(decisions, was);
+      expect(tool("refresh")).toContain("git их не зовёт, переадресации нет: 1 — pre-push");
+      expect(fs.existsSync(path.join(box, ".claude", "hooks", "git", "pre-push"))).toBe(false);
+      expect(tool("refresh", "--apply")).toContain("переадресовано: 1");
+      expect(fs.readFileSync(path.join(box, ".claude", "hooks", "git", "pre-push"), "utf8")).toContain("hooks/pre-push");
+      expect(section(tool("verify", "--full"))).toContain("не запускаются, решения нет: 0");
+      expect(tool("refresh")).toContain("git их не зовёт, переадресации нет: 0");
+      // Переадресация — файл проекта: снимок обвязки её не увозит.
+      const snap = fs.mkdtempSync(path.join(os.tmpdir(), "own-hooks-snap-"));
+      try {
+        tool("handoff", snap);
+        expect(fs.existsSync(path.join(snap, ".claude", "hooks", "git", "pre-commit"))).toBe(true);
+        expect(fs.existsSync(path.join(snap, ".claude", "hooks", "git", "pre-push"))).toBe(false);
+      } finally {
+        fs.rmSync(snap, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});

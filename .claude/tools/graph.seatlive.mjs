@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -17,7 +18,10 @@ import { SCENARIO_NAMES, foreignOffer } from "./graph.profile.mjs";
 import {
   CHILD_OUTPUT_BYTES,
   IDENTITY_NOTICE,
+  COMMON_GIT_DIR_ARGS,
   armGitHooks,
+  forwarderOf,
+  ownHooksOff,
   SEAT_HERE_MARKER,
   claimSandbox,
   factsWithBaseline,
@@ -405,16 +409,27 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   ]);
   if (hidden.length > 0) refuse(...hiddenRefusal(hidden));
   const plan = profile.survey?.plan ?? [];
-  if (familiar && plan.length > 0 && !apply) {
+  // Свои хуки проекта, которые после посадки git не позовёт: `core.hooksPath`
+  // уводит его в папку обвязки. Переадресации — тем же согласием, что и стек.
+  // Решено разработчиком `2026-11-13`.
+  const hooksOff = familiar ? ownHooksOff(target, map, asked(COMMON_GIT_DIR_ARGS)) : [];
+  if (familiar && (plan.length > 0 || hooksOff.length > 0) && !apply) {
     say(
-      "=== Посадка ждёт слова: стек приводится к связке ===",
+      plan.length > 0 ? "=== Посадка ждёт слова: стек приводится к связке ===" : "=== Посадка ждёт слова: свои хуки проекта ===",
       "  Сценарий посадки: " + SCENARIO_NAMES.familiar + ".",
-      "  Пакеты и диапазон среды приводятся к проверенной связке:",
-      ...plan.map(
-        (one) =>
-          "    " + one.name + ": " + (one.from ?? "нет") + " → " + (one.to ?? "снять"),
-      ),
-      "  Это меняет зависимости проекта. Согласие — та же команда с ключом --apply:",
+      ...(plan.length === 0
+        ? []
+        : [
+            "  Пакеты и диапазон среды приводятся к проверенной связке:",
+            ...plan.map((one) => "    " + one.name + ": " + (one.from ?? "нет") + " → " + (one.to ?? "снять")),
+          ]),
+      ...(hooksOff.length === 0
+        ? []
+        : [
+            "  Свои хуки проекта перестанут запускаться: " + hooksOff.join(", ") + ".",
+            "  С --apply посадка положит к ним переадресации, и они продолжат работать.",
+          ]),
+      "  Это меняет зависимости или хуки проекта. Согласие — та же команда с ключом --apply:",
       "    node .claude/tools/graph.mjs seat . --apply",
       "  Проект не тронут.",
     );
@@ -839,6 +854,12 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
     fail("Коммит посадки не прошёл — ворота проекта либо git:", ...tailOf(String(e.stdout ?? "") + String(e.stderr ?? "") || String(e.message), 8));
   };
   try {
+    if (hooksOff.length > 0) {
+      // Своей записью: упавший коммит откатывает и переадресации.
+      for (const name of hooksOff) write(map.gitHooks.dir + "/" + name, forwarderOf(name));
+      for (const name of hooksOff) chmodSync(at(map.gitHooks.dir + "/" + name), 0o755);
+      report.push("Свои хуки проекта переадресованы и запускаются, как прежде: " + hooksOff.join(", ") + ".");
+    }
     armGitHooks(target, shelf);
     git("add", "-A");
     git("commit", "-qm", "chore: seat the harness");
