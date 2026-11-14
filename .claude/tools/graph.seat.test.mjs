@@ -1233,6 +1233,12 @@ describe("посадка на месте одной командой", () => {
       const envTypo = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", box, "--aply"], { cwd: ROOT, encoding: "utf8" });
       expect(envTypo.status, envTypo.stdout).toBe(1);
       expect(envTypo.stdout).toContain("=== Ключ режиму env неизвестен ===");
+      // Посадка в другую папку: ключ посадки на месте там не действует и молча не проходит.
+      const elsewhere = path.join(os.tmpdir(), path.basename(box) + "-elsewhere");
+      const away = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "seat", elsewhere, "--packages", box], { cwd: box, encoding: "utf8" });
+      expect(away.status, away.stdout).toBe(1);
+      expect(away.stdout).toContain("Ключ посадке в другую папку неизвестен: --packages.");
+      expect(fs.existsSync(elsewhere)).toBe(false);
       const envNowhere = spawnSync(process.execPath, [path.join(TOOL_DIR, "graph.mjs"), "env", path.join(box, "nowhere")], { cwd: ROOT, encoding: "utf8" });
       expect(envNowhere.status, envNowhere.stdout + envNowhere.stderr).toBe(1);
       expect(envNowhere.stdout).toContain("Папки проекта нет:");

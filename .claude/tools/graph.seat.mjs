@@ -1783,6 +1783,16 @@ export const runSeat = ({ toolDir, argv, live, profileOf }) => {
       profileOf,
     });
   }
+  // Посадка в другую папку знает один ключ: `--packages`, `--apply` и
+  // опечатка проходили без строки и не делали ничего.
+  if (!stand) {
+    const unknown = unknownFlagsOf(argv, ["--shop"]);
+    if (unknown.length > 0)
+      refuse(
+        "Ключ посадке в другую папку неизвестен: " + unknown.join(", ") + ".",
+        "Есть: --shop. Ключи --packages <папка>, --apply и --with=<оси> — у посадки на месте: seat . из папки проекта. Папка не тронута.",
+      );
+  }
   const busy = existsSync(target) && readdirSync(target).length > 0;
   // По `.git` и `graph.mjs` живой проект с обвязкой от посадки не отличить.
   const marker = gitPathOf(target, SEAT_MARKER);
