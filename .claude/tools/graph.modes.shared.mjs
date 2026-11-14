@@ -83,7 +83,7 @@ export const SUBJECT = (() => {
   if (!out.length) return path.relative(root, fileURLToPath(import.meta.url));
   const HOOKS = /use[A-Z][A-Za-z]*\s*\(/g;
   const score = (f) => (fs.readFileSync(f, "utf8").match(HOOKS) ?? []).length;
-  out.sort((a, b) => score(b) - score(a) || a.localeCompare(b));
+  out.sort((a, b) => score(b) - score(a) || (a < b ? -1 : a > b ? 1 : 0));
   return path.relative(root, out[0]).split(path.sep).join("/");
 })();
 

@@ -1703,6 +1703,7 @@ describe("модуль .mjs под корнем исходников — в гр
       const lib = path.join(box, "src", "shared", "zzMod");
       fs.mkdirSync(lib, { recursive: true });
       fs.writeFileSync(path.join(lib, "util.mjs"), "export const zzUtil = 1;\nexport const zzSpare = 2;\n");
+      fs.writeFileSync(path.join(lib, "Zeta.mjs"), "export const zzLone = 3;\n");
       fs.writeFileSync(
         path.join(box, "src", "app", "zzUse.ts"),
         'import { zzUtil } from "../shared/zzMod/util.mjs";\nexport const zzUse = zzUtil;\n',
@@ -1714,6 +1715,11 @@ describe("модуль .mjs под корнем исходников — в гр
           stdio: ["ignore", "pipe", "pipe"],
         });
       expect(run("dead")).toMatch(/shared\/zzMod\/util\.mjs\n\s+zzSpare\n/);
+      // Порядок строк — по кодам знаков, как у остального вывода: по локали
+      // машины `util` встал бы раньше `Zeta`, и на другой машине — иначе.
+      const said = run("dead");
+      expect(said.indexOf("shared/zzMod/Zeta.mjs")).toBeGreaterThan(-1);
+      expect(said.indexOf("shared/zzMod/Zeta.mjs")).toBeLessThan(said.indexOf("shared/zzMod/util.mjs"));
       expect(sectionOf(run("brief", "shared/zzMod/util.mjs"), "пользуются им")).toContain("app/zzUse.ts");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });

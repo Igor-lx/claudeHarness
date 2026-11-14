@@ -2368,6 +2368,52 @@ it("каждая временная папка инструмента снима
   expect(bare, "временная папка без снятия").toEqual([]);
 });
 
+// Часы и локаль у каждой машины свои: день по UTC съезжал после полуночи, а
+// порядок `localeCompare` зависит от локали среды. Тест держит вид: чтение
+// часов стоит в объявленном месте с причиной, чтения локали нет вовсе.
+it("каждое чтение часов машины объявлено, а локаль машины инструмент не читает", () => {
+  const CLOCK = new Map([
+    ["graph.mjs", [
+      ['JSON.stringify({ at: new Date().toISOString(), command: "git commit" })', "след стража: момент по UTC, читается разностью моментов"],
+      ["const ageS = (Date.now() - Date.parse(trace?.at)) / 1000;", "возраст следа стража: разность моментов, от пояса не зависит"],
+      ["state.pause = { digest: holdDigest, reason, at: new Date().toISOString(), files: holdFiles };", "момент паузы: день из него берёт `localDay`"],
+      ["state.trace = { digest: holdDigest, at: new Date().toISOString(), files: holdFiles, fault: holdFault };", "момент следа ворот конца хода"],
+    ]],
+    ["graph.seat.mjs", [
+      ["export const localDay = (at = new Date()) =>", "единственное место, где момент становится днём: по поясу машины"],
+      ["from = Number(String(Date.now()).slice(-8)),", "начальный номер песочницы: занятый обходится"],
+    ]],
+    ["hook.mjs", [
+      ['JSON.stringify({ turn, at: new Date().toISOString(), why }) + "\\n",', "момент записи журнала хода"],
+      ["at: new Date().toISOString(),", "момент записи следа хука"],
+    ]],
+    ["graph.predicates.mjs", [
+      ["/\\bIntl\\.[A-Z]|\\.toLocale(?:Date|Time)?String\\s*\\(/],", "образец признака в коде проекта, а не чтение"],
+      ["(templated || /\\.(?:toFixed|toLocaleString)\\s*\\(|\\bIntl\\.|", "образец признака в коде проекта, а не чтение"],
+      ["each(/\\.\\s*toFixed\\s*\\(|\\.\\s*toLocale(?:Date|Time)?String\\s*\\(\\s*\\)/g,", "образец признака в коде проекта, а не чтение"],
+    ]],
+  ]);
+  const READ = /\bnew Date\(\)|\bDate\.now\(\)|\.localeCompare\(|toLocale|\bIntl\b/;
+  const bare = [];
+  const used = new Set();
+  let seen = 0;
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))) {
+    const lines = fs.readFileSync(path.join(TOOL_DIR, file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      const code = line.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""').replace(/^\s*(?:\/\/|\*|\/\*).*$/, "");
+      if (!READ.test(code)) return;
+      seen += 1;
+      const known = (CLOCK.get(file) ?? []).find(([piece]) => line.includes(piece));
+      if (known === undefined) bare.push(file + ":" + (i + 1) + " " + line.trim());
+      else used.add(file + "|" + known[0]);
+    });
+  }
+  const idle = [...CLOCK].flatMap(([file, rows]) => rows.filter(([piece]) => !used.has(file + "|" + piece)).map(([piece]) => file + ": " + piece));
+  expect(seen).toBeGreaterThan(7);
+  expect(bare, "чтение часов либо локали машины без объявления").toEqual([]);
+  expect(idle, "объявление, которому нечего объявлять").toEqual([]);
+});
+
 // Конфиг семени — код, и его «почему» лежит заметкой на полке, а в конфиге
 // стоит её адрес. Семя `tsconfig.json` уезжало без заметки вовсе. Тест держит
 // вид: семя в корне проекта называет существующую заметку либо исключено.

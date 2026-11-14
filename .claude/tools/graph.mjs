@@ -8176,7 +8176,7 @@ if (mode === "dead") {
     const dead = [...exportsOf.get(f)].filter((n) => !pulled.has(n));
     if (dead.length) rows.push([rel(f), dead]);
   }
-  for (const [f, dead] of rows.sort((a, b) => a[0].localeCompare(b[0]))) {
+  for (const [f, dead] of rows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
     console.log(`${f}\n    ${dead.join(", ")}`);
   }
   console.log(`
