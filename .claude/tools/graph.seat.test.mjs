@@ -2370,6 +2370,66 @@ it("каждый путь, названный шагом конвейера ма
   expect([...EXEMPT.keys()].filter((k) => !used.has(k)), "исключение, которому нечего исключать").toEqual([]);
 });
 
+// Семя, вшитое в данные инструмента второй копией, отстаёт от семени без
+// признака: настройка стенда не знала двенадцати версий связки и поля своих
+// скиллов. Тест держит вид: копия семени в данных стенда и магазина равна
+// семени с объявленной заменой либо объявлена своим файлом площадки.
+it("каждая копия семени в данных стенда и магазина равна семени с объявленной разницей", () => {
+  const SWAPS = new Map([
+    ["bar-stand.json|.context/graph.config.mjs", ["  domTables: null,\n", "у стенда есть таблицы связей мимо импорта"]],
+  ]);
+  const OWN = /^(?:\.context\/\d\d-[\w-]+\.md|CLAUDE\.md|docs\/FEATURES\.md|index\.html|src\/app\/.+)$/;
+  const map = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "map.json"), "utf8"));
+  const seeds = new Map(map.copy.map((e) => [e.to, path.join(SHELF, e.from.replace(/^\.claude\//, ""))]).filter(([, at]) => fs.existsSync(at) && fs.statSync(at).isFile()));
+  const texts = (node, out = []) => {
+    for (const [key, value] of Object.entries(node ?? {}))
+      if (typeof value === "string") out.push([key, value]);
+      else if (value !== null && typeof value === "object" && !Array.isArray(value)) texts(value, out);
+    return out;
+  };
+  const apart = [];
+  const used = new Set();
+  let copies = 0;
+  for (const data of ["bar-stand.json", "probe-shop.json"])
+    for (const [to, text] of texts(JSON.parse(fs.readFileSync(path.join(TOOL_DIR, data), "utf8")))) {
+      if (!seeds.has(to) || OWN.test(to)) continue;
+      copies += 1;
+      const seed = fs.readFileSync(seeds.get(to), "utf8");
+      const swap = SWAPS.get(data + "|" + to);
+      if (swap === undefined) {
+        if (text !== seed) apart.push(data + ": " + to + " — не равна семени");
+        continue;
+      }
+      used.add(data + "|" + to);
+      const [head, tail] = seed.split(swap[0]);
+      if (tail === undefined || !text.startsWith(head) || !text.endsWith(tail) || text === seed) apart.push(data + ": " + to + " — расходится сверх объявленной замены");
+    }
+  expect(copies).toBeGreaterThan(0);
+  expect(apart, "копия семени отстала от семени").toEqual([]);
+  expect([...SWAPS.keys()].filter((k) => !used.has(k)), "замена, которой нечего заменять").toEqual([]);
+  // Файл в корне мастерской с тем же именем, что у семени, — тоже вторая
+  // копия: правила те же, комментарий свой; свои файлы мастерской объявлены.
+  const WORKSHOP_OWN = new Map([
+    ["CLAUDE.md", "правила мастерской, а не заготовка правил проекта"],
+    [".gitignore", "у мастерской нет пакетов и сборки: свой список"],
+  ]);
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const workshopShelf = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  if (workshopShelf === "") return;
+  const workshop = path.dirname(workshopShelf);
+  const rules = (text) => text.split("\n").filter((line) => line.trim() !== "" && !line.startsWith("#"));
+  const drifted = [];
+  const ownUsed = new Set();
+  for (const [to, at] of seeds) {
+    const twin = path.join(workshop, to);
+    if (to.includes("/") || !fs.existsSync(twin) || !fs.statSync(twin).isFile()) continue;
+    if (WORKSHOP_OWN.has(to)) ownUsed.add(to);
+    else if (rules(fs.readFileSync(twin, "utf8")).join("\n") !== rules(fs.readFileSync(at, "utf8")).join("\n")) drifted.push(to);
+  }
+  expect(drifted, "файл мастерской разошёлся с семенем по правилам").toEqual([]);
+  expect([...WORKSHOP_OWN.keys()].filter((k) => !ownUsed.has(k)), "свой файл мастерской, которого нет").toEqual([]);
+});
+
 // Скрипт манифеста семени исполняется у принимающей стороны: программа,
 // которой нет среди зависимостей семени, находится только там, где её
 // поставили вручную. Тест держит вид: программа скрипта — из `bin` пакета
