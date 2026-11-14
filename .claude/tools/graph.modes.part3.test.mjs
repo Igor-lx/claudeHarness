@@ -4675,6 +4675,50 @@ describe("папка на месте файла базы", () => {
   }, 300000);
 });
 
+// Опечатка в ключе, принятая без строки, делает другое: `verify --ful` печатал
+// короткий вывод и отдавал ноль. Тест держит вид: каждый режим инструмента
+// либо отказывает на неизвестном ключе, либо объявлен с причиной.
+describe("ключ, которого режим не знает", () => {
+  it("каждый режим отказывает на неизвестном ключе и называет его, либо объявлен с причиной", () => {
+    const REFUSES = ["bar", "blast", "brief", "cycles", "dead", "env", "levels", "mutated", "open", "plan", "repoint", "sizes", "tested", "tiers", "twins", "verify"];
+    const OWN = new Map([
+      ["bar-fill", "без протокола свода отказывает раньше ключа; ключи при протоколе проходом `2026-11-14` не читаны"],
+      ["bar-read", "то же"],
+      ["bar-hold", "ключ называет, код ноль: проходом не читан"],
+      ["lint", "доводы идут программе звена, она и отказывает"],
+      ["types", "доводы идут программе звена, она и отказывает"],
+      ["seat", "свой разбор: тест «ключ, назвавший не то, — отказ до работы»"],
+      ["refresh", "свой разбор: секция «Ключ режиму неизвестен»"],
+      ["bar-probe", "режим с побочным действием: проходом не читан"],
+      ["falsify", "режим с побочным действием: проходом не читан"],
+      ["handoff", "режим с побочным действием: проходом не читан"],
+      ["gate", "зовёт хук git: проходом не читан"],
+      ["guard", "зовёт хук среды: проходом не читан"],
+      ["stop", "зовёт хук среды: проходом не читан"],
+      ["series", "режим с побочным действием: проходом не читан"],
+      ["transition", "зовёт хук среды: проходом не читан"],
+    ]);
+    const source = fs.readFileSync(path.join(TOOL_DIR, "graph.mjs"), "utf8");
+    const modes = [...new Set([...source.matchAll(/\bmode === "([a-z-]+)"/g)].map((m) => m[1]))].sort();
+    expect(modes.length).toBeGreaterThan(25);
+    expect(modes.filter((m) => !REFUSES.includes(m) && !OWN.has(m)), "режим без решения о неизвестном ключе").toEqual([]);
+    expect([...REFUSES, ...OWN.keys()].filter((m) => !modes.includes(m)), "решение о режиме, которого нет").toEqual([]);
+    const box = seatEmpty("unknown-key-");
+    try {
+      const silent = [];
+      for (const mode of REFUSES) {
+        const ran = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), mode, "--zz-unknown"], { cwd: box, encoding: "utf8" });
+        if (ran.status === 0 || !(ran.stdout + ran.stderr).includes("--zz-unknown")) silent.push(mode + ": код " + ran.status);
+      }
+      expect(silent, "режим принял неизвестный ключ без отказа").toEqual([]);
+      const full = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], { cwd: box, encoding: "utf8" });
+      expect(full.stdout).not.toContain("Ключ режиму");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 600000);
+});
+
 describe("переменные git, ведущие не в репозиторий проекта", () => {
   it("чужие GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR и GIT_INDEX_FILE названы и сняты на прогон, свои — нет", () => {
     const box = seatEmpty("foreign-git-dir-");

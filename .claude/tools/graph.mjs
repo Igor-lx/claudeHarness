@@ -6143,6 +6143,19 @@ if (predicateFailures.length > 0) {
   }
 }
 
+// Ключ, которого режим не знает, — тоже отказ: `verify --ful` печатал
+// короткий вывод вместо полного и отдавал `0`. Здесь объявлены режимы, которые
+// ключей не читают вовсе, и `verify` с его одним; прочие отказывают сами.
+const MODE_KEYS = { cycles: [], dead: [], open: [], repoint: [], tiers: [], verify: ["--full"] };
+if (Object.hasOwn(MODE_KEYS, mode)) {
+  const unknownKeys = unknownFlagsOf(process.argv.slice(3), MODE_KEYS[mode]);
+  if (unknownKeys.length > 0) {
+    console.log("=== Ключ режиму `" + mode + "` неизвестен ===");
+    console.log("  " + unknownKeys.join(", ") + " — есть: " + (MODE_KEYS[mode].join(", ") || "ключей у режима нет"));
+    process.exit(1);
+  }
+}
+
 /** Путь-аргумент принимается в обеих ходовых формах: как его печатает база
  * (`components/…`) и как его печатает всё остальное — git, редактор, отчёт
  * (`src/components/…`). Вторая форма раньше отвечала «Ничего не нашлось», то
