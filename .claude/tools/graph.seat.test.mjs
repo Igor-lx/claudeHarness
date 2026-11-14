@@ -2414,6 +2414,39 @@ it("каждое чтение часов машины объявлено, а л�
   expect(idle, "объявление, которому нечего объявлять").toEqual([]);
 });
 
+// Переменная окружения переживает вызов: выставленная прошлой командой либо
+// средой, она меняет поведение следующего режима без строки в его доводах.
+// Тест держит вид: каждую переменную-переключатель называет справочник и
+// исполняет тест; системные исключены с причиной.
+it("каждая переменная окружения, которую читает инструмент, названа справочником и тестом", () => {
+  const SYSTEM = new Map([
+    ["PATH", "поиск программ: системная, не переключатель"],
+    ["PATHEXT", "расширения программ Windows: системная, не переключатель"],
+  ]);
+  const modules = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));
+  const texts = modules.map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8"));
+  const constants = new Map(texts.flatMap((t) => [...t.matchAll(/const ([A-Z_]+) = "([A-Z][A-Z_]+)";/g)].map((m) => [m[1], m[2]])));
+  const names = new Set();
+  for (const text of texts)
+    for (const line of text.split("\n")) {
+      const code = line.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""').replace(/^\s*(?:\/\/|\*|\/\*).*$/, "");
+      for (const m of code.matchAll(/\benv\.([A-Z][A-Z_]+)\b/g)) names.add(m[1]);
+      for (const m of code.matchAll(/\benv\[([A-Z_]+)\]/g)) if (constants.has(m[1])) names.add(constants.get(m[1]));
+    }
+  const guide = fs.readFileSync(path.join(TOOL_DIR, "graph.md"), "utf8");
+  const tests = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".test.mjs")).map((f) => fs.readFileSync(path.join(TOOL_DIR, f), "utf8"));
+  const bare = [];
+  for (const name of [...names].sort()) {
+    if (SYSTEM.has(name)) continue;
+    const word = new RegExp("\\b" + name + "\\b");
+    if (!word.test(guide)) bare.push(name + " — справочник не называет");
+    if (!tests.some((t) => word.test(t))) bare.push(name + " — ни один тест не исполняет");
+  }
+  expect(names.size).toBeGreaterThan(8);
+  expect(bare, "переменная окружения без справочника либо без теста").toEqual([]);
+  expect([...SYSTEM.keys()].filter((k) => !names.has(k)), "исключение, которому нечего исключать").toEqual([]);
+});
+
 // Конфиг семени — код, и его «почему» лежит заметкой на полке, а в конфиге
 // стоит её адрес. Семя `tsconfig.json` уезжало без заметки вовсе. Тест держит
 // вид: семя в корне проекта называет существующую заметку либо исключено.

@@ -4676,7 +4676,7 @@ describe("папка на месте файла базы", () => {
 });
 
 describe("переменные git, ведущие не в репозиторий проекта", () => {
-  it("чужие GIT_DIR, GIT_WORK_TREE и GIT_COMMON_DIR названы и сняты на прогон, свои — нет", () => {
+  it("чужие GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR и GIT_INDEX_FILE названы и сняты на прогон, свои — нет", () => {
     const box = seatEmpty("foreign-git-dir-");
     const foreign = fs.mkdtempSync(path.join(os.tmpdir(), "foreign-repo-"));
     try {
@@ -4697,6 +4697,10 @@ describe("переменные git, ведущие не в репозитори�
       expect(run("GIT_COMMON_DIR", path.join(foreign, ".git"))).toContain("=== Переменная GIT_COMMON_DIR ведёт не в репозиторий проекта ===");
       expect(run("GIT_COMMON_DIR", path.join(box, ".git"))).not.toContain("=== Переменная GIT_COMMON_DIR");
       expect(run("GIT_DIR", path.join(box, ".git"))).not.toContain("=== Переменная GIT_DIR");
+      // Индекс вне папки git проекта — чужой; в ней — свой: так его ставит git хуку.
+      expect(run("GIT_INDEX_FILE", path.join(foreign, "other.index"))).toContain("=== Переменная GIT_INDEX_FILE ведёт не в репозиторий проекта ===");
+      expect(run("GIT_INDEX_FILE", path.join(box, ".git", "index"))).not.toContain("=== Переменная GIT_INDEX_FILE");
+      expect(run("GIT_INDEX_FILE", path.join(".git", "index.lock"))).not.toContain("=== Переменная GIT_INDEX_FILE");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
       fs.rmSync(foreign, { recursive: true, force: true });

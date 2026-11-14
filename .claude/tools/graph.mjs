@@ -1885,7 +1885,10 @@ const REPO_AT = path.join(BASE, "..");
 // `GIT_DIR`, `GIT_WORK_TREE` либо `GIT_COMMON_DIR`, ведущие не туда, куда git пришёл бы сам от
 // проекта, подменяли историю, и сверки звали это переписанной историей.
 // Такая переменная называется и снимается на прогон; совпавшая остаётся.
-const GIT_ASKS = { GIT_DIR: "--absolute-git-dir", GIT_WORK_TREE: "--show-toplevel", GIT_COMMON_DIR: "--git-common-dir" };
+// `GIT_INDEX_FILE` своя, пока лежит в папке git проекта: туда её ставит git
+// хуку коммита; чужой индекс показывал правленым весь проект.
+const GIT_ASKS = { GIT_DIR: "--absolute-git-dir", GIT_WORK_TREE: "--show-toplevel", GIT_COMMON_DIR: "--git-common-dir", GIT_INDEX_FILE: "--absolute-git-dir" };
+const GIT_INSIDE = new Set(["GIT_INDEX_FILE"]);
 for (const [name, ask] of Object.entries(GIT_ASKS)) {
   const declared = process.env[name];
   if (declared === undefined || declared === "") continue;
@@ -1900,7 +1903,8 @@ for (const [name, ask] of Object.entries(GIT_ASKS)) {
       return false;
     }
   };
-  if (own !== "" && same(path.resolve(declared), own)) continue;
+  const inside = (file, dir) => same(path.dirname(path.resolve(file)), dir) || path.resolve(file).startsWith(path.resolve(dir) + path.sep);
+  if (own !== "" && (GIT_INSIDE.has(name) ? inside(declared, own) : same(path.resolve(declared), own))) continue;
   console.log("=== Переменная " + name + " ведёт не в репозиторий проекта ===");
   console.log("    " + name + "=" + declared + (own === "" ? " — у проекта своего репозитория нет" : " — git проекта: " + own));
   console.log("    снята на этот прогон: история и состояние читаются из репозитория проекта");
