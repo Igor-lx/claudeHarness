@@ -2331,6 +2331,39 @@ it("версии среды в семенах и конвейерах — те �
       expect(fs.readFileSync(path.join(workshopFlows, f), "utf8"), f).not.toMatch(/node-version:\s*['"]?\d|npm@\d/);
 });
 
+// Проза называет поле настройки, карты либо данных по имени, а поле
+// переименовывают без неё: имя в прозе тогда не ведёт никуда, и прогон этого
+// не видит. Тест держит вид: каждое имя поля, названное прозой полки, есть
+// полем семян и данных либо читается инструментом; чужие форматы объявлены.
+it("каждое поле, названное прозой полки по имени, есть в семенах, данных либо в коде инструмента", () => {
+  const OUTSIDE = new Map([
+    ["disableAllHooks", "поле настроек Claude Code"],
+    ["permission_denials", "поле вывода claude -p"],
+    ["exports", "поле манифеста проекта"],
+    ["eslintConfig", "поле манифеста проекта"],
+    ["jest", "поле манифеста проекта"],
+    ["workspaces", "поле манифеста проекта"],
+  ]);
+  const seedsAt = path.join(SHELF, "seat", "templates");
+  const stores = [
+    ...["graph.config.mjs", "package.json", "settings.json", "stryker.config.json"].map((f) => path.join(seedsAt, f)),
+    path.join(SHELF, "seat", "map.json"),
+    ...fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".json") || (f.endsWith(".mjs") && !f.endsWith(".test.mjs"))).map((f) => path.join(TOOL_DIR, f)),
+  ].map((at) => fs.readFileSync(at, "utf8")).join("\n");
+  const walk = (d) =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+  const prose = walk(SHELF).filter((f) => f.endsWith(".md") && !f.includes(path.sep + "rationale" + path.sep) && !f.includes(path.sep + "templates" + path.sep));
+  const named = new Map();
+  for (const file of prose)
+    for (const m of fs.readFileSync(file, "utf8").replace(/\r?\n/g, " ").matchAll(/(?:пол[еяюй]|полем|полями|графа|ключ[аеу]?)\s+(?:настройки\s+|карты\s+|карты посадки\s+|семени\s+)?`([A-Za-z_][\w.]*)`/g))
+      if (!named.has(m[1])) named.set(m[1], path.relative(SHELF, file));
+  const known = (name) => new RegExp('(^|[^\\w])"?' + name.split(".").pop() + '"?\\s*:|\\.' + name.split(".").pop() + "\\b", "m").test(stores);
+  const ghost = [...named].filter(([name]) => !OUTSIDE.has(name) && !known(name)).map(([name, file]) => name + " — " + file);
+  expect(named.size).toBeGreaterThan(40);
+  expect(ghost, "проза называет поле, которого нет").toEqual([]);
+  expect([...OUTSIDE.keys()].filter((k) => !named.has(k)), "исключение, которому нечего исключать").toEqual([]);
+});
+
 // Конвейер запускают пути, а читает он больше: правка файла вне путей идёт
 // без прогона до следующей правки инструмента. Тест держит вид: каждый путь
 // репозитория, названный шагом конвейера мастерской, запускает его либо
