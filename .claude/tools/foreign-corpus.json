@@ -465,6 +465,54 @@
         "src/wordCount.ts": "export const wordCount = (text: string): number => text.split(/\\s+/).filter(Boolean).length;\n",
         "tests/wordCount.test.ts": "import { expect, it } from \"vitest\";\nimport { wordCount } from \"../src/wordCount\";\n\nit(\"counts words\", () => {\n  expect(wordCount(\"  a  b c \")).toBe(3);\n});\n"
       }
+    },
+    {
+      "name": "scss-above",
+      "scenario": "familiar",
+      "axis": "пакет выше связки точной версией (`sass-embedded`), раскладка обвязки — компонент папкой в `src/components/`, лист SCSS без модулей, тест рядом с файлом",
+      "files": {
+        "package.json": "{\n  \"name\": \"gauge-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"sass-embedded\": \"1.108.2\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\n      \"vite/client\"\n    ]\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/components/Gauge/Gauge.tsx": "import './gauge.scss'\n\nexport function Gauge({ percent }: { percent: number }) {\n  return <p className=\"gauge\">{percent}%</p>\n}\n",
+        "src/components/Gauge/gauge.scss": "$track: #ddd;\n\n.gauge {\n  border-bottom: 2px solid $track;\n}\n",
+        "src/components/Gauge/Gauge.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { Gauge } from './Gauge'\n\nit('prints the percent', () => {\n  expect(renderToString(<Gauge percent={40} />)).toContain('40')\n})\n"
+      }
+    },
+    {
+      "name": "map-root",
+      "scenario": "familiar",
+      "axis": "корень исходников `web`, а не `src`; карта классов пропом; тесты в корневой папке `tests`; конфиг сборщика `vite.config.mts`",
+      "files": {
+        "package.json": "{\n  \"name\": \"crumbs-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"typescript\": \"~6.0.0\",\n    \"vite\": \"^8.3.4\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"web\",\n    \"tests\",\n    \"vite.config.mts\"\n  ]\n}\n",
+        "vite.config.mts": "import { defineConfig } from \"vite\";\n\nexport default defineConfig({ test: { include: [\"tests/**/*.test.tsx\"] } });\n",
+        "web/Crumbs.tsx": "type CrumbsProps = { classes: Record<string, string>; trail: string[] }\n\nexport function Crumbs({ classes, trail }: CrumbsProps) {\n  return (\n    <nav className={classes.trail}>\n      {trail.map((step) => (\n        <span key={step} className={classes.step}>\n          {step}\n        </span>\n      ))}\n    </nav>\n  )\n}\n",
+        "tests/Crumbs.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { Crumbs } from '../web/Crumbs'\n\nit('prints every step', () => {\n  const html = renderToString(<Crumbs classes={{ trail: 't', step: 's' }} trail={['home', 'docs']} />)\n  expect(html).toContain('home')\n  expect(html).toContain('docs')\n})\n"
+      }
+    },
+    {
+      "name": "inline-full",
+      "scenario": "familiar",
+      "axis": "полное окружение ниже связки — свои Prettier и Stryker, объект стилей в разметке, плоская `src`, тест в `__tests__`",
+      "files": {
+        "package.json": "{\n  \"name\": \"capsule-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\",\n    \"mutate\": \"stryker run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@stryker-mutator/core\": \"^8.7.1\",\n    \"@stryker-mutator/vitest-runner\": \"^8.7.1\",\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"prettier\": \"^3.3.3\",\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        ".prettierrc.json": "{\n  \"semi\": false,\n  \"singleQuote\": true\n}\n",
+        "stryker.config.json": "{\n  \"testRunner\": \"vitest\",\n  \"mutate\": [\n    \"src/**/*.tsx\",\n    \"!src/**/*.test.tsx\"\n  ],\n  \"reporters\": [\n    \"clear-text\"\n  ]\n}\n",
+        "src/Capsule.tsx": "export function Capsule({ text }: { text: string }) {\n  return <span style={{ padding: '2px 8px', borderRadius: 12, background: '#eef' }}>{text}</span>\n}\n",
+        "src/__tests__/Capsule.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { Capsule } from '../Capsule'\n\nit('prints the text', () => {\n  expect(renderToString(<Capsule text=\"new\" />)).toContain('new')\n})\n"
+      }
+    },
+    {
+      "name": "exact-seed",
+      "scenario": "familiar",
+      "axis": "версии связки без диапазонов, конфиги именами семени, стили кодом (`styled-components`) без листов, компонент папкой с тестом в её `tests/`",
+      "files": {
+        "package.json": "{\n  \"name\": \"nametag-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"19.3.1\",\n    \"react-dom\": \"19.3.1\",\n    \"styled-components\": \"^6.1.13\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"19.3.0\",\n    \"@types/react-dom\": \"19.3.0\",\n    \"typescript\": \"6.0.3\",\n    \"vite\": \"8.3.5\",\n    \"vitest\": \"4.1.11\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\",\n    \"vite.config.ts\"\n  ]\n}\n",
+        "vite.config.ts": "import { defineConfig } from 'vite'\n\nexport default defineConfig({})\n",
+        "src/components/NameTag/NameTag.tsx": "import styled from 'styled-components'\n\nexport const NameTag = styled.strong`\n  color: #264;\n`\n",
+        "src/components/NameTag/tests/NameTag.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { NameTag } from '../NameTag'\n\nit('prints the name', () => {\n  expect(renderToString(<NameTag>Ada</NameTag>)).toContain('Ada')\n})\n"
+      }
     }
   ]
 }
