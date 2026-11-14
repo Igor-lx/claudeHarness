@@ -12,6 +12,8 @@ on:
       - .claude/tools/**
       - .claude/seat/**
       - .claude/hooks/**
+      # The checkout's line endings on this runner follow this file.
+      - .gitattributes
       - .github/workflows/harness-windows.yml
 
 jobs:

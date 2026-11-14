@@ -2325,6 +2325,45 @@ it("версии среды в семенах и конвейерах — те �
       expect(fs.readFileSync(path.join(workshopFlows, f), "utf8"), f).not.toMatch(/node-version:\s*['"]?\d|npm@\d/);
 });
 
+// Конвейер запускают пути, а читает он больше: правка файла вне путей идёт
+// без прогона до следующей правки инструмента. Тест держит вид: каждый путь
+// репозитория, названный шагом конвейера мастерской, запускает его либо
+// исключён с причиной; корневой `.gitattributes` запускает прогон Windows.
+it("каждый путь, названный шагом конвейера мастерской, его запускает либо исключён с причиной", () => {
+  const EXEMPT = new Map([
+    ["harness-bootstrap.yml|.claude/tools/graph.mjs", "посадка здесь — дым после загрузчика: правку инструмента держат полный набор и harness-windows"],
+  ]);
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  const workshopShelf = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+  const flows = path.join(path.dirname(workshopShelf), ".github", "workflows");
+  if (workshopShelf === "" || !fs.existsSync(flows)) return;
+  const bare = [];
+  const used = new Set();
+  let named = 0;
+  for (const file of fs.readdirSync(flows)) {
+    const lines = fs.readFileSync(path.join(flows, file), "utf8").split("\n");
+    const from = lines.findIndex((l) => /^\s+paths:\s*$/.test(l));
+    const paths = [];
+    let at = from + 1;
+    for (; from !== -1 && /^\s+(?:-|#)\s/.test(lines[at] ?? ""); at += 1) {
+      const one = /^\s+-\s+(\S+)/.exec(lines[at]);
+      if (one !== null) paths.push(one[1]);
+    }
+    const covers = (p) => paths.some((one) => (one.endsWith("/**") ? p.startsWith(one.slice(0, -2)) : one === p));
+    const body = lines.slice(at).filter((l) => !/^\s*#/.test(l)).join("\n");
+    for (const p of new Set(body.match(/(?<!\w)\.(?:claude|github)\/[\w./-]*\w/g) ?? [])) {
+      named += 1;
+      if (covers(p)) continue;
+      if (EXEMPT.has(file + "|" + p)) used.add(file + "|" + p);
+      else bare.push(file + ": " + p);
+    }
+    if (file === "harness-windows.yml") expect(paths, "концы строк копии на Windows задаёт .gitattributes").toContain(".gitattributes");
+  }
+  expect(named).toBeGreaterThan(5);
+  expect(bare, "путь, названный шагом, конвейер не запускает").toEqual([]);
+  expect([...EXEMPT.keys()].filter((k) => !used.has(k)), "исключение, которому нечего исключать").toEqual([]);
+});
+
 // Скрипт манифеста семени исполняется у принимающей стороны: программа,
 // которой нет среди зависимостей семени, находится только там, где её
 // поставили вручную. Тест держит вид: программа скрипта — из `bin` пакета
