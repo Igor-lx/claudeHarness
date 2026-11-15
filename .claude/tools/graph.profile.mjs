@@ -49,6 +49,12 @@ const readJson = (at) => {
  * проекта нет манифеста. Сверка чужого окружения узнаёт её по этому имени. */
 export const NO_MANIFEST_AXIS = "манифест";
 
+/** Имена файла версии среды: имя семени и его другие имена из карты посадки. */
+const versionFileNamesOf = (map) => {
+  const entry = (map.copy ?? []).find((e) => e.to === ".nvmrc");
+  return entry === undefined ? [] : [entry.to, ...(entry.alsoKnownAs ?? [])];
+};
+
 export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => {
   const read = (rel) => {
     const at = path.join(root, rel);
@@ -68,6 +74,10 @@ export const scenarioOf = ({ root, map, seed, commits = 0, withTools = [] }) => 
     ui: map.platformPackages?.ui ?? [],
     alternatives: map.platformPackages?.alternatives ?? {},
     engines: seed.engines ?? {},
+    versionFiles: versionFileNamesOf(map)
+      .map((name) => ({ name, text: read(name) }))
+      .filter((one) => one.text !== null),
+    pinFields: (map.copy ?? []).filter((e) => e.to === ".nvmrc" && e.inManifest !== undefined).map((e) => e.inManifest),
   });
   const foreign =
     manifest === null

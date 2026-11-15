@@ -77,7 +77,8 @@ const npm = (box, ...args) => {
  * списки и манифест и положить свой конфиг рядом под проектным именем;
  * чужому — дописать только исключения git. Прочее — байт в байт. */
 const OWN_CHANGED = {
-  familiar: [".gitignore", ".gitattributes", ".prettierignore", "package.json", ".claude/settings.json"],
+  // Файл версии среды — вторая запись версии: приводится согласием, как манифест.
+  familiar: [".gitignore", ".gitattributes", ".prettierignore", "package.json", ".claude/settings.json", ".nvmrc", ".node-version"],
   foreign: [".gitignore", ".claude/settings.json"],
 };
 const besideName = (rel) =>

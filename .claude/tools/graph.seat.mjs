@@ -433,6 +433,8 @@ export const stackSurveyOf = ({
   ui = [],
   alternatives = {},
   engines = {},
+  versionFiles = [],
+  pinFields = [],
 }) => {
   const ext = (re) => files.filter((f) => re.test(f) && !/\.d\.ts$/.test(f));
   const tsFiles = ext(/\.(?:ts|tsx|mts|cts)$/);
@@ -555,6 +557,29 @@ export const stackSurveyOf = ({
     if (typeof declared !== "string" || floor === undefined) continue;
     if (rangeAllows(declared, floor) === false) plan.push({ name: "engines." + key, from: declared, to: range, section: "engines" });
   }
+  // Файл версии среды проекта — вторая запись той же версии: названная в нём
+  // версия ниже связки оставляла ту же сверку красной уже после согласия.
+  // Приводится тем же согласием; сравнение — на глубину записи файла, как у
+  // сверки. Файл не одной строкой версии план не правит.
+  const nodeFloor = /^>=\s*(\d+(?:\.\d+){0,2})$/.exec(String(engines.node ?? "").trim())?.[1];
+  const belowFloor = (named) => nodeFloor !== undefined && versionCmp(named, nodeFloor, named.split(".").length) < 0;
+  for (const one of versionFiles) {
+    // Строка версии — как её читает сверка: первая непустая без «#»; у файла
+    // нескольких инструментов — строка `nodejs <версия>`.
+    const lines = String(one.text).split(/\r?\n/);
+    const several = one.name === ".tool-versions";
+    const at = lines.findIndex((l) => (several ? /^\s*(?:nodejs|node)\s+\S/.test(l) : l.trim() !== "" && !l.trim().startsWith("#")));
+    const hit = at < 0 ? null : /^(\s*(?:(?:nodejs|node)\s+)?v?)(\d+(?:\.\d+){0,2})\s*$/.exec(lines[at]);
+    if (hit === null || !belowFloor(hit[2])) continue;
+    const text = [...lines.slice(0, at), hit[1] + nodeFloor, ...lines.slice(at + 1)].join("\n");
+    plan.push({ name: one.name, from: hit[2], to: nodeFloor, section: "versionFile", text });
+  }
+  // Поле манифеста — то же место версии (`volta.node`).
+  for (const field of pinFields) {
+    const pinned = m[field]?.node;
+    if (typeof pinned === "string" && /^v?\d+(?:\.\d+){0,2}$/.test(pinned) && belowFloor(pinned.replace(/^v/, "")))
+      plan.push({ name: field + ".node", from: pinned, to: nodeFloor, section: "pin" });
+  }
   const scripts = [];
   for (const axis of axes)
     if (axis.tool !== undefined && withTools.includes(axis.axis)) scripts.push(axis.tool);
@@ -626,6 +651,40 @@ export const manifestOf = (root) => {
   return parsed;
 };
 
+/** План осмотра, положенный в манифест: пакет — в свою секцию и вон из
+ * другой, диапазон среды — в поле `engines`, файл версии среды — отдельным
+ * списком записей. Один применитель на установку и на живую посадку: второй,
+ * общим циклом пакетов, писал диапазон ключом `engines.node` рядом с прежним. */
+export const planIntoManifest = (manifest, plan) => {
+  const m = { ...manifest };
+  const versionFiles = [];
+  for (const one of plan) {
+    if (one.section === "versionFile") {
+      versionFiles.push({ name: one.name, text: one.text, from: one.from, to: one.to });
+      continue;
+    }
+    if (one.section === "pin") {
+      const field = one.name.slice(0, one.name.indexOf("."));
+      m[field] = { ...(m[field] ?? {}), node: one.to };
+      continue;
+    }
+    if (one.section === "engines") {
+      m.engines = { ...(m.engines ?? {}), [one.name.slice("engines.".length)]: one.to };
+      continue;
+    }
+    for (const section of ["dependencies", "devDependencies"])
+      if (section !== one.section && m[section]?.[one.name] !== undefined) {
+        m[section] = { ...m[section] };
+        delete m[section][one.name];
+      }
+    m[one.section] = { ...(m[one.section] ?? {}) };
+    if (one.to === null) delete m[one.section][one.name];
+    else m[one.section][one.name] = one.to;
+    m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  }
+  return { manifest: m, versionFiles };
+};
+
 /** План осмотра — в манифест и одной установкой. Упала установка —
  * манифест и блокировка возвращаются как были, и ответ называет конец
  * вывода. Скрипт звена оси, заменённой своей, ставится семенным, а прежний
@@ -637,20 +696,13 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
   const lockBefore = existsSync(lockAt) ? readFileSync(lockAt, "utf8") : null;
   const manifestAt = path.join(root, "package.json");
   const before = readFileSync(manifestAt, "utf8");
-  const m = manifestOf(root);
-  for (const one of survey.plan) {
-    if (one.section === "engines") {
-      m.engines = { ...(m.engines ?? {}), [one.name.slice("engines.".length)]: one.to };
-      continue;
-    }
-    for (const section of ["dependencies", "devDependencies"])
-      if (section !== one.section && m[section]?.[one.name] !== undefined) delete m[section][one.name];
-    if (one.to === null) {
-      delete m[one.section][one.name];
-      continue;
-    }
-    m[one.section] = { ...(m[one.section] ?? {}), [one.name]: one.to };
-    m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const planned = planIntoManifest(manifestOf(root), survey.plan);
+  const m = planned.manifest;
+  const versionFilesBefore = new Map();
+  for (const one of planned.versionFiles) {
+    const at = path.join(root, one.name);
+    versionFilesBefore.set(at, readFileSync(at, "utf8"));
+    writeFileSync(at, one.text);
   }
   for (const name of survey.scripts) {
     const seed = seedScripts[name];
@@ -663,6 +715,7 @@ export const stackApply = (root, survey, seedScripts, run = runTool) => {
   const done = run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: root });
   if (done.status === 0) return { ok: true, manager: "npm" };
   writeFileSync(manifestAt, before);
+  for (const [at, text] of versionFilesBefore) writeFileSync(at, text);
   // Блокировки до установки не было — упавшая могла её положить.
   if (lockBefore !== null) writeFileSync(lockAt, lockBefore);
   else rmSync(lockAt, { force: true });

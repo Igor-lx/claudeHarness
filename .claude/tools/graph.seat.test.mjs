@@ -19,6 +19,7 @@ import {
   projectFilesOf,
   rangeAllows,
   stackApply,
+  planIntoManifest,
   stackSurveyOf,
   eslintBoundaryOf,
   enclosingRepoOf,
@@ -422,6 +423,53 @@ describe("осмотр окружения проекта по осям карт�
       const written = JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8"));
       expect(written.engines).toEqual({ node: ">=22.23.2", npm: ">=11" });
       expect(written.devDependencies["engines.node"]).toBeUndefined();
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
+  // Файл версии среды проекта ниже связки оставлял «Диапазон среды объявлен»
+  // красной после согласия: посадка знакомого проекта кончалась кодом один.
+  it("файл версии среды ниже связки — строка плана; --apply пишет версию связки, а упавшая установка возвращает файл", () => {
+    const engines = { node: ">=22.23.2", npm: ">=11.21.1" };
+    const withFile = (text, name = ".nvmrc") =>
+      stackSurveyOf({ manifest: { devDependencies: { ...OURS } }, files: ["src/App.tsx"], axes: AXES, verified: OURS, ui: PLATFORM.ui, alternatives: PLATFORM.alternatives, engines, versionFiles: [{ name, text }] });
+    const below = withFile("20\n");
+    expect(below.plan).toEqual([{ name: ".nvmrc", from: "20", to: "22.23.2", section: "versionFile", text: "22.23.2\n" }]);
+    expect(below.verdict).toBe("наше, неполное");
+    expect(withFile("v22.1.0", ".node-version").plan).toEqual([{ name: ".node-version", from: "22.1.0", to: "22.23.2", section: "versionFile", text: "v22.23.2" }]);
+    // Файл нескольких инструментов: правится строка Node, прочие остаются; комментарий над версией — тоже.
+    expect(withFile("python 3.12.1\nnodejs 20.1.0\n", ".tool-versions").plan[0]).toMatchObject({ from: "20.1.0", text: "python 3.12.1\nnodejs 22.23.2\n" });
+    expect(withFile("python 3.12.1\n", ".tool-versions").plan).toEqual([]);
+    expect(withFile("# pinned\n18\n").plan[0]).toMatchObject({ from: "18", text: "# pinned\n22.23.2\n" });
+    // Поле манифеста с той же версией — строкой плана и своим полем, а не секцией пакетов.
+    const pin = (node) => stackSurveyOf({ manifest: { devDependencies: { ...OURS }, volta: { node, npm: "10.0.0" } }, files: ["src/App.tsx"], axes: AXES, verified: OURS, ui: PLATFORM.ui, alternatives: PLATFORM.alternatives, engines, pinFields: ["volta"] }).plan;
+    expect(pin("20.11.0")).toEqual([{ name: "volta.node", from: "20.11.0", to: "22.23.2", section: "pin" }]);
+    expect([pin("22.23.2"), pin("24.0.0"), pin(undefined)].map((p) => p.length)).toEqual([0, 0, 0]);
+    expect(planIntoManifest({ volta: { node: "20.11.0", npm: "10.0.0" } }, pin("20.11.0")).manifest.volta).toEqual({ node: "22.23.2", npm: "10.0.0" });
+    // Сравнение — на глубину записи файла: «22» связку пускает; выше связки и
+    // не одной строкой версии — не трогаются.
+    expect(["22", "22.23", "22.23.2", "24", "lts/*", "20 21", ""].map((text) => withFile(text).plan.length)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "stack-version-file-"));
+    try {
+      fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify({ devDependencies: { ...OURS } }));
+      fs.writeFileSync(path.join(dest, ".nvmrc"), "20\n");
+      expect(stackApply(dest, below, {}, () => ran(1, "", "boom")).ok).toBe(false);
+      expect(fs.readFileSync(path.join(dest, ".nvmrc"), "utf8")).toBe("20\n");
+      expect(stackApply(dest, below, {}, () => ran(0, "", "")).ok).toBe(true);
+      expect(fs.readFileSync(path.join(dest, ".nvmrc"), "utf8")).toBe("22.23.2\n");
+      expect(JSON.parse(fs.readFileSync(path.join(dest, "package.json"), "utf8")).devDependencies[".nvmrc"]).toBeUndefined();
+      // Один применитель плана на установку и на живую посадку: второй писал
+      // диапазон ключом `engines.node`, а файл версии — секцией манифеста.
+      const planned = planIntoManifest(
+        { dependencies: { vite: "1" }, devDependencies: { ...OURS }, engines: { node: ">=24", npm: ">=11" } },
+        [...below.plan, { name: "engines.node", from: ">=24", to: ">=22.23.2", section: "engines" }, { name: "vite", from: "1", to: "8.3.5", section: "devDependencies" }],
+      );
+      expect(planned.manifest.engines).toEqual({ node: ">=22.23.2", npm: ">=11" });
+      expect(planned.manifest.dependencies).toEqual({});
+      expect(planned.manifest.devDependencies.vite).toBe("8.3.5");
+      expect(Object.keys(planned.manifest)).toEqual(["dependencies", "devDependencies", "engines"]);
+      expect(planned.versionFiles).toEqual([{ name: ".nvmrc", text: "22.23.2\n", from: "20", to: "22.23.2" }]);
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
     }

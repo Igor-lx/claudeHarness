@@ -627,7 +627,7 @@ export const strictConfigsOf = (read, seedTsconfig) => {
  * рядом. Имена конфигов — карта посадки: семя и его другие имена. Отдаёт
  * файлы к записи, переносы, строки отчёта и строгость звена типов
  * (`seat/seat.md`, шаг 1-бис). */
-export const composeLive = ({ exists, read, seed, map, roots, prettierInManifest }) => {
+export const composeLive = ({ exists, read, seed, map, roots, prettierInManifest, nodeInManifest = false }) => {
   const entry = (pick) => (map.copy ?? []).find(pick);
   const namesOf = (e) => (e === undefined ? [] : [e.to, ...(e.alsoKnownAs ?? [])]);
   const lying = (names) => names.find((one) => exists(one)) ?? null;
@@ -677,6 +677,8 @@ export const composeLive = ({ exists, read, seed, map, roots, prettierInManifest
     "!" + r + "/**/__tests__/**",
   ]);
   files[mutate.to] = JSON.stringify(stryker, null, 2) + "\n";
-  if (lying(namesOf(node)) === null) files[node.to] = seed(node.to);
+  // Версия среды полем манифеста (`volta.node`) — то же место: файл семени
+  // рядом с ним давал «один предмет, два места настройки» на свежей посадке.
+  if (lying(namesOf(node)) === null && !nodeInManifest) files[node.to] = seed(node.to);
   return { files, moves, report, strict };
 };

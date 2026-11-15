@@ -4713,6 +4713,10 @@ describe("ключ, которого режим не знает", () => {
       expect(silent, "режим принял неизвестный ключ без отказа").toEqual([]);
       const full = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], { cwd: box, encoding: "utf8" });
       expect(full.stdout).not.toContain("Ключ режиму");
+      const keyless = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "tiers", "--zz-unknown"], { cwd: box, encoding: "utf8" });
+      expect(keyless.stdout).toContain("--zz-unknown — есть: ключей у режима нет");
+      const one = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--zz-unknown"], { cwd: box, encoding: "utf8" });
+      expect(one.stdout).toContain("--zz-unknown — есть: --full");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

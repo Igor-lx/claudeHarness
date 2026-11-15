@@ -513,6 +513,49 @@
         "src/components/NameTag/NameTag.tsx": "import styled from 'styled-components'\n\nexport const NameTag = styled.strong`\n  color: #264;\n`\n",
         "src/components/NameTag/tests/NameTag.test.tsx": "import { renderToString } from 'react-dom/server'\nimport { expect, it } from 'vitest'\nimport { NameTag } from '../NameTag'\n\nit('prints the name', () => {\n  expect(renderToString(<NameTag>Ada</NameTag>)).toContain('Ada')\n})\n"
       }
+    },
+    {
+      "name": "own-docs",
+      "scenario": "familiar",
+      "axis": "свои документы проекта на именах семян: `docs/FEATURES.md` и `docs/CONVENTIONS.md` остаются проекта, заготовки не ложатся",
+      "files": {
+        "package.json": "{\n  \"name\": \"pennant-app\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"react\": \"^19.3.1\",\n    \"react-dom\": \"^19.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"typescript\": \"~6.0.0\"\n  }\n}\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+        "src/Pennant.tsx": "export function Pennant({ text }: { text: string }) {\n  return <b>{text}</b>\n}\n",
+        "docs/FEATURES.md": "# Features\n\n- Pennant shows a short label.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nOne component per file.\n"
+      }
+    },
+    {
+      "name": "node-below",
+      "scenario": "familiar",
+      "axis": "свой файл версии среды `.nvmrc` ниже связки: приводится согласием вместе с пакетами",
+      "files": {
+        "package.json": "{\n  \"name\": \"twice\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        ".nvmrc": "20\n",
+        "src/twice.ts": "export const twice = (value: number): number => value * 2\n",
+        "src/twice.test.ts": "import { expect, it } from 'vitest'\nimport { twice } from './twice'\n\nit('doubles', () => {\n  expect(twice(4)).toBe(8)\n})\n"
+      }
+    },
+    {
+      "name": "engines-above",
+      "scenario": "familiar",
+      "axis": "диапазон среды `engines` не пускает связку: приводится согласием, прочие поля диапазона остаются",
+      "files": {
+        "package.json": "{\n  \"name\": \"thrice\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"engines\": {\n    \"node\": \">=24\",\n    \"npm\": \">=11\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "src/thrice.ts": "export const thrice = (value: number): number => value * 3\n",
+        "src/thrice.test.ts": "import { expect, it } from 'vitest'\nimport { thrice } from './thrice'\n\nit('triples', () => {\n  expect(thrice(2)).toBe(6)\n})\n"
+      }
+    },
+    {
+      "name": "volta-pin",
+      "scenario": "familiar",
+      "axis": "версия среды полем манифеста `volta.node` ниже связки: приводится согласием, файл версии рядом не ложится",
+      "files": {
+        "package.json": "{\n  \"name\": \"quarter\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  },\n  \"volta\": {\n    \"node\": \"20.11.0\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"~6.0.0\",\n    \"vitest\": \"^4.1.0\"\n  }\n}\n",
+        "src/quarter.ts": "export const quarter = (value: number): number => value / 4\n",
+        "src/quarter.test.ts": "import { expect, it } from 'vitest'\nimport { quarter } from './quarter'\n\nit('takes a quarter', () => {\n  expect(quarter(8)).toBe(2)\n})\n"
+      }
     }
   ]
 }

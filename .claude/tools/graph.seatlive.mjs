@@ -47,6 +47,7 @@ import {
   walkFiles,
   withSeatingBase,
   npmOfShelf,
+  planIntoManifest,
 } from "./graph.seat.mjs";
 
 /** Посадка живого проекта одной командой — знакомого и чужого (решение
@@ -420,7 +421,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       ...(plan.length === 0
         ? []
         : [
-            "  Пакеты и диапазон среды приводятся к проверенной связке:",
+            "  Пакеты, диапазон среды и файл её версии приводятся к проверенной связке:",
             ...plan.map((one) => "    " + one.name + ": " + (one.from ?? "нет") + " → " + (one.to ?? "снять")),
           ]),
       ...(hooksOff.length === 0
@@ -496,17 +497,13 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
   let strict = null;
   let liveScripts = Object.keys(ownScripts);
   if (familiar) {
-    const m = { ...manifest };
-    for (const one of plan) {
-      for (const section of ["dependencies", "devDependencies"])
-        if (section !== one.section && m[section]?.[one.name] !== undefined) {
-          m[section] = { ...m[section] };
-          delete m[section][one.name];
-        }
-      m[one.section] = { ...(m[one.section] ?? {}) };
-      if (one.to === null) delete m[one.section][one.name];
-      else m[one.section][one.name] = one.to;
-      m[one.section] = Object.fromEntries(Object.entries(m[one.section]).sort(([a], [b]) => (a < b ? -1 : 1)));
+    const planned = planIntoManifest(manifest, plan);
+    const m = planned.manifest;
+    // Файл версии среды — вторая запись версии: согласие приводит и его.
+    for (const one of planned.versionFiles) {
+      overwritable.add(one.name);
+      write(one.name, one.text);
+      report.push("Файл версии среды " + one.name + " приведён к связке: " + one.from + " → " + one.to + ".");
     }
     let composed;
     try {
@@ -517,6 +514,7 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
         map,
         roots,
         prettierInManifest: manifest?.prettier !== undefined,
+        nodeInManifest: (map.copy ?? []).some((e) => e.to === ".nvmrc" && typeof manifest?.[e.inManifest]?.node === "string"),
       });
     } catch (e) {
       fail("Конфиги проекта не сложились с конфигами обвязки: " + e.message + ".", "Поправить конфиг проекта, закоммитить и позвать посадку снова.");
