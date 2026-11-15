@@ -2133,6 +2133,25 @@ export const testFileFormOf = (id) =>
     ? TEST_FILE_FORM
     : "";
 
+/** Форма вне держателя у критерия вне ядра, чьи вопросы модели встают о
+ * строках: на правке признаки модели собираются по правленым файлам, а
+ * сосед из области получает одну сводную строку «сосед». Такой критерий
+ * спрашивают строкой на всю работу, и нарушение в соседе, которого правка не
+ * тронула, машина ему не подсказывает. Ядро узла соседи отвечают своей
+ * строкой с опорой на строки модели о соседях, поэтому его форма не
+ * касается. Сверка, читающая весь проект, видит соседа сама. Вычисляется,
+ * а не пишется в `BAR_FORMS`, по той же причине, что форма о тесте.
+ * Выведено: свод 3.3.2 прогона плана `2026-11-14` пропустил три посадки в
+ * соседе и одну у владельца имени, снятого удалением. */
+export const NEIGHBOUR_FORM =
+  "нарушение в соседе, которого правка не тронула, — на правке признаки модели встают о правленых файлах, а сосед получает одну строку «сосед»";
+/** Общая форма о соседе у критерия либо пустая строка. */
+export const neighbourFormOf = (id) => {
+  if (BAR_CORE.has(id) || BAR_CHECKS[id] !== undefined) return "";
+  const rows = BAR_SIGNALS.filter((s) => s.ids.includes(id)).map((s) => MODEL_LEVEL[s.sort]);
+  return rows.some((level) => level === "единица" || level === "узел") ? NEIGHBOUR_FORM : "";
+};
+
 /** Решения о формах, разобранные по критерию: из них печатают страницу
  * критерия и матрицу. Общие формы — о тестовом файле и о точечном исключении
  * линта — дописываются к списку; закрытый набор при них — противоречие, и его
@@ -2140,7 +2159,7 @@ export const testFileFormOf = (id) =>
 export const BAR_FORMS_SPLIT = Object.fromEntries(
   Object.entries(BAR_FORMS).map(([id, raw]) => {
     const one = splitForms(raw);
-    const extra = [testFileFormOf(id), BAR_LINT[id] === undefined ? "" : LINT_EXEMPT_FORM].filter(
+    const extra = [testFileFormOf(id), neighbourFormOf(id), BAR_LINT[id] === undefined ? "" : LINT_EXEMPT_FORM].filter(
       (form) => form !== "",
     );
     return [
@@ -5535,6 +5554,12 @@ export const PREDICATE_CASES = [
   ["barGripOf", "J9|", "вниманием"],
   ["barGripOf", "G3|лозунг", "лозунг"],
   ["barGripOf", "Z9|", ""],
+  ["neighbourFormOf", "C5", NEIGHBOUR_FORM],
+  ["neighbourFormOf", "K2", NEIGHBOUR_FORM],
+  ["neighbourFormOf", "A3", NEIGHBOUR_FORM],
+  ["neighbourFormOf", "A1", ""],
+  ["neighbourFormOf", "H4", ""],
+  ["neighbourFormOf", "A8", ""],
   ["testFileFormOf", "H7", TEST_FILE_FORM],
   ["testFileFormOf", "B4", TEST_FILE_FORM],
   ["testFileFormOf", "H3", ""],
@@ -5557,10 +5582,10 @@ export const PREDICATE_CASES = [
   // --- barFormsOf: решение о формах вне держателя ---
   ["barFormsOf", "H3", "закрыто"],
   // Три записанные формы и общая — о тестовом файле.
-  ["barFormsOf", "B4", "форм: 4"],
+  ["barFormsOf", "B4", "форм: 5"],
   // Две записанные и общая о точечном исключении линта; о тестовом файле
   // формы нет — линт тесты читает.
-  ["barFormsOf", "E2", "форм: 3"],
+  ["barFormsOf", "E2", "форм: 4"],
   ["barFormsOf", "J4", ""],
   ["barFormsOf", "Z9", ""],
   // --- commentlessOf, escapeRe, joinsTwo: общие помощники разбора ---
