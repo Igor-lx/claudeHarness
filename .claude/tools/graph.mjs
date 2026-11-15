@@ -4238,7 +4238,7 @@ const unreadCodeFiles = (() => {
     const mapAt = shelfAt("seat/map.json");
     const axes =
       mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
-    const exts = axes.flatMap((a) => a.codeFiles ?? []);
+    const exts = axes.flatMap((a) => [...(a.codeFiles ?? []), ...(a.unreadCode ?? [])]);
     memo = projectFilesOf(REPO_AT)
       .filter((f) => exts.some((one) => f.endsWith("." + one)))
       .sort();
@@ -21766,7 +21766,7 @@ if (mode === "verify") {
   checkStep(() => {
     checkHead("Код, который обвязка не читает (предупреждение, прогон не роняет)", () => ({
       n: unreadCodeFiles().length,
-      unit: "файлов кода чужого фреймворка",
+      unit: "файлов кода чужого фреймворка либо языка",
     }));
     console.log("  не прочитано: " + unreadCodeFiles().length);
     for (const line of unreadByKind())

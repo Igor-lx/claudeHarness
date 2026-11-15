@@ -6544,6 +6544,12 @@ describe("чужое окружение — не проверено", () => {
         ".vue — 1: src/app/ZzBadge.vue — база, граф и сверки о них молчат",
         ".svelte — 1: src/shared/zz/ZzDot.svelte — база, граф и сверки о них молчат",
       ]);
+      // Код на языке, которого обвязка не читает вовсе, назван так же, а проект чужим не делает.
+      fs.mkdirSync(path.join(box, "scripts"), { recursive: true });
+      fs.writeFileSync(path.join(box, "scripts", "zz_report.py"), "print('zz')\n");
+      expect(verifyIn(box).get(head)).toContain(".py — 1: scripts/zz_report.py — база, граф и сверки о них молчат");
+      expect(run()).toContain("осмотрено осей окружения, чужих по осмотру посадки: 0");
+      fs.rmSync(path.join(box, "scripts"), { recursive: true });
       expect(run()).not.toContain("ПЕРЕХОД НЕ ВИДИТ ЧАСТЬ КОДА");
       withTransitionDebt(box, []);
       const out = run();
