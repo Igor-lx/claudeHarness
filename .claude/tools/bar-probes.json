@@ -3120,6 +3120,421 @@
         "виновник",
         "владелец"
       ]
+    },
+    {
+      "criterion": "A1-бис",
+      "why": "правило оптовой скидки считается прямо в обработчике нажатия разметки",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "const BULK_TOTAL = 500;\nconst BULK_RATE = 0.9;\nexport function ApplyTotalButton({ total, label, onApply }) {\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        onApply(total > BULK_TOTAL ? total * BULK_RATE : total);\n      }}\n    >\n      {label}\n    </button>\n  );\n}",
+          "ts": "const BULK_TOTAL = 500;\nconst BULK_RATE = 0.9;\n\nexport function ApplyTotalButton({\n  total,\n  label,\n  onApply,\n}: {\n  readonly total: number;\n  readonly label: string;\n  readonly onApply: (due: number) => void;\n}) {\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        onApply(total > BULK_TOTAL ? total * BULK_RATE : total);\n      }}\n    >\n      {label}\n    </button>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "A2",
+      "why": "право править собирается внутри узла из роли и двух идентификаторов, которые зовущий уже знает",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const accessLabel = (role, ownerId, userId) =>\n  role === \"admin\" || ownerId === userId ? \"Edit\" : \"View\";",
+          "ts": "export const accessLabel = (\n  role: string,\n  ownerId: string,\n  userId: string,\n): string => (role === \"admin\" || ownerId === userId ? \"Edit\" : \"View\");"
+        }
+      ]
+    },
+    {
+      "criterion": "A6",
+      "why": "шаг мастера пишется и в переменную модуля, и в атрибут элемента, а читают его из обоих",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let wizardStep = 0;\nexport const goToStep = (bar, step) => {\n  wizardStep = step;\n  bar.dataset.step = String(step);\n};\nexport const stepFromBar = (bar) => Number(bar.dataset.step);\nexport const stepFromMemory = () => wizardStep;",
+          "ts": "let wizardStep = 0;\n\nexport const goToStep = (bar: HTMLElement, step: number): void => {\n  wizardStep = step;\n  bar.dataset.step = String(step);\n};\n\nexport const stepFromBar = (bar: HTMLElement): number =>\n  Number(bar.dataset.step);\n\nexport const stepFromMemory = (): number => wizardStep;"
+        }
+      ]
+    },
+    {
+      "criterion": "A6-бис",
+      "why": "округление суммы с налогом написано дважды в разных файлах под разными именами",
+      "into": [
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "const TAX_RATE = 1.2;\nconst CENTS = 100;\nexport const withTax = (net) => Math.round(net * TAX_RATE * CENTS) / CENTS;",
+          "ts": "const TAX_RATE = 1.2;\nconst CENTS = 100;\n\nexport const withTax = (net: number): number =>\n  Math.round(net * TAX_RATE * CENTS) / CENTS;"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "const VAT_FACTOR = 1.2;\nconst HUNDRED = 100;\nexport const grossOf = (amount) =>\n  Math.round(amount * VAT_FACTOR * HUNDRED) / HUNDRED;",
+          "ts": "const VAT_FACTOR = 1.2;\nconst HUNDRED = 100;\n\nexport const grossOf = (amount: number): number =>\n  Math.round(amount * VAT_FACTOR * HUNDRED) / HUNDRED;"
+        }
+      ],
+      "culprits": [
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "A9-тер",
+      "why": "правило «выходной день» записано в двух узлах: сравнением и разбором по вариантам",
+      "into": [
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "const SUNDAY = 0;\nconst SATURDAY = 6;\nexport const isDayOff = (day) => day === SUNDAY || day === SATURDAY;",
+          "ts": "const SUNDAY = 0;\nconst SATURDAY = 6;\n\nexport const isDayOff = (day: number): boolean =>\n  day === SUNDAY || day === SATURDAY;"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "const WEEK_START = 0;\nconst WEEK_END = 6;\nexport const shiftLabel = (day) => {\n  switch (day) {\n    case WEEK_START:\n    case WEEK_END:\n      return \"off\";\n    default:\n      return \"work\";\n  }\n};",
+          "ts": "const WEEK_START = 0;\nconst WEEK_END = 6;\n\nexport const shiftLabel = (day: number): string => {\n  switch (day) {\n    case WEEK_START:\n    case WEEK_END:\n      return \"off\";\n    default:\n      return \"work\";\n  }\n};"
+        }
+      ],
+      "culprits": [
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "B8",
+      "why": "четыре булевых входа с умолчаниями при разборе на поля вместо одного состояния",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "export function NoticeBar({\n  text,\n  isWarning = false,\n  isCompact = false,\n  isSticky = false,\n  isDismissible = false,\n}) {\n  return (\n    <p\n      data-warning={isWarning}\n      data-compact={isCompact}\n      data-sticky={isSticky}\n      data-dismissible={isDismissible}\n    >\n      {text}\n    </p>\n  );\n}",
+          "ts": "export function NoticeBar({\n  text,\n  isWarning = false,\n  isCompact = false,\n  isSticky = false,\n  isDismissible = false,\n}: {\n  readonly text: string;\n  readonly isWarning?: boolean;\n  readonly isCompact?: boolean;\n  readonly isSticky?: boolean;\n  readonly isDismissible?: boolean;\n}) {\n  return (\n    <p\n      data-warning={isWarning}\n      data-compact={isCompact}\n      data-sticky={isSticky}\n      data-dismissible={isDismissible}\n    >\n      {text}\n    </p>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "B3",
+      "why": "на вход идёт вся запись пользователя, а узлу нужно одно её поле",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const greetingFor = (account) => `Hi, ${account.name}`;",
+          "ts": "type Account = {\n  readonly id: string;\n  readonly name: string;\n  readonly email: string;\n  readonly role: string;\n};\n\nexport const greetingFor = (account: Account): string => `Hi, ${account.name}`;"
+        }
+      ]
+    },
+    {
+      "criterion": "C3",
+      "why": "кэш в простом объекте модуля растёт с каждым новым заголовком, и никто его не чистит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const slugCache = {};\nexport const slugOf = (title) => {\n  slugCache[title] ??= title.toLowerCase().replaceAll(\" \", \"-\");\n  return slugCache[title];\n};",
+          "ts": "const slugCache: Record<string, string> = {};\n\nexport const slugOf = (title: string): string => {\n  slugCache[title] ??= title.toLowerCase().replaceAll(\" \", \"-\");\n  return slugCache[title];\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A3",
+      "why": "потребитель с другим разделителем удалён: параметр теперь на каждом месте приходит одной константой",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const joinLabels = (labels, separator) => labels.join(separator);\nexport const labelLine = (labels) => joinLabels(labels, \", \");",
+          "ts": "export const joinLabels = (\n  labels: readonly string[],\n  separator: string,\n): string => labels.join(separator);\n\nexport const labelLine = (labels: readonly string[]): string =>\n  joinLabels(labels, \", \");"
+        }
+      ],
+      "create": {
+        "path": "app/labelPath.ts",
+        "text": "import { joinLabels } from \"{{from:владелец}}\";\n\nexport const labelPath = (labels: readonly string[]): string =>\n  joinLabels(labels, \" / \");\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "C5",
+      "why": "сосед правленого отвечает верно, только если запись заголовка позвали раньше чтения длины",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let heldTitle = \"\";\nexport const holdTitle = (title) => {\n  heldTitle = title.trim();\n};\nexport const heldTitleLength = () => heldTitle.length;",
+          "ts": "let heldTitle = \"\";\n\nexport const holdTitle = (title: string): void => {\n  heldTitle = title.trim();\n};\n\nexport const heldTitleLength = (): number => heldTitle.length;"
+        }
+      ]
+    },
+    {
+      "criterion": "C8-бис",
+      "why": "сосед правленого одним обработчиком решает, хранит и исполняет: событие смешано с командой и состоянием",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const basketIds = [];\nexport const onAddPressed = (id) => {\n  if (!basketIds.includes(id)) basketIds.push(id);\n  void fetch(\"/basket\", { method: \"POST\", body: id });\n  return basketIds;\n};",
+          "ts": "const basketIds: string[] = [];\n\nexport const onAddPressed = (id: string): readonly string[] => {\n  if (!basketIds.includes(id)) basketIds.push(id);\n  void fetch(\"/basket\", { method: \"POST\", body: id });\n  return basketIds;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "L1",
+      "why": "сосед правленого не говорит, что будет при двух загрузках сразу: поздний ответ первой перезапишет вторую",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let shownProfile = \"\";\nexport const showProfile = async (id) => {\n  const response = await fetch(`/profiles/${id}`);\n  shownProfile = await response.text();\n  return shownProfile;\n};",
+          "ts": "let shownProfile = \"\";\n\nexport const showProfile = async (id: string): Promise<string> => {\n  const response = await fetch(`/profiles/${id}`);\n  shownProfile = await response.text();\n  return shownProfile;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K2",
+      "why": "сосед правленого и второй узел проверяют один и тот же внешний ответ каждый по-своему: границы нет",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const headingOf = (payload) =>\n  typeof payload === \"object\" && payload !== null && \"heading\" in payload\n    ? String(payload.heading)\n    : \"\";",
+          "ts": "export const headingOf = (payload: unknown): string =>\n  typeof payload === \"object\" && payload !== null && \"heading\" in payload\n    ? String(payload.heading)\n    : \"\";"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "export const summaryOf = (payload) =>\n  typeof payload === \"object\" && payload !== null && \"summary\" in payload\n    ? String(payload.summary)\n    : \"\";",
+          "ts": "export const summaryOf = (payload: unknown): string =>\n  typeof payload === \"object\" && payload !== null && \"summary\" in payload\n    ? String(payload.summary)\n    : \"\";"
+        }
+      ],
+      "culprits": [
+        "виновник",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "L3",
+      "why": "переименованный файл отправляет заказ на каждое нажатие: повтор не отклонён и не объединён",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/orders/submitOrder.ts",
+          "text": "export const submitOrder = async (id: string): Promise<number> => {\n  const response = await fetch(\"/orders\", { method: \"POST\", body: id });\n  return response.status;\n};\n"
+        },
+        {
+          "path": "app/orderPress.ts",
+          "text": "import { submitOrder } from \"../shared/orders/submitOrder\";\n\nexport const onOrderPress = (id: string): void => {\n  void submitOrder(id);\n};\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/orders/submitOrder.ts",
+          "to": "shared/orders/placeOrder.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "G4",
+      "why": "переименованный хук пишет положение указателя в состояние на каждое движение: перерисовка с частотой кадров",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/pointer/usePointerX.ts",
+          "text": "import { useEffect, useState } from \"react\";\n\nexport const usePointerX = (): number => {\n  const [pointerX, setPointerX] = useState(0);\n  useEffect(() => {\n    const follow = (event: PointerEvent): void => {\n      setPointerX(event.clientX);\n    };\n    window.addEventListener(\"pointermove\", follow);\n    return () => {\n      window.removeEventListener(\"pointermove\", follow);\n    };\n  }, []);\n  return pointerX;\n};\n"
+        },
+        {
+          "path": "app/pointerShift.ts",
+          "text": "import { usePointerX } from \"../shared/pointer/usePointerX\";\n\nconst HALF = 2;\n\nexport const usePointerShift = (width: number): number =>\n  usePointerX() - width / HALF;\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/pointer/usePointerX.ts",
+          "to": "shared/pointer/useCursorX.ts"
+        }
+      ]
+    },
+    {
+      "criterion": "A5-тер",
+      "why": "слой данных решает, что показать: отдаёт текст для человека и флаг видимости",
+      "create": {
+        "path": "shared/api/ordersBadge.ts",
+        "text": "const MANY_ORDERS = 10;\n\nexport const loadOrdersBadge = async (): Promise<{\n  text: string;\n  isVisible: boolean;\n}> => {\n  const response = await fetch(\"/orders/count\");\n  const count = Number(await response.text());\n  return {\n    text: count > MANY_ORDERS ? \"Many orders\" : \"Orders\",\n    isVisible: count > 0,\n  };\n};\n"
+      }
+    },
+    {
+      "criterion": "A7",
+      "why": "правило «пробный срок истекает» живёт в теле компонента и без него не проверяется",
+      "create": {
+        "path": "app/TrialNotice.tsx",
+        "text": "const DAY_MS = 86_400_000;\nconst URGENT_DAYS = 3;\n\nexport function TrialNotice({\n  endsAt,\n  now,\n  label,\n}: {\n  readonly endsAt: number;\n  readonly now: number;\n  readonly label: string;\n}) {\n  const daysLeft = Math.ceil((endsAt - now) / DAY_MS);\n  let tone = \"calm\";\n  if (daysLeft <= 0) tone = \"expired\";\n  else if (daysLeft <= URGENT_DAYS) tone = \"urgent\";\n  return <p data-tone={tone}>{label}</p>;\n}\n"
+      }
+    },
+    {
+      "criterion": "Q7",
+      "why": "права рассыпаны сравнениями роли по узлу, одного места «кто что может» нет",
+      "create": {
+        "path": "app/toolbarActions.ts",
+        "text": "export const toolbarActions = (role: string): string[] => [\n  \"open\",\n  ...(role === \"editor\" || role === \"admin\" ? [\"edit\"] : []),\n  ...(role === \"admin\" ? [\"delete\"] : []),\n];\n\nexport const canExport = (role: string): boolean => role !== \"guest\";\n"
+      }
+    },
+    {
+      "criterion": "C14",
+      "why": "потребитель правит состояние владельца напрямую, а не просит его командой",
+      "create": [
+        {
+          "path": "shared/basket/basketState.ts",
+          "text": "export const basketState: { ids: string[] } = { ids: [] };\n\nexport const basketSize = (): number => basketState.ids.length;\n"
+        },
+        {
+          "path": "app/dropFromBasket.ts",
+          "text": "import { basketState } from \"../shared/basket/basketState\";\n\nexport const dropFromBasket = (id: string): void => {\n  basketState.ids = basketState.ids.filter((one) => one !== id);\n};\n"
+        }
+      ],
+      "culprits": [
+        "app/dropFromBasket.ts",
+        "shared/basket/basketState.ts"
+      ]
+    },
+    {
+      "criterion": "C16",
+      "why": "фильтр лежит в хранилище сессии и в адресе страницы, какая копия главная — не сказано",
+      "create": {
+        "path": "app/filterState.ts",
+        "text": "const FILTER_KEY = \"filter\";\n\nexport const saveFilter = (value: string): void => {\n  sessionStorage.setItem(FILTER_KEY, value);\n  window.history.replaceState(\n    null,\n    \"\",\n    `?${FILTER_KEY}=${encodeURIComponent(value)}`,\n  );\n};\n\nexport const filterFromStorage = (): string =>\n  sessionStorage.getItem(FILTER_KEY) ?? \"\";\n\nexport const filterFromAddress = (): string =>\n  new URLSearchParams(window.location.search).get(FILTER_KEY) ?? \"\";\n"
+      }
+    },
+    {
+      "criterion": "K3",
+      "why": "предметный расчёт идёт прямо по форме ответа сервера, без преобразования на границе",
+      "create": {
+        "path": "shared/billing/invoiceTotal.ts",
+        "text": "type InvoiceResponse = {\n  readonly payload: {\n    readonly attrs: { readonly amountCents: number; readonly taxCents: number };\n    readonly meta: { readonly page: number };\n  };\n};\n\nexport const invoiceTotal = (response: InvoiceResponse): number =>\n  response.payload.attrs.amountCents + response.payload.attrs.taxCents;\n"
+      }
+    },
+    {
+      "criterion": "K5",
+      "why": "запись хранится с номером схемы, а чтение его не смотрит: запись прежней схемы молча становится умолчанием",
+      "create": {
+        "path": "shared/storage/layoutStorage.ts",
+        "text": "const LAYOUT_KEY = \"layout\";\nconst LAYOUT_SCHEMA_VERSION = 2;\nconst DEFAULT_COLUMNS = 3;\n\nexport const saveLayout = (columns: number): void => {\n  localStorage.setItem(\n    LAYOUT_KEY,\n    JSON.stringify({ version: LAYOUT_SCHEMA_VERSION, columns }),\n  );\n};\n\nexport const loadLayout = (): number => {\n  const raw = localStorage.getItem(LAYOUT_KEY);\n  if (raw === null) return DEFAULT_COLUMNS;\n  const parsed: unknown = JSON.parse(raw);\n  return typeof parsed === \"object\" &&\n    parsed !== null &&\n    \"columns\" in parsed &&\n    typeof parsed.columns === \"number\"\n    ? parsed.columns\n    : DEFAULT_COLUMNS;\n};\n"
+      }
+    },
+    {
+      "criterion": "S4",
+      "why": "флаг отладки в адресе страницы меняет поведение продукта — размер страницы списка",
+      "create": {
+        "path": "app/pageSize.ts",
+        "text": "const PAGE_SIZE = 20;\nconst DEBUG_PAGE_SIZE = 2;\n\nconst debugEnabled = (): boolean => window.location.search.includes(\"debug\");\n\nexport const pageSize = (): number =>\n  debugEnabled() ? DEBUG_PAGE_SIZE : PAGE_SIZE;\n"
+      }
+    },
+    {
+      "criterion": "G6-бис",
+      "why": "длинный журнал рисуется целиком циклом, без порога и окна видимого",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "export function LogLines({ lines }) {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n}",
+          "ts": "export function LogLines({ lines }: { readonly lines: readonly string[] }) {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "J9-бис",
+      "why": "инвариант «ширина только растёт» держится одним максимумом, тест его не закрепляет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let widestSeen = 0;\nexport const widenTo = (width) => {\n  widestSeen = Math.max(widestSeen, width);\n  return widestSeen;\n};",
+          "ts": "let widestSeen = 0;\n\nexport const widenTo = (width: number): number => {\n  widestSeen = Math.max(widestSeen, width);\n  return widestSeen;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "L4",
+      "why": "запрос курсов ждёт ответа без предела: таймаута и правила повтора нет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const loadRates = async () => {\n  const response = await fetch(\"/rates\");\n  return response.text();\n};",
+          "ts": "export const loadRates = async (): Promise<string> => {\n  const response = await fetch(\"/rates\");\n  return response.text();\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "N3",
+      "why": "кадровый цикл идёт через состояние: каждый кадр пишет сдвиг, перерисовка заводит следующий кадр",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useState } from \"react\";\nconst SLIDE_STEP_PX = 2;\nexport const useSlideOffset = () => {\n  const [offset, setOffset] = useState(0);\n  useEffect(() => {\n    const frame = requestAnimationFrame(() => {\n      setOffset((value) => value + SLIDE_STEP_PX);\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  }, [offset]);\n  return offset;\n};",
+          "ts": "import { useEffect, useState } from \"react\";\n\nconst SLIDE_STEP_PX = 2;\n\nexport const useSlideOffset = (): number => {\n  const [offset, setOffset] = useState(0);\n  useEffect(() => {\n    const frame = requestAnimationFrame(() => {\n      setOffset((value) => value + SLIDE_STEP_PX);\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  }, [offset]);\n  return offset;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "P3-бис",
+      "why": "строка убирается только жестом касания: с клавиатуры и указателем того же действия нет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "const SWIPE_EDGE_PX = 40;\nexport function SwipeRow({ text, onDismiss }) {\n  return (\n    <button\n      type=\"button\"\n      onTouchMove={(event) => {\n        if (event.touches.item(0).clientX < SWIPE_EDGE_PX) onDismiss();\n      }}\n    >\n      {text}\n    </button>\n  );\n}",
+          "ts": "const SWIPE_EDGE_PX = 40;\n\nexport function SwipeRow({\n  text,\n  onDismiss,\n}: {\n  readonly text: string;\n  readonly onDismiss: () => void;\n}) {\n  return (\n    <button\n      type=\"button\"\n      onTouchMove={(event) => {\n        if (event.touches.item(0).clientX < SWIPE_EDGE_PX) onDismiss();\n      }}\n    >\n      {text}\n    </button>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "S7",
+      "why": "очередь сообщений в памяти растёт без предела, пока её не опустошат: исчерпание не предусмотрено",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const outbox = [];\nexport const enqueueMessage = (message) => {\n  outbox.push(message);\n};\nexport const flushOutbox = (send) => {\n  for (const message of outbox.splice(0)) send(message);\n};",
+          "ts": "const outbox: string[] = [];\n\nexport const enqueueMessage = (message: string): void => {\n  outbox.push(message);\n};\n\nexport const flushOutbox = (send: (message: string) => void): void => {\n  for (const message of outbox.splice(0)) send(message);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "I1",
+      "why": "новый вид файла требует правки в трёх узлах: значок, подсказка и порядок разбирают одну метку порознь",
+      "into": [
+        {
+          "role": "значок",
+          "file": "модуль",
+          "text": "export const fileIcon = (kind) => {\n  switch (kind) {\n    case \"pdf\":\n      return \"doc\";\n    case \"image\":\n      return \"pic\";\n    case \"text\":\n      return \"txt\";\n  }\n};",
+          "ts": "export const fileIcon = (kind: \"pdf\" | \"image\" | \"text\"): string => {\n  switch (kind) {\n    case \"pdf\":\n      return \"doc\";\n    case \"image\":\n      return \"pic\";\n    case \"text\":\n      return \"txt\";\n  }\n};"
+        },
+        {
+          "role": "подсказка",
+          "file": "модуль",
+          "text": "export const fileHint = (kind) => {\n  switch (kind) {\n    case \"pdf\":\n      return \"Opens in a viewer\";\n    case \"image\":\n      return \"Opens as a preview\";\n    case \"text\":\n      return \"Opens as text\";\n  }\n};",
+          "ts": "export const fileHint = (kind: \"pdf\" | \"image\" | \"text\"): string => {\n  switch (kind) {\n    case \"pdf\":\n      return \"Opens in a viewer\";\n    case \"image\":\n      return \"Opens as a preview\";\n    case \"text\":\n      return \"Opens as text\";\n  }\n};"
+        },
+        {
+          "role": "порядок",
+          "file": "модуль",
+          "text": "const PDF_RANK = 0;\nconst IMAGE_RANK = 1;\nconst TEXT_RANK = 2;\nexport const fileRank = (kind) => {\n  switch (kind) {\n    case \"pdf\":\n      return PDF_RANK;\n    case \"image\":\n      return IMAGE_RANK;\n    case \"text\":\n      return TEXT_RANK;\n  }\n};",
+          "ts": "const PDF_RANK = 0;\nconst IMAGE_RANK = 1;\nconst TEXT_RANK = 2;\n\nexport const fileRank = (kind: \"pdf\" | \"image\" | \"text\"): number => {\n  switch (kind) {\n    case \"pdf\":\n      return PDF_RANK;\n    case \"image\":\n      return IMAGE_RANK;\n    case \"text\":\n      return TEXT_RANK;\n  }\n};"
+        }
+      ],
+      "culprits": [
+        "значок",
+        "подсказка",
+        "порядок"
+      ]
     }
   ],
   "covers": [
