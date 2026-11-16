@@ -3948,6 +3948,13 @@ const fencedLines = (lines) => {
  */
 const proseOf = (at) => unfenced(readFileSync(at, "utf8"));
 
+/** Индексная половина карты классов — строка на строку: подписью либо
+ * `Record<string, string>`. Одна на обе сверки карты: разойдясь, они узнавали
+ * бы разное (карта пересечением `Record` прошла мимо обеих, шаг 4.4 прогона
+ * `2026-11-14`). */
+const CLASS_MAP_INDEX =
+  /\[\s*key\s*:\s*string\s*\]\s*:\s*string|Record<\s*string\s*,\s*string\s*>/;
+
 /** Файлы прозы под папкой, вглубь; папки нет — пусто. */
 const mdUnder = (dir) => {
   if (dir === null || !existsSync(dir)) return [];
@@ -6566,6 +6573,7 @@ const CHECK_SECTIONS = [
   "Связи мимо графа импортов",
   "Имена классов из кода есть в листе стилей",
   "Ключи переданной карты классов названы типом компонента",
+  "Компонент со своим листом принимает карту классов",
   "Класс из листа стилей спрошен кодом",
   "Отступление от схемы стилизации объявлено решением",
   "Код лежит в объявленных деревьях",
@@ -11705,6 +11713,17 @@ const WRITER_KINDS = [
     wipe: /\b(?:localStorage|sessionStorage)\s*\.\s*clear\s*\(/,
     named: /localStorage|sessionStorage|хранилищ|storage/i,
   },
+  // Хранилище, пришедшее портом: значение типа `Storage` — параметр, поле.
+  // Писатель тот, кто зовёт на нём `setItem`; прежде узнавался один вызов на
+  // `localStorage`, и порт прятал ключ (шаг 4.6 прогона `2026-11-14`).
+  {
+    kind: "хранилище",
+    when: /:\s*(?:Readonly<\s*)?Storage\b/,
+    take: /\b[\w$]+\s*\.\s*(?:setItem|removeItem)\s*\(\s*([^,)]+)/g,
+    drop: /\b[\w$]+\s*\.\s*removeItem\s*\(\s*([^,)]+)/g,
+    wipe: /(?!)/,
+    named: /localStorage|sessionStorage|хранилищ|storage/i,
+  },
   // Промежуточный слой Zustand `persist` пишет состояние в хранилище
   // браузера под ключом `name`. Выведено: пятая посадка в живой проект.
   {
@@ -13828,7 +13847,7 @@ const levelFacts = () => {
       });
     }
   for (const r of stateRecords()) {
-    const writing = filesNamedIn(r.writers);
+    const writing = recordWritersOf(r);
     // Запись о том же ключе и тех же писателях, что нашёл код, — тот же
     // факт: печатанный дважды, он требовал два ответа на одно. Ключ запись
     // называет значением либо именем его константы.
@@ -14098,6 +14117,19 @@ const storeFacts = () => {
 };
 /** Писатели внешних хранилищ по ключу: ключ → файл → строка записи. */
 const storeWriters = () => storeFacts().writers;
+/** Писатели записи о состоянии. У ключа, который код пишет, — по коду: графа
+ * «Кто пишет» называет и того, кто лишь просит владельца, и факт второго
+ * писателя вставал ложно (шаг 4.6 прогона `2026-11-14`). */
+const recordWritersOf = (r) => {
+  for (const [key, byFile] of storeWriters()) {
+    const names = [
+      /«(.+)»$/.exec(key)?.[1] ?? key,
+      ...(storeFacts().names.get(key) ?? []),
+    ];
+    if (names.some((n) => r.what.includes(n))) return [...byFile.keys()];
+  }
+  return filesNamedIn(r.writers);
+};
 /** Что снимает запись ключа: файлы снятия по ключу либо очистки целиком. */
 const storeEndOf = (key) => {
   const { drops, wipes } = storeFacts();
@@ -14923,7 +14955,7 @@ const barModelOf = (
           (r.readers || "—"),
         "да",
       );
-      const writing = filesNamedIn(r.writers);
+      const writing = recordWritersOf(r);
       if (unitsAmong(writing) > 1)
         add(
           "писатель",
@@ -26989,13 +27021,18 @@ if (mode === "verify") {
     );
     const isMap = (one) =>
       /ClassMap|ClassNames?|ClassNameKeys|ClassNameMap/.test(one.name) ||
-      /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(one.body);
+      CLASS_MAP_INDEX.test(one.body);
+    const aliases = new Map(unions.map((one) => [one.name, one.body]));
     return [...blocks, ...unions].filter(isMap).map((one) => {
       const keys = new Set();
       // Ключ — строка вида `имя?: string`; индексная подпись сюда не попадает:
       // у неё в позиции имени скобка.
       for (const m of one.body.matchAll(/^\s{2,}(\w+)\??:\s*string/gm)) keys.add(m[1]);
       for (const m of one.body.matchAll(/"([\w-]+)"/g)) keys.add(m[1]);
+      // Ключи, названные псевдонимом в `Record<Ключ, string>`, — из него.
+      for (const m of one.body.matchAll(/Record<\s*(\w+)\s*,/g))
+        for (const k of (aliases.get(m[1]) ?? "").matchAll(/"([\w-]+)"/g))
+          keys.add(k[1]);
       return { name: one.name, keys };
     });
   };
@@ -27199,6 +27236,49 @@ if (mode === "verify") {
     for (const d of passedDrift.slice(passedOpen)) console.log("    " + d);
   });
 
+  // Компонент со своим листом модуля принимает карту классов — шаги 2 и 3
+  // схемы стилизации (`styles.md`): карта вызывающего подмешивается поверх
+  // своей, её ключи объявлены типом рядом. Без сверки компонент без карты
+  // проходил и прогон, и свод: шаг 4.4 прогона `2026-11-14`, два из трёх.
+  const mapless = [];
+  let styledSeen = 0;
+  checkStep(() => {
+    const units = new Map();
+    for (const f of files) {
+      if (isTest(f) || f.endsWith(".d.ts")) continue;
+      const unit = componentUnitOf(rel(f));
+      if (unit === null) continue;
+      const one = units.get(unit) ?? { sheet: false, map: false };
+      units.set(unit, one);
+      const body = codeOf(readFileSync(f, "utf8"));
+      if (styleImportsOf(body, f).length > 0) one.sheet = true;
+      if (classMapsOf(body).some((m) => m.keys.size > 0)) one.map = true;
+    }
+    for (const [unit, one] of [...units].sort(([a], [b]) => a.localeCompare(b))) {
+      if (!one.sheet) continue;
+      styledSeen += 1;
+      if (!one.map)
+        mapless.push(
+          unit + " — свой лист модулем есть, карты классов с именованными ключами нет",
+        );
+    }
+  });
+  const maplessOpen = checkStep(() =>
+    heldOpen("Компонент со своим листом принимает карту классов", mapless.length),
+  );
+  checkStep(() => {
+    checkHead("Компонент со своим листом принимает карту классов", () => ({
+      n: styledSeen,
+      unit: "компонентов со своим листом",
+    }));
+    console.log("  без карты классов: " + (mapless.length - maplessOpen));
+    if (maplessOpen > 0)
+      console.log("  держатся долгом перехода или реестром: " + maplessOpen);
+    for (const d of mapless.slice(maplessOpen)) console.log("    " + d);
+    if (mapless.length > maplessOpen)
+      console.log("  объявить рядом тип карты классов с именованными ключами и подмешивать карту вызывающего поверх своей (`styles.md`, «Три шага»)");
+  });
+
   // Сторона обратная: класс объявлен листом, и не спрашивает его никто.
   //
   // Первая сторона ловит имя, которого нет в листе, — оно даёт `undefined` в
@@ -27328,7 +27408,7 @@ if (mode === "verify") {
           // Карта классов узнаётся так же, как в соседней сверке: по строению
           // с индексной подписью либо по соглашению об имени.
           if (
-            /\[\s*key\s*:\s*string\s*\]\s*:\s*string/.test(body) ||
+            CLASS_MAP_INDEX.test(body) ||
             // Объявить карту классов можно не только типом: проект, пишущий
             // контракт СХЕМОЙ, объявляет её обычной константой. Пока здесь
             // стояли только interface и type, такой проект был для сверки

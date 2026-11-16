@@ -1129,6 +1129,23 @@
       ]
     },
     {
+      "section": "Компонент со своим листом принимает карту классов",
+      "edits": [
+        {
+          "create": {
+            "path": "{узлы}/ZzBare/ZzBare.tsx",
+            "text": "import classes from \"./zzBare.module.css\";\n\nexport const ZzBare = () => <i className={classes.root} />;"
+          }
+        },
+        {
+          "create": {
+            "path": "{узлы}/ZzBare/zzBare.module.css",
+            "text": "@layer components {\n  .root {\n    color: red;\n  }\n}\n"
+          }
+        }
+      ]
+    },
+    {
       "section": "Отступление от схемы стилизации объявлено решением",
       "create": {
         "path": "{исходники}/zzStray/zzStray.tsx",

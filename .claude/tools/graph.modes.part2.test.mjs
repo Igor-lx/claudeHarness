@@ -2527,6 +2527,18 @@ describe("факты по уровням без протокола", () => {
           ),
       );
       expect(tool("levels").out.match(/^ {2}писатель: /gm)).toHaveLength(1);
+      // Графа называет и того, кто лишь просит владельца: ключ пишет код
+      // одного файла — писатель один, сколько бы файлов графа ни назвала.
+      const zzB = fs.readFileSync(path.join(box, "src", "components", "ZzB", "ZzB.tsx"), "utf8");
+      put("components/ZzB/ZzB.tsx", 'export function ZzB() {\n  return <i>x</i>;\n}\n');
+      expect(tool("levels").out).not.toMatch(/^ {2}писатель: /m);
+      put("components/ZzB/ZzB.tsx", zzB);
+      // Хранилище, пришедшее портом, — тот же писатель, что `localStorage`.
+      put("shared/zzPort/zzPort.ts", 'export const zzSave = (storage: Storage): void => {\n  storage.setItem("zz.count", "1");\n};\n');
+      expect(tool("levels").out).toMatch(
+        /писатель: хранилище «zz\.count»: пишут components\/ZzA\/ZzA\.tsx, components\/ZzB\/ZzB\.tsx, shared\/zzPort\/zzPort\.ts/,
+      );
+      fs.rmSync(path.join(box, "src", "shared", "zzPort"), { recursive: true });
       // Запись вправе назвать ключ именем его константы — тот же факт.
       put(
         "components/ZzA/ZzA.tsx",
@@ -6335,11 +6347,58 @@ describe("предмет под другим именем и форматом", 
           'export const ZzTypo = () => <ZzKeys classes={{ rot: "a" }} />;\n' +
           'const cx = (...all: string[]): string => all.join(" ");\n',
       );
+      // Карта пересечением `Record`: ключи — из псевдонима-объединения.
+      put(
+        "components/ZzRec/types.ts",
+        'type ZzRecKey = "bed" | "title";\n\nexport type ZzRecStyles = Partial<Record<ZzRecKey, string>> & Readonly<Record<string, string>>;\n',
+      );
+      put(
+        "components/ZzRec/ZzRec.tsx",
+        'import type { ZzRecStyles } from "./types";\n\nexport const ZzRec = ({ classes }: { classes?: ZzRecStyles }) => <i className={classes?.bed} />;\n',
+      );
+      put(
+        "app/zzRecUse.tsx",
+        'import { ZzRec } from "../components/ZzRec/ZzRec";\n\nexport const ZzRecOk = () => <ZzRec classes={{ title: "a" }} />;\n' +
+          'export const ZzRecTypo = () => <ZzRec classes={{ bad: "a" }} />;\n',
+      );
       const said = verifyIn(box).get("Ключи переданной карты классов названы типом компонента") ?? [];
       expect(said).toEqual([
         "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `sub-titel` нет среди ключей карты классов компонента",
         "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `tilte` нет среди ключей карты классов компонента",
         "app/zzKeysUse.tsx: `<ZzKeys classes>` — ключа `rot` нет среди ключей карты классов компонента",
+        "app/zzRecUse.tsx: `<ZzRec classes>` — ключа `bad` нет среди ключей карты классов компонента",
+      ]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("компонент со своим листом без карты классов назван; с картой подписью и пересечением `Record` — нет; без листа не спрашивается", () => {
+    const box = seatEmpty("mapless-");
+    try {
+      const put = (rel, text) => {
+        const at = path.join(box, "src", ...rel.split("/"));
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      const sheet = "@layer components {\n  .root {\n    color: red;\n  }\n}\n";
+      const node = (name, extra = "") =>
+        `import classes from "./${name.toLowerCase()}.module.css";\n${extra}\nexport const ${name} = () => <i className={classes.root} />;\n`;
+      put("components/ZzBare/zzbare.module.css", sheet);
+      put("components/ZzBare/ZzBare.tsx", node("ZzBare"));
+      put("components/ZzSig/zzsig.module.css", sheet);
+      put("components/ZzSig/ZzSig.tsx", node("ZzSig"));
+      put("components/ZzSig/types.ts", "export interface ZzSigClassMap {\n  readonly [key: string]: string;\n  root?: string;\n}\n");
+      put("components/ZzRec/zzrec.module.css", sheet);
+      put("components/ZzRec/ZzRec.tsx", node("ZzRec"));
+      put(
+        "components/ZzRec/types.ts",
+        'type ZzRecKey = "root";\n\nexport type ZzRecStyles = Partial<Record<ZzRecKey, string>> & Readonly<Record<string, string>>;\n',
+      );
+      put("components/ZzPlain/ZzPlain.tsx", "export const ZzPlain = () => <i />;\n");
+      const said = verifyIn(box).get("Компонент со своим листом принимает карту классов") ?? [];
+      expect(said).toEqual([
+        "components/ZzBare — свой лист модулем есть, карты классов с именованными ключами нет",
       ]);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
