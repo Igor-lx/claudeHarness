@@ -3701,7 +3701,10 @@ describe("ядро по предметам уровня: правка, чтен�
       // Протокол перехода пишет инструмент о коде на день печати: его
       // прежний путь после приведения раскладки сверка путей не зовёт.
       fs.appendFileSync(path.join(dir, "app.md"), "\nПрежний путь `src/zzGone.ts`.\n");
-      expect((verifyIn(box).get("Пути в обратных кавычках") ?? []).join("\n")).not.toContain("zzGone");
+      const seen = verifyIn(box);
+      expect((seen.get("Пути в обратных кавычках") ?? []).join("\n")).not.toContain("zzGone");
+      // Выведены из корпуса намеренно — сверка корпуса их не зовёт непрочитанными.
+      expect((seen.get("Проза целиком попадает в корпус сверок") ?? []).join("\n")).not.toContain("15-transition-bar");
       expect(app).toMatch(/^\| G7 \|/m);
       expect(app).toMatch(/^\| J2 \|/m);
       // Предмет перехода — проект вместе с манифестом: о зависимостях

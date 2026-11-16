@@ -29214,6 +29214,8 @@ if (mode === "verify") {
         for (const e of readdirSync(dir)) {
           const full = norm(path.join(dir, e));
           if (OUT_OF_TREE.has(e) || gitIgnored(full)) continue;
+          // Протоколы перехода выведены из корпуса намеренно, обходом базы выше.
+          if (transitionDir !== null && full === transitionDir) continue;
           if (statSync(full).isDirectory()) {
             walkProse(full);
             continue;
