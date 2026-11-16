@@ -153,6 +153,58 @@ describe("ворота конца хода", () => {
     }
   }, 300000);
 
+  // Задача без диффа кода, чей ответ назвал прочитанный файл кода, утверждает
+  // о коде — свод чтения обязателен. Решено разработчиком `2026-11-16`.
+  it("ответ, назвавший прочитанный код, без свода держит ход; журнал, пауза, коммит и другая сессия — нет", () => {
+    const box = seatEmpty("stop-read-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=stop", "-c", "user.email=stop@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const event = (mode, said) =>
+        spawnSync(process.execPath, [graph, ...mode], { cwd: box, encoding: "utf8", input: JSON.stringify(said) });
+      const read = (session, rel) =>
+        event(["guard", "--hook"], { session_id: session, tool_name: "Read", tool_input: { file_path: path.join(box, rel) } });
+      const stop = (session, answer) =>
+        event(["stop", "--hook"], { session_id: session, last_assistant_message: answer });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      // Чтение не кода — правила, база — в список не идёт.
+      read("s1", ".context/00-map.md");
+      expect(stop("s1", "Карта в `.context/00-map.md` пуста.").status).toBe(0);
+      read("s1", "src/app/App.tsx");
+      const held = stop("s1", "`App.tsx` рисует заголовок и ничего больше.");
+      expect(held.status).toBe(2);
+      expect(held.stderr).toContain("ответ называет прочитанный код, а свода чтения нет — `src/app/App.tsx`");
+      expect(held.stderr).toContain("bar <путь>");
+      // Ответ, не назвавший прочитанного, хода не держит; другая сессия — тоже.
+      expect(stop("s1", "Готово.").status).toBe(0);
+      expect(stop("s2", "`App.tsx` рисует заголовок.").status).toBe(0);
+      // Ответ берётся из журнала, когда событие его не несёт.
+      const journal = path.join(box, "journal.jsonl");
+      fs.writeFileSync(
+        journal,
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Смотрел `src/app/App.tsx`." }] } }) + "\n" +
+          JSON.stringify({ type: "user", message: { content: "ок" } }) + "\n",
+      );
+      expect(event(["stop", "--hook"], { session_id: "s1", transcript_path: journal }).status).toBe(2);
+      // Пауза отпускает: работа не закончена.
+      execFileSync(process.execPath, [graph, "stop", "--pause", "жду ответа разработчика"], { cwd: box, encoding: "utf8" });
+      expect(stop("s1", "`App.tsx` рисует заголовок.").status).toBe(0);
+      // Коммит закрывает прочитанное: его свод держали ворота перед коммитом.
+      read("s1", "src/app/main.tsx");
+      event(["guard", "--hook"], { session_id: "s1", tool_name: "Bash", tool_input: { command: "git commit -m x" } });
+      expect(stop("s1", "Правил `main.tsx`.").status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("отказ, пауза на вид правки, клапан со следом, печать снимает всё", () => {
     const box = seatEmpty("stop-");
     try {

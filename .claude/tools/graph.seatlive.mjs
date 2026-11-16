@@ -749,6 +749,30 @@ const seatLive = ({ shelf, target, env, packagesFrom, apply, profile }, box) => 
       "мерить `npm run mutate` по слову разработчика; выживших разбирать тремя исходами (`code.md`, раздел «Мутационный прогон — машинная форма критерия о падающем тесте»)",
       "`" + second.unprobed + "` файлов",
     ]);
+  // Держимые пунктом долга сверки о коде проекта: находку чинит правка кода,
+  // а посадка код не трогает, — без пункта живой проект не заканчивал фазу 1.
+  const held = runTool(process.execPath, [at(".claude/tools/graph.mjs"), "verify", "--held"], { cwd: target, env });
+  const heldFound = new Map();
+  for (const m of uncolored(held.out).matchAll(/^ДЕРЖИМОЕ\t(.+)\t(\d+)$/gm))
+    if (Number(m[2]) > 0) heldFound.set(m[1], Number(m[2]));
+  const stray = /^ОТСТУПЛЕНИЕ\t(.+)$/m.exec(uncolored(held.out))?.[1].split("\t") ?? [];
+  if (stray.length > 0)
+    layout.push([
+      "Схема стилизации своя: вид приходит картой классов пропом, своего листа нет — " + stray.map((d) => "`" + d + "`").join(", "),
+      "`" + stray.length + "`",
+      "«Отступление от схемы стилизации объявлено решением»",
+      "привести к схеме `styles.md` по слову разработчика либо записать решением, что её оставляют",
+      "`" + stray.length + "` компонентов",
+    ]);
+  for (const [name, found] of heldFound)
+    if (!layout.some((row) => row[2] === "«" + name + "»"))
+      layout.push([
+        "Код до посадки расходится с держимой сверкой — она названа в графе Держит",
+        "`" + found + "`",
+        "«" + name + "»",
+        "чинит правка кода по слову разработчика; адреса печатает сверка",
+        "`" + found + "` мест",
+      ]);
   write(
     transitionAt.to,
     transitionWith(

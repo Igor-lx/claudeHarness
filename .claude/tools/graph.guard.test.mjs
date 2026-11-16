@@ -6,6 +6,9 @@ import {
   protocolShellFault,
   rulesFreshnessOf,
   rulesFreshnessText,
+  codeReadOf,
+  codeNamedIn,
+  lastAnswerOf,
 } from "./graph.guard.mjs";
 
 /** Протокол, в котором модель занимает строки 6–10 (заголовок — строка 6). */
@@ -187,5 +190,36 @@ describe("правила, изменённые после начала сесс�
     expect(text).toContain("правила изменились после начала сессии");
     expect(text).toContain("`.claude/rules/loop.md` (изменён), `CLAUDE.md` (новый)");
     expect(text).toContain("перечитать инструментом Read");
+  });
+});
+
+describe("прочитанный код сессии и ответ, который его называет", () => {
+  it("список копится в сессии, новая сессия и коммит начинают заново", () => {
+    const one = codeReadOf(null, { session: "s1", file: "src/a.ts" });
+    expect(one).toEqual({ session: "s1", files: ["src/a.ts"] });
+    expect(codeReadOf(one, { session: "s1", file: "src/a.ts" }).files).toEqual(["src/a.ts"]);
+    expect(codeReadOf(one, { session: "s1", file: "src/b.ts" }).files).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(codeReadOf(one, { session: "s2", file: "src/b.ts" }).files).toEqual(["src/b.ts"]);
+    expect(codeReadOf(null, { session: "s1", file: null }).files).toEqual([]);
+  });
+  it("файл назван путём либо именем отдельным словом, а не частью другого имени", () => {
+    const files = ["src/app/App.tsx", "src/shared/x/thirst.ts"];
+    expect(codeNamedIn(files, "см. `src/app/App.tsx:3`")).toEqual(["src/app/App.tsx"]);
+    expect(codeNamedIn(files, "в App.tsx заголовок")).toEqual(["src/app/App.tsx"]);
+    expect(codeNamedIn(files, "MyApp.tsx и App.tsx.bak")).toEqual([]);
+    expect(codeNamedIn(files, "правило в thirst.ts, а тест — в thirst.test.ts")).toEqual(["src/shared/x/thirst.ts"]);
+    expect(codeNamedIn(files, "ничего")).toEqual([]);
+  });
+  it("последний ответ — последняя запись ассистента с текстом; порченый журнал — пусто", () => {
+    const line = (o) => JSON.stringify(o);
+    const jsonl = [
+      line({ type: "assistant", message: { content: [{ type: "text", text: "первый" }] } }),
+      line({ type: "assistant", message: { content: [{ type: "tool_use", name: "Read" }] } }),
+      line({ type: "assistant", message: { content: [{ type: "text", text: "второй" }, { type: "text", text: "хвост" }] } }),
+      line({ type: "user", message: { content: "ок" } }),
+      "не json",
+    ].join("\n");
+    expect(lastAnswerOf(jsonl)).toBe("второй\nхвост");
+    expect(lastAnswerOf("мусор")).toBe("");
   });
 });

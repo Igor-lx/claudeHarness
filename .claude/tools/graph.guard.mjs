@@ -105,3 +105,53 @@ export const rulesFreshnessText = (stale) =>
     : "Обвязка: правила изменились после начала сессии, и в контексте их прежний текст — " +
       stale.map((s) => "`" + s.rel + "` (" + s.how + ")").join(", ") +
       ". Изменённый и новый перечитать инструментом Read: пока не перечитан, напоминание повторяется; снятый больше не действует.";
+
+/** Прочитанный код сессии — для ворот конца хода на задаче без диффа кода:
+ * ответ, назвавший прочитанный файл кода, утверждает о коде, и свод чтения
+ * обязателен (`loop.md`, раздел «Объяснение — тоже работа, и проверяется так
+ * же»). `state` — прежнее `{ session, files }` либо `null`; `call` — сессия
+ * и путь файла от корня либо `null`, если читали не код проекта. Новая
+ * сессия начинает список заново. Решено разработчиком `2026-11-16`. */
+export const codeReadOf = (state, call) => {
+  const files =
+    state === null || state.session !== call.session ? [] : [...state.files];
+  if (call.file !== null && !files.includes(call.file)) files.push(call.file);
+  return { session: call.session, files };
+};
+
+/** Прочитанные файлы, которые текст ответа называет — путём от корня либо
+ * именем с расширением как отдельным словом. */
+export const codeNamedIn = (files, text) =>
+  files.filter((rel) => {
+    if (text.includes(rel)) return true;
+    const name = rel.slice(rel.lastIndexOf("/") + 1);
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("(^|[^\\w./-])" + escaped + "(?![\\w-]|\\.\\w)").test(text);
+  });
+
+/** Текст последнего ответа модели из журнала сессии (строки JSON): последняя
+ * запись ассистента с текстом. Журнала нет либо он не разбирается —
+ * пустая строка: судить не о чем. */
+export const lastAnswerOf = (jsonl) => {
+  const lines = String(jsonl).split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    let one;
+    try {
+      one = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (one?.type !== "assistant") continue;
+    const content = one.message?.content;
+    const text = Array.isArray(content)
+      ? content
+          .filter((c) => c?.type === "text")
+          .map((c) => String(c.text ?? ""))
+          .join("\n")
+      : typeof content === "string"
+        ? content
+        : "";
+    if (text.trim() !== "") return text;
+  }
+  return "";
+};

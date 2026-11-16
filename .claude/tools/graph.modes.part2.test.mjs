@@ -6373,6 +6373,41 @@ describe("предмет под другим именем и форматом", 
     }
   }, 300000);
 
+  it("строка базовой линии, правленая после конца посадки, названа; правленая до него и нетронутая — нет", () => {
+    const box = seatEmpty("rebaseline-");
+    try {
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=zz", "-c", "user.email=zz@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      const factsAt = path.join(box, ".context", "01-facts.md");
+      const edit = (at, from, to) => {
+        const text = fs.readFileSync(at, "utf8");
+        expect(from.test(text)).toBe(true);
+        fs.writeFileSync(at, text.replace(from, to));
+      };
+      const said = () => (verifyIn(box).get("Числа в прозе базы") ?? []).join("\n");
+      edit(cfgAt, /^ {2}seating: [^,]*,/m, "  seating: 1,");
+      edit(factsAt, /^## Базовая линия\n/m, "## Базовая линия\n\n| `test` | зелено, тестов `2` | `npm test` |\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      edit(cfgAt, /^ {2}barSince: [^,]*,/m, '  barSince: "' + git("rev-parse", "HEAD").trim() + '",');
+      // Фаза 2 ещё правит замер: строка формата приведена ею.
+      edit(factsAt, /тестов `2`/, "тестов `3`");
+      edit(cfgAt, /^ {2}seating: 1,/m, "  seating: null,");
+      git("commit", "-qam", "конец посадки", "--no-verify");
+      expect(said()).not.toContain("правлена после конца посадки");
+      edit(factsAt, /тестов `3`/, "тестов `41`");
+      expect(said()).toMatch(/01-facts\.md:\d+ — базовая линия правлена после конца посадки \(`[0-9a-f]{7}`\)/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("компонент со своим листом без карты классов назван; с картой подписью и пересечением `Record` — нет; без листа не спрашивается", () => {
     const box = seatEmpty("mapless-");
     try {
@@ -6395,6 +6430,10 @@ describe("предмет под другим именем и форматом", 
         "components/ZzRec/types.ts",
         'type ZzRecKey = "root";\n\nexport type ZzRecStyles = Partial<Record<ZzRecKey, string>> & Readonly<Record<string, string>>;\n',
       );
+      // Ключи с модификатором `readonly` — тоже именованные ключи.
+      put("components/ZzRo/zzro.module.css", sheet);
+      put("components/ZzRo/ZzRo.tsx", node("ZzRo"));
+      put("components/ZzRo/types.ts", "export type ZzRoClasses = {\n  readonly root: string;\n  readonly [key: string]: string;\n};\n");
       put("components/ZzPlain/ZzPlain.tsx", "export const ZzPlain = () => <i />;\n");
       const said = verifyIn(box).get("Компонент со своим листом принимает карту классов") ?? [];
       expect(said).toEqual([

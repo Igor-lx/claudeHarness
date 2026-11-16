@@ -118,6 +118,7 @@ import {
   isProbeRun,
   isPinnedSpec,
   isRulesState,
+  isCodeReadState,
   isStopState,
   BAR_PAGES_DIR,
   OUT_OF_TREE,
@@ -217,6 +218,9 @@ import {
   protocolReadFault,
   protocolShellFault,
   rulesFreshnessOf,
+  codeReadOf,
+  codeNamedIn,
+  lastAnswerOf,
   rulesFreshnessText,
 } from "./graph.guard.mjs";
 // Части правки: таблица в протоколе свода, связность, записи и наложение.
@@ -334,6 +338,9 @@ const heldOpen = (name, found) => {
   if (!HELD_BY_DEBT_ROW.includes(name))
     throw new Error("сверка не в списке держимых пунктом долга: " + name);
   HELD_FOUND.set(name, found);
+  // Посадка пишет пункт долга на каждую держимую сверку с находками: иначе
+  // живой проект не заканчивал посадку без правки кода.
+  if (process.argv.includes("--held")) process.stderr.write("ДЕРЖИМОЕ\t" + name + "\t" + found + "\n");
   return Math.min(found, openFindings().get(name) ?? 0);
 };
 /** Держимые сверки этого прогона с числом их находок: пункт, назвавший
@@ -604,6 +611,51 @@ const entryRulesNow = (root) => {
   return now;
 };
 
+/** Файл кода проекта по пути от корня: модуль, тест, лист стилей вне обвязки,
+ * базы и пакетов. */
+const PROJECT_CODE_PATH = /^(?!\.claude\/|\.context\/|node_modules\/|\.\.\/)[^]*\.(?:[cm]?[jt]sx?|s?css|less)$/;
+/** Где лежит состояние прочитанного кода; `null` — git недоступен. */
+const codeReadAt = (root) => {
+  try {
+    const dir = execFileSync("git", ["rev-parse", "--git-dir"], {
+      maxBuffer: CHILD_OUTPUT_BYTES,
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return path.join(path.resolve(root, dir), "claude-harness-read.json");
+  } catch {
+    return null;
+  }
+};
+/** Шаг стража на `Read`: прочитанный файл кода проекта ложится в состояние
+ * сессии, его спрашивают ворота конца хода. */
+const codeReadStep = (said) => {
+  const session = String(said?.session_id ?? "");
+  if (session === "") return;
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  // Коммит закрывает прочитанное: оно принадлежало закоммиченной правке, и её
+  // свод держали ворота перед коммитом.
+  const commit =
+    said?.tool_name === "Bash" && /\bgit\b[^|;&]*\bcommit\b/.test(String(said?.tool_input?.command ?? ""));
+  let file = null;
+  if (said?.tool_name === "Read" && typeof said?.tool_input?.file_path === "string") {
+    file = path.relative(root, path.resolve(root, said.tool_input.file_path)).split(path.sep).join("/");
+    if (!PROJECT_CODE_PATH.test(file)) return;
+  } else if (!commit) return;
+  const at = codeReadAt(root);
+  if (at === null) return;
+  const state = commit
+    ? null
+    : readOwn(at, null, (one) =>
+        isCodeReadState(one) ? "" : "состояние не по форме { session, files }: " + recordText(one),
+      );
+  try {
+    writeFileSync(at, JSON.stringify(codeReadOf(state, { session, file })) + "\n");
+  } catch {
+    // Не легло — ворота конца хода этого чтения не увидят.
+  }
+};
 /** Шаг свежести правил на вызове хука: состояние сессии лежит в папке git
  * (без git — во временной папке, своей на проект), напоминание — строкой.
  * Ручной вызов без номера сессии ничего не пишет. */
@@ -695,6 +747,7 @@ if (mode === "guard") {
   })();
   if (hook) {
     const stale = rulesFreshnessStep(said);
+    codeReadStep(said);
     if (why === "" && page === "" && protocol === "" && variable === "" && written === "") {
       if (stale !== "")
         console.log(
@@ -6186,7 +6239,7 @@ if (predicateFailures.length > 0) {
 // Ключ, которого режим не знает, — тоже отказ: `verify --ful` печатал
 // короткий вывод вместо полного и отдавал `0`. Здесь объявлены режимы, которые
 // ключей не читают вовсе, и `verify` с его одним; прочие отказывают сами.
-const MODE_KEYS = { cycles: [], dead: [], open: [], repoint: [], tiers: [], verify: ["--full"] };
+const MODE_KEYS = { cycles: [], dead: [], open: [], repoint: [], tiers: [], verify: ["--full", "--held"] };
 if (Object.hasOwn(MODE_KEYS, mode)) {
   const unknownKeys = unknownFlagsOf(process.argv.slice(3), MODE_KEYS[mode]);
   if (unknownKeys.length > 0) {
@@ -8780,11 +8833,14 @@ if (mode === "stop") {
   const flag =
     ["--hook", "--pause", "--session"].find((f) => process.argv.includes(f)) ??
     null;
+  // Событие среды несёт сессию и путь журнала: по ним судят ответ задачи
+  // без диффа кода. Правка кода решается по рабочему дереву.
+  let event = {};
   if (flag === "--hook" && !process.stdin.isTTY)
     try {
-      readFileSync(0);
+      event = parseJson(readFileSync(0, "utf8")) ?? {};
     } catch {
-      // Событие среды не нужно: решение принимается по рабочему дереву.
+      event = {};
     }
   let gitDir = null;
   try {
@@ -8863,12 +8919,61 @@ if (mode === "stop") {
       );
     return "";
   })();
-  const holdFault = want.length > 0 ? fault : readFault;
+  // Ответ без диффа кода, назвавший прочитанный файл кода, — утверждение о
+  // коде, и свод чтения обязателен (`loop.md`, раздел «Объяснение — тоже
+  // работа, и проверяется так же»). Прочитанное пишет страж на `Read`; свод
+  // чтения, начатый этой работой, судит `readFault`. Решено разработчиком
+  // `2026-11-16`: работник шага 4.5 прогона приёмки утверждал о коде без свода.
+  const codeRead =
+    gitDir === null
+      ? null
+      : readOwn(path.join(gitDir, "claude-harness-read.json"), null, (one) =>
+          isCodeReadState(one) ? "" : "состояние не по форме { session, files }: " + recordText(one),
+        );
+  const readNamed = (() => {
+    if (flag !== "--hook" || want.length > 0 || readFault !== "" || codeRead === null) return [];
+    if (codeRead.session !== String(event.session_id ?? "")) return [];
+    if (protoAt !== null && body !== null) {
+      let dirty = "";
+      try {
+        dirty = execFileSync("git", ["status", "--porcelain", "--", protoAt], {
+          maxBuffer: CHILD_OUTPUT_BYTES,
+          cwd: REPO_AT,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch {
+        dirty = "";
+      }
+      if (dirty !== "") return [];
+    }
+    let answer = typeof event.last_assistant_message === "string" ? event.last_assistant_message : "";
+    if (answer === "" && typeof event.transcript_path === "string")
+      try {
+        answer = lastAnswerOf(readFileSync(event.transcript_path, "utf8"));
+      } catch {
+        answer = "";
+      }
+    return codeNamedIn(codeRead.files, answer);
+  })();
+  const namedFault =
+    readNamed.length === 0
+      ? ""
+      : "ответ называет прочитанный код, а свода чтения нет — " +
+        readNamed.map((f) => "`" + f + "`").join(", ");
+  const holdFault = want.length > 0 ? fault : readFault || namedFault;
   const holdDigest =
     want.length > 0
       ? digest
-      : barDigest("на чтение " + (body === null ? "" : (barHeaderOf(body).address ?? "")));
-  const holdFiles = want.length > 0 ? named : [String(CONFIG.barProtocol ?? "")];
+      : readFault === "" && namedFault !== ""
+        ? barDigest("прочитан код " + (codeRead?.session ?? ""))
+        : barDigest("на чтение " + (body === null ? "" : (barHeaderOf(body).address ?? "")));
+  const holdFiles =
+    want.length > 0
+      ? named
+      : readFault === "" && namedFault !== ""
+        ? readNamed
+        : [String(CONFIG.barProtocol ?? "")];
   const paused = state.pause?.digest === holdDigest && holdFault !== "";
   const day = (iso) => (Number.isNaN(Date.parse(iso)) ? "" : localDay(new Date(iso)));
 
@@ -8883,11 +8988,15 @@ if (mode === "stop") {
       );
       process.exit(1);
     }
-    if (want.length === 0 && readFault === "") {
-      console.log("  Правки кода и начатого свода чтения нет — пауза не нужна.");
+    const readOnly = want.length === 0 && readFault === "";
+    if (readOnly && (codeRead === null || codeRead.files.length === 0)) {
+      console.log("  Правки кода, начатого свода чтения и прочитанного кода нет — пауза не нужна.");
       process.exit(0);
     }
-    state.pause = { digest: holdDigest, reason, at: new Date().toISOString(), files: holdFiles };
+    // Ответ хода ручной вызов не видит: пауза о прочитанном коде — по сессии.
+    state.pause = readOnly
+      ? { digest: barDigest("прочитан код " + codeRead.session), reason, at: new Date().toISOString(), files: codeRead.files }
+      : { digest: holdDigest, reason, at: new Date().toISOString(), files: holdFiles };
     state.blocks = null;
     save();
     console.log("=== Пауза поставлена ===");
@@ -9004,7 +9113,9 @@ if (mode === "stop") {
     process.stderr.write(
       (want.length > 0
         ? "Обвязка: ход кончается, а правка кода не накрыта сводом по планке — "
-        : "Обвязка: ход кончается, а свод на задаче чтения не закончен — ") +
+        : readFault === ""
+          ? "Обвязка: ход кончается, а ответ утверждает о коде без свода по планке — "
+          : "Обвязка: ход кончается, а свод на задаче чтения не закончен — ") +
         holdFault +
         ".\n" +
         "Файлы: " +
@@ -9012,7 +9123,9 @@ if (mode === "stop") {
         ".\n" +
         (want.length > 0
           ? "Работа закончена — свод: `node .claude/tools/graph.mjs bar`, ответы по протоколу, печать.\n"
-          : "Работа закончена — свод: `node .claude/tools/graph.mjs bar " + address + "`, ответы по протоколу, печать.\n") +
+          : readFault === ""
+            ? "Работа закончена — свод чтения по прочитанной области: `node .claude/tools/graph.mjs bar <путь>`, ответы по протоколу, печать.\n"
+            : "Работа закончена — свод: `node .claude/tools/graph.mjs bar " + address + "`, ответы по протоколу, печать.\n") +
         'Работа не закончена (ждёт ответа разработчика, прервана на развилке) — пауза с причиной: `node .claude/tools/graph.mjs stop --pause "<причина>"`; причину печатает начало следующей сессии.\n',
     );
     process.exit(2);
@@ -9062,6 +9175,55 @@ const seatedTextOf = (rel) => {
   } catch {
     return null;
   }
+};
+/** Конец посадки — коммит, снявший флаг `seating`: базовая линия написана
+ * к нему и дальше не правится (`base-format.md`). `null` — посадка идёт,
+ * основания нет либо git недоступен. */
+let SEAT_END;
+const seatEnd = () => {
+  if (SEAT_END !== undefined) return SEAT_END;
+  SEAT_END = null;
+  if (SEAT_BASE === null || seatingIsUp()) return SEAT_END;
+  try {
+    const config = path
+      .relative(REPO_AT, path.join(BASE, "graph.config.mjs"))
+      .split(path.sep)
+      .join("/");
+    const first = execFileSync(
+      "git",
+      ["log", "--reverse", "--format=%H", "-G", "^[[:space:]]*seating:[[:space:]]*(null|0)([,[:space:]]|$)", SEAT_BASE + "..HEAD", "--", config],
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    )
+      .trim()
+      .split(String.fromCharCode(10))[0];
+    if (first !== "") SEAT_END = first;
+  } catch {
+    SEAT_END = null;
+  }
+  return SEAT_END;
+};
+/** Строки разделов базовой линии файла базы на конце посадки; `null` —
+ * сверять не с чем. */
+const baselineAtSeatEnd = (name) => {
+  if (seatEnd() === null) return null;
+  let text;
+  try {
+    text = execFileSync(
+      "git",
+      ["show", seatEnd() + ":./" + path.relative(REPO_AT, path.join(BASE, name)).split(path.sep).join("/")],
+      { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+  } catch {
+    return null;
+  }
+  const out = new Set();
+  let inside = false;
+  for (const line of unfenced(flatText(text)).split(String.fromCharCode(10))) {
+    if (/^##\s/.test(line))
+      inside = (CONFIG.baselineSections ?? []).some((one) => line.includes(one));
+    if (inside) out.add(line.trim());
+  }
+  return out;
 };
 /** Заготовки кода и стилей карты посадки. Конфиг корня, обвязка, база и
  * документация кодом проекта не являются — как у сверок. */
@@ -27027,7 +27189,8 @@ if (mode === "verify") {
       const keys = new Set();
       // Ключ — строка вида `имя?: string`; индексная подпись сюда не попадает:
       // у неё в позиции имени скобка.
-      for (const m of one.body.matchAll(/^\s{2,}(\w+)\??:\s*string/gm)) keys.add(m[1]);
+      // Модификатор `readonly` ключа не меняет: карта стенда пишет так.
+      for (const m of one.body.matchAll(/^\s{2,}(?:readonly\s+)?(\w+)\??:\s*string/gm)) keys.add(m[1]);
       for (const m of one.body.matchAll(/"([\w-]+)"/g)) keys.add(m[1]);
       // Ключи, названные псевдонимом в `Record<Ключ, string>`, — из него.
       for (const m of one.body.matchAll(/Record<\s*(\w+)\s*,/g))
@@ -27254,7 +27417,7 @@ if (mode === "verify") {
       if (styleImportsOf(body, f).length > 0) one.sheet = true;
       if (classMapsOf(body).some((m) => m.keys.size > 0)) one.map = true;
     }
-    for (const [unit, one] of [...units].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [unit, one] of [...units].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
       if (!one.sheet) continue;
       styledSeen += 1;
       if (!one.map)
@@ -27432,6 +27595,10 @@ if (mode === "verify") {
         schemeStray.push(at);
       }
     }
+    // Посадка живого проекта пишет отступление пунктом долга с адресами:
+    // записать его решением на фазе 1 некому, а без записи фаза 1 красная.
+    if (process.argv.includes("--held") && schemeStray.length > 0)
+      process.stderr.write("ОТСТУПЛЕНИЕ\t" + schemeStray.join("\t") + "\n");
   });
   // 13k. Новый узел лежит по раскладке.
   //
@@ -30314,6 +30481,7 @@ if (mode === "verify") {
       .filter((_, i) => i % 2 === 0)
       .join(" ");
   const frozenNumbers = [];
+  const rebaselined = [];
   // Обход верхнего уровня базы — намеренный, а не оставшийся от плоской эпохи.
   // Доктрина лежит подпапкой и побайтово общая с полкой: числа в ней — не счёт
   // сущностей ЭТОГО проекта, а иллюстрации («шестьдесят или сто двадцать раз в
@@ -30338,12 +30506,19 @@ if (mode === "verify") {
       // Образец в ограде кода — не запись базы: счёт в нём показан, а не заявлен.
       const prose = proseOf(path.join(BASE, name));
       const counted = withoutTitles(prose).split(NEWLINE);
+      const seated = baselineAtSeatEnd(name);
       for (const [i, line] of prose.split(NEWLINE).entries()) {
         if (/^##\s/.test(line))
           inBaseline = (CONFIG.baselineSections ?? []).some((one) =>
             line.includes(one),
           );
-        if (inBaseline) continue;
+        if (inBaseline) {
+          if (seated !== null && line.trim() !== "" && !seated.has(line.trim()))
+            rebaselined.push(
+              `${name}:${i + 1} — базовая линия правлена после конца посадки (\`${seatEnd().slice(0, 7)}\`): это замер дня посадки, текущие числа даёт команда`,
+            );
+          continue;
+        }
         if (DECLARED_NUM.some((rx) => rx.test(line))) continue;
         const bare = outsideTicks(counted[i]).replace(NUMBERING, " ");
         const hit = bare.match(PROSE_NUM);
@@ -30389,6 +30564,10 @@ if (mode === "verify") {
     }));
     console.log(`  счётов вне формы: ${frozenNumbers.length}`);
     for (const f of frozenNumbers) console.log("    " + f);
+    if (seatEnd() !== null) {
+      console.log(`  строк базовой линии правлено после посадки: ${rebaselined.length}`);
+      for (const f of rebaselined) console.log("    " + f);
+    }
     if (seedDriftNote(frozenNumbers) !== "") console.log(seedDriftNote(frozenNumbers));
   });
   checkStep(() => {

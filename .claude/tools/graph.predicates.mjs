@@ -6200,6 +6200,13 @@ export const PREDICATE_CASES = [
   ["isRulesState", { session: "s1", seen: { a: 1 }, own: [] }, false],
   ["isRulesState", { seen: {}, own: [] }, false],
   ["isRulesState", "x", false],
+  // --- isCodeReadState: сессия и прочитанные пути ---
+  ["isCodeReadState", { session: "s1", files: ["src/app/App.tsx"] }, true],
+  ["isCodeReadState", { session: "s1", files: [] }, true],
+  ["isCodeReadState", { session: "s1", files: [3] }, false],
+  ["isCodeReadState", { session: 1, files: [] }, false],
+  ["isCodeReadState", { files: [] }, false],
+  ["isCodeReadState", null, false],
   // --- isPinnedSpec: версия зависимости закреплена (`R1-бис`) ---
   ["isPinnedSpec", "3.9.10", true],
   ["isPinnedSpec", "=3.9.10", true],
@@ -7488,6 +7495,10 @@ export const isRulesState = (state) =>
   isPlain(state.seen) &&
   Object.values(state.seen).every((one) => typeof one === "string") &&
   isTexts(state.own);
+
+/** Состояние прочитанного кода: сессия и пути от корня. */
+export const isCodeReadState = (state) =>
+  isPlain(state) && typeof state.session === "string" && isTexts(state.files);
 
 /** Закреплена ли версия зависимости в манифесте (`R1-бис`): точная версия,
  * псевдоним `npm:` с точной версией либо коммит git. Локальный пакет —
