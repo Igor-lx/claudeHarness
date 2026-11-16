@@ -8994,9 +8994,10 @@ if (mode === "stop") {
       process.exit(0);
     }
     // Ответ хода ручной вызов не видит: пауза о прочитанном коде — по сессии.
-    state.pause = readOnly
-      ? { digest: barDigest("прочитан код " + codeRead.session), reason, at: new Date().toISOString(), files: codeRead.files }
-      : { digest: holdDigest, reason, at: new Date().toISOString(), files: holdFiles };
+    const held = readOnly
+      ? { digest: barDigest("прочитан код " + codeRead.session), files: codeRead.files }
+      : { digest: holdDigest, files: holdFiles };
+    state.pause = { digest: held.digest, reason, at: new Date().toISOString(), files: held.files };
     state.blocks = null;
     save();
     console.log("=== Пауза поставлена ===");

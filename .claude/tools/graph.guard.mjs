@@ -9,6 +9,8 @@
  * протокол платится на каждом обращении после чтения
  * (`.claude/rationale/loop.md`, раздел «Соразмерность: что читать под задачу»). */
 
+import { parseJson } from "./graph.predicates.mjs";
+
 /** Заголовок раздела, который читают из протокола. */
 export const MODEL_TITLE = "## Модель предмета";
 /** Столько строк `Read` отдаёт без `limit`. */
@@ -137,7 +139,7 @@ export const lastAnswerOf = (jsonl) => {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     let one;
     try {
-      one = JSON.parse(lines[i]);
+      one = parseJson(lines[i]);
     } catch {
       continue;
     }

@@ -2562,7 +2562,7 @@ it("каждое чтение часов машины объявлено, а л�
     ["graph.mjs", [
       ['JSON.stringify({ at: new Date().toISOString(), command: "git commit" })', "след стража: момент по UTC, читается разностью моментов"],
       ["const ageS = (Date.now() - Date.parse(trace?.at)) / 1000;", "возраст следа стража: разность моментов, от пояса не зависит"],
-      ["state.pause = { digest: holdDigest, reason, at: new Date().toISOString(), files: holdFiles };", "момент паузы: день из него берёт `localDay`"],
+      ["state.pause = { digest: held.digest, reason, at: new Date().toISOString(), files: held.files };", "момент паузы: день из него берёт `localDay`"],
       ["state.trace = { digest: holdDigest, at: new Date().toISOString(), files: holdFiles, fault: holdFault };", "момент следа ворот конца хода"],
     ]],
     ["graph.seat.mjs", [
@@ -2670,6 +2670,7 @@ it("каждый файл состояния обвязки назван вме�
   const STATE = new Map([
     ["claude-harness-stop.json", "readOwn: порчу называет сверка «Файл, написанный обвязкой, читается»"],
     ["claude-harness-rules.json", "readOwn: то же"],
+    ["claude-harness-read.json", "readOwn: то же; порченое — прочитанного нет, ход не держится"],
     ["claude-harness-rules-", "readOwn: то же, вне git — во временной папке"],
     ["claude-harness-guard.json", "readJson: то же; след без команды — хуки названы неисполняемыми"],
     ["claude-harness-hook.json", "порча — «отказа ещё не было»: ход держится снова; тест обёртки хуков"],
