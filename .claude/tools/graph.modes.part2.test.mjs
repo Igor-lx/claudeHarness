@@ -4554,6 +4554,14 @@ describe("находки мини-стенда: факты, долг, отлож
       expect(get("Новые якоря — с цитатой")).toEqual([
         expect.stringContaining("App.tsx:3` — якорь без цитаты"),
       ]);
+      // След прогонов инструмента — данные, а не запись базы: адрес в нём не якорь.
+      fs.writeFileSync(
+        path.join(box, ".context", "bar-probe-ledger.json"),
+        JSON.stringify([{ outcome: "критерий назван, адрес другой: `src/app/App.tsx:4`" }]) + "\n",
+      );
+      expect(get("Новые якоря — с цитатой")).toEqual([
+        expect.stringContaining("App.tsx:3` — якорь без цитаты"),
+      ]);
       fs.writeFileSync(
         idioms,
         fs.readFileSync(idioms, "utf8").split("\n```\n")[0] + "\n",

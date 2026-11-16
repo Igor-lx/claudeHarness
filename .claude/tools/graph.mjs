@@ -24194,6 +24194,12 @@ if (mode === "verify") {
         CONFIG.barProtocol == null
           ? null
           : norm(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
+      // Следы прогонов, которые пишет сам инструмент, — данные, а не записи
+      // базы: суд пробы кладёт адрес «путь:строка» в свой след, и сверка
+      // звала его якорем без цитаты (стенд проб прогона `2026-11-14`).
+      const toolOwn = new Set(
+        partToolFiles().map((one) => norm(path.relative(REPO, one))),
+      );
       // Протоколы перехода — та же форма режима, что и протокол текущей работы.
       const barDir =
         barTransitionDir() === null
@@ -24225,7 +24231,7 @@ if (mode === "verify") {
             at = Number(hunk[1]);
             continue;
           }
-          if (file === barFile) continue;
+          if (file === barFile || toolOwn.has(file)) continue;
           if (barDir !== null && file.startsWith(barDir)) continue;
           if (!line.startsWith("+") || line.startsWith("+++")) continue;
           const lineNo = at;
