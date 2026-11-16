@@ -3260,14 +3260,14 @@
     },
     {
       "criterion": "C5",
-      "why": "сосед правленого отвечает верно, только если запись заголовка позвали раньше чтения длины",
+      "why": "сосед правленого: эхо заголовка верно, только пока эффект записи выполняется раньше эффекта чтения — их связывает переменная модуля",
       "change": "сосед",
       "into": [
         {
           "role": "виновник",
           "file": "модуль",
-          "text": "let heldTitle = \"\";\nexport const holdTitle = (title) => {\n  heldTitle = title.trim();\n};\nexport const heldTitleLength = () => heldTitle.length;",
-          "ts": "let heldTitle = \"\";\n\nexport const holdTitle = (title: string): void => {\n  heldTitle = title.trim();\n};\n\nexport const heldTitleLength = (): number => heldTitle.length;"
+          "text": "import { useEffect } from \"react\";\nlet lastTitle = \"\";\nexport const useTitleRecorder = (title) => {\n  useEffect(() => {\n    lastTitle = title;\n  }, [title]);\n};\nexport const useTitleEcho = () => {\n  useEffect(() => {\n    document.title = lastTitle;\n  }, []);\n};",
+          "ts": "import { useEffect } from \"react\";\n\nlet lastTitle = \"\";\n\nexport const useTitleRecorder = (title: string): void => {\n  useEffect(() => {\n    lastTitle = title;\n  }, [title]);\n};\n\nexport const useTitleEcho = (): void => {\n  useEffect(() => {\n    document.title = lastTitle;\n  }, []);\n};"
         }
       ]
     },
@@ -3299,20 +3299,20 @@
     },
     {
       "criterion": "K2",
-      "why": "сосед правленого и второй узел проверяют один и тот же внешний ответ каждый по-своему: границы нет",
+      "why": "сосед правленого и второй узел проверяют одно и то же поле одного внешнего входа каждый сам: границы, где неизвестное становится известным, нет",
       "change": "сосед",
       "into": [
         {
           "role": "виновник",
           "file": "модуль",
-          "text": "export const headingOf = (payload) =>\n  typeof payload === \"object\" && payload !== null && \"heading\" in payload\n    ? String(payload.heading)\n    : \"\";",
-          "ts": "export const headingOf = (payload: unknown): string =>\n  typeof payload === \"object\" && payload !== null && \"heading\" in payload\n    ? String(payload.heading)\n    : \"\";"
+          "text": "export const titleOf = (payload) =>\n  typeof payload === \"object\" && payload !== null && \"title\" in payload\n    ? String(payload.title)\n    : \"\";",
+          "ts": "export const titleOf = (payload: unknown): string =>\n  typeof payload === \"object\" && payload !== null && \"title\" in payload\n    ? String(payload.title)\n    : \"\";"
         },
         {
           "role": "второй",
           "file": "модуль",
-          "text": "export const summaryOf = (payload) =>\n  typeof payload === \"object\" && payload !== null && \"summary\" in payload\n    ? String(payload.summary)\n    : \"\";",
-          "ts": "export const summaryOf = (payload: unknown): string =>\n  typeof payload === \"object\" && payload !== null && \"summary\" in payload\n    ? String(payload.summary)\n    : \"\";"
+          "text": "export const titleLength = (payload) =>\n  typeof payload === \"object\" && payload !== null && \"title\" in payload\n    ? String(payload.title).length\n    : 0;",
+          "ts": "export const titleLength = (payload: unknown): number =>\n  typeof payload === \"object\" && payload !== null && \"title\" in payload\n    ? String(payload.title).length\n    : 0;"
         }
       ],
       "culprits": [
