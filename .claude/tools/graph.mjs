@@ -18,7 +18,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
@@ -685,7 +685,13 @@ if (mode === "guard") {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
     const at = path.resolve(process.cwd(), target);
     const inside = (dir) => at === dir || at.startsWith(dir + path.sep);
-    return inside(root) && !inside(path.resolve(tmpdir())) ? target : "";
+    let temp = null;
+    try {
+      temp = path.resolve(systemTemp());
+    } catch {
+      // Негодной временной папки нет — исключать нечего.
+    }
+    return inside(root) && (temp === null || !inside(temp)) ? target : "";
   })();
   if (hook) {
     const stale = rulesFreshnessStep(said);
