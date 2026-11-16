@@ -1449,7 +1449,7 @@ const UNSEEN = {
   race:
     "асинхронный результат, который пишут не сеттером: в хранилище, в ссылку, в поле — признак гонки ставится, когда в файле есть `await` либо `.then` и запись сеттером",
   flag: "флаг без пометки типа и без умолчания — признак ищет `: boolean` и умолчание `true` либо `false`",
-  list: "список, который рисуют не через `.map` в разметке: компонент списка, цикл, виртуальный список — признак видит `.map` в фигурных скобках разметки",
+  list: "список, который рисуют не через `.map` в разметке и не элементом, положенным в массив: компонент списка, виртуальный список — признак видит `.map` в фигурных скобках разметки и `push` элемента разметки",
   motion:
     "движение средствами, которых нет в образце: `setInterval` со сдвигом, `anime`, `react-transition-group`, `useTransition` — образец знает `requestAnimationFrame`, `animate`, `motion`, `gsap`, `useSpring` и движение листа стилей",
   method: "метод класса и объекта — тела признак ищет у `function` и у `const` со стрелкой",
@@ -3702,6 +3702,9 @@ const codeSignalsOf = (file, text, own) => {
     each(/\{\s*[\w$]+(?:\s*\??\.\s*[\w$]+)*\s*\??\.\s*map\s*\(/g, bare, (m) =>
       at("список", m.index, m[0].replace(/^\{\s*/, ""), positional ? "ключ по позиции" : ""),
     );
+    // Список, нарисованный циклом: элемент разметки кладут в массив. Свод
+    // 3.3.4 прогона `2026-11-14` пропустил журнал, собранный `for … push`.
+    each(/\.\s*push\s*\(\s*<[A-Za-z]/g, bare, (m) => at("список", m.index, "push", positional ? "ключ по позиции" : ""));
     each(/\bvalue=\{\s*[{[]/g, bare, (m) => at("контекст", m.index, "value"));
   }
   each(
@@ -5820,6 +5823,8 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (id !== requestId) return;\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (v !== latestValue) return;\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, idx) => <li key={idx}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:имя/сокращение"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n};", "3:список"],
+  ["signalsSummary", "src/a.tsx\nexport const add = (rows, row) => {\n  rows.push(row <1 ? 1 : row);\n};", ""],
   ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, index) => <li key={index}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
   ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, rowIndex) => <li key={rowIndex}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
   ["signalsSummary", "src/a.tsx\nexport const A0 = () => <div onScroll={go} />;\nexport const A1 = () => <div onMouseMove={go} />;\nexport const A2 = () => <div onPointerMove={go} />;\nexport const A3 = () => <div onTouchMove={go} />;\nexport const A4 = () => <div onWheel={go} />;\nexport const A5 = () => <div onDrag={go} />;\nexport const A6 = () => <div onDragOver={go} />;\nexport const watcher = new ResizeObserver(onResize);", "1:частое;2:частое;3:частое;4:частое;5:частое;6:частое;7:частое;8:частое"],
