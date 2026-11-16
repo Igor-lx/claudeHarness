@@ -550,6 +550,21 @@ describe("страж обхода ворот", () => {
       expect(ask(home, fine).status, fine).toBe(0);
   }, 180000);
 
+  // Работники посадки `2026-11-15` правили файлы проекта скриптом, записанным
+  // оболочкой. Решено разработчиком `2026-11-16`, вопрос 25.
+  it("останавливает запись файла проекта оболочкой, называя Write и Edit, а временное вне проекта пропускает", () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    for (const write of ["cat > zz-notes.md <<'EOF'\nx\nEOF", "node -e 'console.log(1)' >> .context/zz.md", "npm test | tee zz-run.log"]) {
+      const stopped = ask(home, write);
+      expect(stopped.status, write).toBe(2);
+      expect(stopped.stderr).toContain("пишет файл проекта оболочкой");
+      expect(stopped.stderr).toContain("инструментом Write и правят инструментом Edit");
+    }
+    const temp = path.join(os.tmpdir(), "zz-guard.log");
+    for (const fine of ["npm run check > " + temp + " 2>&1", "npm test 2>/dev/null", "node -e 'const f = (a) => a > 1'"])
+      expect(ask(home, fine).status, fine).toBe(0);
+  }, 180000);
+
   it("останавливает чтение страницы свода оболочкой, называя Read, и пропускает остальное", () => {
     const home = path.join(TOOL_DIR, "..", "..");
     // Страница и файл ключей лежат в одной папке, и отказ называет, откуда

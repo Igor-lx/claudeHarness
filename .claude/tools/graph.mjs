@@ -18,7 +18,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 
 // Словарь области — чистые функции от пути, вынесенные ради одного: решение
@@ -42,6 +42,7 @@ import {
   recipeStepFromSeed,
   gitHookBypass,
   shellVariableOf,
+  shellWriteTargetOf,
   pageReadByShell,
   protocolReadByShell,
   BAR_PROTOCOL_FILE,
@@ -675,9 +676,20 @@ if (mode === "guard") {
   const page = pageReadByShell(command);
   const protocol = await protocolFault(read, command);
   const variable = shellVariableOf(command);
+  // Файл проекта пишут Write и правят Edit, а не перенаправлением оболочки:
+  // запись мимо них не читает файл перед правкой и не оставляет в журнале
+  // сессии, что изменилось. Временное вне проекта пишут как угодно.
+  const written = (() => {
+    const target = shellWriteTargetOf(command);
+    if (target === "" || target.startsWith("/dev/")) return "";
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const at = path.resolve(process.cwd(), target);
+    const inside = (dir) => at === dir || at.startsWith(dir + path.sep);
+    return inside(root) && !inside(path.resolve(tmpdir())) ? target : "";
+  })();
   if (hook) {
     const stale = rulesFreshnessStep(said);
-    if (why === "" && page === "" && protocol === "" && variable === "") {
+    if (why === "" && page === "" && protocol === "" && variable === "" && written === "") {
       if (stale !== "")
         console.log(
           JSON.stringify({
@@ -706,6 +718,14 @@ if (mode === "guard") {
           "Страницы перечисляет `node .claude/tools/graph.mjs bar-read`, путь к файлу ключей печатает `bar`; открыть — Read.\n",
       );
     else if (protocol !== "") process.stderr.write(protocol);
+    else if (variable === "")
+      process.stderr.write(
+        "Обвязка: команда пишет файл проекта оболочкой (`" +
+          written +
+          "`).\n" +
+          "Файл проекта создают инструментом Write и правят инструментом Edit; вывод команды, который нужно сохранить, кладут вне проекта — во временную папку сессии.\n" +
+          "Порядок — `.claude/rules/environment.md`, раздел «Отсюда раздел труда, а не отказ от Bash».\n",
+      );
     else
       process.stderr.write(
         "Обвязка: в команде переменная оболочки `" +
@@ -735,7 +755,14 @@ if (mode === "guard") {
       ? "  переменной оболочки нет"
       : "    переменная оболочки: " + variable,
   );
-  process.exit(why === "" && page === "" && protocol === "" && variable === "" ? 0 : 1);
+  console.log(
+    written === ""
+      ? "  записи файла проекта оболочкой нет"
+      : "    запись файла проекта оболочкой: " + written,
+  );
+  process.exit(
+    why === "" && page === "" && protocol === "" && variable === "" && written === "" ? 0 : 1,
+  );
 }
 
 // Посадка и стенд проб собираются до настройки проекта: в мастерской обвязки
@@ -14958,6 +14985,16 @@ const barModelOf = (
       );
     }
   }
+  // Соседи области на правке: признаки модели — и о них. Доктрина велит
+  // найденное в области чинить тем же заходом, а строка на всю работу у
+  // критерия вне ядра без строки о соседе судилась по правленому: своды
+  // прогона плана `2026-11-14` пропустили посадки в соседе девять раз из
+  // десяти. Сдвига у неправленого соседа нет, и вопрос только о сдвиге на
+  // нём не встаёт. Решено разработчиком `2026-11-16`, вопрос 24.
+  if (change)
+    for (const f of area)
+      if (!inFocus.has(f) && files.includes(f) && !isTest(f) && SYMPTOM_SORTS.some(want))
+        addSignals(f, symptomsOf(f));
 
   // Тесты предмета — их признаки: без утверждения, подмена, «изменилось»,
   // снимок. Тест читают ради кода, который он держит.

@@ -2133,25 +2133,6 @@ export const testFileFormOf = (id) =>
     ? TEST_FILE_FORM
     : "";
 
-/** Форма вне держателя у критерия вне ядра, чьи вопросы модели встают о
- * строках: на правке признаки модели собираются по правленым файлам, а
- * сосед из области получает одну сводную строку «сосед». Такой критерий
- * спрашивают строкой на всю работу, и нарушение в соседе, которого правка не
- * тронула, машина ему не подсказывает. Ядро узла соседи отвечают своей
- * строкой с опорой на строки модели о соседях, поэтому его форма не
- * касается. Сверка, читающая весь проект, видит соседа сама. Вычисляется,
- * а не пишется в `BAR_FORMS`, по той же причине, что форма о тесте.
- * Выведено: свод 3.3.2 прогона плана `2026-11-14` пропустил три посадки в
- * соседе и одну у владельца имени, снятого удалением. */
-export const NEIGHBOUR_FORM =
-  "нарушение в соседе, которого правка не тронула, — на правке признаки модели встают о правленых файлах, а сосед получает одну строку «сосед»";
-/** Общая форма о соседе у критерия либо пустая строка. */
-export const neighbourFormOf = (id) => {
-  if (BAR_CORE.has(id) || BAR_CHECKS[id] !== undefined) return "";
-  const rows = BAR_SIGNALS.filter((s) => s.ids.includes(id)).map((s) => MODEL_LEVEL[s.sort]);
-  return rows.some((level) => level === "единица" || level === "узел") ? NEIGHBOUR_FORM : "";
-};
-
 /** Решения о формах, разобранные по критерию: из них печатают страницу
  * критерия и матрицу. Общие формы — о тестовом файле и о точечном исключении
  * линта — дописываются к списку; закрытый набор при них — противоречие, и его
@@ -2159,7 +2140,7 @@ export const neighbourFormOf = (id) => {
 export const BAR_FORMS_SPLIT = Object.fromEntries(
   Object.entries(BAR_FORMS).map(([id, raw]) => {
     const one = splitForms(raw);
-    const extra = [testFileFormOf(id), neighbourFormOf(id), BAR_LINT[id] === undefined ? "" : LINT_EXEMPT_FORM].filter(
+    const extra = [testFileFormOf(id), BAR_LINT[id] === undefined ? "" : LINT_EXEMPT_FORM].filter(
       (form) => form !== "",
     );
     return [
@@ -5557,12 +5538,6 @@ export const PREDICATE_CASES = [
   ["barGripOf", "J9|", "вниманием"],
   ["barGripOf", "G3|лозунг", "лозунг"],
   ["barGripOf", "Z9|", ""],
-  ["neighbourFormOf", "C5", NEIGHBOUR_FORM],
-  ["neighbourFormOf", "K2", NEIGHBOUR_FORM],
-  ["neighbourFormOf", "A3", NEIGHBOUR_FORM],
-  ["neighbourFormOf", "A1", ""],
-  ["neighbourFormOf", "H4", ""],
-  ["neighbourFormOf", "A8", ""],
   ["testFileFormOf", "H7", TEST_FILE_FORM],
   ["testFileFormOf", "B4", TEST_FILE_FORM],
   ["testFileFormOf", "H3", ""],
@@ -5585,10 +5560,10 @@ export const PREDICATE_CASES = [
   // --- barFormsOf: решение о формах вне держателя ---
   ["barFormsOf", "H3", "закрыто"],
   // Три записанные формы и общая — о тестовом файле.
-  ["barFormsOf", "B4", "форм: 5"],
+  ["barFormsOf", "B4", "форм: 4"],
   // Две записанные и общая о точечном исключении линта; о тестовом файле
   // формы нет — линт тесты читает.
-  ["barFormsOf", "E2", "форм: 4"],
+  ["barFormsOf", "E2", "форм: 3"],
   ["barFormsOf", "J4", ""],
   ["barFormsOf", "Z9", ""],
   // --- commentlessOf, escapeRe, joinsTwo: общие помощники разбора ---
@@ -5995,6 +5970,15 @@ export const PREDICATE_CASES = [
   ["sandboxEscape", { edits: [{ file: "docs/a.md", rename: "../b.md" }] }, ""],
   ["sandboxEscape", { edits: [{ file: "a.md", rename: "../b.md" }] }, "../b.md"],
   // --- shellVariableOf: переменная оболочки в команде ---
+  // --- shellWriteTargetOf: запись в файл оболочкой ---
+  ["shellWriteTargetOf", "npm run check", ""],
+  ["shellWriteTargetOf", "cat > notes.md <<'EOF'\nconst a = b > c;\nEOF", "notes.md"],
+  ["shellWriteTargetOf", "node build.mjs >> out/log.txt 2>&1", "out/log.txt"],
+  ["shellWriteTargetOf", "npm test 2>&1 | tee -a \"run log.txt\"", "run log.txt"],
+  ["shellWriteTargetOf", "npm test 2>&1 >&2", ""],
+  ["shellWriteTargetOf", "node -e 'const f = (a) => a > 1' && echo \"a > b\"", ""],
+  ["shellWriteTargetOf", "git log &> /tmp/x.log", "/tmp/x.log"],
+  ["shellWriteTargetOf", "echo x > 'my log.txt'", "my log.txt"],
   ["shellVariableOf", "npm run check", ""],
   ["shellVariableOf", 'npm run check 2>&1 | tail -60; echo "EXIT ${PIPESTATUS[0]}"', "${PIPESTATUS[0]}"],
   ["shellVariableOf", "npm run check > out.txt 2>&1; echo EXIT $?", "$?"],
@@ -7329,6 +7313,66 @@ export const pageReadByShell = (command) =>
  * в теле встроенного документа с кавычками у метки подстановки нет;
  * подстановка команды `$(…)` переменной не считается: её среда пропускает
  * по частям. Выведено: работники посадки `2026-11-07`. */
+/** Первая цель записи в файл оболочкой: перенаправление `>`, `>>`, `>|`,
+ * `&>` либо `tee`, вне кавычек и вне тела heredoc. Пусто — записи нет;
+ * дескриптор (`2>&1`, `>&2`) файлом не считается. Лежит ли цель в проекте,
+ * решает страж: признаку путь проекта не нужен. Решено разработчиком
+ * `2026-11-16`, вопрос 25: оба работника посадки правили файлы проекта
+ * скриптом, записанным оболочкой, в обход инструментов правки. */
+export const shellWriteTargetOf = (command) => {
+  const kept = [];
+  let until = null;
+  for (const line of String(command).split(NEWLINE)) {
+    if (until !== null) {
+      if (line.trim() === until) until = null;
+      continue;
+    }
+    kept.push(line);
+    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
+    if (doc !== null) until = doc[2];
+  }
+  const body = kept.join(NEWLINE);
+  const word = (from) => {
+    const m = /^\s*("[^"]*"|'[^']*'|[^\s;&|<>()]+)/.exec(body.slice(from));
+    return m === null ? "" : m[1].replace(/^(["'])(.*)\1$/, "$2");
+  };
+  let quote = null;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    if (quote !== null) continue;
+    if (ch === "'") {
+      quote = "'";
+      continue;
+    }
+    if (ch === ">") {
+      let at = i + 1;
+      if (body[at] === ">" || body[at] === "|") at += 1;
+      if (body[at] === "&") continue;
+      const target = word(at);
+      if (target !== "") return target;
+      continue;
+    }
+    if (/^tee\b/.test(body.slice(i)) && (i === 0 || /[\s|;&(]/.test(body[i - 1]))) {
+      const rest = body.slice(i + 3).replace(/^(\s+-[A-Za-z]+)+/, "");
+      const target = word(body.length - rest.length);
+      if (target !== "") return target;
+    }
+  }
+  return "";
+};
+
 export const shellVariableOf = (command) => {
   const kept = [];
   let until = null;
