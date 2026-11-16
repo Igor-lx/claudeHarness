@@ -5671,7 +5671,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const q = new URLSearchParams(location.search);", "1:внешнее/адрес;1:внешнее/адрес"],
   ["signalsSummary", "src/a.ts\nexport const mode = process.env.MODE;", "1:внешнее/окружение"],
   ["signalsSummary", "src/a.ts\nexport const data = JSON.parse(text);", "1:внешнее/разбор"],
-  ["signalsSummary", "src/a.ts\nexport const titleOf = (payload: unknown): string =>\n  typeof payload === \"string\" ? payload : \"\";", "1:внешнее/неизвестное"],
+  ["signalsSummary", "src/a.ts\nexport const inputLabel = (payload: unknown): string =>\n  typeof payload === \"string\" ? payload : \"\";", "1:внешнее/неизвестное"],
   ["signalsSummary", "src/a.ts\nexport const parsed = (text: string): unknown => text;", ""],
   ["signalsSummary", "src/a.ts\nexport const f = (): void => {\n  try {\n    g();\n  } catch (error: unknown) {\n    throw error;\n  }\n};", "5:бросок"],
   ["signalsSummary", "src/a.ts\nexport const data = JSON.stringify(value);", ""],
