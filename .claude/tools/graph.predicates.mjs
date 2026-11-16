@@ -1876,7 +1876,7 @@ export const BAR_FORMS = {
   K1: [UNSEEN.outside],
   K2: [
     UNSEEN.outside,
-    "проверка, рассыпанная по потребителям, — признак видит место, где внешнее входит, а не то, где его проверяют",
+    "проверка, рассыпанная по потребителям, у входа, не объявленного `unknown`, — признак видит место, где внешнее входит, и параметр типа `unknown`, а не любое место проверки",
   ],
   K3: [
     UNSEEN.network,
@@ -3277,6 +3277,10 @@ const OUTSIDE_KINDS = [
     /\bprocess\s*\.\s*env\b(?!\s*\.\s*NODE_ENV\b)|\bimport\s*\.\s*meta\s*\.\s*env\b(?!\s*\.\s*(?:DEV|PROD|MODE|SSR|BASE_URL)\b)/g,
   ],
   ["разбор", /\bJSON\s*\.\s*parse\s*\(/g],
+  // Вход, объявленный неизвестным, — место, где неизвестное проверяют: две
+  // такие проверки одного входа и есть проверка, рассыпанная по
+  // потребителям. Свод 3.5 прогона `2026-11-14` её не увидел.
+  ["неизвестное", /(?<!\bcatch\s*)[(,]\s*[\w$]+\s*\??\s*:\s*unknown\b/g],
   [
     "сообщение",
     /\bpostMessage\s*\(|\.\s*onmessage\b|\bnew\s+(?:BroadcastChannel|MessageChannel)\s*\(/g,
@@ -5667,6 +5671,9 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const q = new URLSearchParams(location.search);", "1:внешнее/адрес;1:внешнее/адрес"],
   ["signalsSummary", "src/a.ts\nexport const mode = process.env.MODE;", "1:внешнее/окружение"],
   ["signalsSummary", "src/a.ts\nexport const data = JSON.parse(text);", "1:внешнее/разбор"],
+  ["signalsSummary", "src/a.ts\nexport const titleOf = (payload: unknown): string =>\n  typeof payload === \"string\" ? payload : \"\";", "1:внешнее/неизвестное"],
+  ["signalsSummary", "src/a.ts\nexport const parsed = (text: string): unknown => text;", ""],
+  ["signalsSummary", "src/a.ts\nexport const f = (): void => {\n  try {\n    g();\n  } catch (error: unknown) {\n    throw error;\n  }\n};", "5:бросок"],
   ["signalsSummary", "src/a.ts\nexport const data = JSON.stringify(value);", ""],
   ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"message\", onMessage);", "1:внешнее/сообщение"],
   ["signalsSummary", "src/a.ts\nlocalStorage.setItem(k, v);", "1:внешнее/хранилище;1:запись/хранилище"],
