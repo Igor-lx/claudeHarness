@@ -28731,6 +28731,9 @@ if (mode === "verify") {
   const SHELF_ROOT = checkStep(() =>
     SHELF === null ? "\u0000нет полки" : norm(SHELF),
   );
+  const transitionDir = checkStep(() =>
+    barTransitionDir() === null ? null : norm(barTransitionDir()),
+  );
   const docSources = checkStep(() =>
     [
       // База обходится ВГЛУБЬ. Плоский обход брал только верхний уровень, а база
@@ -28746,6 +28749,10 @@ if (mode === "verify") {
           // Корпус — то, что видит git: страницы чтения свода игнорируют себя
           // сами, а обход базы этого не спрашивал и читал их прозой базы.
           if (OUT_OF_TREE.has(e) || gitIgnored(full)) continue;
+          // Протоколы перехода пишет инструмент о коде на день печати: после
+          // приведения раскладки их пути законно прежние, и сверка звала их
+          // путями в никуда (работник шага 4.3 прогона `2026-11-14`).
+          if (transitionDir !== null && full === transitionDir) continue;
           if (statSync(full).isDirectory()) out.push(...walkBase(full));
           else if (e.endsWith(".md"))
             out.push([norm(path.relative(BASE, full)), full]);

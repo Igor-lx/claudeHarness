@@ -3698,6 +3698,10 @@ describe("ядро по предметам уровня: правка, чтен�
       // о всём проекте, и не заданные здесь они ложились на первую правку.
       const app = fs.readFileSync(path.join(dir, "app.md"), "utf8");
       expect(app).toMatch(/^\| A6 \|/m);
+      // Протокол перехода пишет инструмент о коде на день печати: его
+      // прежний путь после приведения раскладки сверка путей не зовёт.
+      fs.appendFileSync(path.join(dir, "app.md"), "\nПрежний путь `src/zzGone.ts`.\n");
+      expect((verifyIn(box).get("Пути в обратных кавычках") ?? []).join("\n")).not.toContain("zzGone");
       expect(app).toMatch(/^\| G7 \|/m);
       expect(app).toMatch(/^\| J2 \|/m);
       // Предмет перехода — проект вместе с манифестом: о зависимостях
