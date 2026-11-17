@@ -64,8 +64,11 @@ delete process.env.CLAUDE_CODE_CHILD_SESSION;
  * Насыщенность считается числом хуков: файл, держащий состояние и эффекты,
  * заводит в режимах ветки, которых простой файл не заводит, — долг базы по
  * предмету, порядок, радиус. Выбор детерминирован: при равном счёте берётся
- * первый по алфавиту.
+ * первый по кодам знаков, а не по локали машины.
  */
+export const richestOf = (files, score) =>
+  [...files].sort((a, b) => score(b) - score(a) || (a < b ? -1 : a > b ? 1 : 0))[0];
+
 export const SUBJECT = (() => {
   const root = path.join(TOOL_DIR, "..", "..");
   const src = path.join(root, "src");
@@ -83,8 +86,7 @@ export const SUBJECT = (() => {
   if (!out.length) return path.relative(root, fileURLToPath(import.meta.url));
   const HOOKS = /use[A-Z][A-Za-z]*\s*\(/g;
   const score = (f) => (fs.readFileSync(f, "utf8").match(HOOKS) ?? []).length;
-  out.sort((a, b) => score(b) - score(a) || (a < b ? -1 : a > b ? 1 : 0));
-  return path.relative(root, out[0]).split(path.sep).join("/");
+  return path.relative(root, richestOf(out, score)).split(path.sep).join("/");
 })();
 
 /** Режимы вне дымового прогона — с причиной у каждого.

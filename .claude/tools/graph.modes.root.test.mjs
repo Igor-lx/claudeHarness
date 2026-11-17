@@ -8,6 +8,7 @@ import {
   TOOL_DIR,
   TOOL,
   SUBJECT,
+  richestOf,
   OUTSIDE,
   modes,
   smoke,
@@ -59,6 +60,17 @@ afterAll(() => {
   for (const [name, body] of baseWas)
     fs.writeFileSync(path.join(BASE_DIR, name), body);
 });
+/** На каркасе посадки у всех файлов исходников ноль хуков, и предмет решает
+ * порядок при равном счёте. Шаг 6.1 прогона `2026-11-14`. */
+describe("предмет дымового набора выбирается одинаково на любой машине", () => {
+  it("больший счёт первым; при равном — первый по кодам знаков, а не по локали", () => {
+    const hooks = { "src/a.ts": 1, "src/m.ts": 3, "src/z.ts": 2 };
+    expect(richestOf(Object.keys(hooks), (f) => hooks[f])).toBe("src/m.ts");
+    expect(richestOf(["src/b.ts", "src/B.ts", "src/a.ts"], () => 0)).toBe("src/B.ts");
+    expect(richestOf(["src/a.ts", "src/B.ts"], () => 0)).toBe("src/B.ts");
+  });
+});
+
 // Правило раскладки держит этот тест, а не справочник: тест из корня
 // посадки, положенный в часть, шёл бы параллельно с хуками базы выше.
 describe("корень посадки трогают только тесты этого файла", () => {

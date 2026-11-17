@@ -4158,6 +4158,32 @@ describe("песочница прерванного прогона не оста
     }
   });
 
+  /** Мутационный прогон грузит конфиг тестов в нескольких процессах разом, и
+   * каждый подметает: запись, снятая соседом между перечнем и чтением,
+   * роняла прогон `ENOENT`. Шаг 6.1 прогона `2026-11-14`. */
+  it("запись, снятая другим подметающим посреди обхода, пропускается", async () => {
+    const { sweepDeadSandboxes, ownSandbox } = await import("./graph.seat.mjs");
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "sweep-"));
+    try {
+      for (const id of ["1", "2"]) fs.mkdirSync(path.join(parent, id));
+      ownSandbox(path.join(parent, "1"), 101);
+      ownSandbox(path.join(parent, "2"), 202);
+      let asked = 0;
+      const neighbourSweeps = () => {
+        asked += 1;
+        if (asked === 1) for (const name of fs.readdirSync(parent)) fs.rmSync(path.join(parent, name), { recursive: true, force: true });
+        return true;
+      };
+      expect(sweepDeadSandboxes(parent, neighbourSweeps)).toEqual({ removed: [], ownerless: [] });
+      expect(fs.readdirSync(parent)).toEqual([]);
+      // Иная ошибка — не след соседа, она видна.
+      fs.mkdirSync(path.join(parent, "4.pid"));
+      expect(() => sweepDeadSandboxes(parent, () => false)).toThrow(/EISDIR/);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   /** Прерванный прогон тестов обвязки оставлял песочницы во временной папке
    * системы: двенадцать песочниц по `600M` заполнили диск облачной сессии. */
   it("тест идёт во временной папке своего прогона, и владелец её жив", async () => {

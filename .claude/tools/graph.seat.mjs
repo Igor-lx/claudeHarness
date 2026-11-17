@@ -812,16 +812,21 @@ export const sweepDeadSandboxes = (parent, alive = pidAlive) => {
   const names = readdirSync(parent);
   for (const name of names) {
     const at = path.join(parent, name);
-    if (name.endsWith(".pid")) {
-      const pid = Number(readFileSync(at, "utf8").trim());
-      if (Number.isInteger(pid) && pid > 0 && alive(pid)) continue;
-      const box = at.slice(0, -".pid".length);
-      rmSync(box, { recursive: true, force: true });
-      rmSync(at, { force: true });
-      removed.push(path.basename(box));
-      continue;
+    try {
+      if (name.endsWith(".pid")) {
+        const pid = Number(readFileSync(at, "utf8").trim());
+        if (Number.isInteger(pid) && pid > 0 && alive(pid)) continue;
+        const box = at.slice(0, -".pid".length);
+        rmSync(box, { recursive: true, force: true });
+        rmSync(at, { force: true });
+        removed.push(path.basename(box));
+        continue;
+      }
+      if (statSync(at).isDirectory() && !names.includes(name + ".pid")) ownerless.push(name);
+    } catch (e) {
+      // Подметают разом несколько прогонов: запись, снятая соседом, уже снята.
+      if (e.code !== "ENOENT") throw e;
     }
-    if (statSync(at).isDirectory() && !names.includes(name + ".pid")) ownerless.push(name);
   }
   return { removed, ownerless };
 };
