@@ -4706,23 +4706,12 @@ describe("папка на месте файла базы", () => {
 // либо отказывает на неизвестном ключе, либо объявлен с причиной.
 describe("ключ, которого режим не знает", () => {
   it("каждый режим отказывает на неизвестном ключе и называет его, либо объявлен с причиной", () => {
-    const REFUSES = ["bar", "blast", "brief", "cycles", "dead", "env", "levels", "mutated", "open", "plan", "repoint", "sizes", "tested", "tiers", "twins", "verify"];
+    const REFUSES = ["bar", "bar-fill", "bar-hold", "bar-probe", "bar-read", "blast", "brief", "cycles", "dead", "env", "falsify", "gate", "guard", "handoff", "levels", "mutated", "open", "plan", "repoint", "series", "sizes", "stop", "tested", "tiers", "transition", "twins", "verify"];
     const OWN = new Map([
-      ["bar-fill", "без протокола свода отказывает раньше ключа; ключи при протоколе проходом `2026-11-14` не читаны"],
-      ["bar-read", "то же"],
-      ["bar-hold", "ключ называет, код ноль: проходом не читан"],
       ["lint", "доводы идут программе звена, она и отказывает"],
       ["types", "доводы идут программе звена, она и отказывает"],
       ["seat", "свой разбор: тест «ключ, назвавший не то, — отказ до работы»"],
       ["refresh", "свой разбор: секция «Ключ режиму неизвестен»"],
-      ["bar-probe", "режим с побочным действием: проходом не читан"],
-      ["falsify", "режим с побочным действием: проходом не читан"],
-      ["handoff", "режим с побочным действием: проходом не читан"],
-      ["gate", "зовёт хук git: проходом не читан"],
-      ["guard", "зовёт хук среды: проходом не читан"],
-      ["stop", "зовёт хук среды: проходом не читан"],
-      ["series", "режим с побочным действием: проходом не читан"],
-      ["transition", "зовёт хук среды: проходом не читан"],
     ]);
     const source = fs.readFileSync(path.join(TOOL_DIR, "graph.mjs"), "utf8");
     const modes = [...new Set([...source.matchAll(/\bmode === "([a-z-]+)"/g)].map((m) => m[1]))].sort();
@@ -4737,6 +4726,13 @@ describe("ключ, которого режим не знает", () => {
         if (ran.status === 0 || !(ran.stdout + ran.stderr).includes("--zz-unknown")) silent.push(mode + ": код " + ran.status);
       }
       expect(silent, "режим принял неизвестный ключ без отказа").toEqual([]);
+      // Режим, чей довод — папка, ключ папкой не считает.
+      expect(fs.existsSync(path.join(box, "--zz-unknown"))).toBe(false);
+      // Ключ со значением и ключ хука проходят отказ: объявлены своим режимом.
+      for (const [mode, ...keys] of [["bar-probe", "--cost", "--session=00000000-0000-0000-0000-000000000000"], ["stop", "--session"], ["bar-hold", "--fired"]]) {
+        const ran = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), mode, ...keys], { cwd: box, encoding: "utf8" });
+        expect(ran.stdout + ran.stderr, mode).not.toContain("неизвестен ===");
+      }
       const full = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify", "--full"], { cwd: box, encoding: "utf8" });
       expect(full.stdout).not.toContain("Ключ режиму");
       const keyless = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "tiers", "--zz-unknown"], { cwd: box, encoding: "utf8" });

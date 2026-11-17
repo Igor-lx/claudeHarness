@@ -526,6 +526,40 @@ const sayLooked = (unit, n) => {
 };
 
 const mode = process.argv[2];
+// Ключ, которого режим не знает, — тоже отказ: `verify --ful` печатал
+// короткий вывод вместо полного и отдавал `0`, `handoff --zz` собирал снимок
+// в папку с именем ключа. Отказ стоит до любого режима: страж, расход пробы и
+// стенд отвечают раньше настройки проекта. Здесь объявлены режимы со
+// своими ключами целиком; `seat`, `env`, `refresh`, `lint`, `types` и режимы,
+// чей довод — путь, отказывают сами (тест «каждый режим отказывает на
+// неизвестном ключе»).
+const MODE_KEYS = {
+  cycles: [],
+  dead: [],
+  open: [],
+  repoint: [],
+  tiers: [],
+  verify: ["--full", "--held"],
+  "bar-fill": [],
+  "bar-read": ["--print", "--stale"],
+  "bar-hold": ["--fired"],
+  "bar-probe": ["--batch=", "--cost", "--criterion=", "--existing", "--machine", "--move", "--neighbour", "--new", "--plant=", "--removal", "--seed=", "--session=", "--stand-build", "--stand-check"],
+  falsify: [],
+  handoff: [],
+  gate: ["--message"],
+  guard: ["--hook"],
+  stop: ["--hook", "--pause", "--session"],
+  series: ["--commit", "--stage"],
+  transition: ["--hook"],
+};
+if (Object.hasOwn(MODE_KEYS, mode)) {
+  const unknownKeys = unknownFlagsOf(process.argv.slice(3), MODE_KEYS[mode]);
+  if (unknownKeys.length > 0) {
+    console.log("=== Ключ режиму `" + mode + "` неизвестен ===");
+    console.log("  " + unknownKeys.join(", ") + " — есть: " + (MODE_KEYS[mode].join(", ") || "ключей у режима нет"));
+    process.exit(1);
+  }
+}
 // Вывод git, который читают сверки, — один на любой машине: настройки цвета и
 // префиксов диффа у разработчика снимаются для каждого запуска git отсюда.
 pinGitOutput(process.env);
@@ -6253,19 +6287,6 @@ if (predicateFailures.length > 0) {
       "этого инструмента, и опечатка в имени режима сделала бы прогон зелёным",
       "при том, что не проверено ничего.",
     );
-    process.exit(1);
-  }
-}
-
-// Ключ, которого режим не знает, — тоже отказ: `verify --ful` печатал
-// короткий вывод вместо полного и отдавал `0`. Здесь объявлены режимы, которые
-// ключей не читают вовсе, и `verify` с его одним; прочие отказывают сами.
-const MODE_KEYS = { cycles: [], dead: [], open: [], repoint: [], tiers: [], verify: ["--full", "--held"] };
-if (Object.hasOwn(MODE_KEYS, mode)) {
-  const unknownKeys = unknownFlagsOf(process.argv.slice(3), MODE_KEYS[mode]);
-  if (unknownKeys.length > 0) {
-    console.log("=== Ключ режиму `" + mode + "` неизвестен ===");
-    console.log("  " + unknownKeys.join(", ") + " — есть: " + (MODE_KEYS[mode].join(", ") || "ключей у режима нет"));
     process.exit(1);
   }
 }
