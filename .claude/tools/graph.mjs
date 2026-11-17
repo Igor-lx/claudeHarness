@@ -6675,6 +6675,7 @@ const CHECK_SECTIONS = [
   "Таблица состава лежит в одном месте",
   "Файлы обвязки видны git",
   "Концы строк рабочего дерева сходятся с объявленными",
+  "Маркеров конфликта слияния нет",
   "Перечень папок полки полный",
   "Исключения сверок используются",
   "Списки исключений не разрослись (предупреждение, прогон не роняет)",
@@ -30100,6 +30101,67 @@ if (mode === "verify") {
         : `  расходятся: ${eolDrift.length}`,
     );
     for (const d of eolDrift) console.log("    " + d);
+  });
+
+  // 14a-9. Маркеров конфликта слияния нет.
+  //
+  // Развязка слияния, снятая `git add` без правки, оставляет в файле обе
+  // стороны между маркерами. В коде их ловит компилятор, а прозу базы,
+  // правила и `.gitignore` не разбирает ни одно звено: замерено пробой — с
+  // маркерами в карте и в правилах проекта прогон давал код ноль, а базу
+  // следующая сессия читала обеими сторонами сразу. Спрашивается каждый
+  // файл, который видит git, — в индексе и новый, без игнорируемого.
+  const conflictLeft = [];
+  let conflictLooked = 0;
+  let conflictBlind = false;
+  checkStep(() => {
+    let listing = "";
+    try {
+      listing = execFileSync(
+        "git",
+        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        {
+          cwd: REPO_AT,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          maxBuffer: CHILD_OUTPUT_BYTES,
+        },
+      );
+    } catch {
+      conflictBlind = true;
+      return;
+    }
+    // Неслитый файл git перечисляет по строке на каждую из трёх сторон.
+    for (const rel of new Set(listing.split("\0").filter(Boolean))) {
+      const at = path.join(REPO_AT, rel);
+      let text;
+      try {
+        if (!statSync(at).isFile()) continue;
+        text = readFileSync(at, "utf8");
+      } catch {
+        continue;
+      }
+      if (text.includes("\0")) continue;
+      conflictLooked += 1;
+      text.split(LF).forEach((line, i) => {
+        if (/^(<{7}|\|{7}|>{7})( |\r?$)/.test(line))
+          conflictLeft.push(
+            `${rel}:${i + 1} — маркер конфликта слияния: развязка оставила стороны; решить и снять маркеры`,
+          );
+      });
+    }
+  });
+  checkStep(() => {
+    checkHead("Маркеров конфликта слияния нет", () => ({
+      n: conflictLooked,
+      unit: "файлов, которые видит git",
+    }));
+    console.log(
+      conflictBlind
+        ? "  репозитория нет либо git недоступен — не сверено"
+        : `  маркеров: ${conflictLeft.length}`,
+    );
+    for (const d of conflictLeft) console.log("    " + d);
   });
   checkStep(() => {
     checkHead("Перечень папок полки полный", () => ({

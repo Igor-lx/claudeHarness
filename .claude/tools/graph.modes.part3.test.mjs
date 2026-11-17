@@ -4752,6 +4752,37 @@ describe("ключ, которого режим не знает", () => {
 // С `color.ui=always` у разработчика строки диффа приходили в кодах цвета, и
 // сверка якорей не видела добавленных. Тест держит вид: настройка git машины
 // не меняет вывода, который разбирает инструмент.
+// Развязка слияния, снятая `git add` без правки, оставляла маркеры в карте
+// и в правилах проекта, и прогон давал код ноль. Тест держит вид: маркер
+// конфликта в любом файле, который видит git, называет сверка.
+describe("маркеры конфликта слияния", () => {
+  it("маркер в файле индекса и в новом файле назван, подчёркнутый заголовок и игнорируемое — нет", () => {
+    const box = seatEmpty("conflict-left-");
+    try {
+      const git = (...args) =>
+        spawnSync("git", ["-c", "user.name=u", "-c", "user.email=u@local", ...args], { cwd: box, encoding: "utf8" });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      const mapAt = path.join(box, ".context", "00-map.md");
+      fs.appendFileSync(mapAt, "\n<<<<<<< HEAD\nкарта main\n=======\nкарта side\n>>>>>>> side\n");
+      const mapLines = fs.readFileSync(mapAt, "utf8").split("\n");
+      fs.mkdirSync(path.join(box, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(box, "docs", "zz-notes.md"), "Заголовок\n=======\n\nтекст\n||||||| base\n");
+      fs.mkdirSync(path.join(box, "bar-pages"), { recursive: true });
+      fs.writeFileSync(path.join(box, "bar-pages", "zz.md"), "<<<<<<< HEAD\n");
+      const named = verifyIn(box).get("Маркеров конфликта слияния нет") ?? [];
+      const at = (rel, line) => named.some((l) => l.startsWith(rel + ":" + line + " — маркер конфликта слияния"));
+      expect(at(".context/00-map.md", mapLines.indexOf("<<<<<<< HEAD") + 1), named.join("\n")).toBe(true);
+      expect(at(".context/00-map.md", mapLines.indexOf(">>>>>>> side") + 1), named.join("\n")).toBe(true);
+      expect(at("docs/zz-notes.md", 5), named.join("\n")).toBe(true);
+      expect(named, named.join("\n")).toHaveLength(3);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 describe("настройки git машины, меняющие вывод", () => {
   it("цвет, префиксы и внешний дифф машины не прячут добавленный якорь, а показ неотслеживаемых — новый файл", async () => {
     const box = seatEmpty("git-output-pins-");

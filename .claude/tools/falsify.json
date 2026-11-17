@@ -318,6 +318,11 @@
       "replace": "\"noUncheckedIndexedAccess\": false"
     },
     {
+      "section": "Маркеров конфликта слияния нет",
+      "file": ".gitignore",
+      "append": "<<<<<<< HEAD\nzz-main/\n=======\nzz-side/\n>>>>>>> side"
+    },
+    {
       "section": "Перечень папок полки полный",
       "file": ".claude/README.md",
       "find": "| `hooks/` | git-хук перед коммитом — ворота |",
