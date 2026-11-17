@@ -205,6 +205,37 @@ describe("ворота конца хода", () => {
     }
   }, 300000);
 
+  // Удаление файла среда спрашивает подтверждением: работник шага 5.2 прогона
+  // приёмки встал на «снести протокол». Свод заново — пустым протоколом.
+  it("правленый после печати протокол называет выход без удаления файла; пустой протокол собирается заново", () => {
+    const box = seatEmpty("bar-anew-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [graph, ...args], { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/App.tsx");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar", "app/App.tsx")).toContain("печать поставлена");
+      fs.appendFileSync(protoAt, "\nправка после печати\n");
+      const said = tool("bar", "app/App.tsx");
+      expect(said).toContain("протокол уже закрыт и правлен после этого");
+      expect(said).toContain("записать протокол");
+      expect(said).toContain("пустым инструментом Write");
+      expect(said).not.toContain("снести протокол");
+      fs.writeFileSync(protoAt, "");
+      tool("bar", "app/App.tsx");
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(/^- печать: `нет`$/m);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("отказ, пауза на вид правки, клапан со следом, печать снимает всё", () => {
     const box = seatEmpty("stop-");
     try {
