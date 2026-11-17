@@ -192,6 +192,7 @@ import {
   runTool,
   CHILD_OUTPUT_BYTES,
   COMMON_GIT_DIR_ARGS,
+  pinGitOutput,
   insideOf,
   ownHooksOff,
   writeForwarders,
@@ -523,6 +524,9 @@ const sayLooked = (unit, n) => {
 };
 
 const mode = process.argv[2];
+// Вывод git, который читают сверки, — один на любой машине: настройки цвета и
+// префиксов диффа у разработчика снимаются для каждого запуска git отсюда.
+pinGitOutput(process.env);
 // Порчу файла, который пишет обвязка, печатает сверка «Файл, написанный
 // обвязкой, читается» — но только в `verify`. Прочие режимы читали такой файл
 // пустым и отвечали, будто его нет: обрубленный реестр мутаций давал «ни разу
@@ -24401,7 +24405,7 @@ if (mode === "verify") {
         // кавычками с восьмеричными кодами и не сходится с путём протокола.
         diff = execFileSync(
           "git",
-          ["-c", "core.quotePath=false", "diff", "-U0", "HEAD", "--", ".context"],
+          ["-c", "core.quotePath=false", "diff", "-U0", "--no-ext-diff", "HEAD", "--", ".context"],
           {
             maxBuffer: CHILD_OUTPUT_BYTES,
             cwd: REPO,

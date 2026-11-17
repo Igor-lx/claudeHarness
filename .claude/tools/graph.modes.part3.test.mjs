@@ -4749,6 +4749,61 @@ describe("ключ, которого режим не знает", () => {
   }, 600000);
 });
 
+// С `color.ui=always` у разработчика строки диффа приходили в кодах цвета, и
+// сверка якорей не видела добавленных. Тест держит вид: настройка git машины
+// не меняет вывода, который разбирает инструмент.
+describe("настройки git машины, меняющие вывод", () => {
+  it("цвет, префиксы и внешний дифф машины не прячут добавленный якорь, а показ неотслеживаемых — новый файл", async () => {
+    const box = seatEmpty("git-output-pins-");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "git-output-home-"));
+    try {
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=pins", "-c", "user.email=pins@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      git("init", "-q");
+      const note = path.join(box, ".context", "заметка.md");
+      fs.writeFileSync(note, "Заметка.\n");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.appendFileSync(note, "Якорь `src/app/App.tsx:1` без цитаты.\n");
+      const config = path.join(home, "gitconfig");
+      fs.writeFileSync(config, "[color]\n\tui = always\n\tdiff = always\n[diff]\n\tnoprefix = true\n\tmnemonicPrefix = true\n\texternal = false\n");
+      const said = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "verify"], {
+        cwd: box,
+        encoding: "utf8",
+        env: { ...process.env, GIT_CONFIG_GLOBAL: config },
+      });
+      expect(said.stdout).toContain(".context/заметка.md: `src/app/App.tsx:1` — якорь без цитаты");
+      // Неотслеживаемый файл виден `status` и тогда, когда машина их прячет.
+      fs.appendFileSync(config, "[status]\n\tshowUntrackedFiles = no\n");
+      fs.writeFileSync(path.join(box, "новый.txt"), "x\n");
+      const { pinGitOutput } = await import("./graph.seat.mjs");
+      const status = execFileSync("git", ["status", "--porcelain", "-z"], {
+        cwd: box,
+        encoding: "utf8",
+        env: pinGitOutput({ ...process.env, GIT_CONFIG_GLOBAL: config }),
+      });
+      expect(status.split("\0")).toContain("?? новый.txt");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("pinGitOutput дописывает настройки к заданным до инструмента, а не стирает их", async () => {
+    const { GIT_OUTPUT_PINS, pinGitOutput } = await import("./graph.seat.mjs");
+    const env = pinGitOutput({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.pager", GIT_CONFIG_VALUE_0: "cat" });
+    expect(env.GIT_CONFIG_KEY_0).toBe("core.pager");
+    expect(env.GIT_CONFIG_COUNT).toBe(String(1 + GIT_OUTPUT_PINS.length));
+    expect(env.GIT_CONFIG_KEY_1).toBe("color.ui");
+    expect(env.GIT_CONFIG_VALUE_1).toBe("never");
+    expect(pinGitOutput({}).GIT_CONFIG_KEY_0).toBe("color.ui");
+  });
+});
+
 describe("переменные git, ведущие не в репозиторий проекта", () => {
   it("чужие GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR и GIT_INDEX_FILE названы и сняты на прогон, свои — нет", () => {
     const box = seatEmpty("foreign-git-dir-");

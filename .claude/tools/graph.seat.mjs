@@ -79,6 +79,37 @@ export const systemTemp = () => {
  * отказ как «истории нет». */
 export const CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
 
+/** Настройки git машины, меняющие вывод, который инструмент разбирает: цвет,
+ * префиксы путей диффа, подпись и кодировка журнала, показ неотслеживаемых в
+ * `status`. `color.ui=always` красил строки диффа, и сверка якорей не видела
+ * добавленных. Внешний дифф настройкой не снять — его снимает ключ
+ * `--no-ext-diff` у каждого диффа с заплатой. */
+export const GIT_OUTPUT_PINS = [
+  ["color.ui", "never"],
+  ["color.diff", "never"],
+  ["diff.noprefix", "false"],
+  ["diff.mnemonicPrefix", "false"],
+  ["diff.srcPrefix", "a/"],
+  ["diff.dstPrefix", "b/"],
+  ["log.showSignature", "false"],
+  ["i18n.logOutputEncoding", "UTF-8"],
+  ["status.showUntrackedFiles", "normal"],
+];
+
+/** Ставит `GIT_OUTPUT_PINS` переменными `GIT_CONFIG_COUNT` поверх тех, что
+ * уже заданы: их git читает выше любого файла настройки, и каждый запуск git
+ * из этого процесса и его детей получает тот же вывод на любой машине. */
+export const pinGitOutput = (env) => {
+  const had = Number(env.GIT_CONFIG_COUNT ?? "0");
+  const from = Number.isInteger(had) && had > 0 ? had : 0;
+  GIT_OUTPUT_PINS.forEach(([key, value], i) => {
+    env["GIT_CONFIG_KEY_" + (from + i)] = key;
+    env["GIT_CONFIG_VALUE_" + (from + i)] = value;
+  });
+  env.GIT_CONFIG_COUNT = String(from + GIT_OUTPUT_PINS.length);
+  return env;
+};
+
 /** Запуск внешней команды — один на инструмент. На Windows менеджер пакетов
  * и их бинарники — файлы `.cmd`, и без оболочки их не найти. Исполняемому
  * файлу оболочка только мешает: `cmd.exe` разбирает его доводы заново, и
