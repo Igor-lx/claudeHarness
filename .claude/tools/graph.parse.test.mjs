@@ -305,6 +305,19 @@ describe.each(PARSERS)(
       ).toEqual([]);
     });
 
+    it("импорт в блочном комментарии и в описании над функцией — не ребро", () => {
+      const src = [
+        '/* lazy: import("./ghost") */',
+        "/**",
+        ' * Loads `require("./doc")` on demand,',
+        " * see import(`./pages/${name}`).",
+        " */",
+        'export const load = () => import("./real");',
+      ].join("\n");
+      expect(calls(src)).toEqual(["import ./real"]);
+      expect(parse(src).computed).toEqual([]);
+    });
+
     it("адрес, собранный выражением, идёт своим списком: постоянные начало и хвост", () => {
       const src = [
         'const at = "./x";',

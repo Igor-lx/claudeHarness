@@ -33,7 +33,8 @@ export const SCENARIO_NAMES = {
   foreign: "чужой проект",
 };
 
-const readJson = (at) => {
+/** Файл JSON; нет его либо он не разбирается — `null`. */
+export const readJson = (at) => {
   try {
     return parseJson(readFileSync(at, "utf8"));
   } catch {

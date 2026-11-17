@@ -2002,6 +2002,45 @@ it("каждый режим инструмента зовёт хоть один 
   expect(modes.filter((m) => !tests.includes('"' + m + '"')), "режим без теста").toEqual([]);
 });
 
+// Функцию, определённую копией в двух модулях, чинят в одном: копия разбора
+// регулярными выражениями снимала одни строчные комментарии, общая — и блочные.
+// Одно имя с другим смыслом читается той же функцией. Одна функция — одно имя.
+it("каждая функция верхнего уровня определена в одном модуле инструмента", () => {
+  const DEFINED = /^(?:export )?(?:async )?function\*? ?([\w$]+)\s*\(|^(?:export )?const ([\w$]+) = (?:async )?(?:\([^)]*\)|[\w$]+) =>/gm;
+  const where = new Map();
+  for (const file of fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")))
+    for (const m of fs.readFileSync(path.join(TOOL_DIR, file), "utf8").matchAll(DEFINED)) {
+      const name = m[1] ?? m[2];
+      where.set(name, [...(where.get(name) ?? []), file]);
+    }
+  expect(where.size).toBeGreaterThan(500);
+  const twice = [...where].filter(([, at]) => at.length > 1).map(([name, at]) => name + " — " + at.join(", "));
+  expect(twice, "функция определена в двух модулях: взять у одного либо назвать иначе").toEqual([]);
+});
+
+// Полное имя — адрес теста: по нему зовут один тест (`-t`) и исключают тесты
+// из мутационного прогона. Второе такое же имя уводит адрес в два теста. Имена
+// даёт сам раннер: имя, собранное циклом, текстом файла не перечислить.
+it("каждое полное имя теста инструмента стоит в наборе один раз", () => {
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "test-names-"));
+  try {
+    const listed = path.join(box, "list.json");
+    const runner = path.join(ROOT, "node_modules", "vitest", "vitest.mjs");
+    const config = path.join(TOOL_DIR, "vitest.config.mjs");
+    const run = spawnSync(process.execPath, [runner, "list", "--config", config, "--json=" + listed], { cwd: ROOT, encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    const tests = JSON.parse(fs.readFileSync(listed, "utf8"));
+    const files = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".test.mjs"));
+    expect(new Set(tests.map((t) => path.basename(t.file))), "перечень раннера не охватил файл тестов").toEqual(new Set(files));
+    const where = new Map();
+    for (const t of tests) where.set(t.name, [...(where.get(t.name) ?? []), path.basename(t.file)]);
+    const twice = [...where].filter(([, at]) => at.length > 1).map(([name, at]) => name + " — " + at.join(", "));
+    expect(twice, "полное имя теста стоит дважды").toEqual([]);
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true });
+  }
+});
+
 // Отказ, до которого не доходит ни один тест, меняет текст и код возврата без
 // признака, а человек получает его как ответ инструмента. Тест держит вид
 // целиком: новый отказ без теста роняет набор, пока его не назовут тестом либо

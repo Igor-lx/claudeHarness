@@ -195,6 +195,7 @@ import {
   COMMON_GIT_DIR_ARGS,
   pinGitOutput,
   insideOf,
+  norm,
   ownHooksOff,
   writeForwarders,
   reasonLineOf,
@@ -462,7 +463,7 @@ const debtPlanText = () => {
 const SPOILED = [];
 /** Диапазон среды не объявлен вовсе: опоры нет, и это роняет прогон. */
 let envUndeclared = false;
-const readJson = (at, fallback) => {
+const jsonObjectOr = (at, fallback) => {
   if (!existsSync(at)) return fallback;
   let parsed;
   try {
@@ -495,7 +496,7 @@ const readJson = (at, fallback) => {
  * называется сверкой «Файл, написанный обвязкой, читается»; писатель его не
  * переписывает — потеряется история. */
 const readOwn = (at, fallback, faultOf) => {
-  const parsed = readJson(at, null);
+  const parsed = jsonObjectOr(at, null);
   if (parsed === null) return fallback;
   const fault = faultOf(parsed);
   if (fault === "") return parsed;
@@ -988,7 +989,7 @@ if (mode === "env") {
   if (projectAt !== null && low.length === 0) {
     const root = path.resolve(projectAt);
     const mapAt = path.join(here, "..", "seat", "map.json");
-    const seatMap = existsSync(mapAt) ? readJson(mapAt, {}) : {};
+    const seatMap = existsSync(mapAt) ? jsonObjectOr(mapAt, {}) : {};
     const axes = seatMap.stackAxes ?? [];
     const withAsked = withToolsOf(process.argv, seatMap);
     const withWrong = withRefusal(withAsked);
@@ -999,7 +1000,7 @@ if (mode === "env") {
     }
     const withTools = withAsked.tools;
     // Версии — те, что посадка ставит в пустую папку: на них обвязка проверена.
-    const seedPkg = readJson(path.join(here, "..", "seat", "templates", "package.json"), {});
+    const seedPkg = jsonObjectOr(path.join(here, "..", "seat", "templates", "package.json"), {});
     const manifest = manifestOrStop(root);
     const gitIn = (args) => {
       try {
@@ -1018,7 +1019,7 @@ if (mode === "env") {
     }
     const installedOf = (name) => {
       const one = path.join(root, "node_modules", name, "package.json");
-      return existsSync(one) ? readJson(one, null) : null;
+      return existsSync(one) ? jsonObjectOr(one, null) : null;
     };
     const peers = peerConflictsOf({
       plan: survey.plan,
@@ -1088,7 +1089,7 @@ if (mode === "env") {
       console.log("  пакетов: " + survey.plan.length + ", скриптов звеньев: " + survey.scripts.length);
       const boundary = eslintBoundaryOf(survey.plan, readdirSync(root));
       if (boundary !== null) console.log("  " + boundary);
-      const scripts = readJson(path.join(root, "package.json"), {}).scripts ?? {};
+      const scripts = jsonObjectOr(path.join(root, "package.json"), {}).scripts ?? {};
       for (const name of ["build", "typecheck"]) {
         // Без скрипта типы на новой связке не проверил никто: это строка
         // вывода, а не молчание. Проверит их звено типов шага 1-бис.
@@ -1805,7 +1806,7 @@ const recipeVars = (fresh) => {
     "{тест вне раскладки}": "src/zzProbe.test.tsx",
   };
   if (fresh) return seat;
-  const repo = norm(path.join(BASE, ".."));
+  const repo = trimmedPath(path.join(BASE, ".."));
   // `componentsAt: []` — компонентов у проекта нет, и `{узлы}` не задан:
   // рецепт, правящий узел, беспредметен. Выведено: шестая посадка в живой
   // проект — режим падал стеком на пустом списке.
@@ -1866,7 +1867,7 @@ const recipeVars = (fresh) => {
     "{план перехода}": fieldDir("transition", "file", "{план перехода}"),
     "{заголовок изоляции}": CONFIG.isolationHeading ?? "",
     "{скрипт lint}": JSON.stringify(
-      readJson(path.join(repo, "package.json"), {}).scripts?.lint ?? "",
+      jsonObjectOr(path.join(repo, "package.json"), {}).scripts?.lint ?? "",
     ).slice(1, -1),
     "{менеджер}": PACKAGE_MANAGER,
     // Пробный тест вне `tests/`, которого не покрывает образец
@@ -1892,7 +1893,7 @@ const recipeVars = (fresh) => {
  * скрипты узнаёт проверка `calls`; `null` — такого нет. */
 const delegatedLink = (calls, scripts) => {
   const rootAt = path.join(BASE, CONFIG.manifest ?? "../package.json");
-  const globs = readJson(rootAt, {}).workspaces ?? [];
+  const globs = jsonObjectOr(rootAt, {}).workspaces ?? [];
   const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
   const packs = [];
   for (const g of list) {
@@ -1900,12 +1901,12 @@ const delegatedLink = (calls, scripts) => {
     if (!existsSync(dir)) continue;
     const one = path.join(dir, "package.json");
     if (!String(g).endsWith("/*")) {
-      if (existsSync(one)) packs.push(readJson(one, {}));
+      if (existsSync(one)) packs.push(jsonObjectOr(one, {}));
       continue;
     }
     for (const e of readdirSync(dir)) {
       const at = path.join(dir, e, "package.json");
-      if (existsSync(at)) packs.push(readJson(at, {}));
+      if (existsSync(at)) packs.push(jsonObjectOr(at, {}));
     }
   }
   for (const [name, body] of Object.entries(scripts)) {
@@ -1925,7 +1926,7 @@ const linkScripts = (scripts) => {
   if (CONFIG.scenario == null) return scripts;
   const mapAt = shelfAt("seat/map.json");
   const names = new Set(
-    (mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).chainScripts ?? []) : []).map(
+    (mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).chainScripts ?? []) : []).map(
       (e) => e.name,
     ),
   );
@@ -1979,7 +1980,7 @@ const recipeSubst = (recipe, vars) =>
 /** Лежит ли файл В ОБЪЯВЛЕННОМ дереве. Спрашивается там, где корпус кода
  * собирается не обходом, а фильтром по уже собранному списку. */
 const insideRoots = (f) =>
-  SRC_ROOTS.some((one) => f === one || norm(f).startsWith(one + "/"));
+  SRC_ROOTS.some((one) => f === one || trimmedPath(f).startsWith(one + "/"));
 
 
 /** Книги посадок — рецепты фальсификации и книга проб планки. Поломка в них
@@ -2052,7 +2053,7 @@ const mutationConfigLoad = async () => {
   const at = path.join(BASE, CONFIG.mutationConfig);
   if (!existsSync(at)) return MUTATION_CONF;
   if (/\.json$/.test(at)) {
-    MUTATION_CONF = readJson(at, {});
+    MUTATION_CONF = jsonObjectOr(at, {});
     return MUTATION_CONF;
   }
   try {
@@ -2094,7 +2095,7 @@ const seedNamesOf = (pick) => {
   const at = shelfAt("seat/map.json");
   const entry =
     at !== null && existsSync(at)
-      ? (readJson(at, {}).copy ?? []).find(pick)
+      ? (jsonObjectOr(at, {}).copy ?? []).find(pick)
       : undefined;
   return entry === undefined
     ? []
@@ -2228,7 +2229,7 @@ const seededBase = () => {
   const out = new Set();
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return out;
-  const m = readJson(mapAt, {});
+  const m = jsonObjectOr(mapAt, {});
   for (const one of [
     ...(m.copy ?? []),
     ...(m.onSubject ?? []),
@@ -2254,7 +2255,7 @@ const seededBase = () => {
  * посадки в живой проект — команда и скилл проекта. */
 const shelfProjectOwn = () => {
   const mapAt = shelfAt("seat/map.json");
-  const map = mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {};
+  const map = mapAt !== null && existsSync(mapAt) ? jsonObjectOr(mapAt, {}) : {};
   // В смешанной папке обвязке принадлежит названное картой, прочее — проекту.
   // Папка хуков git — тоже смешанная: переадресации к своим хукам проекта
   // пишет посадка, а принадлежат они проекту.
@@ -2275,7 +2276,7 @@ const shelfProjectOwn = () => {
     SHELF === null
       ? []
       : (CONFIG.rulesManifest?.rules ?? [])
-          .map((one) => norm(path.relative(SHELF, path.join(BASE, one))))
+          .map((one) => trimmedPath(path.relative(SHELF, path.join(BASE, one))))
           .filter((one) => !one.startsWith("..") && !path.isAbsolute(one));
   return [
     ...(map.projectOwnedInsideHarness ?? []),
@@ -2292,9 +2293,9 @@ const shelfProse = () => {
   const out = [];
   (function walk(dir) {
     for (const e of readdirSync(dir)) {
-      if (ownInShelf(norm(path.relative(SHELF, path.join(dir, e))), own))
+      if (ownInShelf(trimmedPath(path.relative(SHELF, path.join(dir, e))), own))
         continue;
-      const full = norm(path.join(dir, e));
+      const full = trimmedPath(path.join(dir, e));
       if (statSync(full).isDirectory()) {
         walk(full);
         continue;
@@ -2305,7 +2306,7 @@ const shelfProse = () => {
         full,
       ]);
     }
-  })(norm(SHELF));
+  })(trimmedPath(SHELF));
   return out;
 };
 
@@ -2558,7 +2559,7 @@ const barWorkOf = (subject) => subject.filter((f) => existsSync(f));
 const barChangedSubject = async (repoRoot) => {
   const changed = await changedPaths(repoRoot);
   if (changed === null) return null;
-  const all = changed.map((f) => norm(path.join(repoRoot, f)));
+  const all = changed.map((f) => trimmedPath(path.join(repoRoot, f)));
   // Семя, лежащее нетронутым, — работа обвязки, а не проекта, и свода на него
   // не спрашивают. Признак тот же, что у ворот и у ревизии, и применяется он
   // ЗДЕСЬ ТОЖЕ: сперва я поставил его в двух местах из трёх, и предмет свода
@@ -2622,7 +2623,7 @@ const mutationArea = () => {
   const inside = globMatcher(globs, REPO_AT);
   // Путь считается от КОРНЯ РЕПОЗИТОРИЯ: образцы в конфиге Stryker написаны
   // от него же. Форма та же, какой пользуется режим долга.
-  const key = (f) => norm(path.relative(REPO_AT, f));
+  const key = (f) => trimmedPath(path.relative(REPO_AT, f));
   return [...files, ...styleFiles].filter((f) => inside(key(f)));
 };
 /** Шапка протокола из ТЕКСТА. Ревизия читает протокол из истории — файла с
@@ -3357,7 +3358,7 @@ const seedOfPath = () => {
   const mapAt = shelfAt("seat/map.json");
   const out = new Map();
   if (mapAt === null || !existsSync(mapAt)) return out;
-  for (const e of readJson(mapAt, {}).copy ?? []) {
+  for (const e of jsonObjectOr(mapAt, {}).copy ?? []) {
     out.set(e.to, e.from);
     for (const name of e.alsoKnownAs ?? []) {
       const at = path.posix.join(path.posix.dirname(e.to), name);
@@ -3372,7 +3373,7 @@ const formatterSeeds = () => {
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return new Set();
   return new Set(
-    (readJson(mapAt, {}).copy ?? [])
+    (jsonObjectOr(mapAt, {}).copy ?? [])
       .filter((e) => e.inManifest === "prettier")
       .map((e) => e.from),
   );
@@ -3386,7 +3387,7 @@ const seedDriftNote = (findings) => {
   const seeds = seedOfPath();
   const repoRoot = path.join(BASE, "..");
   const hit = new Set();
-  const baseDir = norm(path.relative(repoRoot, BASE));
+  const baseDir = trimmedPath(path.relative(repoRoot, BASE));
   for (const one of findings) {
     // Адрес находки — от корня репозитория либо, у сверок прозы базы, от её
     // папки: семя ищут под обоими.
@@ -3531,7 +3532,7 @@ const manifestOnlySeedFields = (head, body) => {
   }
   const mapAt = shelfAt("seat/map.json");
   const fields = (
-    mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).copy ?? []) : []
+    mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).copy ?? []) : []
   ).filter((e) => e.inManifest !== undefined);
   const sorted = (v) =>
     v !== null && typeof v === "object" && !Array.isArray(v)
@@ -3597,7 +3598,7 @@ const withoutFormatOnly = async (abs, repoRoot) => {
  * прогона не было. Замерено посадкой живого стенда — на общем помощнике
  * слияния карт классов, приехавшем семенем и никем не тронутом. */
 const untouchedSeed = (at, repoRoot, seeds) => {
-  const to = norm(path.relative(repoRoot, at));
+  const to = trimmedPath(path.relative(repoRoot, at));
   const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
   if (from === null || !existsSync(from) || !existsSync(at)) return false;
   return (
@@ -3730,7 +3731,7 @@ const owedFor = (file) => {
   const mapAt = shelfAt("seat/map.json");
   if (mapAt === null || !existsSync(mapAt)) return out;
   const body = readFileSync(file, "utf8");
-  for (const one of readJson(mapAt, {}).onSubject ?? []) {
+  for (const one of jsonObjectOr(mapAt, {}).onSubject ?? []) {
     const re = BRIEF_SUBJECTS[one.subject];
     if (re === undefined) continue;
     if (!re.test(body)) continue;
@@ -3875,7 +3876,8 @@ const rel0 = (p) =>
       ? path.relative(BASE, p).split(path.sep).join("/")
       : p;
 
-const norm = (f) => f.split(path.sep).join("/").replace(/[/]+$/, "");
+/** Путь косыми вперёд и без косой на конце: адрес папки равен адресу без неё. */
+const trimmedPath = (f) => norm(f).replace(/[/]+$/, "");
 
 const files = [];
 
@@ -3892,9 +3894,9 @@ const files = [];
  * файл правил», — каждая заведена под свой случай, и следующий случай потребовал
  * бы четвёртой. Найдено пробой: лечится класс, а не пример. */
 const RULE_FILES = new Set(
-  CONFIG.rulesManifest.rules.map((r) => norm(path.join(BASE, r))),
+  CONFIG.rulesManifest.rules.map((r) => trimmedPath(path.join(BASE, r))),
 );
-const SHELF_DIR = SHELF === null ? "\u0000нет полки" : norm(SHELF) + "/";
+const SHELF_DIR = SHELF === null ? "\u0000нет полки" : trimmedPath(SHELF) + "/";
 const isMachinery = (full) =>
   RULE_FILES.has(full) || full.startsWith(SHELF_DIR);
 
@@ -3928,7 +3930,7 @@ const walkable = (dir) => existsSync(dir) && statSync(dir).isDirectory();
  */
 const insideShelf = (full) =>
   SHELF !== null &&
-  (full === norm(SHELF) || full.startsWith(norm(SHELF) + "/"));
+  (full === trimmedPath(SHELF) || full.startsWith(trimmedPath(SHELF) + "/"));
 
 /** Текст без огороженных блоков: строки примера заменяются пустыми.
  *
@@ -4198,7 +4200,7 @@ const ROOT_SEEDS = (() => {
     return out;
   }
   for (const e of map.copy ?? [])
-    if (!e.to.includes("/")) out.add(norm(path.join(REPO_AT, e.to)));
+    if (!e.to.includes("/")) out.add(trimmedPath(path.join(REPO_AT, e.to)));
   return out;
 })();
 
@@ -4232,7 +4234,7 @@ const GIT_IGNORED = (() => {
   }
   for (const one of listing.split("\0")) {
     if (one === "") continue;
-    const full = norm(path.join(REPO_AT, one));
+    const full = trimmedPath(path.join(REPO_AT, one));
     if (one.endsWith("/")) out.dirs.push(full + "/");
     else out.files.add(full);
   }
@@ -4272,15 +4274,15 @@ const ciFilesOf = () => {
 
 const outOfTree = (name, full) =>
   OUT_OF_TREE.has(name) ||
-  insideShelf(norm(full)) ||
-  ROOT_SEEDS.has(norm(full)) ||
-  gitIgnored(norm(full));
+  insideShelf(trimmedPath(full)) ||
+  ROOT_SEEDS.has(trimmedPath(full)) ||
+  gitIgnored(trimmedPath(full));
 
 const collect = (dir) => {
   if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
     if (outOfTree(e, path.join(dir, e))) continue;
-    const full = norm(path.join(dir, e));
+    const full = trimmedPath(path.join(dir, e));
     if (statSync(full).isDirectory()) collect(full);
     else if (CODE_FILE.test(e)) {
       if (!files.includes(full)) files.push(full);
@@ -4303,7 +4305,7 @@ for (const one of SRC_ROOTS) collect(one);
 // продолжает их называть, и цена отступления платится списком исключений. Но
 // НЕВИДИМОСТЬ и НЕСОГЛАСИЕ — разные вещи, и вторая лучше первой: несогласие
 // печатается, невидимость молчит.
-for (const one of CONFIG.testDirs ?? []) collect(norm(path.join(BASE, one)));
+for (const one of CONFIG.testDirs ?? []) collect(trimmedPath(path.join(BASE, one)));
 
 // Конфиги в корне репозитория: файлы кода, лежащие прямо в нём, — и семена, и
 // свои.
@@ -4325,7 +4327,7 @@ const ROOT_CONFIGS = walkable(REPO_AT)
         (e) =>
           (CODE_FILE.test(e) || isHashCommentConfig(e)) && !OUT_OF_TREE.has(e),
       )
-      .map((e) => norm(path.join(REPO_AT, e)))
+      .map((e) => trimmedPath(path.join(REPO_AT, e)))
       .filter((full) => statSync(full).isFile() && !gitIgnored(full))
       .sort()
   : [];
@@ -4347,7 +4349,7 @@ const ROOT_CONFIGS = walkable(REPO_AT)
 const SEEDS_REFORMATTED = await (async () => {
   const out = new Set();
   for (const [to, from] of seedOfPath()) {
-    const abs = norm(path.join(REPO_AT, to));
+    const abs = trimmedPath(path.join(REPO_AT, to));
     if (
       !files.includes(abs) &&
       !styleFiles.includes(abs) &&
@@ -4385,7 +4387,7 @@ const unreadCodeFiles = (() => {
     if (memo !== null) return memo;
     const mapAt = shelfAt("seat/map.json");
     const axes =
-      mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
+      mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).stackAxes ?? []) : [];
     const exts = axes.flatMap((a) => [...(a.codeFiles ?? []), ...(a.unreadCode ?? [])]);
     memo = projectFilesOf(REPO_AT)
       .filter((f) => exts.some((one) => f.endsWith("." + one)))
@@ -4417,7 +4419,7 @@ const unreadByKind = () => {
 const projectHasForeignUi = () => {
   if (unreadCodeFiles().length > 0) return true;
   const mapAt = shelfAt("seat/map.json");
-  const framework = (mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : []).find(
+  const framework = (mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).stackAxes ?? []) : []).find(
     (a) => a.axis === "фреймворк",
   );
   const declared = projectDeclared();
@@ -4467,11 +4469,11 @@ if (CONFIG.docsIndex != null) {
   (function walkDocs(dir) {
     if (!walkable(dir)) return;
     for (const e of readdirSync(dir)) {
-      const full = norm(path.join(dir, e));
+      const full = trimmedPath(path.join(dir, e));
       if (statSync(full).isDirectory()) walkDocs(full);
       else if (/.md$/.test(e) && !docFiles.includes(full)) docFiles.push(full);
     }
-  })(norm(path.join(BASE, CONFIG.docsIndex.dir)));
+  })(trimmedPath(path.join(BASE, CONFIG.docsIndex.dir)));
 }
 
 // Документы, лежащие РЯДОМ С КОДОМ, — тот же корпус.
@@ -4485,7 +4487,7 @@ if (CONFIG.docsIndex != null) {
 const walkNear = (dir) => {
   if (!walkable(dir)) return;
   for (const e of readdirSync(dir)) {
-    const full = norm(path.join(dir, e));
+    const full = trimmedPath(path.join(dir, e));
     // Общее исключение спрашивается и здесь. Пока корень исходников лежал
     // глубже зависимостей, вопрос не вставал; проект с двумя деревьями
     // объявляет корнем корень репозитория — и в корпус прозы поехали
@@ -4504,7 +4506,7 @@ for (const one of SRC_ROOTS) walkNear(one);
  * `test/unit/setup.ts` карта требовала описать как код. Замерено переходом
  * библиотеки с папкой `test/`. */
 const TEST_DIRS = (CONFIG.testDirs ?? []).map((one) =>
-  norm(path.join(BASE, one)),
+  trimmedPath(path.join(BASE, one)),
 );
 const isTest = (f) =>
   isTestPath(f) || TEST_DIRS.some((d) => f.startsWith(d + "/"));
@@ -4523,12 +4525,12 @@ const otherRunnerDirs = () => {
   for (const ext of ["ts", "js", "mjs", "cjs", "mts", "cts"]) {
     const pw = read("playwright.config." + ext);
     const dir = pw === null ? null : /\btestDir:\s*["'`]([^"'`]+)["'`]/.exec(pw);
-    if (dir !== null) out.push(norm(path.join(REPO_AT, dir[1])));
+    if (dir !== null) out.push(trimmedPath(path.join(REPO_AT, dir[1])));
     const cy = read("cypress.config." + ext);
     if (cy !== null) {
       const spec = /\bspecPattern:\s*["'`]([^"'`*{]+)/.exec(cy);
       out.push(
-        norm(path.join(REPO_AT, spec === null ? "cypress/e2e" : spec[1])).replace(
+        trimmedPath(path.join(REPO_AT, spec === null ? "cypress/e2e" : spec[1])).replace(
           /\/+$/,
           "",
         ),
@@ -4654,7 +4656,7 @@ const ADR_REF = /\bADR[-\s](\d+)/g;
 // однозначен, а полный путь пришлось бы вычислять от каждого файла заново.
 const adrByNumber = new Map();
 if (CONFIG.adr != null) {
-  const adrDir = norm(path.join(BASE, CONFIG.adr.dir));
+  const adrDir = trimmedPath(path.join(BASE, CONFIG.adr.dir));
   if (existsSync(adrDir)) {
     const tail = adrDir.split("/").slice(-2).join("/");
     for (const name of readdirSync(adrDir)) {
@@ -4696,9 +4698,9 @@ const docRefsIn = (body, hash = false) => {
  * из `path.join`: на Windows он с обратной косой, и сравнение с корнем без
  * приведения давало адрес от корня репозитория (W-7). */
 const rel = (f) =>
-  norm(f).startsWith(ROOT + "/")
-    ? norm(f).slice(ROOT.length + 1)
-    : norm(path.relative(path.join(BASE, ".."), f));
+  trimmedPath(f).startsWith(ROOT + "/")
+    ? trimmedPath(f).slice(ROOT.length + 1)
+    : trimmedPath(path.relative(path.join(BASE, ".."), f));
 
 // --- разрешение спецификатора импорта в файл ---------------------------------
 /** Короткие адреса импорта — те, что объявлены конфигом компилятора.
@@ -4732,11 +4734,11 @@ const typeCheckConfigs = () => {
   const mapAt = shelfAt("seat/map.json");
   const link = (
     mapAt !== null && existsSync(mapAt)
-      ? (readJson(mapAt, {}).chainScripts ?? [])
+      ? (jsonObjectOr(mapAt, {}).chainScripts ?? [])
       : []
   ).find((e) => e.name === "typecheck");
   const manifestAt = path.join(BASE, CONFIG.manifest ?? "../package.json");
-  const rootScripts = linkScripts(readJson(manifestAt, {}).scripts ?? {});
+  const rootScripts = linkScripts(jsonObjectOr(manifestAt, {}).scripts ?? {});
   const calls = [];
   if (link?.recognise != null) {
     const re = new RegExp(link.recognise);
@@ -4746,7 +4748,7 @@ const typeCheckConfigs = () => {
     const handed = delegatedLink((body) => re.test(body), rootScripts);
     if (handed !== null) {
       const m = /\bnpm run ([\w:-]+)/.exec(rootScripts[handed]);
-      const globs = readJson(manifestAt, {}).workspaces ?? [];
+      const globs = jsonObjectOr(manifestAt, {}).workspaces ?? [];
       const list = Array.isArray(globs) ? globs : (globs.packages ?? []);
       for (const g of list) {
         const dir = path.join(
@@ -4758,7 +4760,7 @@ const typeCheckConfigs = () => {
           ? readdirSync(dir).map((e) => path.join(dir, e))
           : [dir];
         for (const d of dirs) {
-          const body = readJson(path.join(d, "package.json"), {}).scripts?.[
+          const body = jsonObjectOr(path.join(d, "package.json"), {}).scripts?.[
             m?.[1] ?? ""
           ];
           if (body !== undefined && re.test(body)) calls.push([d, body]);
@@ -4822,8 +4824,8 @@ const compilerConfigs = () => {
 const SEEN_BY = new WeakMap();
 const compilerSees = (got, abs) => {
   if (got.fileNames != null) {
-    if (!SEEN_BY.has(got)) SEEN_BY.set(got, new Set(got.fileNames.map(norm)));
-    return SEEN_BY.get(got).has(norm(abs));
+    if (!SEEN_BY.has(got)) SEEN_BY.set(got, new Set(got.fileNames.map(trimmedPath)));
+    return SEEN_BY.get(got).has(trimmedPath(abs));
   }
   const dir = path.dirname(got.at);
   const globs = [
@@ -4852,7 +4854,7 @@ const ALIASES = compilerConfigs().flatMap((got) => {
     targets.map((target) => ({
       head: pattern.replace(/\*$/, ""),
       star: pattern.endsWith("*"),
-      to: norm(path.resolve(base, target.replace(/\*$/, ""))),
+      to: trimmedPath(path.resolve(base, target.replace(/\*$/, ""))),
       sees: (abs) => compilerSees(got, abs),
     })),
   );
@@ -4864,7 +4866,7 @@ const ALIASES = compilerConfigs().flatMap((got) => {
  * пакет со стороны: ребро между пакетами граф не видел, и вход библиотеки
  * читался никем не взятым. Выведено седьмой посадкой в монорепозиторий. */
 const WORKSPACE_PACKAGES = (() => {
-  const root = readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {});
+  const root = jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {});
   const declared = Array.isArray(root.workspaces)
     ? root.workspaces
     : (root.workspaces?.packages ?? []);
@@ -4893,10 +4895,10 @@ const WORKSPACE_PACKAGES = (() => {
     return first(dot) ?? pkg.module ?? pkg.main ?? null;
   };
   return dirs.flatMap((dir) => {
-    const pkg = readJson(path.join(dir, "package.json"), null);
+    const pkg = jsonObjectOr(path.join(dir, "package.json"), null);
     if (typeof pkg?.name !== "string") return [];
     const entry = entryOf(pkg);
-    return [{ name: pkg.name, dir: norm(dir), entry: entry === null ? null : norm(path.resolve(dir, entry)) }];
+    return [{ name: pkg.name, dir: trimmedPath(dir), entry: entry === null ? null : trimmedPath(path.resolve(dir, entry)) }];
   });
 })();
 /** Имена пакетов, объявленных проектом: манифест корня и манифесты пакетов
@@ -4906,8 +4908,8 @@ const WORKSPACE_PACKAGES = (() => {
 const projectDeclared = () =>
   new Set(
     [
-      readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}),
-      ...WORKSPACE_PACKAGES.map((one) => readJson(path.join(one.dir, "package.json"), {})),
+      jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}),
+      ...WORKSPACE_PACKAGES.map((one) => jsonObjectOr(path.join(one.dir, "package.json"), {})),
     ].flatMap((m) => [...Object.keys(m.dependencies ?? {}), ...Object.keys(m.devDependencies ?? {})]),
   );
 /** Адрес пакета рабочего пространства, который называет `spec`: вход пакета
@@ -4918,7 +4920,7 @@ const workspaceBaseOf = (spec) => {
   );
   if (hit === undefined) return null;
   if (spec === hit.name) return hit.entry ?? hit.dir;
-  return norm(path.join(hit.dir, spec.slice(hit.name.length + 1)));
+  return trimmedPath(path.join(hit.dir, spec.slice(hit.name.length + 1)));
 };
 /** Короткий адрес, которым разрешается `spec` из файла `fromFile`: самый
  * длинный подходящий из конфигов, видящих файл; файл не видит ни один
@@ -4938,13 +4940,13 @@ const resolve = (fromFile, spec) =>
 const resolveAmong = (fromFile, spec, known) => {
   let base;
   if (spec.startsWith(".")) {
-    base = norm(path.resolve(path.dirname(fromFile), spec));
+    base = trimmedPath(path.resolve(path.dirname(fromFile), spec));
   } else {
     const hit = aliasOf(fromFile, spec);
     if (hit === undefined) {
       base = workspaceBaseOf(spec);
       if (base === null) return null;
-    } else base = norm(path.join(hit.to, spec.slice(hit.head.length)));
+    } else base = trimmedPath(path.join(hit.to, spec.slice(hit.head.length)));
   }
   // Расширения перечислены ВСЕ, а не только пара машинописных: проект на
   // обычном JavaScript пишет импорт без расширения так же, и его связи
@@ -4982,11 +4984,11 @@ const computedTargets = (fromFile, one) => {
   const tail = one.prefix.endsWith("/") ? "/" : "";
   let head;
   if (one.prefix.startsWith("./") || one.prefix.startsWith("../"))
-    head = norm(path.resolve(path.dirname(fromFile), one.prefix)) + tail;
+    head = trimmedPath(path.resolve(path.dirname(fromFile), one.prefix)) + tail;
   else {
     const hit = aliasOf(fromFile, one.prefix);
     if (hit === undefined) return null;
-    head = norm(path.join(hit.to, one.prefix.slice(hit.head.length))) + tail;
+    head = trimmedPath(path.join(hit.to, one.prefix.slice(hit.head.length))) + tail;
   }
   return files.filter(
     (c) =>
@@ -5645,7 +5647,7 @@ const sourceOfShipped = (spec) => {
         for (const one of isStyleSpec
           ? [tail + ext]
           : [tail + ext, tail + "/index" + ext]) {
-          const at = norm(path.join(root, one));
+          const at = trimmedPath(path.join(root, one));
           if (files.includes(at) || styleFiles.includes(at)) return at;
         }
   return null;
@@ -5669,12 +5671,12 @@ const publicEntries = () => {
   const unmapped = [];
   if (Array.isArray(CONFIG.publicEntries)) {
     for (const one of CONFIG.publicEntries) {
-      const at = norm(path.join(BASE, one));
+      const at = trimmedPath(path.join(BASE, one));
       if (files.includes(at) || styleFiles.includes(at)) found.push(at);
       else unmapped.push(one);
     }
   } else if (CONFIG.manifest != null) {
-    const pkg = readJson(path.join(BASE, CONFIG.manifest), {});
+    const pkg = jsonObjectOr(path.join(BASE, CONFIG.manifest), {});
     const published = isPublishedManifest(pkg);
     if (published) {
       const specs = new Set();
@@ -5802,8 +5804,8 @@ const linkEnds = () => {
             .map((hit) => hit[1])
             .filter((one) => one.includes("/") && CODE_OR_STYLE.test(one))
             .flatMap((one) => [
-              norm(path.join(REPO_AT, one)),
-              norm(path.join(ROOT, one)),
+              trimmedPath(path.join(REPO_AT, one)),
+              trimmedPath(path.join(ROOT, one)),
             ])
             .filter((f) => known.has(f)),
         ),
@@ -5817,8 +5819,8 @@ const linkEnds = () => {
 const linkPartnersOf = (target) => [
   ...new Set(
     linkEnds()
-      .filter((ends) => ends.includes(norm(target)))
-      .flatMap((ends) => ends.filter((f) => f !== norm(target))),
+      .filter((ends) => ends.includes(trimmedPath(target)))
+      .flatMap((ends) => ends.filter((f) => f !== trimmedPath(target))),
   ),
 ];
 
@@ -6129,7 +6131,7 @@ const heldByOpenSteps = () => {
 const heldByWaitingSeeds = () => {
   const mapAt = shelfAt("seat/map.json");
   const entries =
-    mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).copy ?? []) : [];
+    mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).copy ?? []) : [];
   return Object.entries(HELD_BY_WAITING_SEED).flatMap(([from, checks]) =>
     entries.some(
       (e) => e.from === from && existsSync(path.join(REPO_AT, e.to + ".seat")),
@@ -6146,7 +6148,7 @@ const foreignAxesNamed = () => {
   if (foreign.length === 0) return [];
   const mapAt = shelfAt("seat/map.json");
   const axes =
-    mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).stackAxes ?? []) : [];
+    mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).stackAxes ?? []) : [];
   return foreign.map((name) => ({
     axis: name,
     known: name === NO_MANIFEST_AXIS || axes.some((a) => a.axis === name),
@@ -6350,12 +6352,12 @@ const outOfScope = (arg) => {
   const here = [path.resolve(REPO_AT, repoPathOf(arg)), path.join(ROOT, argPath(arg))];
   // Внутри исходников адрес в области: пустая папка и файл не кода — свой
   // ответ. «Вне области разбора» вело искать причину в полке.
-  const inSource = here.find((one) => existsSync(one) && norm(one).startsWith(norm(ROOT) + "/"));
+  const inSource = here.find((one) => existsSync(one) && trimmedPath(one).startsWith(trimmedPath(ROOT) + "/"));
   if (inSource !== undefined)
     return statSync(inSource).isDirectory()
       ? `${tick}${arg}${tick} — папка исходников без файлов кода и стилей: разбирать в ней нечего.` +
           ` Спрашивать надо про файл кода либо про папку, где он лежит.`
-      : isStylePath(norm(inSource))
+      : isStylePath(trimmedPath(inSource))
         ? `${tick}${arg}${tick} — лист стилей: в граф импортов он не входит, и радиуса у него нет.` +
             ` Кто его подключает, печатают ${tick}graph.mjs plan${tick} и ${tick}brief${tick} — по тексту.`
         : `${tick}${arg}${tick} — не код и не стиль: в граф импортов он не входит, и` +
@@ -6821,7 +6823,7 @@ const SHELF_HOME = CONFIG.scenario == null;
 const FOREIGN = CONFIG.scenario === "foreign";
 const SCENARIO_LISTS = (() => {
   const mapAt = shelfAt("seat/map.json");
-  const map = mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {};
+  const map = mapAt !== null && existsSync(mapAt) ? jsonObjectOr(mapAt, {}) : {};
   return { shelfOnly: map.shelfOnly ?? [], foreignOff: map.foreignOff ?? [] };
 })();
 /** Заглушённая сверка и почему: `falsify` печатает причину вместо рецепта. */
@@ -6887,7 +6889,7 @@ const folderInPlaceOfFile = (error) => {
       for (const e of kids) {
         if (!e.isDirectory() || OUT_OF_TREE.has(e.name)) continue;
         const at = path.join(dir, e.name);
-        if (/^[^.].*\.[A-Za-z]{1,5}$/.test(e.name)) foldersNamedLikeFiles.push(norm(path.relative(REPO_AT, at)));
+        if (/^[^.].*\.[A-Za-z]{1,5}$/.test(e.name)) foldersNamedLikeFiles.push(trimmedPath(path.relative(REPO_AT, at)));
         else if (depth > 0) walk(at, depth - 1);
       }
     };
@@ -7141,7 +7143,7 @@ if (mode === "falsify") {
   if (!existsSync(recipesAt)) {
     console.log("=== Рецептов фальсификации нет ===");
     sayLooked("рецептов опровержения", 0);
-    console.log("  Ожидался файл: " + norm(recipesAt));
+    console.log("  Ожидался файл: " + trimmedPath(recipesAt));
     process.exit(1);
   }
   const recipes = parseJson(readFileSync(recipesAt, "utf8")).recipes ?? [];
@@ -7155,7 +7157,7 @@ if (mode === "falsify") {
   // Замерено переходом библиотеки: шаг «перенацелить рецепты» не имел места.
   const projectRecipesAt = path.join(BASE, "falsify.json");
   const projectJson = existsSync(projectRecipesAt)
-    ? readJson(projectRecipesAt, {})
+    ? jsonObjectOr(projectRecipesAt, {})
     : null;
   // Файл есть, а списка `recipes` в нём нет — рецептов проекта ноль, и прежде
   // это было молча: перенацеленные рецепты не исполнялись, а прогон печатал
@@ -7304,7 +7306,7 @@ if (mode === "falsify") {
   /** Карта посадки рядом, разобранная. */
   const seatMapOf = () => {
     const at = shelfAt("seat/map.json");
-    return at === null || !existsSync(at) ? {} : readJson(at, {});
+    return at === null || !existsSync(at) ? {} : jsonObjectOr(at, {});
   };
   const subjectless = (section) => {
     const field = RECIPE_NEEDS[section];
@@ -7623,7 +7625,7 @@ if (mode === "falsify") {
     // которой у проекта нет: у проекта со своим раннером нечего перенацеливать
     // в конфиге чужого.
     const scriptsNow = () =>
-      readJson(path.join(tmp, "package.json"), {}).scripts ?? {};
+      jsonObjectOr(path.join(tmp, "package.json"), {}).scripts ?? {};
     const linkLives = (name) => {
       const one = (seatMapOf().chainScripts ?? []).find((e) => e.name === name);
       if (one?.recognise == null) return true;
@@ -8123,8 +8125,8 @@ if (mode === "handoff") {
   // пути, оставив вложенное дерево в самой обвязке.
   if (SHELF !== null && insideOf(root, SHELF)) {
     console.log("=== СНИМОК НЕ СОБРАН ===");
-    console.log("  Папка снимка лежит внутри обвязки, которую копируют: " + norm(root));
-    console.log("  Назовите папку вне " + norm(SHELF) + ". Ничего не тронуто.");
+    console.log("  Папка снимка лежит внутри обвязки, которую копируют: " + trimmedPath(root));
+    console.log("  Назовите папку вне " + trimmedPath(SHELF) + ". Ничего не тронуто.");
     process.exit(1);
   }
 
@@ -8135,7 +8137,7 @@ if (mode === "handoff") {
   // и в рабочей области. Найдено попыткой собрать снимок в корень области.
   if (existsSync(root) && readdirSync(root).length > 0) {
     console.log("=== СНИМОК НЕ СОБРАН ===");
-    console.log("  Папка снимка уже занята: " + norm(root));
+    console.log("  Папка снимка уже занята: " + trimmedPath(root));
     console.log("  В ней лежит: " + readdirSync(root).slice(0, 6).join(", "));
     console.log(
       "  Снимок кладут в пустое место: слитый с чужим содержимым он ломает",
@@ -8216,7 +8218,7 @@ if (mode === "handoff") {
   // Печатается то, из чего состоит отчёт о сборке: путь, счёт, что исключено.
   // Иначе эти числа пересказываются по памяти, и проверить их по отчёту нечем.
   console.log("=== СНИМОК СОБРАН ===");
-  console.log("  путь:      " + norm(root));
+  console.log("  путь:      " + trimmedPath(root));
   console.log("  файлов:    " + copied.length);
   // Называется то, что РЕАЛЬНО не поехало, а не список правил исключения.
   // Прежде печатались правила, и в отчёте стоял файл, которого в проекте нет
@@ -8275,7 +8277,7 @@ if (mode === "handoff") {
     console.log("  проверка:  посажен в пустую папку, сверка базы — код 0");
     console.log("");
     console.log("=== ЧТО С НИМ ДЕЛАТЬ ===");
-    console.log("  - взять папку целиком: " + norm(root));
+    console.log("  - взять папку целиком: " + trimmedPath(root));
     console.log(
       "  - получатель копирует .claude в корень своего проекта и говорит",
     );
@@ -8293,7 +8295,7 @@ if (mode === "handoff") {
     if (red.length) for (const r of red) console.log("  " + r.trim());
     else console.log("  " + String(e.message).split(NEWLINE)[0]);
     console.log("  Отдавать нельзя: у получателя он не встанет,");
-    console.log("  и потому папка снимка удалена: " + norm(root) + ".");
+    console.log("  и потому папка снимка удалена: " + trimmedPath(root) + ".");
     // Негодный снимок не остаётся лежать. Оставленный, он неотличим от
     // годного: строка об отказе уходит в конец длинного вывода, а папка на
     // месте — и её берут. Замерено на себе: снимок не собирался несколько
@@ -8696,7 +8698,7 @@ const guardTraceFault = (needCommit) => {
   }
   const at = path.join(dir, "claude-harness-guard.json");
   if (!existsSync(at)) return "следа стража нет";
-  const trace = readJson(at, {});
+  const trace = jsonObjectOr(at, {});
   const ageS = (Date.now() - Date.parse(trace?.at)) / 1000;
   if (!(ageS >= 0 && ageS < windowS))
     return (
@@ -8874,8 +8876,7 @@ const barProposedLoose = (body) => {
 if (mode === "stop") {
   const NEWLINE = String.fromCharCode(10);
   const flag =
-    ["--hook", "--pause", "--session"].find((f) => process.argv.includes(f)) ??
-    null;
+    MODE_KEYS.stop.find((f) => process.argv.includes(f)) ?? null;
   // Событие среды несёт сессию и путь журнала: по ним судят ответ задачи
   // без диффа кода. Правка кода решается по рабочему дереву.
   let event = {};
@@ -9274,7 +9275,7 @@ const baselineAtSeatEnd = (name) => {
 const seedCodeEntries = () => {
   const mapAt = shelfAt("seat/map.json");
   const notCode = /^(?:\.claude|\.context|docs)\//;
-  return ((mapAt === null ? {} : readJson(mapAt, {})).copy ?? []).filter(
+  return ((mapAt === null ? {} : jsonObjectOr(mapAt, {})).copy ?? []).filter(
     (e) => e.to.includes("/") && !notCode.test(e.to) && (CODE_FILE.test(e.to) || isStylePath(e.to)),
   );
 };
@@ -9287,7 +9288,7 @@ const SEED_MUTATION_MARK = "Stryker disable next-line all: seeded entry point";
  * у husky, у чужого проекта — хуков проекта не отключает. */
 const hooksOffHere = () => {
   const mapAt = shelfAt("seat/map.json");
-  const map = mapAt === null ? {} : readJson(mapAt, {});
+  const map = mapAt === null ? {} : jsonObjectOr(mapAt, {});
   const git = (args) => {
     const done = spawnSync("git", args, { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8" });
     return done.status === 0 ? done.stdout.trim() : null;
@@ -9328,7 +9329,7 @@ if (mode === "refresh") {
   console.log("=== Заготовки прежней версии ===");
   console.log("  с посадки не правлены, заменить свежими: " + stale.length);
   for (const one of stale)
-    console.log("    " + one.to + " — свежая: " + norm(path.relative(REPO_AT, one.from)));
+    console.log("    " + one.to + " — свежая: " + trimmedPath(path.relative(REPO_AT, one.from)));
   console.log("  правлены с посадки, оставлены как свой код: " + kept.length);
   for (const one of kept) console.log("    " + one);
   if (base === null)
@@ -9371,10 +9372,10 @@ if (mode === "twins") {
     }
   }
   if (changed !== null) {
-    const srcPrefix = norm(path.relative(path.join(BASE, ".."), ROOT)) + "/";
+    const srcPrefix = trimmedPath(path.relative(path.join(BASE, ".."), ROOT)) + "/";
     const touched = new Set(
       changed
-        .map(norm)
+        .map(trimmedPath)
         .filter((f) => f.startsWith(srcPrefix))
         .map((f) => f.slice(srcPrefix.length)),
     );
@@ -9419,8 +9420,8 @@ if (mode === "twins") {
     // Полка правил — такая же пара, только текстом. Сверять её содержимое
     // нельзя: полка пишет обобщённо, без имён файлов проекта. Поэтому тот же
     // вопрос в тот же момент — правило тронули здесь, а увозят его отсюда.
-    const all = new Set(changed.map(norm));
-    const shelf = norm(path.relative(path.join(BASE, ".."), SHELF_RULES));
+    const all = new Set(changed.map(trimmedPath));
+    const shelf = trimmedPath(path.relative(path.join(BASE, ".."), SHELF_RULES));
     const rulesTouched = [...all].filter(
       (f) => /(^|\/)CLAUDE\.md$/.test(f) || f.startsWith(".context/"),
     );
@@ -9469,7 +9470,7 @@ if (mode === "tested") {
   }
   if (changed !== null) {
     const repoRoot = path.join(BASE, "..");
-    const abs = (f) => norm(path.join(repoRoot, f));
+    const abs = (f) => trimmedPath(path.join(repoRoot, f));
     const touched = new Set(changed.map(abs));
     const touchedCode = [...touched].filter(
       (f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"),
@@ -9509,7 +9510,7 @@ if (mode === "tested") {
 
     // Правка обвязки — не правка кода проекта: её тесты в прогон проекта не
     // входят, идут своей командой, и напомнить о них больше некому.
-    const toolDir = norm(TOOL_DIR) + "/";
+    const toolDir = trimmedPath(TOOL_DIR) + "/";
     const harness = changed.filter((f) => abs(f).startsWith(toolDir));
     if (harness.length) {
       console.log("=== Тронута обвязка ===");
@@ -9633,7 +9634,7 @@ if (mode === "tested") {
     // Содержимое, а не время: клон ставит всем файлам одну свежую метку.
     if (CONFIG.testedLedger != null) {
       const at = path.join(BASE, CONFIG.testedLedger);
-      const seen = readJson(at, {});
+      const seen = jsonObjectOr(at, {});
       for (const f of [...touchedCode, ...touchedStyles])
         seen[rel(f)] = createHash("sha1")
           .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
@@ -9684,7 +9685,7 @@ if (mode === "tested") {
         );
         console.log(
           "  Звать: node " +
-            norm(path.relative(REPO_AT, fileURLToPath(import.meta.url))) +
+            trimmedPath(path.relative(REPO_AT, fileURLToPath(import.meta.url))) +
             " bar",
         );
         // Связь через разметку и стили — второй по незаметности способ: она
@@ -9709,7 +9710,7 @@ if (mode === "tested") {
         // самый незаметный: признак по коду его не увидит, потому что вызовов
         // ещё нет, а библиотека уже стоит. Поэтому вопрос задаётся по факту
         // правки манифеста, а не ждёт, пока предикат догадается.
-        if (changed.some((c) => /(^|\/)package\.json$/.test(norm(c))))
+        if (changed.some((c) => /(^|\/)package\.json$/.test(trimmedPath(c))))
           console.log(
             "  Манифест тронут: приехала зависимость — проверь таблицу" +
               " применимости, не появился ли предмет спящего раздела.",
@@ -9767,7 +9768,7 @@ if (mode === "tested") {
       // механизм, которого нет, — ровно тот класс, который петля запрещает
       // отдельным правилом. Спрашивается по факту правки прозы: тронут хоть
       // один документ — вопрос печатается.
-      if (changed.some((c) => /.md$/.test(norm(c)))) {
+      if (changed.some((c) => /.md$/.test(trimmedPath(c)))) {
         console.log(NEWLINE + "=== Проза: форма записи ===");
         console.log(
           "  Тронут текст. Сверена ли его форма по каталогу приёмов из свода",
@@ -9848,8 +9849,8 @@ if (mode === "tested") {
     // публичной поверхностью.
     const shelfHits = changed.filter(
       (c) =>
-        isCodePath(norm(c)) &&
-        shelfRoots.some((p) => norm(c).includes("/" + p + "/")),
+        isCodePath(trimmedPath(c)) &&
+        shelfRoots.some((p) => trimmedPath(c).includes("/" + p + "/")),
     );
     if (shelfHits.length > 0) {
       console.log(NEWLINE + "=== Публичная поверхность полки ===");
@@ -9885,8 +9886,8 @@ if (mode === "tested") {
     // подходит. Это и стало доводом вынести решение в одно место.
     const smokeHits = changed.filter(
       (f) =>
-        touchesRuntime(norm(f)) &&
-        CONFIG.smokeScope.some((p) => norm(f).startsWith(p)),
+        touchesRuntime(trimmedPath(f)) &&
+        CONFIG.smokeScope.some((p) => trimmedPath(f).startsWith(p)),
     );
     console.log(String.fromCharCode(10) + "=== Смоук в браузере ===");
     if (smokeHits.length === 0)
@@ -10163,7 +10164,7 @@ if (mode === "mutated") {
       mutateGlobs.every((g) => /^<.*>$/.test(String(g).trim())));
   const inScope =
     mutateGlobs === null ? null : globMatcher(mutateGlobs, repoRoot);
-  const key = (f) => norm(path.relative(repoRoot, f));
+  const key = (f) => trimmedPath(path.relative(repoRoot, f));
 
   // Отчёт последнего прогона. HTML-репортер Stryker держит внутри ТОТ ЖЕ
   // объект, что отдал бы JSON-репортер: `app.report = {…}` перед закрытием
@@ -10232,7 +10233,7 @@ if (mode === "mutated") {
         ? globMatcher(parsed.config.mutate, repoRoot)
         : null;
       for (const [key, d] of Object.entries(parsed.files ?? {})) {
-        const file = norm(path.join(repoRoot, key));
+        const file = trimmedPath(path.join(repoRoot, key));
         if (!files.includes(file)) continue;
         // Числа описывают тот код, что был на момент прогона. Если файл
         // тронут ПОСЛЕ него, приписать их нынешнему содержимому нельзя —
@@ -10320,7 +10321,7 @@ if (mode === "mutated") {
 
   const needRun = [];
   if (changed !== null) {
-    const touched = new Set(changed.map((f) => norm(path.join(repoRoot, f))));
+    const touched = new Set(changed.map((f) => trimmedPath(path.join(repoRoot, f))));
     const touchedCode = [...touched].filter(
       (f) =>
         files.includes(f) &&
@@ -10438,7 +10439,7 @@ if (mode === "bar-probe") {
   const at = path.join(TOOL_DIR, "bar-probes.json");
   if (!existsSync(at)) {
     console.log("=== Сажаемых нарушений нет ===");
-    console.log("  Ожидался файл: " + norm(at));
+    console.log("  Ожидался файл: " + trimmedPath(at));
     process.exit(1);
   }
   // Пять родов посадки: новым файлом; в существующий код — правкой его
@@ -10635,7 +10636,7 @@ if (mode === "bar-probe") {
       }
       const box = path.join(systemTemp(), "bar-probe-" + id);
       const mark = box + ".plant.json";
-      const record = readJson(mark, { plants: [] });
+      const record = jsonObjectOr(mark, { plants: [] });
       const placed = new Set((record.plants ?? []).map((one) => one.number));
       for (const one of batch)
         if (!placed.has(one.number))
@@ -10665,7 +10666,7 @@ if (mode === "bar-probe") {
           : "");
       const whose = (file) =>
         owner.get(path.resolve(box, file)) ??
-        theBatch + ", файл " + norm(path.relative(box, path.resolve(box, file)));
+        theBatch + ", файл " + trimmedPath(path.relative(box, path.resolve(box, file)));
       // Посадка удалением и в соседе вписана в коммит, и в правленом её нет:
       // линт и формат берут её файлы по записи посадки.
       const changed = [
@@ -10681,7 +10682,7 @@ if (mode === "bar-probe") {
             .map((e) => e.path),
           ...[...owner.keys()]
             .filter((f) => existsSync(f))
-            .map((f) => norm(path.relative(box, f))),
+            .map((f) => trimmedPath(path.relative(box, f))),
         ]),
       ];
       const tsc = runTool(bin("tsc"), ["--noEmit", "-p", "."], { cwd: box });
@@ -10737,7 +10738,7 @@ if (mode === "bar-probe") {
         ["run", "--reporter=json", "--outputFile=" + out],
         { cwd: box },
       );
-      const tests = readJson(out, null);
+      const tests = jsonObjectOr(out, null);
       if (tests === null)
         failed.push(
           theBatch +
@@ -11091,7 +11092,7 @@ if (mode === "bar-probe") {
         .split("\n")
         .join(NEWLINE);
     const specFrom = (from, to) => {
-      let r = norm(path.relative(path.dirname(from), to)).replace(
+      let r = trimmedPath(path.relative(path.dirname(from), to)).replace(
         CODE_FILE,
         "",
       );
@@ -11189,7 +11190,7 @@ if (mode === "bar-probe") {
             ? [creates[0].path]
             : [plant.patch[0].path])
       ).map((c) => movedTo.get(c) ?? c);
-      const culprits = named.map((c) => norm(own(c)));
+      const culprits = named.map((c) => trimmedPath(own(c)));
       return {
         criterion: plant.criterion,
         why: plant.why,
@@ -11361,7 +11362,7 @@ if (mode === "bar-probe") {
       ) + NEWLINE,
     );
     console.log("=== Проба планки посажена ===");
-    console.log("  песочница: " + norm(box));
+    console.log("  песочница: " + trimmedPath(box));
     if (wantBatch !== null)
       console.log(
         "  пачка: посадок " +
@@ -11378,7 +11379,7 @@ if (mode === "bar-probe") {
       );
     console.log("");
     console.log("  Что делать: сделать свод в песочнице обычным порядком —");
-    console.log("    cd " + norm(box));
+    console.log("    cd " + trimmedPath(box));
     console.log("    node .claude/tools/graph.mjs bar");
     console.log("  прочитать правленое, поставить исход по каждому критерию,");
     console.log("  позвать режим снова и получить печать.");
@@ -11394,19 +11395,19 @@ if (mode === "bar-probe") {
   // Суд. Принимается и короткий номер, и полный путь песочницы.
   const id =
     judged.includes(path.sep) || judged.includes("/")
-      ? path.basename(norm(judged)).replace(/^bar-probe-/, "")
+      ? path.basename(trimmedPath(judged)).replace(/^bar-probe-/, "")
       : judged;
   const mark = path.join(systemTemp(), "bar-probe-" + id + ".plant.json");
   if (!existsSync(mark)) {
     console.log("=== Пробы с таким номером нет ===");
-    console.log("  Ожидалась запись: " + norm(mark));
+    console.log("  Ожидалась запись: " + trimmedPath(mark));
     process.exit(1);
   }
   // Запись оборвалась посреди — суд называет порчу, а не падает стеком.
-  const record = readJson(mark, null);
+  const record = jsonObjectOr(mark, null);
   if (record === null || typeof record.box !== "string") {
     console.log("=== Запись пробы испорчена ===");
-    console.log("  " + (SPOILED[0] ?? norm(mark) + " — нет поля box"));
+    console.log("  " + (SPOILED[0] ?? trimmedPath(mark) + " — нет поля box"));
     console.log("  Посадить пробу заново: bar-probe --batch=<номера>.");
     process.exit(1);
   }
@@ -11427,7 +11428,7 @@ if (mode === "bar-probe") {
   console.log("=== Суд по пробе планки ===");
   // Без адреса «свода нет» не отличить от протокола, который лежит не там.
   if (was === null && protocolAt !== null)
-    console.log("  протокол искали: " + norm(protocolAt));
+    console.log("  протокол искали: " + trimmedPath(protocolAt));
   // Суд мерит полноту: лишняя находка не штрафуется, и свод, назвавший у
   // посаженного каждый критерий, поймает всегда. Поэтому рядом с исходом стоит,
   // сколько находок дал свод и сколько критериев названо по адресу посадки:
@@ -11449,8 +11450,8 @@ if (mode === "bar-probe") {
   // вне исходников и сличаются путём от корня песочницы.
   const boxRoot = path.join(record.box, path.relative(projectRoot, ROOT));
   const plantedName = (f) => {
-    const r = norm(path.relative(boxRoot, f));
-    return r.startsWith("../") ? norm(path.relative(record.box, f)) : r;
+    const r = trimmedPath(path.relative(boxRoot, f));
+    return r.startsWith("../") ? trimmedPath(path.relative(record.box, f)) : r;
   };
   const verdicts = [];
   for (const plant of entries) {
@@ -11458,7 +11459,7 @@ if (mode === "bar-probe") {
     const culprits = plant.files ?? [plant.file];
     console.log(
       "  где: " +
-        culprits.map((f) => norm(path.relative(record.box, f))).join(", "),
+        culprits.map((f) => trimmedPath(path.relative(record.box, f))).join(", "),
     );
     let verdict = refused;
     let atPlant = null;
@@ -11578,9 +11579,9 @@ if (mode === "bar-probe") {
   } else if (!machineOnly)
     console.log(
       "  песочница оставлена для разбора промаха: " +
-        norm(record.box) +
+        trimmedPath(record.box) +
         " — удалить после разбора вместе с " +
-        norm(mark),
+        trimmedPath(mark),
     );
   process.exit(allCaught ? 0 : 1);
 }
@@ -11647,13 +11648,13 @@ for (const one of SRC_ROOTS) walkAll(one);
 const locate = (q, prefix) => {
   for (const candidate of prefix === null ? [q] : [prefix + q, q]) {
     const expanded = expand(candidate);
-    if (expanded !== null && existsSync(expanded)) return norm(expanded);
+    if (expanded !== null && existsSync(expanded)) return trimmedPath(expanded);
     const atRepo = path.join(REPO_AT, candidate);
-    if (existsSync(atRepo) && statSync(atRepo).isFile()) return norm(atRepo);
+    if (existsSync(atRepo) && statSync(atRepo).isFile()) return trimmedPath(atRepo);
     // Файл базы — от её папки: так адрес пишет строка гарантии в протоколе
     // свода, и печать иначе роняла сверку «Не разобрано».
     const atBase = path.join(BASE, candidate);
-    if (existsSync(atBase) && statSync(atBase).isFile()) return norm(atBase);
+    if (existsSync(atBase) && statSync(atBase).isFile()) return trimmedPath(atBase);
   }
   const hits = everyPath.filter((f) => f.endsWith("/" + q));
   return hits.length === 1 ? hits[0] : null;
@@ -11703,7 +11704,7 @@ const inside = (q, prefix) => {
       const root = expand(head);
       if (root === null) continue;
       const slash = head.endsWith("/") ? "/" : "";
-      shapes.push(asRegExp(norm(root) + slash + pattern.slice(head.length)));
+      shapes.push(asRegExp(trimmedPath(root) + slash + pattern.slice(head.length)));
     }
     if (!shapes.length) continue;
     const hits = everyFile.filter((f) => shapes.some((rx) => rx.test(f)));
@@ -12234,10 +12235,10 @@ const placeSymptomsOf = (f) => {
   if (isBarrel(f) || isTest(f)) return out;
   const users = [...dependentsOf(f)].filter((u) => !isTest(u));
   const units = [...new Set(users.map(unitOf))].sort();
-  const tree = SRC_ROOTS.find((one) => norm(f).startsWith(norm(one) + "/"));
+  const tree = SRC_ROOTS.find((one) => trimmedPath(f).startsWith(trimmedPath(one) + "/"));
   const shared = [
     rel(f),
-    tree === undefined ? "" : norm(path.relative(tree, f)),
+    tree === undefined ? "" : trimmedPath(path.relative(tree, f)),
   ].some((r) => r.startsWith("shared/"));
   if (shared && units.length === 1 && units[0] !== unitOf(f))
     out.push({
@@ -12493,7 +12494,7 @@ const mutationRowOf = (f) => {
     }
   }
   if (MUTATION_CACHE.scope === null) return null;
-  const key = norm(path.relative(REPO_AT, f));
+  const key = trimmedPath(path.relative(REPO_AT, f));
   if (!MUTATION_CACHE.scope(key)) return null;
   const row = MUTATION_CACHE.ledger[key];
   if (row === undefined)
@@ -12858,7 +12859,7 @@ const manifestShiftsOf = () => {
   if (CONFIG.manifest == null) return [];
   const at = path.join(BASE, CONFIG.manifest);
   if (!existsSync(at)) return [];
-  const now = readJson(at, {});
+  const now = jsonObjectOr(at, {});
   let was = {};
   try {
     was = parseJson(headTextOf(at) ?? "{}");
@@ -12964,17 +12965,17 @@ const setupShiftsOf = () => {
   const skip = new Set(
     [CONFIG.barProtocol, CONFIG.mutationLedger]
       .filter((x) => x != null)
-      .map((x) => norm(path.join(BASE, x))),
+      .map((x) => trimmedPath(path.join(BASE, x))),
   );
   for (const one of changedPathsNow(REPO_AT) ?? []) {
     const abs = path.join(REPO_AT, one);
-    const where = norm(one);
-    if (where.startsWith(".claude/") || skip.has(norm(abs))) continue;
+    const where = trimmedPath(one);
+    if (where.startsWith(".claude/") || skip.has(trimmedPath(abs))) continue;
     if (files.includes(abs) || styleFiles.includes(abs)) continue;
     // В базе бюджет записан фактами; прочие её файлы — проза о коде, и
     // слово «поставка» в карте о бюджете не говорит.
     const inBase = !path.relative(BASE, abs).startsWith("..");
-    if (inBase && norm(abs) !== norm(path.join(BASE, "01-facts.md"))) continue;
+    if (inBase && trimmedPath(abs) !== trimmedPath(path.join(BASE, "01-facts.md"))) continue;
     const now = existsSync(abs) ? readFileSync(abs, "utf8") : "";
     const was = headTextOf(abs) ?? "";
     if (SETUP_PIPELINE.test(where))
@@ -13494,7 +13495,7 @@ const rangesOf = (text) =>
     const m = /^\s*([0-9]+)(?:–([0-9]+))?\s*$/.exec(one);
     return m === null ? [1, 0] : [Number(m[1]), Number(m[2] ?? m[1])];
   });
-const absOfRel = (r) => barAbsOf(r) ?? norm(path.join(ROOT, r));
+const absOfRel = (r) => barAbsOf(r) ?? trimmedPath(path.join(ROOT, r));
 
 /** Описание страницы политики: критерии подряд по порядку ВСЕЙ политики
  * сжимаются в диапазон, пропуск разрывает его. Описание самодостаточно:
@@ -13852,7 +13853,7 @@ const headTextOf = (abs) => {
   try {
     text = execFileSync(
       "git",
-      ["show", workBaseOf(REPO_AT) + ":./" + norm(path.relative(REPO_AT, abs))],
+      ["show", workBaseOf(REPO_AT) + ":./" + trimmedPath(path.relative(REPO_AT, abs))],
       { maxBuffer: CHILD_OUTPUT_BYTES, cwd: REPO_AT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
   } catch {
@@ -14143,7 +14144,7 @@ const stateRecords = () => {
   const entry =
     mapAt === null || !existsSync(mapAt)
       ? undefined
-      : (readJson(mapAt, {}).onSubject ?? []).find(
+      : (jsonObjectOr(mapAt, {}).onSubject ?? []).find(
           (e) => e.subject === "state",
         );
   const at = entry === undefined ? null : path.join(REPO_AT, entry.to);
@@ -14466,16 +14467,16 @@ const guaranteeAbs = (p) => {
   const hit = barAbsOf(p);
   if (hit !== null) return hit;
   for (const one of [path.join(REPO_AT, p), path.join(ROOT, p)])
-    if (existsSync(one) && statSync(one).isFile()) return norm(one);
+    if (existsSync(one) && statSync(one).isFile()) return trimmedPath(one);
   return null;
 };
 /** Гарантии, которые называют хоть один файл из списка. */
 const guaranteesOver = (list) => {
-  const inList = new Set(list.map(norm));
+  const inList = new Set(list.map(trimmedPath));
   return guarantees().rows.filter((g) =>
     g.nodes.some((n) => {
       const f = guaranteeAbs(n);
-      return f !== null && inList.has(norm(f));
+      return f !== null && inList.has(trimmedPath(f));
     }),
   );
 };
@@ -15519,9 +15520,9 @@ const barModelOf = (
   // области, его писателей и то, что его снимает. Ключ, который не снимает
   // никто, несёт пометку `без снятия`: его конец — вопрос к основанию.
   if (want("хранение")) {
-    const inWork = new Set([...focus, ...area].map(norm));
+    const inWork = new Set([...focus, ...area].map(trimmedPath));
     for (const [key, byFile] of storeWriters()) {
-      const mine = [...byFile].filter(([g]) => inWork.has(norm(g)));
+      const mine = [...byFile].filter(([g]) => inWork.has(trimmedPath(g)));
       if (mine.length === 0) continue;
       const end = storeEndOf(key);
       const made = mine.some(([g, line]) => {
@@ -15569,7 +15570,7 @@ const barModelOf = (
     const named = (g) => {
       const direct = g.nodes.filter((n) => {
         const f = guaranteeAbs(n);
-        return f !== null && inWork.some((one) => norm(one) === norm(f));
+        return f !== null && inWork.some((one) => trimmedPath(one) === trimmedPath(f));
       });
       return direct.length > 0
         ? direct.join(", ")
@@ -15918,7 +15919,7 @@ const barAreaOf = (focus) =>
             ...linkPartnersOf(target),
           ];
         })
-        .map(norm),
+        .map(trimmedPath),
     ),
   ].sort(barByRel);
 
@@ -16003,7 +16004,7 @@ const barModelFor = (rows, level, subject, neighbours = null) =>
     : subject === BAR_AREA
       ? rows.filter((r) => {
           const f = barAbsOf(r.where);
-          return f !== null && (neighbours?.[level]?.has(norm(f)) ?? false);
+          return f !== null && (neighbours?.[level]?.has(trimmedPath(f)) ?? false);
         })
       : rows.filter((r) => {
           const p = barPlaceOf(r.where);
@@ -16038,7 +16039,7 @@ const barNoneHeld = (reason, { c, subject, model, neighbours, kind }) =>
 const barInsideOf = (level, subject, abs, neighbours = null) =>
   subject === "" ||
   (subject === BAR_AREA
-    ? (neighbours?.[level]?.has(norm(abs)) ?? false)
+    ? (neighbours?.[level]?.has(trimmedPath(abs)) ?? false)
     : level === "узел"
       ? unitOf(abs) === subject
       : level === "слой"
@@ -16318,7 +16319,7 @@ const barLintOf = (repoRoot, list) => {
   const linted = new Set();
   const hits = new Map();
   for (const one of report.results) {
-    linted.add(norm(one.filePath));
+    linted.add(trimmedPath(one.filePath));
     // Сообщение — одной строкой: правила компилятора React пишут его в
     // несколько, и перевод строки рвал строку протокола, куда оно ложится.
     const found = (one.messages ?? [])
@@ -16328,10 +16329,10 @@ const barLintOf = (repoRoot, list) => {
         line: m.line,
         words: String(m.message).replace(/\s+/g, " ").trim(),
       }));
-    if (found.length > 0) hits.set(norm(one.filePath), found);
+    if (found.length > 0) hits.set(trimmedPath(one.filePath), found);
   }
   const enabled = new Map(
-    Object.entries(report.enabled ?? {}).map(([f, rules]) => [norm(f), new Set(rules)]),
+    Object.entries(report.enabled ?? {}).map(([f, rules]) => [trimmedPath(f), new Set(rules)]),
   );
   const exempt = new Map();
   for (const f of files) {
@@ -16352,7 +16353,7 @@ const barLintOf = (repoRoot, list) => {
           .filter((r) => r !== "");
         rows.push({ line: k + 1, rules: named });
       });
-    if (rows.length > 0) exempt.set(norm(f), rows);
+    if (rows.length > 0) exempt.set(trimmedPath(f), rows);
   }
   return {
     state: "прогнан",
@@ -16494,7 +16495,7 @@ const sourceNamedIn = (line) => {
     SOURCE_BY_NAME = new Map();
     for (const f of [...files, ...styleFiles]) {
       SOURCE_BY_NAME.set(rel(f), f);
-      SOURCE_BY_NAME.set(norm(path.relative(REPO_AT, f)), f);
+      SOURCE_BY_NAME.set(trimmedPath(path.relative(REPO_AT, f)), f);
     }
   }
   const out = new Set();
@@ -17244,7 +17245,7 @@ const barHolesOf = ({
   // файл — тот самый класс, что уже записан у разбора путей-аргументов.
   const spotFile = (p) => {
     for (const one of [path.join(repoRoot, p), path.join(ROOT, p)]) {
-      const abs = norm(one);
+      const abs = trimmedPath(one);
       if (existsSync(abs)) return abs;
     }
     return null;
@@ -17252,8 +17253,8 @@ const barHolesOf = ({
   const spotOf = (addr) => /^`?(.+?):([0-9]+)`?$/.exec(addr);
   const formsOf = (spot, abs) => [
     spot[1],
-    norm(path.relative(repoRoot, abs)),
-    norm(path.relative(ROOT, abs)),
+    trimmedPath(path.relative(repoRoot, abs)),
+    trimmedPath(path.relative(ROOT, abs)),
   ];
   // Пункт долга перехода, называющий критерий и файл предмета, — известная
   // находка. Работа с диффом кода, задевшая файл, чинит её тем же заходом и
@@ -17334,7 +17335,7 @@ const barHolesOf = ({
   // Место находки — одним видом, от корня репозитория: адрес пишут и от
   // корня исходников, и одно место не должно стать двумя строками сверки.
   const placeKey = (abs, line) =>
-    norm(path.relative(repoRoot, abs)) + ":" + Number(line);
+    trimmedPath(path.relative(repoRoot, abs)) + ":" + Number(line);
   const placesFound = new Map();
   const findingsAt = [];
   for (const { c, subject } of expected) {
@@ -17931,11 +17932,11 @@ const barHolesOf = ({
         // правку, которой не было, нечем было отличить. Переход пишет базу
         // шагом знания, и правленым её здесь не видно: у него не спрашивается.
         else if (one === "правлено" && kind !== "на переход" && changedKnown) {
-          const base = norm(BASE) + "/";
+          const base = trimmedPath(BASE) + "/";
           const named = quotedIn(c[2])
             .map((q) => q.replace(/:[0-9]+$/, ""))
             .flatMap((q) => [path.join(repoRoot, q), path.join(BASE, q)])
-            .map(norm)
+            .map(trimmedPath)
             .filter((abs) => changedNow.has(abs));
           const inBase = (abs) => abs.startsWith(base);
           if (!named.some((abs) => (i === 0 ? inBase(abs) : !inBase(abs))))
@@ -18423,7 +18424,7 @@ const barProcess = ({
       const touched = new Set(
         edited.map((one) => {
           const abs = barAbsOf(one) ?? path.join(ROOT, one);
-          return norm(abs);
+          return trimmedPath(abs);
         }),
       );
       const touchedUnits = new Set([...touched].map((f) => unitOf(f)));
@@ -18432,7 +18433,7 @@ const barProcess = ({
         if (
           w.kind === "единица"
             ? touchedUnits.has(w.unit)
-            : file !== null && touched.has(norm(file))
+            : file !== null && touched.has(trimmedPath(file))
         )
           carry.witness.delete(w.key);
       }
@@ -18852,13 +18853,13 @@ const barChangeOf = async (repoRoot) => {
   // из предмета, был ложен всегда: правка, добавившая пакет, получала «нет
   // предмета» по зависимостям, и вопрос о пакете не задавался.
   const manifestAt =
-    CONFIG.manifest == null ? null : norm(path.join(BASE, CONFIG.manifest));
+    CONFIG.manifest == null ? null : trimmedPath(path.join(BASE, CONFIG.manifest));
   // Пакет, впервые взятый в код, — тот же вопрос о зависимости, хотя
   // манифест не тронут: пакет лежал в нём и прежде.
   const manifestTouched =
     (manifestAt !== null &&
       ((await changedPaths(repoRoot)) ?? []).some(
-        (f) => norm(path.join(repoRoot, f)) === manifestAt,
+        (f) => trimmedPath(path.join(repoRoot, f)) === manifestAt,
       )) ||
     codePackageShiftsOf(subject).length > 0;
   return { subject, manifestTouched };
@@ -18888,7 +18889,7 @@ const partToolFiles = () =>
     CONFIG.barProbeLedger,
   ]
     .filter((one) => one != null)
-    .map((one) => norm(path.join(BASE, one)));
+    .map((one) => trimmedPath(path.join(BASE, one)));
 /** Файлы зависимостей: манифест и блокировка лежат в одной части. */
 const PART_DEPS =
   /^(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/;
@@ -18976,7 +18977,7 @@ const partDiffOf = (abs, repoRoot) => {
           "--no-ext-diff",
           workBaseOf(repoRoot),
           "--",
-          norm(path.relative(repoRoot, abs)),
+          trimmedPath(path.relative(repoRoot, abs)),
         ],
         { cwd: repoRoot, encoding: "utf8", maxBuffer: CHILD_OUTPUT_BYTES },
       ),
@@ -19004,12 +19005,12 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
   if (table === null) return out;
   const holes = out.holes;
   const changed = (changedPathsNow(repoRoot) ?? []).map((f) =>
-    norm(path.join(repoRoot, f)),
+    trimmedPath(path.join(repoRoot, f)),
   );
   const changedSet = new Set(changed);
   const absOf = (q) =>
     [path.join(ROOT, q), path.join(repoRoot, q)]
-      .map(norm)
+      .map(trimmedPath)
       .find((one) => changedSet.has(one)) ?? null;
   // Явные: файлы, названные таблицей.
   const partOf = out.partOf;
@@ -19098,7 +19099,7 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     else
       holes.push(
         "файл " +
-          barQuoted(norm(path.relative(repoRoot, f))) +
+          barQuoted(trimmedPath(path.relative(repoRoot, f))) +
           " не отнесён к части — назвать его в графе «файлы» нужной части",
       );
   }
@@ -19136,7 +19137,7 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     const { removed, added } = changedLinesOf(d.hunks);
     const partOfLine = { removed: new Map(), added: new Map() };
     const said = new Set();
-    const where = norm(path.relative(repoRoot, f));
+    const where = trimmedPath(path.relative(repoRoot, f));
     const judge = (lines, rec, i, side, map) => {
       const [s, e] = rec[i];
       const named = partsNamedIn(lines.slice(s, e + 1).join(""));
@@ -19297,7 +19298,7 @@ const barInputsOf = async ({
       ? subject
       : ((await barChangedSubject(repoRoot)) ?? [])),
     ...(changedList ?? []).map((f) =>
-      norm(path.join(repoRoot, f)),
+      trimmedPath(path.join(repoRoot, f)),
     ),
   ]);
   return {
@@ -19480,7 +19481,7 @@ if (mode === "gate") {
   let formatted = 0;
   const want = [];
   for (const { status, one } of staged) {
-    const abs = norm(path.join(REPO_AT, one));
+    const abs = trimmedPath(path.join(REPO_AT, one));
     // Удаление — тоже правка: удалённый код в предмете с отпечатком «нет
     // файла», и свод обязан его назвать.
     if (status === "D") {
@@ -19533,12 +19534,12 @@ if (mode === "gate") {
     // уходил в историю зелёным, и сверка краснела следующим коммитом
     // (находка Н-10, решение Р7). Нетронутое семя и одно приведение формата
     // — не правка, как у кода.
-    const toolConfig = norm(
+    const toolConfig = trimmedPath(
       path.relative(REPO_AT, path.join(BASE, "graph.config.mjs")),
     );
     const configs = [];
     for (const { status, one } of staged) {
-      const at = norm(one);
+      const at = trimmedPath(one);
       if (!isChainConfigPath(at) && at !== toolConfig) continue;
       if (status !== "D") {
         let body;
@@ -19562,7 +19563,7 @@ if (mode === "gate") {
         } catch {
           head = null;
         }
-        if (await formatOnly(head, body, norm(path.join(REPO_AT, one))))
+        if (await formatOnly(head, body, trimmedPath(path.join(REPO_AT, one))))
           continue;
         if (head !== null && one === "package.json" && manifestOnlySeedFields(head, body))
           continue;
@@ -19709,9 +19710,9 @@ if (mode === "bar") {
     mkdirSync(dir, { recursive: true });
     // Протокол о предмете, которого больше нет, описывает ничто: снимается
     // тем же вызовом и называется.
-    const wantAt = new Set(subjects.map((s) => norm(s.at)));
+    const wantAt = new Set(subjects.map((s) => trimmedPath(s.at)));
     const orphans = readdirSync(dir).filter(
-      (n) => n.endsWith(".md") && !wantAt.has(norm(path.join(dir, n))),
+      (n) => n.endsWith(".md") && !wantAt.has(trimmedPath(path.join(dir, n))),
     );
     for (const n of orphans) rmSync(path.join(dir, n));
     const tally = { напечатан: [], запечатан: [], дыры: [], правлен: [] };
@@ -20309,7 +20310,7 @@ if (mode === "series") {
       "Сперва `node .claude/tools/graph.mjs bar`.",
     );
   const changed = (changedPathsNow(REPO_AT) ?? []).map((f) =>
-    norm(path.join(REPO_AT, f)),
+    trimmedPath(path.join(REPO_AT, f)),
   );
   const whole = new Map(
     changed
@@ -20817,7 +20818,7 @@ if (mode === "bar-fill") {
     const abs = m === null ? null : barAbsOf(m[2]);
     return abs === null
       ? k
-      : m[1] + norm(path.relative(path.join(BASE, ".."), abs)) + ":" + m[3] + "`";
+      : m[1] + trimmedPath(path.relative(path.join(BASE, ".."), abs)) + ":" + m[3] + "`";
   };
   for (const { line, n } of asked) {
     const parts = line.split(/(?<!\\)\|/).map((c) => c.trim());
@@ -20981,7 +20982,7 @@ if (mode === "bar-hold") {
   // его форму: посаженное нарушение — одна форма из многих.
   const probeAt = path.join(TOOL_DIR, "bar-probes.json");
   const plantsOf = new Map();
-  for (const p of existsSync(probeAt) ? (readJson(probeAt, {}).plants ?? []) : [])
+  for (const p of existsSync(probeAt) ? (jsonObjectOr(probeAt, {}).plants ?? []) : [])
     plantsOf.set(p.criterion, (plantsOf.get(p.criterion) ?? 0) + 1);
   const ledgerAt =
     CONFIG.barProbeLedger == null ? null : path.join(BASE, CONFIG.barProbeLedger);
@@ -21741,12 +21742,12 @@ if (mode === "tiers") {
     const walk = (dir) => {
       if (!existsSync(dir)) return;
       for (const e of readdirSync(dir)) {
-        const at = norm(path.join(dir, e));
+        const at = trimmedPath(path.join(dir, e));
         if (statSync(at).isDirectory()) walk(at);
         else if (e.endsWith(".md")) doctrine.push(at);
       }
     };
-    walk(norm(path.join(SHELF, "rules")));
+    walk(trimmedPath(path.join(SHELF, "rules")));
   }
   // База целиком.
   const baseAll = readdirSync(BASE)
@@ -21764,7 +21765,7 @@ if (mode === "tiers") {
   let nodeWords = 0;
   for (const [k, n] of nodes) if (n > nodeWords) [node, nodeWords] = [k, n];
   const nodeDocs =
-    node === null ? 0 : words(norm(path.join(ROOT, node, "docs", "README.md")));
+    node === null ? 0 : words(trimmedPath(path.join(ROOT, node, "docs", "README.md")));
 
   const map0 = words(baseAt(CONFIG.map ?? "00-map.md"));
   const full = sum(doctrine) + sum(baseAll);
@@ -22753,21 +22754,21 @@ if (mode === "verify") {
     const seeded = seedOfPath();
     const covered = (full) =>
       [...SRC_ROOTS, ...TEST_DIRS].some(
-        (d) => full === norm(d) || full.startsWith(norm(d) + "/"),
+        (d) => full === trimmedPath(d) || full.startsWith(trimmedPath(d) + "/"),
       );
     (function walk(dir) {
       if (!walkable(dir)) return;
       for (const e of readdirSync(dir)) {
-        const full = norm(path.join(dir, e));
+        const full = trimmedPath(path.join(dir, e));
         if (outOfTree(e, full) || covered(full)) continue;
         if (statSync(full).isDirectory()) walk(full);
         else if (
           TEST_SUFFIX.test(e) &&
-          !seeded.has(norm(path.relative(REPO_AT, full)))
+          !seeded.has(trimmedPath(path.relative(REPO_AT, full)))
         )
           out.push(full);
       }
-    })(norm(REPO_AT));
+    })(trimmedPath(REPO_AT));
     return out.sort();
   });
   checkStep(() => {
@@ -22790,7 +22791,7 @@ if (mode === "verify") {
     for (const f of unseenTests)
       console.log(
         "    " +
-          norm(path.relative(REPO_AT, f)) +
+          trimmedPath(path.relative(REPO_AT, f)) +
           " — тест, которого обвязка не видит: объявить его папку полем `testDirs`",
       );
   });
@@ -22904,15 +22905,15 @@ if (mode === "verify") {
             : path.join(BASE, CONFIG.barProtocol),
         ]
           .filter((one) => one !== null)
-          .map(norm),
+          .map(trimmedPath),
       );
       const quoting = [
         ...files.filter(isTest),
         ...docFiles,
         ...readdirSync(BASE)
           .filter((e) => e.endsWith(".md"))
-          .map((e) => norm(path.join(BASE, e))),
-      ].filter((f) => !skip.has(norm(f)));
+          .map((e) => trimmedPath(path.join(BASE, e))),
+      ].filter((f) => !skip.has(trimmedPath(f)));
       for (const f of [...new Set(quoting)]) {
         // Образец в ограде кода документа — показанная форма, не ссылка.
         const raw = readFileSync(f, "utf8");
@@ -23437,7 +23438,7 @@ if (mode === "verify") {
   const danglingAdr = [];
   checkStep(() => {
     if (CONFIG.adr != null) {
-      const dir = norm(path.join(BASE, CONFIG.adr.dir));
+      const dir = trimmedPath(path.join(BASE, CONFIG.adr.dir));
       // Нет папки — нет предмета: у нового проекта решений ещё не было, и
       // требовать её значило бы ронять посадку на пустом месте. Поймано
       // пересадкой, ровно как со сверкой исключений линта.
@@ -23457,7 +23458,7 @@ if (mode === "verify") {
           // предлагалось снести живую запись. Найдено посадкой в проект со
           // вложенными правилами единицы переноса.
           const rulesFiles = (CONFIG.rulesManifest?.rules ?? [])
-            .map((one) => norm(path.join(BASE, one)))
+            .map((one) => trimmedPath(path.join(BASE, one)))
             .filter((one) => existsSync(one));
           const found = [
             ...files,
@@ -23465,7 +23466,7 @@ if (mode === "verify") {
             ...docFiles,
             ...rulesFiles,
           ].some((f) => {
-            if (norm(f) === norm(path.join(dir, file))) return false;
+            if (trimmedPath(f) === trimmedPath(path.join(dir, file))) return false;
             const body = readFileSync(f, "utf8");
             if (marks.some((m) => body.includes(m))) return true;
             // Номер сравнивается ЧИСЛОМ, а не строкой. Имя файла решения
@@ -23494,8 +23495,8 @@ if (mode === "verify") {
   let constantsChecked = 0;
   checkStep(() => {
     if (CONFIG.configDocs != null) {
-      const dir = norm(path.join(BASE, CONFIG.configDocs.dir));
-      const docsDir = norm(path.join(BASE, CONFIG.configDocs.docs));
+      const dir = trimmedPath(path.join(BASE, CONFIG.configDocs.dir));
+      const docsDir = trimmedPath(path.join(BASE, CONFIG.configDocs.docs));
       // Как и у решений: нет предмета — нет сверки. Новый проект садится на
       // пустое место, и требовать с него таблиц значило бы ронять первый прогон.
       if (existsSync(dir) && existsSync(docsDir)) {
@@ -23921,7 +23922,7 @@ if (mode === "verify") {
   const deadAnchors = [];
   let anchorCount = 0;
   const shelfDocs = checkStep(
-    () => new Set(shelfProse().map(([, full]) => norm(full))),
+    () => new Set(shelfProse().map(([, full]) => trimmedPath(full))),
   );
   checkStep(() => {
     for (const f of new Set([...files, ...ROOT_CONFIGS])) {
@@ -23932,7 +23933,7 @@ if (mode === "verify") {
         // Якорь пишут относительно файла (`./README.md`), относительно корня
         // компонента (`docs/architecture/x.md`) или корня исходников
         // (`shared/engines/motion/README.md`). Поэтому пробуются все предки.
-        let dir = norm(path.dirname(f));
+        let dir = trimmedPath(path.dirname(f));
         let found = false;
         // Подъём идёт до корня РЕПОЗИТОРИЯ, а не исходников. Папка документации
         // лежит рядом с исходниками, а не внутри: адрес, начинающийся с папки
@@ -23940,18 +23941,18 @@ if (mode === "verify") {
         // Пока решений у
         // проектов не было, это не проявлялось — первая же ссылка на решение из
         // кода легла в «ведут в никуда», при живом файле на диске.
-        const stop = norm(path.join(BASE, ".."));
+        const stop = trimmedPath(path.join(BASE, ".."));
         while (dir.length >= stop.length) {
-          const at = norm(path.join(dir, spec));
+          const at = trimmedPath(path.join(dir, spec));
           if (
             docFiles.includes(at) ||
             shelfDocs.has(at) ||
-            (at.startsWith(norm(BASE) + "/") && existsSync(at))
+            (at.startsWith(trimmedPath(BASE) + "/") && existsSync(at))
           ) {
             found = true;
             break;
           }
-          const up = norm(path.dirname(dir));
+          const up = trimmedPath(path.dirname(dir));
           if (up === dir) break;
           dir = up;
         }
@@ -24489,18 +24490,18 @@ if (mode === "verify") {
       const barFile =
         CONFIG.barProtocol == null
           ? null
-          : norm(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
+          : trimmedPath(path.relative(REPO, path.join(BASE, CONFIG.barProtocol)));
       // Следы прогонов, которые пишет сам инструмент, — данные, а не записи
       // базы: суд пробы кладёт адрес «путь:строка» в свой след, и сверка
       // звала его якорем без цитаты (стенд проб прогона `2026-11-14`).
       const toolOwn = new Set(
-        partToolFiles().map((one) => norm(path.relative(REPO, one))),
+        partToolFiles().map((one) => trimmedPath(path.relative(REPO, one))),
       );
       // Протоколы перехода — та же форма режима, что и протокол текущей работы.
       const barDir =
         barTransitionDir() === null
           ? null
-          : norm(path.relative(REPO, barTransitionDir())) + "/";
+          : trimmedPath(path.relative(REPO, barTransitionDir())) + "/";
       if (diff !== null) {
         let file = "";
         // Строки ограды кода — показанный образец, якорь в нём не запись. Какие
@@ -24803,26 +24804,26 @@ if (mode === "verify") {
       // опаснее её отсутствия, следующий заход на неё обопрётся.
       {
         const declared = new Set(
-          CONFIG.rulesManifest.rules.map((r) => norm(path.join(BASE, r))),
+          CONFIG.rulesManifest.rules.map((r) => trimmedPath(path.join(BASE, r))),
         );
         (function walkRules(dir) {
           for (const e of readdirSync(dir)) {
             if (OUT_OF_TREE.has(e)) continue;
-            const full = norm(path.join(dir, e));
+            const full = trimmedPath(path.join(dir, e));
             // Обвязка из обхода исключена целиком: в её семенах лежит заготовка
             // файла правил, и обход объявлял её незаявленным файлом правил
             // проекта. Найдено пересадкой начисто.
-            if (SHELF !== null && full.startsWith(norm(SHELF) + "/")) continue;
+            if (SHELF !== null && full.startsWith(trimmedPath(SHELF) + "/")) continue;
             if (statSync(full).isDirectory()) walkRules(full);
             else if (e === "CLAUDE.md" && !declared.has(full))
               unclassified.push(
                 `файл правил не объявлен в манифесте: ${rel(full)}`,
               );
           }
-        })(norm(REPO));
+        })(trimmedPath(REPO));
       }
       const heads = [];
-      const rootRules = norm(path.join(REPO, "CLAUDE.md"));
+      const rootRules = trimmedPath(path.join(REPO, "CLAUDE.md"));
       for (const one of CONFIG.rulesManifest.rules) {
         const at = path.join(BASE, one);
         if (!existsSync(at)) {
@@ -24835,7 +24836,7 @@ if (mode === "verify") {
         // Вложенный файл грузится один, без корневого, и без пути до него
         // читается как весь свод правил (`base.md`, раздел «Правила,
         // действующие только в одной папке»).
-        const here = norm(at);
+        const here = trimmedPath(at);
         if (
           here !== rootRules &&
           path.basename(here) === "CLAUDE.md" &&
@@ -24843,11 +24844,11 @@ if (mode === "verify") {
         ) {
           // Путь читается как путь: подстрока «../../CLAUDE.md» содержит
           // «../CLAUDE.md», но ведёт выше корня.
-          const back = norm(path.relative(path.dirname(here), rootRules));
+          const back = trimmedPath(path.relative(path.dirname(here), rootRules));
           const points = [
             ...body.matchAll(/[^\s()[\]`"'<>|]*CLAUDE\.md/g),
           ].some(
-            (m) => norm(path.resolve(path.dirname(here), m[0])) === rootRules,
+            (m) => trimmedPath(path.resolve(path.dirname(here), m[0])) === rootRules,
           );
           if (!points)
             unclassified.push(
@@ -25070,7 +25071,7 @@ if (mode === "verify") {
         // бы абсолютным, в отличие от соседей по списку. Считается от корня
         // репозитория, как в остальных режимах.
         ...skillFiles.map((at) => [
-          norm(path.relative(path.join(BASE, ".."), at)),
+          trimmedPath(path.relative(path.join(BASE, ".."), at)),
           at,
         ]),
         // Собственная проза ПОЛКИ: доктрина, инструкция посадки, справочник
@@ -25091,7 +25092,7 @@ if (mode === "verify") {
       const filesByName = new Map();
       for (const at of new Set(
         [...headSources, ...skillFiles, ...sources.map(([, one]) => one)].map(
-          norm,
+          trimmedPath,
         ),
       )) {
         headsOfFile.set(at, new Set(headingsOf(at)));
@@ -25112,13 +25113,13 @@ if (mode === "verify") {
         // пути. По одному имени ссылка из нормы на раздел обоснования
         // разрешалась в одноимённую норму рядом.
         if (hit[1].includes("/")) {
-          const exact = norm(path.resolve(path.dirname(from), hit[1]));
-          const tail = "/" + norm(hit[1]).replace(/^(?:\.\.?\/)+/, "");
+          const exact = trimmedPath(path.resolve(path.dirname(from), hit[1]));
+          const tail = "/" + trimmedPath(hit[1]).replace(/^(?:\.\.?\/)+/, "");
           const named = all.filter((f) => f === exact || f.endsWith(tail));
           if (named.length) return named;
         }
         const here = all.filter(
-          (f) => path.dirname(f) === path.dirname(norm(from)),
+          (f) => path.dirname(f) === path.dirname(trimmedPath(from)),
         );
         if (here.length) return here;
         const norms = all.filter((f) => !f.includes("/rationale/"));
@@ -25324,7 +25325,7 @@ if (mode === "verify") {
     if (!existsSync(root)) return found;
     (function walk(dir) {
       for (const entry of readdirSync(dir)) {
-        const full = norm(path.join(dir, entry));
+        const full = trimmedPath(path.join(dir, entry));
         if (!statSync(full).isDirectory()) continue;
         // Общее исключение спрашивается и здесь: на проекте, объявившем
         // корнем исходников корень репозитория, обход находил папки внутри
@@ -25333,7 +25334,7 @@ if (mode === "verify") {
         if (entry === name) found.push(full);
         walk(full);
       }
-    })(norm(root));
+    })(trimmedPath(root));
     return found;
   };
   checkStep(() => {
@@ -25394,7 +25395,7 @@ if (mode === "verify") {
       disarmedLooked += 1;
       const script = /\brun\s+(\S+)/.exec(CONFIG.smokeCommand ?? "")?.[1] ?? null;
       const scripts =
-        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {};
+        jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {};
       const config = readdirSync(REPO).find((n) => /^playwright\.config\.[cm]?[jt]s$/.test(n));
       const where =
         script !== null && Object.hasOwn(scripts, script)
@@ -25734,7 +25735,7 @@ if (mode === "verify") {
         {
           const seedAt = shelfAt("seat/templates/package.json");
           if (seedAt !== null && existsSync(seedAt)) {
-            const seed = readJson(seedAt, {});
+            const seed = jsonObjectOr(seedAt, {});
             for (const d of Object.keys(seed.dependencies ?? {}))
               shelfDeps.add(d);
             for (const d of Object.keys(seed.devDependencies ?? {}))
@@ -25906,7 +25907,7 @@ if (mode === "verify") {
   const runnerConfigs = (await checkStepAsync(runnerConfigsLoad)) ?? [];
   checkStep(() => {
     if (CONFIG.docsIndex != null) {
-      const dir = norm(path.join(BASE, CONFIG.docsIndex.dir));
+      const dir = trimmedPath(path.join(BASE, CONFIG.docsIndex.dir));
       const table = path.join(BASE, CONFIG.docsIndex.table);
       if (existsSync(dir) && existsSync(table)) {
         const text = readFileSync(table, "utf8");
@@ -25918,7 +25919,7 @@ if (mode === "verify") {
           const all = [];
           (function walkIndexed(at) {
             for (const e of readdirSync(at)) {
-              const full = norm(path.join(at, e));
+              const full = trimmedPath(path.join(at, e));
               if (outOfTree(e, full)) continue;
               if (statSync(full).isDirectory()) walkIndexed(full);
               else if (e.endsWith(".md")) all.push(full);
@@ -25939,7 +25940,7 @@ if (mode === "verify") {
                 ? [dir]
                 : [path.dirname(from), dir];
               for (const one of bases) {
-                const at = norm(path.join(one, tail));
+                const at = trimmedPath(path.join(one, tail));
                 const hit = (
                   /\.md$/.test(at)
                     ? [at]
@@ -26012,7 +26013,7 @@ if (mode === "verify") {
         // посадка в живой проект — `.node-version` сверка не читала вовсе.
         const nvmMapAt = shelfAt("seat/map.json");
         const nvmEntry = (
-          nvmMapAt !== null && existsSync(nvmMapAt) ? (readJson(nvmMapAt, {}).copy ?? []) : []
+          nvmMapAt !== null && existsSync(nvmMapAt) ? (jsonObjectOr(nvmMapAt, {}).copy ?? []) : []
         ).find((e) => e.to === ".nvmrc");
         let nvmName =
           [".nvmrc", ...(nvmEntry?.alsoKnownAs ?? [])].find((n) =>
@@ -26113,7 +26114,7 @@ if (mode === "verify") {
     checkRegion(["Версии зависимостей закреплены"], () => {
       if (CONFIG.manifest == null)
         return "манифест не объявлен: поле `manifest` настройки пусто";
-      const pkg = readJson(path.join(BASE, CONFIG.manifest), {});
+      const pkg = jsonObjectOr(path.join(BASE, CONFIG.manifest), {});
       // Пакеты рабочих пространств держат свои версии: корень один их не
       // называет. Ссылка на соседний пакет — не версия со стороны. Выведено
       // десятой посадкой.
@@ -26122,7 +26123,7 @@ if (mode === "verify") {
         { at: null, pkg },
         ...WORKSPACE_PACKAGES.map((one) => ({
           at: path.relative(REPO_AT, one.dir).split(path.sep).join("/") + "/package.json",
-          pkg: readJson(path.join(one.dir, "package.json"), {}),
+          pkg: jsonObjectOr(path.join(one.dir, "package.json"), {}),
         })),
       ];
       for (const { at, pkg: one } of manifests)
@@ -26177,7 +26178,7 @@ if (mode === "verify") {
         // подготовки прогона её библиотека утверждений звену не нужна.
         const mapAt = shelfAt("seat/map.json");
         const unlaid = new Set(
-          (mapAt === null || !existsSync(mapAt) ? [] : readJson(mapAt, {}).copy ?? [])
+          (mapAt === null || !existsSync(mapAt) ? [] : jsonObjectOr(mapAt, {}).copy ?? [])
             .filter((e) => e.onlyWith != null && !existsSync(path.join(REPO_AT, e.to)))
             .flatMap((e) => e.packages ?? []),
         );
@@ -26185,7 +26186,7 @@ if (mode === "verify") {
         // помощники тестов рядом с Svelte — второй ответ на тот же вопрос.
         // Выведено десятой посадкой.
         const framework =
-          (mapAt === null || !existsSync(mapAt) ? [] : readJson(mapAt, {}).stackAxes ?? []).find(
+          (mapAt === null || !existsSync(mapAt) ? [] : jsonObjectOr(mapAt, {}).stackAxes ?? []).find(
             (a) => a.axis === "фреймворк",
           ) ?? {};
         if (projectHasForeignUi())
@@ -26303,7 +26304,7 @@ if (mode === "verify") {
             const seedBody =
               seedAt === null || !existsSync(seedAt)
                 ? null
-                : readJson(seedAt, {}).scripts?.check;
+                : jsonObjectOr(seedAt, {}).scripts?.check;
             for (const piece of String(seedBody ?? "").split("&&")) {
               const one = piece.trim();
               const run = /^npm run ([^ ]+)/.exec(one);
@@ -26426,7 +26427,7 @@ if (mode === "verify") {
             const seeds =
               mapAt === null || !existsSync(mapAt)
                 ? []
-                : (readJson(mapAt, {}).copy ?? []);
+                : (jsonObjectOr(mapAt, {}).copy ?? []);
             if (compilers.length)
               for (const e of seeds) {
                 // Компилятор и линт с типами разбирают TypeScript; остальной код
@@ -26488,7 +26489,7 @@ if (mode === "verify") {
               // Раннер второй версии даёт сборщику поле `test` и ссылкой на свои
               // типы — замерено компилятором на такой настройке. Для старших
               // версий это не мерено, и они спрашиваются по-прежнему.
-              const runner = readJson(
+              const runner = jsonObjectOr(
                 path.join(BASE, "..", "node_modules", "vitest", "package.json"),
                 {},
               );
@@ -26526,7 +26527,7 @@ if (mode === "verify") {
             const setupAt = shelfAt("seat/map.json");
             const setupSeed =
               setupAt !== null && existsSync(setupAt)
-                ? (readJson(setupAt, {}).copy ?? []).find((e) =>
+                ? (jsonObjectOr(setupAt, {}).copy ?? []).find((e) =>
                     e.from.endsWith("tests/setup.ts"),
                   )
                 : undefined;
@@ -26556,13 +26557,13 @@ if (mode === "verify") {
               // проект с `vite.config.js`. У проекта со своим раннером звено
               // тестов не живое, и вопроса нет.
               const testLink = (
-                readJson(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
+                jsonObjectOr(shelfAt("seat/map.json") ?? "", {}).chainScripts ?? []
               ).find((e) => e.name === "test");
               const testLives =
                 testLink?.recognise != null &&
                 linkCalled(
                   new RegExp(testLink.recognise),
-                  readJson(
+                  jsonObjectOr(
                     path.join(BASE, CONFIG.manifest ?? "../package.json"),
                     {},
                   ).scripts ?? {},
@@ -26616,9 +26617,9 @@ if (mode === "verify") {
               .filter(
                 (f) =>
                   !pathUnder(f + "\n" + dir) ||
-                  !collected(norm(path.relative(root, f))),
+                  !collected(trimmedPath(path.relative(root, f))),
               )
-              .map((f) => norm(path.relative(path.join(BASE, ".."), f)));
+              .map((f) => trimmedPath(path.relative(path.join(BASE, ".."), f)));
             for (const k of lost.slice(0, 5))
               viteDrift.push(
                 cfg.name +
@@ -26640,7 +26641,7 @@ if (mode === "verify") {
           {
             const jest = jestConfigLoad(
               REPO_AT,
-              readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}),
+              jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}),
             );
             if (jest !== null) {
               viteSeen.add(jest.name);
@@ -26653,7 +26654,7 @@ if (mode === "verify") {
                   .filter((f) => TEST_SUFFIX.test(f))
                   .filter((f) => !other.some((d) => f.startsWith(d + "/")))
                   .filter((f) => !collects(f))
-                  .map((f) => norm(path.relative(REPO_AT, f)));
+                  .map((f) => trimmedPath(path.relative(REPO_AT, f)));
                 for (const k of lost.slice(0, 5))
                   viteDrift.push(jest.name + " — тест проекта " + k + " вне области сбора jest: раннер его не соберёт");
                 if (lost.length > 5)
@@ -26973,7 +26974,7 @@ if (mode === "verify") {
     if ((CONFIG.smokeScope ?? []).length > 0 && smokeScript !== undefined) {
       scopePaths++;
       const scripts =
-        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {};
+        jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {};
       if (!Object.hasOwn(scripts, smokeScript))
         goneScope.push(
           `команда смоука: ${CONFIG.smokeCommand} — скрипта ${smokeScript} в манифесте нет`,
@@ -27279,7 +27280,7 @@ if (mode === "verify") {
               codeOf(readFileSync(f, "utf8")),
               f,
             )) {
-              const at = norm(path.resolve(dir, one.spec));
+              const at = trimmedPath(path.resolve(dir, one.spec));
               if (existsSync(at) && !sheets.includes(at)) sheets.push(at);
             }
         return classesOf(sheets);
@@ -27302,7 +27303,7 @@ if (mode === "verify") {
         const sheets = [];
         for (const one of styleImportsOf(body, f)) {
           bindings.push(one.binding);
-          const at = norm(path.resolve(dir, one.spec));
+          const at = trimmedPath(path.resolve(dir, one.spec));
           if (existsSync(at)) sheets.push(at);
         }
         if (bindings.length) {
@@ -27384,7 +27385,7 @@ if (mode === "verify") {
       if (!keysByDir.has(dir)) {
         let keys = null;
         for (const g of files)
-          if (norm(path.dirname(g)) === dir)
+          if (trimmedPath(path.dirname(g)) === dir)
             for (const one of classMapsOf(codeOf(readFileSync(g, "utf8")))) {
               keys ??= new Set();
               for (const k of one.keys) keys.add(k);
@@ -27426,7 +27427,7 @@ if (mode === "verify") {
         const literal = raw.slice(m.index + m[0].length, end - 1);
         const target = bound.get(m[1]);
         if (target === undefined) continue;
-        const keys = keysOfDir(norm(path.dirname(target)));
+        const keys = keysOfDir(trimmedPath(path.dirname(target)));
         if (keys == null) continue;
         passedSeen += 1;
         for (const part of partsOf(literal)) {
@@ -27719,7 +27720,7 @@ if (mode === "verify") {
           // несколькими деревьями объявлялся лежащим вне раскладки. Замерено
           // посадкой по инструкции в монорепозиторий.
           const tree = SRC_ROOTS.find((one) =>
-            norm(f).startsWith(norm(one) + "/"),
+            trimmedPath(f).startsWith(trimmedPath(one) + "/"),
           );
           if (
             tree !== undefined &&
@@ -27729,7 +27730,7 @@ if (mode === "verify") {
           )
             continue;
           layoutStray.push(r);
-          SEAT_FACTS.strays.push(norm(path.relative(REPO, f)).split(path.sep).join("/"));
+          SEAT_FACTS.strays.push(trimmedPath(path.relative(REPO, f)).split(path.sep).join("/"));
         }
         if (layoutStray.length === 0) layoutSaid = "вне объявленных слоёв: 0";
       }
@@ -27784,7 +27785,7 @@ if (mode === "verify") {
           const there = nodeOf(to);
           if (there === null || there === here) continue;
           pullLooked += 1;
-          const doc = norm(path.join(ROOT, here, "docs", "README.md"));
+          const doc = trimmedPath(path.join(ROOT, here, "docs", "README.md"));
           // Пара называется ВСЕГДА, даже когда документа ещё нет: строение
           // приложения — кто кого тянет — видно из графа импортов и без
           // чтения кода, и прятать его до перехода незачем. Находкой это
@@ -27826,7 +27827,7 @@ if (mode === "verify") {
       }
       componentDirs = seen.size;
       for (const one of seen) {
-        const at = norm(path.join(ROOT, one, "docs", "README.md"));
+        const at = trimmedPath(path.join(ROOT, one, "docs", "README.md"));
         if (!docFiles.includes(at)) noReadme.push(rel(at));
       }
       // Своя раскладка, а не просто «слоёв нет»: проект умолчания без
@@ -28140,7 +28141,7 @@ if (mode === "verify") {
           return;
         }
         for (const e of kids) {
-          const at = norm(path.join(dir, e.name));
+          const at = trimmedPath(path.join(dir, e.name));
           if (outOfTree(e.name, at)) continue;
           if (e.isDirectory()) {
             walk(at);
@@ -28149,7 +28150,7 @@ if (mode === "verify") {
           if (!CODE_FILE.test(e.name) && !isStylePath(e.name)) continue;
           // Файл в самом корне репозитория — настройка, а не код проекта:
           // тот же признак, что у описи кода.
-          if (norm(dir) === norm(REPO)) continue;
+          if (trimmedPath(dir) === trimmedPath(REPO)) continue;
           // Настройка инструмента названа по обычаю — `*.config.*`, — и лежит
           // она не только в корне репозитория, но и в корне каждого пакета
           // монорепозитория. Прежде исключался один корень репозитория, и
@@ -28167,17 +28168,17 @@ if (mode === "verify") {
           // с ними. Иначе записи базы о привезённых файлах указывают в
           // корпус, которого нет, а звенья цепочки их всё равно разбирают.
           const seeded = seedOfPath().has(
-            norm(path.relative(REPO, at)).split(path.sep).join("/"),
+            trimmedPath(path.relative(REPO, at)).split(path.sep).join("/"),
           );
           outsideRoots.push(
-            norm(path.relative(REPO, at)).split(path.sep).join("/") +
+            trimmedPath(path.relative(REPO, at)).split(path.sep).join("/") +
               (seeded
                 ? " — код обвязки вне объявленных деревьев: она кладёт свой в `src/`, и это дерево объявляют наравне со своими"
                 : " — код вне объявленных деревьев: его не видит ни одна сверка кода"),
           );
         }
       };
-      walk(norm(REPO));
+      walk(trimmedPath(REPO));
     }
   });
   checkStep(() => {
@@ -28322,7 +28323,7 @@ if (mode === "verify") {
         // проект — настройка форматтера полем `prettier`.
         const mapAt = shelfAt("seat/map.json");
         const field = (
-          mapAt !== null && existsSync(mapAt) ? (readJson(mapAt, {}).copy ?? []) : []
+          mapAt !== null && existsSync(mapAt) ? (jsonObjectOr(mapAt, {}).copy ?? []) : []
         ).find((e) => e.to === link.config)?.inManifest;
         if (linkConfigAt(link) === null && !(field !== undefined && Object.hasOwn(pkg, field)))
           toolchainDrift.push(
@@ -28572,7 +28573,7 @@ if (mode === "verify") {
         const walkMd = (dir) => {
           if (dir === null || !existsSync(dir)) return [];
           return readdirSync(dir).flatMap((e) => {
-            const full = norm(path.join(dir, e));
+            const full = trimmedPath(path.join(dir, e));
             if (statSync(full).isDirectory()) return walkMd(full);
             return /.md$/.test(e) ? [full] : [];
           });
@@ -28589,7 +28590,7 @@ if (mode === "verify") {
         // видела его ни одна сверка.
         const shelfCode = (dir) =>
           readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-            const full = norm(path.join(dir, e.name));
+            const full = trimmedPath(path.join(dir, e.name));
             if (e.isDirectory()) return shelfCode(full);
             return CODE_FILE.test(e.name) || /(?:^|\/)hooks\//.test(full)
               ? [full]
@@ -28694,14 +28695,14 @@ if (mode === "verify") {
       // инструмента — свои справочники.
       const walkAll = (dir) =>
         readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-          const full = norm(path.join(dir, e.name));
+          const full = trimmedPath(path.join(dir, e.name));
           return e.isDirectory() ? walkAll(full) : [full];
         });
       const texts = walkAll(SHELF)
         .filter((f) => /\.(?:md|json|mjs)$/.test(f) && !PLANT_BOOK.test(f))
         .map((f) => [f, readFileSync(f, "utf8")]);
       for (const [, f] of shelfProse()) {
-        const own = norm(path.relative(SHELF, f));
+        const own = trimmedPath(path.relative(SHELF, f));
         if (
           /^rules\/[^/]+$/.test(own) ||
           /^skills\/[^/]+\/SKILL\.md$/.test(own)
@@ -28821,7 +28822,7 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       const budget =
         mapAt !== null && existsSync(mapAt)
-          ? readJson(mapAt, {}).doctrineBudget
+          ? jsonObjectOr(mapAt, {}).doctrineBudget
           : undefined;
       if (rulesAt === null || !existsSync(rulesAt))
         doctrineSaid = "доктрины нет: полка не заявлена";
@@ -28991,12 +28992,12 @@ if (mode === "verify") {
   // Общий источник для всех трёх: файлы базы (по имени), документация рядом с
   // кодом (путём от `src`), файлы правил и скиллы.
   const skillDocs = () => {
-    const root = norm(path.join(BASE, CONFIG.skills.dir));
+    const root = trimmedPath(path.join(BASE, CONFIG.skills.dir));
     if (!existsSync(root)) return [];
     const found = [];
     (function walk(dir) {
       for (const entry of readdirSync(dir)) {
-        const full = norm(path.join(dir, entry));
+        const full = trimmedPath(path.join(dir, entry));
         if (statSync(full).isDirectory()) walk(full);
         else if (entry.endsWith(".md"))
           found.push([
@@ -29032,16 +29033,16 @@ if (mode === "verify") {
   // в пустую папку, где семена становятся файлами проекта, и гоняет сверку там.
   // Найдено посадкой в живой проект: семя реестра тестов называет тест каркаса,
   // а каркас в живой проект не кладётся.
-  const fromTemplates = (at) => norm(at).includes("/seat/templates/");
+  const fromTemplates = (at) => trimmedPath(at).includes("/seat/templates/");
   const ofAnyProject = (tok) =>
     /^\d\d-[^/]+\.md$/.test(tok) ||
     tok.startsWith("docs/") ||
     tok.endsWith("settings.local.json");
   const SHELF_ROOT = checkStep(() =>
-    SHELF === null ? "\u0000нет полки" : norm(SHELF),
+    SHELF === null ? "\u0000нет полки" : trimmedPath(SHELF),
   );
   const transitionDir = checkStep(() =>
-    barTransitionDir() === null ? null : norm(barTransitionDir()),
+    barTransitionDir() === null ? null : trimmedPath(barTransitionDir()),
   );
   const docSources = checkStep(() =>
     [
@@ -29054,7 +29055,7 @@ if (mode === "verify") {
       ...(function walkBase(dir) {
         const out = [];
         for (const e of readdirSync(dir)) {
-          const full = norm(path.join(dir, e));
+          const full = trimmedPath(path.join(dir, e));
           // Корпус — то, что видит git: страницы чтения свода игнорируют себя
           // сами, а обход базы этого не спрашивал и читал их прозой базы.
           if (OUT_OF_TREE.has(e) || gitIgnored(full)) continue;
@@ -29064,17 +29065,17 @@ if (mode === "verify") {
           if (transitionDir !== null && full === transitionDir) continue;
           if (statSync(full).isDirectory()) out.push(...walkBase(full));
           else if (e.endsWith(".md"))
-            out.push([norm(path.relative(BASE, full)), full]);
+            out.push([trimmedPath(path.relative(BASE, full)), full]);
         }
         return out;
-      })(norm(BASE)),
+      })(trimmedPath(BASE)),
       ...docFiles.map((d) => [rel(d), d]),
       // Файлы правил сюда не входили, и это ловилось только вниманием: битая
       // ссылка на вложенный `CLAUDE.md` прошла пробу молча. Читают их чаще всего
       // остального, а проверяли — реже: адреса в них живут ровно так же и
       // устаревают ровно так же.
       ...CONFIG.rulesManifest.rules
-        .map((r) => norm(path.join(BASE, r)))
+        .map((r) => trimmedPath(path.join(BASE, r)))
         .filter((p) => existsSync(p))
         .map((p) => [path.relative(REPO, p).split(path.sep).join("/"), p]),
       // Скиллы — те же документы с адресами: скилл начала задачи целиком состоит
@@ -29092,8 +29093,8 @@ if (mode === "verify") {
       // клонирование, не читала ни одна сверка.
       ...readdirSync(REPO)
         .filter((e) => e.endsWith(".md"))
-        .filter((e) => statSync(norm(path.join(REPO, e))).isFile())
-        .map((e) => [e, norm(path.join(REPO, e))]),
+        .filter((e) => statSync(trimmedPath(path.join(REPO, e))).isFile())
+        .map((e) => [e, trimmedPath(path.join(REPO, e))]),
       // Собственные файлы полки: доктрина, инструкция посадки, справочник
       // инструмента, памятки. Читают их чаще всего остального, а адреса в них
       // до сих пор не проверялись ни одной сверкой.
@@ -29102,7 +29103,7 @@ if (mode === "verify") {
         : (function walkShelf(dir) {
             const out = [];
             for (const e of readdirSync(dir)) {
-              const full = norm(path.join(dir, e));
+              const full = trimmedPath(path.join(dir, e));
               if (statSync(full).isDirectory()) out.push(...walkShelf(full));
               else if (e.endsWith(".md"))
                 out.push([
@@ -29111,7 +29112,7 @@ if (mode === "verify") {
                 ]);
             }
             return out;
-          })(norm(SHELF))),
+          })(trimmedPath(SHELF))),
     ]
       // Скиллы приходят дважды — своим сборщиком и обходом полки.
       .filter((one, i, all) => all.findIndex(([, at]) => at === one[1]) === i)
@@ -29162,7 +29163,7 @@ if (mode === "verify") {
             // этом проекте. Пока исключались только семена, инструкция называла
             // звено, которого у проекта нет намеренно, и предупреждение висело на
             // законном устройстве. Найдено посадкой в проект без TypeScript.
-            if (norm(src).includes("/seat/")) continue;
+            if (trimmedPath(src).includes("/seat/")) continue;
             for (const hit of readFileSync(src, "utf8").matchAll(
               /`([^`\n]+)`/g,
             ))
@@ -29211,7 +29212,7 @@ if (mode === "verify") {
     // из комментария. Номер сравнивается числом, а не строкой, — иначе `ADR-4` и
     // `ADR-004` считались бы разными решениями, хотя решение одно.
     if (CONFIG.adr != null) {
-      const dir = norm(path.join(BASE, CONFIG.adr.dir));
+      const dir = trimmedPath(path.join(BASE, CONFIG.adr.dir));
       const known = new Set(
         (existsSync(dir) ? readdirSync(dir) : [])
           .filter((n) => /\.md$/.test(n))
@@ -29274,11 +29275,11 @@ if (mode === "verify") {
     (function walkRepo(dir) {
       for (const e of readdirSync(dir)) {
         if (OUT_OF_TREE.has(e)) continue;
-        const full = norm(path.join(dir, e));
+        const full = trimmedPath(path.join(dir, e));
         if (statSync(full).isDirectory()) walkRepo(full);
         else bareCount.set(e, (bareCount.get(e) ?? 0) + 1);
       }
-    })(norm(REPO));
+    })(trimmedPath(REPO));
   });
   // Только документы. У `.json` и `.ts` голое имя в этом проекте чаще всего
   // проза — «положите рядом `config.json`», «суффикс `.test.ts`», — и сверка по
@@ -29299,7 +29300,7 @@ if (mode === "verify") {
     for (const e of readdirSync(dir)) {
       const full = path.join(dir, e);
       if (statSync(full).isDirectory()) walkScripts(full);
-      else if (e.endsWith(".mjs")) scriptFiles.push(norm(full));
+      else if (e.endsWith(".mjs")) scriptFiles.push(trimmedPath(full));
     }
     // Корень исходников — из настройки, а не имя `src` строкой: см. соседний
     // обход. У проекта, зовущего его иначе, этот список выходил пустым.
@@ -29329,11 +29330,11 @@ if (mode === "verify") {
       (function walkMd(dir) {
         for (const e of readdirSync(dir)) {
           const full = path.join(dir, e);
-          if (OUT_OF_TREE.has(e) || gitIgnored(norm(full))) continue;
+          if (OUT_OF_TREE.has(e) || gitIgnored(trimmedPath(full))) continue;
           if (statSync(full).isDirectory()) walkMd(full);
-          else if (e.endsWith(".md")) mdFiles.push(norm(full));
+          else if (e.endsWith(".md")) mdFiles.push(trimmedPath(full));
         }
-      })(norm(REPO));
+      })(trimmedPath(REPO));
       linkFiles = mdFiles.length;
       for (const f of mdFiles) {
         for (const m of proseOf(f).matchAll(/\]\(([^)\s]+)\)/g)) {
@@ -29378,7 +29379,7 @@ if (mode === "verify") {
   let pathTokens = 0;
   checkStep(() => {
     for (const [name, at, fromShelf] of docSources) {
-      const dir = norm(path.dirname(at));
+      const dir = trimmedPath(path.dirname(at));
       const prose = proseOf(at);
       // Протокол свода называет удалённый файл предмета отпечатком «нет
       // файла» и тем же путём — в таблице частей: это путь удалённого, а не
@@ -29386,7 +29387,7 @@ if (mode === "verify") {
       // переименованием не коммитились (находка Н-7 плана `2026-10-20`).
       const deleted =
         CONFIG.barProtocol != null &&
-        norm(at) === norm(path.join(BASE, CONFIG.barProtocol))
+        trimmedPath(at) === trimmedPath(path.join(BASE, CONFIG.barProtocol))
           ? new Set(
               [
                 ...prose.matchAll(
@@ -29426,7 +29427,7 @@ if (mode === "verify") {
         pathTokens++;
         const asRelative =
           tok.startsWith("./") || tok.startsWith("../")
-            ? norm(path.resolve(dir, tok))
+            ? trimmedPath(path.resolve(dir, tok))
             : null;
         // Текст полки адресует своих соседей от КОРНЯ ОБВЯЗКИ, а не от папки
         // самого файла: инструкция посадки пишет `seat/map.json`, лёжа в
@@ -29434,7 +29435,7 @@ if (mode === "verify") {
         // то есть сверка краснела бы на законной форме записи.
         const fromShelfRoot =
           fromShelf === true && SHELF !== null
-            ? norm(path.join(SHELF, tok))
+            ? trimmedPath(path.join(SHELF, tok))
             : null;
         if (fromShelfRoot !== null && existsSync(fromShelfRoot)) continue;
         // `locate` требует ОДНОЗНАЧНОГО разрешения и молчит, когда путь есть в
@@ -29512,16 +29513,16 @@ if (mode === "verify") {
   const proseFiles = [];
   checkStep(() => {
     {
-      const inCorpus = new Set(docSources.map(([, at]) => norm(at)));
+      const inCorpus = new Set(docSources.map(([, at]) => trimmedPath(at)));
       const shortOf = (full) =>
         path.relative(REPO, full).split(path.sep).join("/");
       const outside = new Set(
-        (CONFIG.corpusOutside ?? []).map((one) => norm(path.join(REPO, one))),
+        (CONFIG.corpusOutside ?? []).map((one) => trimmedPath(path.join(REPO, one))),
       );
       const outsideUsed = new Set();
       (function walkProse(dir) {
         for (const e of readdirSync(dir)) {
-          const full = norm(path.join(dir, e));
+          const full = trimmedPath(path.join(dir, e));
           if (OUT_OF_TREE.has(e) || gitIgnored(full)) continue;
           // Протоколы перехода выведены из корпуса намеренно, обходом базы выше.
           if (transitionDir !== null && full === transitionDir) continue;
@@ -29538,7 +29539,7 @@ if (mode === "verify") {
           }
           corpusGap.push(shortOf(full) + " — прозу не читает ни одна сверка");
         }
-      })(norm(REPO));
+      })(trimmedPath(REPO));
       for (const one of outside)
         if (!outsideUsed.has(one))
           deadExceptions.push(
@@ -29667,17 +29668,17 @@ if (mode === "verify") {
           .join("е")
           .replace(/[^a-zа-я0-9]+/g, " ")
           .trim();
-      const policy = new Set(policyFiles.map((one) => norm(one)));
+      const policy = new Set(policyFiles.map((one) => trimmedPath(one)));
       const rulesMine = new Set(
         (CONFIG.rulesManifest?.rules ?? []).map((r) =>
-          norm(path.join(BASE, r)),
+          trimmedPath(path.join(BASE, r)),
         ),
       );
       const ID =
         /(?<![\wА-Яа-яЁё`-])([A-Z]\d{1,2}(?:-(?:бис|тер))?)(?![\wА-Яа-яЁё-])/g;
       for (const [name, at, fromShelf] of docSources) {
-        if (policy.has(norm(at))) continue;
-        if (fromShelf !== true && !rulesMine.has(norm(at))) continue;
+        if (policy.has(trimmedPath(at))) continue;
+        if (fromShelf !== true && !rulesMine.has(trimmedPath(at))) continue;
         const rows = proseOf(at).split(NEWLINE);
         // Единица — абзац: заголовок ёлочками законно переносится на строку ниже.
         for (let i = 0; i < rows.length;) {
@@ -29911,14 +29912,14 @@ if (mode === "verify") {
     // таблица сверок переехала из правил в справочник, поле настройки
     // осталось прежним, и сверка звала справочник копией.
     for (const [head, file] of declaredTables) {
-      const home = norm(path.join(BASE, file));
+      const home = trimmedPath(path.join(BASE, file));
       const atHome =
         existsSync(home) &&
         proseOf(home)
           .split(NEWLINE)
           .some((line) => line.trim() === head.trim());
       for (const [name, at] of docSources) {
-        if (norm(at) === home || fromTemplates(at)) continue;
+        if (trimmedPath(at) === home || fromTemplates(at)) continue;
         proseOf(at)
           .split(NEWLINE)
           .forEach((line, i) => {
@@ -29961,7 +29962,7 @@ if (mode === "verify") {
     if (IN_TEST_SEAT && SHELF !== null) {
       const mapAt = shelfAt("seat/map.json");
       const skipOwn = new Set(
-        (mapAt !== null && existsSync(mapAt) ? readJson(mapAt, {}) : {})
+        (mapAt !== null && existsSync(mapAt) ? jsonObjectOr(mapAt, {}) : {})
           .projectOwnedInsideHarness ?? [],
       );
       const tops = readdirSync(SHELF)
@@ -30237,7 +30238,7 @@ if (mode === "verify") {
           hit: (f) => test(path.relative(REPO, f).split(path.sep).join("/")),
         };
       }
-      const at = norm(path.join(REPO, one));
+      const at = trimmedPath(path.join(REPO, one));
       return one.endsWith("/")
         ? { one, hit: (f) => f.startsWith(at + "/") }
         : { one, hit: (f) => f === at };
@@ -30384,7 +30385,7 @@ if (mode === "verify") {
     (function walkNames(dir) {
       for (const entry of readdirSync(dir)) {
         if (OUT_OF_TREE.has(entry)) continue;
-        const full = norm(path.join(dir, entry));
+        const full = trimmedPath(path.join(dir, entry));
         if (statSync(full).isDirectory()) walkNames(full);
         else {
           // Книга посадок — не исходник: её имена делали бы живым посаженное.
@@ -30399,7 +30400,7 @@ if (mode === "verify") {
               if (!inComment(line, hit.index)) liveCamel.add(hit[0]);
         }
       }
-    })(norm(path.join(BASE, "..")));
+    })(trimmedPath(path.join(BASE, "..")));
   });
   const goneCamel = [];
   const foreignUsed = new Set();
@@ -30830,7 +30831,7 @@ if (mode === "verify") {
         existsSync(doc) &&
         existsSync(mapAt)
       ) {
-        const seatMap = readJson(mapAt, {});
+        const seatMap = jsonObjectOr(mapAt, {});
         const text = proseOf(doc);
         const from = text.indexOf(NEWLINE + "## Файлы");
         const upTo = text.indexOf(NEWLINE + "## ", from + 1);
@@ -30925,7 +30926,7 @@ if (mode === "verify") {
         let shut = i;
         while (shut < lines.length && !lines[shut].includes("-->")) shut += 1;
         if ((lines[shut + 1] ?? "").trim().startsWith("|")) {
-          const where = norm(path.relative(REPO, at)) + ":" + (i + 1);
+          const where = trimmedPath(path.relative(REPO, at)) + ":" + (i + 1);
           tornTables.push(where + " — " + lines[i].trim());
         }
       }
@@ -30977,7 +30978,7 @@ if (mode === "verify") {
   );
   checkStep(() => {
     SEAT_FACTS.testsAway = (strayTests ?? []).map((f) =>
-      norm(path.relative(REPO, f)).split(path.sep).join("/"),
+      trimmedPath(path.relative(REPO, f)).split(path.sep).join("/"),
     );
   });
   // Исключение обязано стоять на РЕШЕНИИ: поле снимает красное, а причину
@@ -31189,7 +31190,7 @@ if (mode === "verify") {
       const recipesAt = path.join(TOOL_DIR, "falsify.json");
       const mapAt = shelfAt("seat/map.json");
       if (existsSync(recipesAt) && mapAt !== null && existsSync(mapAt)) {
-        const seat = readJson(mapAt, {});
+        const seat = jsonObjectOr(mapAt, {});
         const seedFrom = new Map(
           [
             ...(seat.copy ?? []),
@@ -31222,7 +31223,7 @@ if (mode === "verify") {
             : null;
         };
         const freshVars = recipeVars(true);
-        for (const r0 of readJson(recipesAt, {}).recipes ?? []) {
+        for (const r0 of jsonObjectOr(recipesAt, {}).recipes ?? []) {
           const r = recipeSubst(r0, freshVars);
           if (idleInSeat(r.section)) continue;
           // Ветка про заданное поле в свежей посадке места не имеет: семя
@@ -31313,7 +31314,7 @@ if (mode === "verify") {
   await checkStepAsync(async () => {
     if (CONFIG.testedLedger != null) {
       const at = path.join(BASE, CONFIG.testedLedger);
-      const seen = readJson(at, {});
+      const seen = jsonObjectOr(at, {});
       ledgerSeen = Object.keys(seen).length;
       // Правка берётся у состояния репозитория тем же способом, что и в режиме
       // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
@@ -31329,7 +31330,7 @@ if (mode === "verify") {
         ledgerBlind = true;
       else
         changedNow = changedNow
-          .map((f) => norm(path.join(BASE, "..", f)))
+          .map((f) => trimmedPath(path.join(BASE, "..", f)))
           .filter(
             (f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"),
           )
@@ -31805,7 +31806,7 @@ if (mode === "verify") {
         const subjectOf = async (touched, hash) => {
           const want = [];
           for (const { status, one } of touched) {
-            const abs = norm(path.join(REPO_AT, one));
+            const abs = trimmedPath(path.join(REPO_AT, one));
             // Удалённый этим коммитом код — в предмете, как у ворот.
             if (status === "D") {
               if (codeByPlace(abs))
@@ -31966,7 +31967,7 @@ if (mode === "verify") {
   await checkStepAsync(async () => {
     {
       const mapAt = shelfAt("seat/map.json");
-      const said = mapAt === null ? null : readJson(mapAt, {}).gitHooks;
+      const said = mapAt === null ? null : jsonObjectOr(mapAt, {}).gitHooks;
       if (said == null) gateGap.push("папка хуков не объявлена картой посадки");
       else {
         gateLooked = (said.hooks ?? []).length;
@@ -32019,7 +32020,7 @@ if (mode === "verify") {
         const looks =
           where === null ? null : gitSays(["rev-parse", "--git-path", "hooks"]);
         const looksAt =
-          looks === null ? null : norm(path.resolve(REPO_AT, looks));
+          looks === null ? null : trimmedPath(path.resolve(REPO_AT, looks));
         const setHooks =
           'git config core.hooksPath "$(git rev-parse --show-prefix)' +
           said.dir +
@@ -32075,7 +32076,7 @@ if (mode === "verify") {
               "`",
           );
         else if (
-          looksAt !== norm(path.resolve(REPO_AT, said.dir)) &&
+          looksAt !== trimmedPath(path.resolve(REPO_AT, said.dir)) &&
           (looksAt === null || !callsGate(looksAt))
         )
           gateGap.push(
@@ -32084,7 +32085,7 @@ if (mode === "verify") {
               ": git ищет хук в " +
               (looksAt === null
                 ? "неизвестной папке"
-                : norm(path.relative(REPO_AT, looksAt)) || ".") +
+                : trimmedPath(path.relative(REPO_AT, looksAt)) || ".") +
               ", а ворота лежат в " +
               said.dir +
               ", и хуки там ворот не зовут. Путь — от корня репозитория: `" +
@@ -32184,7 +32185,7 @@ if (mode === "verify") {
             const seeds = seedOfPath();
             const own = [...files, ...styleFiles].filter((f) => {
               if (isTest(f) || f.endsWith(".d.ts")) return false;
-              const to = norm(path.relative(path.join(BASE, ".."), f));
+              const to = trimmedPath(path.relative(path.join(BASE, ".."), f));
               const from = seeds.has(to) ? shelfAt(seeds.get(to)) : null;
               if (from === null || !existsSync(from)) return true;
               if (SEEDS_REFORMATTED.has(to)) return false;
@@ -32203,7 +32204,7 @@ if (mode === "verify") {
           }
         }
         const manifest = path.join(BASE, "..", "package.json");
-        const pkg = readJson(manifest, {});
+        const pkg = jsonObjectOr(manifest, {});
         const deps = Object.keys({
           ...(pkg.dependencies ?? {}),
           ...(pkg.devDependencies ?? {}),
@@ -32246,8 +32247,8 @@ if (mode === "verify") {
     const code = readdirSync(folder).filter(
       (one) =>
         !statSync(path.join(folder, one)).isDirectory() &&
-        isCodePath(norm(path.join(folder, one))) &&
-        !isTest(norm(path.join(folder, one))),
+        isCodePath(trimmedPath(path.join(folder, one))) &&
+        !isTest(trimmedPath(path.join(folder, one))),
     );
     const named = code.filter(
       (one) => one.replace(/\.[^.]+$/, "").toLowerCase() === name.toLowerCase(),
@@ -32288,14 +32289,14 @@ if (mode === "verify") {
               sheetInCode ? one.replace(/\.styles\.[^.]+$/, "") : bareName(one)
             ).toLowerCase();
             if (
-              (isStylePath(norm(inside)) || sheetInCode) &&
+              (isStylePath(trimmedPath(inside)) || sheetInCode) &&
               (bare === name.toLowerCase() ||
                 [...nodeFiles].some((f) => bareName(f).toLowerCase() === bare))
             )
               continue;
             if (one === "types.ts" || one === "index.ts" || one === "index.tsx")
               continue;
-            if (!isCodePath(norm(inside)) && !isStylePath(norm(inside)))
+            if (!isCodePath(trimmedPath(inside)) && !isStylePath(trimmedPath(inside)))
               continue;
             loose.push(one);
           }
@@ -32348,7 +32349,7 @@ if (mode === "verify") {
           const nodeFiles = nodeFilesIn(folder, name);
           for (const one of readdirSync(folder)) {
             const at = path.join(folder, one);
-            if (statSync(at).isDirectory() || !isCodePath(norm(at))) continue;
+            if (statSync(at).isDirectory() || !isCodePath(trimmedPath(at))) continue;
             if (!nodeFiles.has(one)) continue;
             nodeFilesLooked += 1;
             const self = one.replace(/\.[^.]+$/, "").toLowerCase();
@@ -32414,7 +32415,7 @@ if (mode === "verify") {
   checkStep(() => {
     {
       const seedAt = shelfAt("seat/templates/package.json");
-      const seed = seedAt === null ? {} : readJson(seedAt, {});
+      const seed = seedAt === null ? {} : jsonObjectOr(seedAt, {});
       const scripts = new Set(Object.keys(seed.scripts ?? {}));
       const deps = Object.keys({
         ...(seed.dependencies ?? {}),
@@ -32440,7 +32441,7 @@ if (mode === "verify") {
         const out = new Map();
         const mapAt = shelfAt("seat/map.json");
         if (mapAt === null || !existsSync(mapAt)) return out;
-        const seat = readJson(mapAt, {});
+        const seat = jsonObjectOr(mapAt, {});
         for (const e of seat.copy ?? [])
           out.set(e.from, { laidBySeat: e.notAtSeating == null });
         for (const e of [
@@ -32478,7 +32479,7 @@ if (mode === "verify") {
       // линия записала замер его командой — и сверка ответила «звена нет в
       // манифесте проекта» про звено, которое там есть. Замерено посадкой
       // по инструкции в проект со своим именем звена.
-      const own = readJson(path.join(BASE, "..", "package.json"), {});
+      const own = jsonObjectOr(path.join(BASE, "..", "package.json"), {});
       const ownScripts = new Set(Object.keys(own.scripts ?? {}));
       const ownDeps = Object.keys({
         ...(own.dependencies ?? {}),
@@ -32487,7 +32488,7 @@ if (mode === "verify") {
       const shelfSide = new Set(shelfProse().map(([, full]) => full));
       // Скрипт каркаса без скрипта у проекта — строка семени правил, которую
       // фаза 1 не сняла: находка называет, кто её снимает.
-      const seatMapNow = readJson(shelfAt("seat/map.json") ?? "", {});
+      const seatMapNow = jsonObjectOr(shelfAt("seat/map.json") ?? "", {});
       const frameScripts = new Set(seatMapNow.frameScripts ?? []);
       // Звено цепочки, которого у проекта нет, — строка, которую фаза 1 не
       // сняла после слияния манифеста. Выведено: шестая посадка в живой
@@ -32828,7 +32829,7 @@ if (mode === "verify") {
         const seedAt = new Map();
         for (const e of seatMap.copy ?? []) {
           const from0 = shelfAt(e.from);
-          if (from0 !== null) seedAt.set(norm(path.join(REPO, e.to)), from0);
+          if (from0 !== null) seedAt.set(trimmedPath(path.join(REPO, e.to)), from0);
         }
         const fromSeed = (f) => {
           const src = seedAt.get(f);
@@ -32863,11 +32864,11 @@ if (mode === "verify") {
             }
             for (const e of kids) {
               if (skip.has(e.name) || OUT_OF_TREE.has(e.name)) continue;
-              const at = norm(path.join(dir, e.name));
+              const at = trimmedPath(path.join(dir, e.name));
               if (e.isDirectory()) walk(at);
               else if (
                 (CODE_FILE.test(e.name) || isStylePath(e.name)) &&
-                norm(dir) !== norm(REPO)
+                trimmedPath(dir) !== trimmedPath(REPO)
               )
                 everywhere.push(at);
             }
@@ -32876,7 +32877,7 @@ if (mode === "verify") {
           // — сборщика, линтера, мутационного прогона, — и код проекта в корне
           // не держат. Иначе привезённый и правленый проектом конфиг сошёл бы
           // за свой код и объявил живым любой посаженный проект.
-          walk(norm(REPO));
+          walk(trimmedPath(REPO));
         }
         const own = everywhere.filter((f) => !fromSeed(f) && !isTest(f));
         // Обратная сторона того же признака: пока СВОЕГО КОДА НЕТ, проект
@@ -32891,12 +32892,12 @@ if (mode === "verify") {
         // каркасный файл «своим кодом» и гасит её. Замерено посаженной
         // поломкой — строка, дописанная в корневой компонент, сверку не
         // разбудила, а усыпила.
-        const frameTo = new Set(frame.map((e) => norm(path.join(REPO, e.to))));
+        const frameTo = new Set(frame.map((e) => trimmedPath(path.join(REPO, e.to))));
         const ownOutsideFrame = own.filter((f) => !frameTo.has(f));
         frameLives = ownOutsideFrame.length === 0;
         driftedOwn =
           ownOutsideFrame.length > 0 && ownOutsideFrame.every((f) => seedAt.has(f))
-            ? ownOutsideFrame.map((f) => norm(path.relative(REPO, f)))
+            ? ownOutsideFrame.map((f) => trimmedPath(path.relative(REPO, f)))
             : [];
         // Записи о пустоте: посадка пишет правду, а свой код делает её ложью.
         // Маркер ставится там, где утверждается пустота, и обязан уйти вместе
@@ -32962,7 +32963,7 @@ if (mode === "verify") {
               const row = rows[i].trim();
               if (!claim.includes(row) && row !== OPEN) continue;
               emptyClaims.push(
-                norm(at).slice(norm(REPO).length + 1) +
+                trimmedPath(at).slice(trimmedPath(REPO).length + 1) +
                   ":" +
                   (i + 1) +
                   " — утверждает пустоту, а свой код уже есть",
@@ -32973,7 +32974,7 @@ if (mode === "verify") {
         if (frameLives)
           for (const e of seatMap.copy ?? []) {
             const from0 = shelfAt(e.from);
-            const to0 = norm(path.join(REPO, e.to));
+            const to0 = trimmedPath(path.join(REPO, e.to));
             if (from0 === null || !existsSync(from0)) continue;
             if (!existsSync(to0) || !files.includes(to0)) continue;
             if (same(to0, from0)) continue;
@@ -33044,7 +33045,7 @@ if (mode === "verify") {
         const seedText = new Map();
         for (const e of seatMap.copy ?? []) {
           const to = path.resolve(REPO, e.to);
-          if (norm(path.dirname(to)) !== norm(BASE)) continue;
+          if (trimmedPath(path.dirname(to)) !== trimmedPath(BASE)) continue;
           const from = shelfAt(e.from);
           if (from === null || !existsSync(from)) continue;
           seedText.set(path.basename(e.to), readFileSync(from, "utf8"));
@@ -33303,14 +33304,14 @@ if (mode === "verify") {
           // него. Иначе проект шаблона, чьи файлы зовутся общими именами,
           // проходил сверку только путём кода в тексте для пользователя.
           if (!named) {
-            const ownSet = new Set(own.map(norm));
+            const ownSet = new Set(own.map(trimmedPath));
             const ids = new Set(said.match(/\bREQ-[0-9]+\b/g) ?? []);
             named = guarantees().rows.some(
               (g) =>
                 ids.has(g.id) &&
                 g.nodes.some((n) => {
                   const f = guaranteeAbs(n);
-                  return f !== null && ownSet.has(norm(f));
+                  return f !== null && ownSet.has(trimmedPath(f));
                 }),
             );
           }
@@ -33361,7 +33362,7 @@ if (mode === "verify") {
         const copy = parseJson(readFileSync(mapAt, "utf8")).copy ?? [];
         let seedAt = null;
         for (const e of copy) {
-          if (norm(path.join(REPO, e.to)) !== norm(tableAt)) continue;
+          if (trimmedPath(path.join(REPO, e.to)) !== trimmedPath(tableAt)) continue;
           seedAt = shelfAt(e.from);
         }
         if (seedAt !== null && existsSync(seedAt) && existsSync(tableAt)) {
@@ -33461,7 +33462,7 @@ if (mode === "verify") {
             placed.length > 0 &&
             e.inManifest !== undefined &&
             existsSync(manifestAt) &&
-            Object.hasOwn(readJson(manifestAt, {}), e.inManifest)
+            Object.hasOwn(jsonObjectOr(manifestAt, {}), e.inManifest)
           )
             twinConfigs.push(
               placed[0] +
@@ -33834,7 +33835,7 @@ if (mode === "verify") {
   checkStep(() => {
     if (CONFIG.manifest != null) {
       const at = path.join(BASE, CONFIG.manifest);
-      const pkg = readJson(at, {});
+      const pkg = jsonObjectOr(at, {});
       const published = isPublishedManifest(pkg);
       if (published) {
         const imported = new Set();
@@ -34164,8 +34165,8 @@ if (mode === "verify") {
         })();
         const manifestAt = path.join(BASE, "..", "package.json");
         const held = new Set([
-          ...Object.keys(readJson(manifestAt, {}).dependencies ?? {}),
-          ...Object.keys(readJson(manifestAt, {}).devDependencies ?? {}),
+          ...Object.keys(jsonObjectOr(manifestAt, {}).dependencies ?? {}),
+          ...Object.keys(jsonObjectOr(manifestAt, {}).devDependencies ?? {}),
         ]);
         for (const one of inSeed) {
           if (platform.has(one) || stack.has(one)) continue;
@@ -34222,22 +34223,22 @@ if (mode === "verify") {
       const mapAt = shelfAt("seat/map.json");
       const alternatives =
         mapAt !== null && existsSync(mapAt)
-          ? (readJson(mapAt, {}).platformPackages?.alternatives ?? {})
+          ? (jsonObjectOr(mapAt, {}).platformPackages?.alternatives ?? {})
           : {};
       const held = projectDeclared();
       // Пакет интерфейса у проекта без интерфейса — та же ошибка слияния:
       // дописан по имени, а предмета у проекта нет.
       const ui =
         mapAt !== null && existsSync(mapAt)
-          ? (readJson(mapAt, {}).platformPackages?.ui ?? [])
+          ? (jsonObjectOr(mapAt, {}).platformPackages?.ui ?? [])
           : [];
       alternativesDeclared += ui.length;
       // Пакет, чьё орудие зовёт свой скрипт проекта, работает и без
       // интерфейса: библиотека, собираемая `vite build`. Скрипт с телом
       // семени — заготовка, а не выбор проекта. Выведено корпусом посадок.
-      const seedScripts = readJson(shelfAt("seat/templates/package.json") ?? "", {}).scripts ?? {};
+      const seedScripts = jsonObjectOr(shelfAt("seat/templates/package.json") ?? "", {}).scripts ?? {};
       const scriptBodies = Object.entries(
-        readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {},
+        jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {}).scripts ?? {},
       )
         .filter(([name, body]) => seedScripts[name] !== body)
         .map(([, body]) => body)
@@ -34317,7 +34318,7 @@ if (mode === "verify") {
       const seedOf = new Map();
       for (const e of parseJson(readFileSync(mapAt, "utf8")).copy ?? []) {
         const from0 = shelfAt(e.from);
-        if (from0 !== null) seedOf.set(norm(path.join(REPO, e.to)), from0);
+        if (from0 !== null) seedOf.set(trimmedPath(path.join(REPO, e.to)), from0);
       }
       const eol = String.fromCharCode(13) + NEWLINE;
       return files.some((f) => {
@@ -34383,7 +34384,7 @@ if (mode === "verify") {
           if (statSync(at).isDirectory()) look(at);
           else if ((seatWalked += 1) && e.endsWith(".seat"))
             unmerged.push(
-              norm(path.relative(REPO, at)).split(path.sep).join("/"),
+              trimmedPath(path.relative(REPO, at)).split(path.sep).join("/"),
             );
         }
       };
@@ -34430,7 +34431,7 @@ if (mode === "verify") {
               "форматтера нет — сверить нечем, и это не поломка: звено формата в проекте может быть неприменимо";
           else {
             for (const at of found) {
-              const shown = norm(path.relative(path.join(BASE, ".."), at));
+              const shown = trimmedPath(path.relative(path.join(BASE, ".."), at));
               try {
                 const options = (await prettier.resolveConfig(at)) ?? {};
                 const body = readFileSync(at, "utf8");
@@ -34512,7 +34513,7 @@ if (mode === "verify") {
             const to = m[1].replace(/^\.\//, "");
             if (addressed.has(to)) continue;
             seedRefs.push(
-              norm(path.relative(SHELF, f)).split(path.sep).join("/") +
+              trimmedPath(path.relative(SHELF, f)).split(path.sep).join("/") +
                 " называет " +
                 m[1] +
                 " — такого адреса назначения в карте нет",
@@ -34874,7 +34875,7 @@ if (mode === "verify") {
           );
           continue;
         }
-        const at = norm(path.join(REPO_AT, e.to));
+        const at = trimmedPath(path.join(REPO_AT, e.to));
         if (!existsSync(at) || seedConditionHolds(e)) continue;
         if (untouchedSeed(at, REPO_AT, seeds))
           idleSeeds.push(
@@ -34957,7 +34958,7 @@ if (mode === "verify") {
           const pkgAt =
             CONFIG.manifest == null ? null : path.join(BASE, CONFIG.manifest);
           const scripts =
-            pkgAt === null ? {} : (readJson(pkgAt, {}).scripts ?? {});
+            pkgAt === null ? {} : (jsonObjectOr(pkgAt, {}).scripts ?? {});
           if (mapAt !== null && existsSync(mapAt))
             for (const e of parseJson(readFileSync(mapAt, "utf8"))
               .chainScripts ?? []) {
@@ -35198,11 +35199,11 @@ if (mode === "verify") {
     const mapAt = shelfAt("seat/map.json");
     const link = (
       mapAt !== null && existsSync(mapAt)
-        ? (readJson(mapAt, {}).chainScripts ?? [])
+        ? (jsonObjectOr(mapAt, {}).chainScripts ?? [])
         : []
     ).find((e) => e.name === canonical);
     const scripts = linkScripts(
-      readJson(path.join(BASE, CONFIG.manifest ?? "../package.json"), {})
+      jsonObjectOr(path.join(BASE, CONFIG.manifest ?? "../package.json"), {})
         .scripts ?? {},
     );
     const re = link?.recognise == null ? null : new RegExp(link.recognise);
@@ -35610,7 +35611,7 @@ if (mode === "verify") {
         if (!existsSync(wrapperAt))
           gateHooksOff.push(
             "обёртки хуков нет: " +
-              norm(path.relative(REPO_AT, wrapperAt)) +
+              trimmedPath(path.relative(REPO_AT, wrapperAt)) +
               " — хук, который её зовёт, падает, и ход кончается без свода",
           );
         // Путь инструмента — от каталога проекта, а не от текущей папки: хук
@@ -35973,9 +35974,9 @@ if (mode === "verify") {
     const mapAt = shelfAt("seat/map.json");
     if (mapAt === null || !existsSync(mapAt)) return [];
     const scripts =
-      readJson(path.join(BASE, "..", "package.json"), {}).scripts ?? {};
+      jsonObjectOr(path.join(BASE, "..", "package.json"), {}).scripts ?? {};
     const out = new Set();
-    for (const one of readJson(mapAt, {}).chainScripts ?? []) {
+    for (const one of jsonObjectOr(mapAt, {}).chainScripts ?? []) {
       out.add(one.name);
       const own = linkOwnName(one.name, scripts);
       if (own !== null) out.add(own);
@@ -35998,7 +35999,7 @@ if (mode === "verify") {
       // — замер до приведения; не приведённый — красное звено самой цепочки.
       const formatNames = (() => {
         const scripts =
-          readJson(path.join(BASE, "..", "package.json"), {}).scripts ?? {};
+          jsonObjectOr(path.join(BASE, "..", "package.json"), {}).scripts ?? {};
         const own = linkOwnName("format:check", scripts);
         return new Set(own === null ? ["format:check"] : ["format:check", own]);
       })();
@@ -36044,7 +36045,7 @@ if (mode === "verify") {
   const chainAlive = checkStep(() =>
     (() => {
       const at = path.join(BASE, "..", "package.json");
-      const scripts = Object.keys(readJson(at, {}).scripts ?? {});
+      const scripts = Object.keys(jsonObjectOr(at, {}).scripts ?? {});
       return chainLinkNames().filter((one) => scripts.includes(one)).length;
     })(),
   );
@@ -36159,7 +36160,7 @@ if (mode === "verify") {
     planLies = existsSync(path.join(BASE, CONFIG.transition.file));
     if (!planLies) return;
     const ledger = readLedger(path.join(BASE, CONFIG.mutationLedger));
-    const key = (f) => norm(path.relative(REPO_AT, f));
+    const key = (f) => trimmedPath(path.relative(REPO_AT, f));
     unprobed = mutationArea()
       .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
       .filter(

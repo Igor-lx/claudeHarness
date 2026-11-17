@@ -13,6 +13,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { commentlessOf } from "./graph.predicates.mjs";
 
 const NAME = /^[A-Za-z_$][\w$]*$/;
 
@@ -53,19 +54,10 @@ const TEMPLATED =
 /** Импорт во время работы с адресом-значением: переменной, вызовом,
  * сложением строк. */
 const VALUED = /(?<![\w$.])(import|require)\s*\(\s*(?=[A-Za-z_$(])/g;
-/** Строчный комментарий: снимается перед поиском импорта во время работы.
- * Перед двумя косыми — начало строки, пробел либо скобка: двоеточие адреса
- * `https://` комментарием не считается. */
-const LINE_COMMENT = /(^|[\s;{}()])\/\/[^\n]*/g;
-
 /** Импорты во время работы в тексте, найденные образцом. Тип
  * `import("x").T` и `typeof import("x")` — не ребро исполнения: сборка его
- * стирает. */
-const commentlessOf = (src) =>
-  src.replace(
-    LINE_COMMENT,
-    (m, lead) => lead + " ".repeat(m.length - lead.length),
-  );
+ * стирает. Комментарии, строчные и блочные, снимает общий разбор: длина
+ * текста прежняя, и смещения адресов верны. */
 const dynamicOf = (src) => {
   const text = commentlessOf(src);
   const out = [];

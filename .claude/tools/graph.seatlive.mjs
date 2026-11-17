@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { composeLive } from "./graph.configs.mjs";
 import { parseJson } from "./graph.predicates.mjs";
-import { SCENARIO_NAMES, foreignOffer } from "./graph.profile.mjs";
+import { SCENARIO_NAMES, foreignOffer, readJson } from "./graph.profile.mjs";
 import {
   CHILD_OUTPUT_BYTES,
   IDENTITY_NOTICE,
@@ -351,14 +351,6 @@ export const testDirsOf = (files, roots) =>
       return code.length > 0 && code.every((f) => TEST.test(f));
     })
     .sort();
-
-const readJson = (at) => {
-  try {
-    return parseJson(readFileSync(at, "utf8"));
-  } catch {
-    return null;
-  }
-};
 
 /** Посадка живого проекта: `profile` — ответ `scenarioOf`. */
 export const runSeatLive = (args) => unexpectedRolledBack((box) => seatLive(args, box));

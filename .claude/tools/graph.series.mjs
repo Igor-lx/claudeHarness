@@ -28,13 +28,12 @@ import { parseJson } from "./graph.predicates.mjs";
 import {
   CHILD_OUTPUT_BYTES,
   claimSandbox,
+  norm,
   runTool,
   saidBy,
   sandboxPackages,
   systemTemp,
 } from "./graph.seat.mjs";
-
-const norm = (p) => p.split(path.sep).join("/");
 
 /** Папка git проекта: там лежат отметки и вывод красной части. Зовущие
  * ловят отказ (проекта без git ещё нет), поэтому `stderr` git не наследуется:
