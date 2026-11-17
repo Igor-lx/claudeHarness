@@ -25,6 +25,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Commit hashes in the shelf prose are checked against this history.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:

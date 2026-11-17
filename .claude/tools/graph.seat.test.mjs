@@ -2002,6 +2002,32 @@ it("каждый режим инструмента зовёт хоть один 
   expect(modes.filter((m) => !tests.includes('"' + m + '"')), "режим без теста").toEqual([]);
 });
 
+// Хеш в прозе полки — адрес случая, на котором выведено правило: по нему
+// читают коммит. Сверяется с историей полки-источника, её путь — в метке
+// посадки. Отпечаток печати свода — двенадцать знаков, коммит прозой — семь.
+const SOURCE_HISTORY = (() => {
+  const marker = gitPathOf(ROOT, SEAT_MARKER);
+  if (!fs.existsSync(marker)) return null;
+  const source = path.dirname(fs.readFileSync(marker, "utf8").trim());
+  const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: source, encoding: "utf8" });
+  return shallow.status === 0 && shallow.stdout.trim() === "false" ? source : null;
+})();
+it.skipIf(SOURCE_HISTORY === null)("каждый хеш коммита в прозе полки есть в истории мастерской", () => {
+  // Данные прогона называют и коммиты площадок: их история — в снимках и в
+  // клонах работников, а раздел прогона удаляется его концом.
+  const RUN_DATA = path.join("state", "todo.md");
+  const prose = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? prose(path.join(dir, e.name)) : e.name.endsWith(".md") ? [path.join(dir, e.name)] : []));
+  const readmes = ["README.md", "README.ru.md"].map((one) => path.join(SOURCE_HISTORY, one)).filter((one) => fs.existsSync(one));
+  const named = [];
+  for (const file of [...prose(SHELF).filter((f) => path.relative(SHELF, f) !== RUN_DATA), ...readmes])
+    for (const m of fs.readFileSync(file, "utf8").matchAll(/`([0-9a-f]{7,11}|[0-9a-f]{40})`/g))
+      if (/[a-f]/.test(m[1]) && /\d/.test(m[1])) named.push([m[1], path.relative(SHELF, file)]);
+  expect(named.length).toBeGreaterThan(30);
+  const absent = named.filter(([hash]) => spawnSync("git", ["cat-file", "-e", hash + "^{commit}"], { cwd: SOURCE_HISTORY }).status !== 0);
+  expect(absent.map(([hash, file]) => hash + " — " + file), "коммита нет в истории мастерской").toEqual([]);
+});
+
 // Функцию, определённую копией в двух модулях, чинят в одном: копия разбора
 // регулярными выражениями снимала одни строчные комментарии, общая — и блочные.
 // Одно имя с другим смыслом читается той же функцией. Одна функция — одно имя.
@@ -2021,24 +2047,57 @@ it("каждая функция верхнего уровня определен
 // Полное имя — адрес теста: по нему зовут один тест (`-t`) и исключают тесты
 // из мутационного прогона. Второе такое же имя уводит адрес в два теста. Имена
 // даёт сам раннер: имя, собранное циклом, текстом файла не перечислить.
-it("каждое полное имя теста инструмента стоит в наборе один раз", () => {
+let listedOnce = null;
+const listedTests = () => {
+  if (listedOnce !== null) return listedOnce;
   const box = fs.mkdtempSync(path.join(os.tmpdir(), "test-names-"));
   try {
     const listed = path.join(box, "list.json");
     const runner = path.join(ROOT, "node_modules", "vitest", "vitest.mjs");
     const config = path.join(TOOL_DIR, "vitest.config.mjs");
     const run = spawnSync(process.execPath, [runner, "list", "--config", config, "--json=" + listed], { cwd: ROOT, encoding: "utf8" });
-    expect(run.status, run.stderr).toBe(0);
-    const tests = JSON.parse(fs.readFileSync(listed, "utf8"));
-    const files = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".test.mjs"));
-    expect(new Set(tests.map((t) => path.basename(t.file))), "перечень раннера не охватил файл тестов").toEqual(new Set(files));
-    const where = new Map();
-    for (const t of tests) where.set(t.name, [...(where.get(t.name) ?? []), path.basename(t.file)]);
-    const twice = [...where].filter(([, at]) => at.length > 1).map(([name, at]) => name + " — " + at.join(", "));
-    expect(twice, "полное имя теста стоит дважды").toEqual([]);
+    if (run.status !== 0) throw new Error("перечень раннера не собран: " + run.stderr);
+    listedOnce = JSON.parse(fs.readFileSync(listed, "utf8"));
+    return listedOnce;
   } finally {
     fs.rmSync(box, { recursive: true, force: true });
   }
+};
+it("каждое полное имя теста инструмента стоит в наборе один раз", () => {
+  const tests = listedTests();
+  const files = fs.readdirSync(TOOL_DIR).filter((f) => f.endsWith(".test.mjs"));
+  expect(new Set(tests.map((t) => path.basename(t.file))), "перечень раннера не охватил файл тестов").toEqual(new Set(files));
+  const where = new Map();
+  for (const t of tests) where.set(t.name, [...(where.get(t.name) ?? []), path.basename(t.file)]);
+  const twice = [...where].filter(([, at]) => at.length > 1).map(([name, at]) => name + " — " + at.join(", "));
+  expect(twice, "полное имя теста стоит дважды").toEqual([]);
+});
+
+// Тест, названный по имени, читают и зовут этим именем: причина исключения
+// называла тесты текстом их отказа, и `-t` не находил ни одного. Имя можно
+// назвать началом.
+it("каждый тест, названный прозой полки и кодом инструмента по имени, есть в наборе", () => {
+  const NOT_OURS = new Map([
+    ["база не требуется", "ответ протокола о тесте, а не имя теста"],
+    ["zz badge shows its label", "тест проекта-образца в данных теста гарантий"],
+    ["puts the smallest first", "тест проекта-образца в данных теста свода"],
+    ["puts the oldest first", "тест проекта-образца в словаре признаков"],
+  ]);
+  const flat = (text) => text.replace(/\n\s*(?:\/\/|\*)?\s*/g, " ").replace(/\s+/g, " ");
+  const titles = listedTests().flatMap((t) => t.name.split(" > ")).map(flat);
+  const walk = (d) =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+  const cited = [];
+  for (const file of walk(SHELF).filter((f) => f.endsWith(".md") || (f.endsWith(".mjs") && path.dirname(f) === TOOL_DIR)))
+    for (const m of flat(fs.readFileSync(file, "utf8")).matchAll(/тест(?:ы|ом|а|у)?\s+«([^»"]{8,})»/g)) cited.push([m[1].trim(), path.relative(SHELF, file)]);
+  expect(cited.length).toBeGreaterThan(10);
+  const used = new Set();
+  const absent = [];
+  for (const [name, file] of cited)
+    if (NOT_OURS.has(name)) used.add(name);
+    else if (!titles.some((title) => title.startsWith(name))) absent.push(name + " — " + file);
+  expect(absent, "тест назван по имени, а в наборе его нет").toEqual([]);
+  expect([...NOT_OURS.keys()].filter((name) => !used.has(name)), "исключение, которому нечего исключать").toEqual([]);
 });
 
 // Отказ, до которого не доходит ни один тест, меняет текст и код возврата без
@@ -2067,7 +2126,7 @@ it("каждый отказ инструмента назван тестом л�
     ["=== Обвязка не заявлена ===", "handoff вне посадки — теста нет, не взято"],
     ["слой судят по фактам модели", "страницы протокола слоя — теста на этот текст нет, не взято"],
     ["Папка не тронута.", "текст отказа — ответ gitBusyOf, его держит тест gitBusyOf"],
-    ["Поправить файл, закоммитить и позвать посадку снова", "текст — ответ profileOf; ветку проходит тест «package.json проекта не разбирается»"],
+    ["Поправить файл, закоммитить и позвать посадку снова", "текст — ответ profileOf; ветку проходит тест «битый манифест живого проекта — отказ с его именем»"],
     ["Семена не легли", "внутренний сбой посадки: откат один, его держит тест «звено, не поймавшее посаженную ошибку»"],
     ["Проверка красная на свежей посадке", "внутренний сбой посадки: тот же откат"],
     ["Базовая линия не записалась", "внутренний сбой посадки: тот же откат"],
@@ -2075,7 +2134,7 @@ it("каждый отказ инструмента назван тестом л�
     ["Полка сажается сама в себя", "достижим только сборкой стенда проб"],
     ["Магазин кладут на свежую посадку", "инфраструктура стенда проб: магазин"],
     ["В семени настройки нет строки", "сломанное семя — сломанная полка"],
-    ["Настройка не записалась", "внутренний сбой живой посадки: откат один, его держит тест «Посадка упала посреди работы»"],
+    ["Настройка не записалась", "внутренний сбой живой посадки: откат один, его держит тест «сбой, которого посадка не ждала, — тем же откатом с причиной»"],
     ["не назвало число ошибок", "внутренний сбой живой посадки: тот же откат"],
     ["В настройке нет вида долга", "сломанное семя — сломанная полка"],
     ["Сверка базы не отдала факты посадки", "внутренний сбой живой посадки: тот же откат"],
