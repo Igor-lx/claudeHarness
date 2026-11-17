@@ -3586,6 +3586,15 @@ const barCoverFault = (want, body) => {
 const barNamedFault = (want, body, whole) => {
   const was = barHeaderOf(body);
   const had = new Map(was.marks.map((m) => [m.file, m.mark]));
+  // Протокол, не назвавший ни одного файла правки, — свод прошлой работы:
+  // перечень его файлов читался как чужой мусор в правке (горячий раунд
+  // прогона приёмки `2026-11-17`).
+  if (whole && had.size > 0 && !want.some((one) => had.has(one.file)))
+    return (
+      "свода этой правки нет: протокол описывает прошлую работу — файлов " +
+      had.size +
+      ", ни один не в правке; `bar` начнёт свод этой правки"
+    );
   const loose = [];
   for (const one of want) {
     const mark = had.get(one.file);

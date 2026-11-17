@@ -207,6 +207,43 @@ describe("ворота конца хода", () => {
 
   // Удаление файла среда спрашивает подтверждением: работник шага 5.2 прогона
   // приёмки встал на «снести протокол». Свод заново — пустым протоколом.
+  it("протокол прошлой работы, не назвавший ни одного файла правки, назван прошлым, а не перечнем чужих файлов", () => {
+    const box = seatEmpty("stop-past-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=stop", "-c", "user.email=stop@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [graph, ...args], { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.writeFileSync(path.join(box, "src", "app", "zzPast.ts"), "export const zzPast = (n: number): number => n * 2;\n");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain("печать поставлена");
+      git("add", "-A");
+      git("commit", "-qm", "прошлая работа", "--no-verify");
+      fs.writeFileSync(path.join(box, "src", "app", "zzNow.ts"), "export const zzNow = (n: number): number => n * 3;\n");
+      const held = spawnSync(process.execPath, [graph, "stop", "--hook"], { cwd: box, encoding: "utf8", input: "{}" });
+      expect(held.status).toBe(2);
+      expect(held.stderr).toContain("свода этой правки нет: протокол описывает прошлую работу");
+      expect(held.stderr).not.toContain("назван сводом, а в правке его нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("правленый после печати протокол называет выход без удаления файла; пустой протокол собирается заново", () => {
     const box = seatEmpty("bar-anew-");
     try {
