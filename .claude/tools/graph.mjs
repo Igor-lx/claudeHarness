@@ -243,6 +243,7 @@ import {
   SERIES_PART,
   gitDirOf,
   livingBaseOf,
+  mergeSplitFault,
   nextPartOf,
   partTreesOf,
   readMarks,
@@ -20259,6 +20260,10 @@ if (mode === "series") {
   if (subject === null) refuse("Состояние репозитория прочитать не удалось.");
   if (was === null && !codeFree)
     refuse("Протокола свода нет: сперва `node .claude/tools/graph.mjs bar`.");
+  // Раньше дыр раскладки: посреди слияния правка шире протокола, и дыры
+  // назвали бы файлы влитой ветки вместо причины.
+  const merging = mergeSplitFault(REPO_AT, count);
+  if (merging !== "") refuse("Частями посреди слияния не коммитят: " + merging + ".");
   if (parts.holes.length > 0)
     refuse(
       "Раскладка правки по частям с дырами — сперва их закрыть в протоколе:",

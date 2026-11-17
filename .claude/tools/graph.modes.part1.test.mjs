@@ -5066,6 +5066,89 @@ describe("серия", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 300000);
+
+  // Коммит, кончающий слияние, получает двух родителей. Первая часть серии,
+  // закоммиченная посреди слияния, становилась таким коммитом с частью работы:
+  // история говорила «ветка влита», а её правки лежали в следующем коммите.
+  it("посреди слияния коммит один: серия и ворота не дробят его на части", () => {
+    const box = seatEmpty("seriya-sliyanie-");
+    try {
+      const git = (...args) =>
+        spawnSync("git", ["-c", "user.name=u", "-c", "user.email=u@local", ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+      const tool = (...args) => {
+        const r = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      const put = (rel, text) => {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      };
+      fakeCheck(box);
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const head = "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n";
+      const mapRows = (rows) => fs.writeFileSync(mapAt, fs.readFileSync(mapAt, "utf8").replace(head, head + rows));
+      put("src/shared/zzc/zzc.ts", "export const zzc = 1;\n");
+      mapRows("| `src/shared/zzc/zzc.ts` | третье | нет | нет |\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      git("config", "core.hooksPath", ".claude/hooks/git");
+      // Конфликт вне предмета свода: печать переживает слияние, и отказ
+      // ворот — их собственный, а не устаревший протокол.
+      const ignoreAt = path.join(box, ".gitignore");
+      const ignored = fs.readFileSync(ignoreAt, "utf8");
+      git("checkout", "-q", "-b", "side");
+      fs.writeFileSync(ignoreAt, ignored + "zz-side/\n");
+      git("commit", "-qam", "side", "--no-verify");
+      git("checkout", "-q", "-");
+      fs.writeFileSync(ignoreAt, ignored + "zz-main/\n");
+      git("commit", "-qam", "main", "--no-verify");
+      // Работа в две части, серия прогнана до слияния; слияние её не трогает.
+      put("src/shared/zza/zza.ts", "export const zza = 1;\n");
+      mapRows("| `src/shared/zza/zza.ts` | первое | нет | нет |\n");
+      put("src/shared/zzc/zzc.ts", "export const zzc = 2;\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      expect(tool("bar").out).toContain("части ждут коммита: 1–2 из 2");
+      expect(tool("series").code).toBe(0);
+      const marks = JSON.parse(fs.readFileSync(path.join(box, ".git", "graph-series.json"), "utf8"));
+      expect(git("merge", "side").status).not.toBe(0);
+      // Серия посреди слияния частей не режет — отказ раньше свода.
+      const split = tool("series");
+      expect(split.code).toBe(1);
+      expect(split.out).toContain("идёт слияние");
+      expect(split.out).not.toContain("Свод не покрывает правку");
+      // Дерево первой части руками — ворота не пускают: файл влитой ветки
+      // протокол не раскладывал, а разложить его велит уже отказ серии.
+      git("read-tree", marks.parts[0].tree);
+      const partial = git("commit", "-qm", "часть посреди слияния");
+      expect(partial.status).not.toBe(0);
+      expect(partial.stdout + partial.stderr).toContain("файл `.gitignore` не отнесён к части");
+      // Части слиты в одну — коммит слияния несёт всё дерево и проходит.
+      fs.writeFileSync(ignoreAt, ignored + "zz-main/\nzz-side/\n");
+      fs.writeFileSync(protoAt, "");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const resealed = tool("bar").out;
+      expect(resealed, resealed).toContain("печать поставлена");
+      expect(tool("series").code).toBe(0);
+      expect(tool("series", "--stage", "1").code).toBe(0);
+      const merged = git("commit", "-qm", "merge side");
+      expect(merged.status, merged.stdout + merged.stderr).toBe(0);
+      expect(git("rev-list", "--parents", "-1", "HEAD").stdout.trim().split(" ")).toHaveLength(3);
+      expect(git("show", "HEAD:.gitignore").stdout).toBe(ignored + "zz-main/\nzz-side/\n");
+      expect(git("show", "HEAD:src/shared/zza/zza.ts").stdout).toBe("export const zza = 1;\n");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
 });
 
 // Ссылку на решение код несёт адресом записи базы — так велит правило о
