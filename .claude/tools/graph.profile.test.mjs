@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { foreignOffer, manifestOf, scenarioByShelf } from "./graph.profile.mjs";
+import { foreignOffer, manifestOf, scenarioByShelf, scenarioOf } from "./graph.profile.mjs";
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SHELF = path.join(TOOL_DIR, "..");
@@ -55,6 +55,39 @@ describe("сценарий посадки", () => {
     ]).join("\n");
     expect(mixed).not.toContain("--with=");
     expect(mixed).toContain("переставить нельзя одной командой: чужое здесь не только инструменты (структура)");
+  });
+});
+
+/** Версия среды ниже связки лежит у проекта до трёх мест — файл семени, его
+ * другие имена из карты, поле манифеста, — и план стека спрашивает каждое,
+ * что есть на диске. Шаг 6.1 прогона `2026-11-14`: мутант, снявший любое из
+ * мест, проходил тесты. */
+describe("осмотр стека получает каждое место версии среды", () => {
+  it("файл семени, его другое имя и поле манифеста — в плане; файла, которого нет, — нет", () => {
+    const project = CORPUS.projects.find((p) => p.name === "exact-seed");
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "scenario-node-"));
+    try {
+      for (const [rel, text] of Object.entries(project.files)) {
+        fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+        fs.writeFileSync(path.join(box, rel), text);
+      }
+      const manifest = JSON.parse(project.files["package.json"]);
+      fs.writeFileSync(path.join(box, "package.json"), JSON.stringify({ ...manifest, volta: { node: "20.11.0" } }));
+      fs.writeFileSync(path.join(box, ".nvmrc"), "20\n");
+      fs.writeFileSync(path.join(box, ".node-version"), "v18.19.0\n");
+      const plan = scenarioByShelf({ root: box, shelf: SHELF }).survey.plan.filter((one) => one.section === "versionFile" || one.section === "pin");
+      expect(plan.map(({ name, from, section }) => ({ name, from, section }))).toEqual([
+        { name: ".nvmrc", from: "20", section: "versionFile" },
+        { name: ".node-version", from: "18.19.0", section: "versionFile" },
+        { name: "volta.node", from: "20.11.0", section: "pin" },
+      ]);
+      // Карта без записи о файле версии — мест версии нет, а не падение.
+      const seed = JSON.parse(fs.readFileSync(path.join(SHELF, "seat", "templates", "package.json"), "utf8").replace(/^﻿/, ""));
+      const bare = scenarioOf({ root: box, map: {}, seed }).survey.plan;
+      expect(bare.filter((one) => one.section === "versionFile" || one.section === "pin")).toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
   });
 });
 

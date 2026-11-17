@@ -222,4 +222,15 @@ describe("прочитанный код сессии и ответ, которы
     expect(lastAnswerOf(jsonl)).toBe("второй\nхвост");
     expect(lastAnswerOf("мусор")).toBe("");
   });
+  // Шаг 6.1 прогона `2026-11-14`: мутанты чтения формы записи выживали.
+  it("запись без сообщения, null, пустой текст и содержимое не списком — не ответ и не падение", () => {
+    const line = (o) => JSON.stringify(o);
+    const said = (text) => line({ type: "assistant", message: { content: [{ type: "text", text }] } });
+    expect(lastAnswerOf(said("единственный"))).toBe("единственный");
+    const mixed = line({ type: "assistant", message: { content: [null, { type: "tool_use" }, { type: "text" }, { type: "text", text: "поздний" }] } });
+    expect(lastAnswerOf([said("ранний"), mixed, "null", line({ type: "assistant" })].join("\n"))).toBe("\nпоздний");
+    expect(lastAnswerOf(line({ type: "assistant", message: { content: "строкой" } }))).toBe("строкой");
+    const tail = [line({ type: "assistant", message: { content: 3 } }), said("  \n")];
+    expect(lastAnswerOf([said("раньше"), ...tail].join("\n"))).toBe("раньше");
+  });
 });

@@ -5673,6 +5673,8 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const data = JSON.parse(text);", "1:внешнее/разбор"],
   ["signalsSummary", "src/a.ts\nexport const inputLabel = (payload: unknown): string =>\n  typeof payload === \"string\" ? payload : \"\";", "1:внешнее/неизвестное"],
   ["signalsSummary", "src/a.ts\nexport const parsed = (text: string): unknown => text;", ""],
+  ["signalsSummary", "src/a.ts\nexport const f = ( payload ? :unknown): string => String(payload);", "1:внешнее/неизвестное"],
+  ["signalsSummary", "src/a.ts\nexport const f = (): void => {\n  try {\n    g();\n  } catch(error: unknown) {\n    throw error;\n  }\n};", "5:бросок"],
   ["signalsSummary", "src/a.ts\nexport const f = (): void => {\n  try {\n    g();\n  } catch (error: unknown) {\n    throw error;\n  }\n};", "5:бросок"],
   ["signalsSummary", "src/a.ts\nexport const data = JSON.stringify(value);", ""],
   ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"message\", onMessage);", "1:внешнее/сообщение"],
@@ -5807,6 +5809,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, idx) => <li key={idx}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:имя/сокращение"],
   ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n};", "3:список"],
   ["signalsSummary", "src/a.tsx\nexport const add = (rows, row) => {\n  rows.push(row <1 ? 1 : row);\n};", ""],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  lines.forEach((line, i) => rows. push ( <li key={i}>{line}</li>));\n  return <ul>{rows}</ul>;\n};", "3:список/ключ по позиции"],
   ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, index) => <li key={index}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
   ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, rowIndex) => <li key={rowIndex}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
   ["signalsSummary", "src/a.tsx\nexport const A0 = () => <div onScroll={go} />;\nexport const A1 = () => <div onMouseMove={go} />;\nexport const A2 = () => <div onPointerMove={go} />;\nexport const A3 = () => <div onTouchMove={go} />;\nexport const A4 = () => <div onWheel={go} />;\nexport const A5 = () => <div onDrag={go} />;\nexport const A6 = () => <div onDragOver={go} />;\nexport const watcher = new ResizeObserver(onResize);", "1:частое;2:частое;3:частое;4:частое;5:частое;6:частое;7:частое;8:частое"],
@@ -5986,6 +5989,24 @@ export const PREDICATE_CASES = [
   ["shellWriteTargetOf", "node -e 'const f = (a) => a > 1' && echo \"a > b\"", ""],
   ["shellWriteTargetOf", "git log &> /tmp/x.log", "/tmp/x.log"],
   ["shellWriteTargetOf", "echo x > 'my log.txt'", "my log.txt"],
+  ["shellWriteTargetOf", "node - <<'EOF'\nconst a = b > c;\nEOF", ""],
+  ["shellWriteTargetOf", "npm test >", ""],
+  ["shellWriteTargetOf", "echo a \\> b", ""],
+  ["shellWriteTargetOf", 'echo "a" > out.txt', "out.txt"],
+  ["shellWriteTargetOf", "echo 'a' > out.txt", "out.txt"],
+  ["shellWriteTargetOf", "echo x >| out.txt", "out.txt"],
+  ["shellWriteTargetOf", "tee out.txt -a", "out.txt"],
+  ["shellWriteTargetOf", "echo guarantee x", ""],
+  ["shellWriteTargetOf", "npm test | tee  -ai -a log.txt", "log.txt"],
+  ["shellWriteTargetOf", "echo a | tee | cat > out.txt", "out.txt"],
+  ["shellWriteTargetOf", "cat <<'EOF'\na\nb > c\nEOF\necho done > out.txt", "out.txt"],
+  ["shellWriteTargetOf", "cat << 'EOF'\na > b\nEOF", ""],
+  ["shellWriteTargetOf", "cat <<EOF\na > b\nEOF", ""],
+  ["shellWriteTargetOf", "cat <<-EOF\n\ta > b\n\tEOF\necho x > out.txt", "out.txt"],
+  ["shellWriteTargetOf", "echo x >  out.txt", "out.txt"],
+  ["shellWriteTargetOf", "cat > >(tee log.txt)", "log.txt"],
+  ["shellWriteTargetOf", 'echo x > "run"/log.txt', "run/log.txt"],
+  ["shellWriteTargetOf", "echo x > a'b'", "ab"],
   ["shellVariableOf", "npm run check", ""],
   ["shellVariableOf", 'npm run check 2>&1 | tail -60; echo "EXIT ${PIPESTATUS[0]}"', "${PIPESTATUS[0]}"],
   ["shellVariableOf", "npm run check > out.txt 2>&1; echo EXIT $?", "$?"],
@@ -6934,24 +6955,43 @@ export const sandboxEscape = (recipe) => {
   return "";
 };
 
+/** Строки команды оболочки с родом каждой: `команда`; тело встроенного
+ * документа — `буквальное` (метка в кавычках) либо `раскрываемое`, где
+ * оболочка подставляет переменные. Строка конца документа не входит. Один
+ * разбор на три стража. */
+const heredocLinesOf = (command) => {
+  const out = [];
+  let until = null;
+  let literal = false;
+  for (const line of String(command).split(NEWLINE)) {
+    if (until !== null) {
+      if (line.trim() === until) until = null;
+      else out.push({ line, kind: literal ? "буквальное" : "раскрываемое" });
+      continue;
+    }
+    out.push({ line, kind: "команда" });
+    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
+    if (doc !== null) {
+      until = doc[2];
+      literal = doc[1] !== "";
+    }
+  }
+  return out;
+};
+
+/** Текст команды без тел встроенных документов: тела — данные, а не команды. */
+const shellCommandTextOf = (command) =>
+  heredocLinesOf(command)
+    .filter((one) => one.kind === "команда")
+    .map((one) => one.line)
+    .join(NEWLINE);
+
 /** Команды оболочки: слова каждой, без тел встроенных документов. Разбираются
  * кавычки и разделители `; & | ( )` и перевод строки; подстановка и
  * псевдоним не раскрываются. Общий разбор для стражей: флаг в тексте
  * сообщения и в доводе `echo` командой не является. */
 const shellCommandsOf = (command) => {
-  // Тела встроенных документов — данные, а не команды.
-  const kept = [];
-  let until = null;
-  for (const line of String(command).split(NEWLINE)) {
-    if (until !== null) {
-      if (line.trim() === until) until = null;
-      continue;
-    }
-    kept.push(line);
-    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
-    if (doc !== null) until = doc[2];
-  }
-  const body = kept.join(NEWLINE);
+  const body = shellCommandTextOf(command);
   const commands = [];
   let words = [];
   let word = "";
@@ -7335,21 +7375,10 @@ export const pageReadByShell = (command) =>
  * `2026-11-16`, вопрос 25: оба работника посадки правили файлы проекта
  * скриптом, записанным оболочкой, в обход инструментов правки. */
 export const shellWriteTargetOf = (command) => {
-  const kept = [];
-  let until = null;
-  for (const line of String(command).split(NEWLINE)) {
-    if (until !== null) {
-      if (line.trim() === until) until = null;
-      continue;
-    }
-    kept.push(line);
-    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
-    if (doc !== null) until = doc[2];
-  }
-  const body = kept.join(NEWLINE);
+  const body = shellCommandTextOf(command);
   const word = (from) => {
-    const m = /^\s*("[^"]*"|'[^']*'|[^\s;&|<>()]+)/.exec(body.slice(from));
-    return m === null ? "" : m[1].replace(/^(["'])(.*)\1$/, "$2");
+    const m = /^\s*((?:"[^"]*"|'[^']*'|[^\s;&|<>()"'])+)/.exec(body.slice(from));
+    return m === null ? "" : m[1].replace(/"([^"]*)"|'([^']*)'/g, "$1$2");
   };
   let quote = null;
   for (let i = 0; i < body.length; i += 1) {
@@ -7389,23 +7418,11 @@ export const shellWriteTargetOf = (command) => {
 };
 
 export const shellVariableOf = (command) => {
-  const kept = [];
-  let until = null;
-  let literal = false;
-  for (const line of String(command).split(NEWLINE)) {
-    if (until !== null) {
-      if (line.trim() === until) until = null;
-      else if (!literal) kept.push(line);
-      continue;
-    }
-    kept.push(line);
-    const doc = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
-    if (doc !== null) {
-      until = doc[2];
-      literal = doc[1] !== "";
-    }
-  }
-  const body = kept.join(NEWLINE);
+  // Тело с меткой в кавычках оболочка не раскрывает — переменной там нет.
+  const body = heredocLinesOf(command)
+    .filter((one) => one.kind !== "буквальное")
+    .map((one) => one.line)
+    .join(NEWLINE);
   let quote = null;
   for (let i = 0; i < body.length; i += 1) {
     const ch = body[i];

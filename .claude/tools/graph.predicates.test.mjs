@@ -62,6 +62,14 @@ describe("словарь области", () => {
     expect(vocabulary[name](input)).toBe(want);
   });
 
+  // Строку модели о списке читают по образцу: сводка признаков его не печатает.
+  // Шаг 6.1 прогона `2026-11-14`.
+  it("список, сложенный циклом, назван образцом push", () => {
+    const text = "export const L = ({ lines }) => {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n};";
+    const hits = vocabulary.signalsOf("src/a.tsx", text, { kind: "код", own: new Set() });
+    expect(hits.filter((h) => h.sort === "список").map((h) => h.sample)).toEqual(["push"]);
+  });
+
   it("самопроверка не находит расхождений", () => {
     expect(selfCheck()).toEqual([]);
   });
