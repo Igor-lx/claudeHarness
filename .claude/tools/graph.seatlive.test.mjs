@@ -257,6 +257,50 @@ describe("живая посадка: композиция конфигов и с
     expect(compose('{ "include": ["lib"] }').files["tsconfig.json"]).toBeUndefined();
   });
 
+  // Конфиг линта проекта посадка переносит рядом и подключает импортом из
+  // своего `.mjs`: имя, которое Node связки не загрузит, роняло бы линт
+  // проекта на первом прогоне. Тест держит вид: каждое плоское имя конфига
+  // линта из карты загружается тем импортом, который пишет посадка.
+  it("каждое плоское имя конфига линта из карты загружается импортом конфига обвязки", () => {
+    const map = JSON.parse(fs.readFileSync(path.join(SEEDS, "..", "map.json"), "utf8"));
+    const lint = map.copy.find((e) => e.neededBy === "lint" && !e.to.includes("/"));
+    const flat = [lint.to, ...lint.alsoKnownAs].filter((one) => !/^\.eslintrc/.test(one));
+    expect(flat.length).toBeGreaterThan(5);
+    const body = (name) =>
+      /\.cts$/.test(name)
+        ? "const blocks: unknown[] = [{ rules: {} }];\nmodule.exports = blocks;\n"
+        : /\.cjs$/.test(name)
+          ? "module.exports = [{ rules: {} }];\n"
+          : /\.[mc]?ts$/.test(name)
+            ? "const blocks: unknown[] = [{ rules: {} }];\nexport default blocks;\n"
+            : "export default [{ rules: {} }];\n";
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), "lint-names-"));
+    try {
+      const failed = [];
+      for (const name of flat) {
+        const dir = fs.mkdtempSync(path.join(box, "p-"));
+        fs.writeFileSync(path.join(dir, "package.json"), '{ "type": "module" }\n');
+        fs.writeFileSync(path.join(dir, name), body(name));
+        const { files, moves } = composeLive({
+          exists: (one) => one === name,
+          read: () => null,
+          seed,
+          map,
+          roots: ["src"],
+          prettierInManifest: false,
+        });
+        for (const [from, to] of moves) if (from === name) fs.renameSync(path.join(dir, from), path.join(dir, to));
+        const importLine = files[lint.to].split("\n").find((l) => l.startsWith("import project from "));
+        fs.writeFileSync(path.join(dir, "probe.mjs"), importLine + "\nconsole.log(JSON.stringify([project].flat().length));\n");
+        const ran = spawnSync(process.execPath, ["probe.mjs"], { cwd: dir, encoding: "utf8" });
+        if (ran.status !== 0 || ran.stdout.trim() !== "1") failed.push(name + ": " + (ran.stderr.split("\n").find((l) => /Error/.test(l)) ?? ran.stdout.trim()));
+      }
+      expect(failed, "имя конфига линта, которое импорт посадки не загружает").toEqual([]);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+
   it("строгость: копия конфига; у решения — копия каждой ссылки, своя память компилятора у той, что её задала", () => {
     const tsconfig = seed("tsconfig.json");
     const plain = strictConfigsOf((n) => (n === "tsconfig.json" ? '{ "include": ["lib"] }' : null), tsconfig);
