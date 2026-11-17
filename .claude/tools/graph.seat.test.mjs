@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  commitsIn,
   envLowOf,
   factsWithBaseline,
   copyTree,
@@ -112,6 +113,18 @@ describe("посадка на месте: что лежит рядом с пол
     for (const own of ["src/cart.ts", "src/App.test.tsx", "src/pages/Home.tsx", "public/data.json", "src/assets/icons/x.svg"])
       expect(inPlaceKindOf(entries, read(files), 0, [...template, own]).kind, own).toBe("живой");
     expect(inPlaceKindOf(entries, read(files), 2).kind).toBe("живой");
+    // Мелкий клон показывает один коммит из многих: счёт истории у него не
+    // меньше видимого плюс один, и свежим шаблоном он не считается.
+    const shallowGit = (said) => (args) => (args[0] === "rev-parse" ? said : "1");
+    const hasGit = fs.mkdtempSync(path.join(os.tmpdir(), "melkaya-"));
+    try {
+      fs.mkdirSync(path.join(hasGit, ".git"));
+      expect(commitsIn(hasGit, shallowGit("false"))).toBe(1);
+      expect(commitsIn(hasGit, shallowGit("true"))).toBe(2);
+      expect(inPlaceKindOf(entries, read(files), commitsIn(hasGit, shallowGit("true"))).kind).toBe("живой");
+    } finally {
+      fs.rmSync(hasGit, { recursive: true, force: true });
+    }
     expect(
       inPlaceKindOf(entries, read({ ...files, "src/App.tsx": "own app\n" }), 0).kind,
     ).toBe("живой");

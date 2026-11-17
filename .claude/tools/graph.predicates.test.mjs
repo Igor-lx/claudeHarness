@@ -20,6 +20,7 @@ const {
   withFalsifyTrace,
   recipeEditOf,
   inComment,
+  historyCutNote,
   printedIsRed,
   sectionsOf,
   verifyBriefOf,
@@ -474,6 +475,24 @@ describe("verifyBriefOf", () => {
     expect(got.at(-1)).toBe(
       "  сверок: 4, с находками: 0, с предупреждением: 1, держит посадка либо шаг перехода: 1, зелёных не показано: 2 — полный вывод: `graph.mjs verify --full`",
     );
+  });
+
+  // Пропуск по истории в мелкой копии уходил вместе с зелёной секцией:
+  // конвейер, берущий репозиторий мелким клоном, его не видел.
+  it("строку пропуска мелкой копии из зелёной секции печатает под её именем", () => {
+    const cut = historyCutNote("своды по истории не сверены", "abcdef0123456789");
+    expect(cut).toBe(
+      "не сверено в мелкой копии: коммита abcdef012345 в ней нет — своды по истории не сверены; полная история: `git fetch --unshallow`",
+    );
+    expect(historyCutNote("починки не счесть", null)).toContain("не сверено в мелкой копии: истории глубже вершины в ней нет — починки не счесть");
+    const got = verifyBriefOf(
+      ["=== Зелёная ===", "  осмотрено коммитов: 0", "  " + cut, "=== Ещё ===", "  нарушений: 0"],
+      WARN,
+    );
+    expect(got.slice(0, 2)).toEqual(["=== Зелёная ===", "  " + cut]);
+    expect(got).not.toContain("=== Ещё ===");
+    expect(printedIsRed(got, WARN, new Set())).toBe(false);
+    expect(got.at(-1)).toContain("зелёных не показано: 2");
   });
 
   // Баннер телом зелёной секции уходил вместе с ней: `npm run check` молчал,

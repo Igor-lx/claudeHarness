@@ -42,11 +42,14 @@ export const seatIdentity = (asked) =>
   asked(["config", "user.email"]) ? [] : ["-c", "user.name=seat", "-c", "user.email=seat@local"];
 
 /** Проекты корпуса и ящики тестов кладут файлы без истории; живой проект
- * свою историю несёт, и счёт коммитов берётся у git. */
+ * свою историю несёт, и счёт коммитов берётся у git. Мелкий клон видит
+ * часть истории: его счёт — нижняя граница, не меньше видимого плюс один,
+ * иначе живой проект на файлах шаблона читался бы свежим шаблоном, и
+ * посадка сняла бы его файлы. Выведено холодной осью, шаг 6.3.4. */
 export const commitsIn = (root, git) => {
   if (!existsSync(path.join(root, ".git"))) return 0;
-  const said = git(["rev-list", "--count", "HEAD"]);
-  return Number(said) || 0;
+  const said = Number(git(["rev-list", "--count", "HEAD"])) || 0;
+  return git(["rev-parse", "--is-shallow-repository"]) === "true" ? said + 1 : said;
 };
 
 /** Корни, в которые временная папка лежать не может: копия проекта в

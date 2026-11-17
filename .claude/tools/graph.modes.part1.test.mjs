@@ -1719,6 +1719,86 @@ describe("ревизия сводов по истории", () => {
     }
   }, 240000);
 
+  it("мелкая копия: сверка по истории называет пропуск одной строкой, короткий вывод её показывает, отсутствие коммита правкой не считается", () => {
+    const box = seatEmpty("istoriya-melkaya-");
+    const cut = box + "-cut";
+    try {
+      const gitIn = (at, ...args) =>
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@local", "-c", "core.hooksPath=", ...args], {
+          cwd: at,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+      const toolIn = (at, ...args) => {
+        const r = spawnSync(process.execPath, [path.join(at, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: at,
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        return String(r.stdout ?? "");
+      };
+      const section = (out, title) => out.split("=== " + title + " ===")[1]?.split("\n===")[0] ?? "";
+      const git = (...args) => gitIn(box, ...args);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const seat = git("rev-parse", "HEAD");
+      // Основания и конец посадки — коммитом после неё, базовая линия — к нему.
+      const cfgAt = path.join(box, ".context", "graph.config.mjs");
+      fs.writeFileSync(
+        cfgAt,
+        fs
+          .readFileSync(cfgAt, "utf8")
+          .replace(/^ {2}seating: [^,]*,/m, "  seating: null,")
+          .replace(/^ {2}barSince: [^,]*,/m, '  barSince: "' + seat + '",')
+          .replace(/^ {2}seriesSince: [^,]*,/m, '  seriesSince: "' + seat + '",')
+          .replace(/^ {4}since: [^,]*,/m, '    since: "' + seat + '",'),
+      );
+      const factsAt = path.join(box, ".context", "01-facts.md");
+      const facts = fs.readFileSync(factsAt, "utf8");
+      expect(facts).toContain("## Базовая линия\n\n<!-- ПУСТО -->");
+      fs.writeFileSync(factsAt, facts.replace("## Базовая линия\n\n<!-- ПУСТО -->", "## Базовая линия\n\n- тестов на день посадки: `1`"));
+      git("commit", "-qam", "конец посадки", "--no-verify");
+      fs.writeFileSync(factsAt, fs.readFileSync(factsAt, "utf8").replace("посадки: `1`", "посадки: `2`"));
+      git("commit", "-qam", "базовая линия правлена", "--no-verify");
+      // Мерило на полной копии: правку базовой линии сверка называет.
+      const full = toolIn(box, "verify", "--full");
+      expect(section(full, "Числа в прозе базы")).toContain("базовая линия правлена после конца посадки");
+      expect(full).not.toContain("не сверено в мелкой копии");
+
+      execFileSync("git", ["clone", "-q", "--depth", "1", "file://" + box, cut], { stdio: "ignore" });
+      expect(gitIn(cut, "rev-parse", "--is-shallow-repository")).toBe("true");
+      // Семя каркаса на полке новее посаженного файла: в полной копии файл
+      // совпадает с собой в коммите посадки, в мелкой этого коммита нет.
+      const mainSeed = path.join(cut, ".claude", "seat", "templates", "src", "app", "main.tsx");
+      expect(fs.readFileSync(path.join(cut, "src", "app", "main.tsx"), "utf8")).toContain("Stryker disable next-line all: seeded entry point");
+      fs.appendFileSync(mainSeed, "\n");
+      const said = toolIn(cut, "verify", "--full");
+      const note = "не сверено в мелкой копии: коммита " + seat.slice(0, 12) + " в ней нет";
+      for (const title of ["Коммит с кодом накрыт сводом", "Находки закрыты", "Числа в прозе базы"])
+        expect(section(said, title), title).toContain(note);
+      expect(section(said, "Числа в прозе базы")).not.toContain("базовая линия правлена после конца посадки");
+      expect(section(said, "Числа в прозе базы")).not.toContain("строк базовой линии правлено после посадки: 0");
+      expect(section(said, "Пометка каркаса снята при правке")).toContain(note);
+      expect(section(said, "Пометка каркаса снята при правке")).toContain("изменены после посадки, пометка на месте: 0");
+      // Короткий вывод — тот, что печатает связка проверок, — пропуск не прячет.
+      const brief = toolIn(cut, "verify");
+      expect(brief.split("\n").filter((l) => l.includes(note)).length).toBe(4);
+      expect(toolIn(cut, "refresh")).toContain(note);
+      // Реестра нет — счёт починок по истории той же копии тоже неполон.
+      const cutCfg = path.join(cut, ".context", "graph.config.mjs");
+      const nulled = fs.readFileSync(cutCfg, "utf8").replace(/^ {2}findings: \{[\s\S]*?^ {2}\},/m, "  findings: null,");
+      expect(nulled).toContain("\n  findings: null,");
+      fs.writeFileSync(cutCfg, nulled);
+      expect(section(toolIn(cut, "verify", "--full"), "Сверки, выключенные при живом предмете")).toContain(
+        "не сверено в мелкой копии: истории глубже вершины в ней нет",
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+      fs.rmSync(cut, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("снос узла не делает накрытый сводом коммит красным задним числом", () => {
     const box = seatEmpty("istoriya-");
     try {

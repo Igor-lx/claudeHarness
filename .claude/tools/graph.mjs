@@ -138,6 +138,7 @@ import {
   firstCellOf,
   keyFromCall,
   namesAddress,
+  historyCutNote,
   printedIsRed,
   verifyBriefOf,
   SCOPE_LINE_KINDS,
@@ -2472,6 +2473,12 @@ const baseInHistory = (hash, cwd) => {
   if (ancestor.status === 0) return "есть";
   return String(ask(["rev-parse", "--is-shallow-repository"]).stdout ?? "").trim() === "true" ? "мелкая" : "вне";
 };
+/** Основание объявлено, а мелкая копия его не несёт: сверка по нему не
+ * сделана, и сказать это обязана строкой `historyCutNote`. */
+const cutAt = (hash, cwd) => hash != null && baseInHistory(hash, cwd) === "мелкая";
+/** Копия мелкая: история глубже вершины в ней отрезана. */
+const isShallowAt = (cwd) =>
+  String(spawnSync("git", ["rev-parse", "--is-shallow-repository"], { maxBuffer: CHILD_OUTPUT_BYTES, cwd, encoding: "utf8" }).stdout ?? "").trim() === "true";
 /** Строка находки об основании вне истории ветки: поле и что объявить. */
 const baseOutside = (field, hash) =>
   "основание " + field + " " + hash.slice(0, 12) + " не в истории вершины — историю посадки переписали (слияние коммитов, перебазирование). Объявить основанием коммит посадки этой истории: поля barSince, seriesSince и findings.since";
@@ -9305,6 +9312,8 @@ if (mode === "refresh") {
   for (const one of kept) console.log("    " + one);
   if (base === null)
     console.log("  основание посадки в настройке не названо — «не правили» доказать нечем");
+  else if (kept.length > 0 && cutAt(base, REPO_AT))
+    console.log("  " + historyCutNote("«не правили» доказать нечем, оставленные не сверены с посадкой", base));
   if (stale.length > 0 && !apply)
     console.log("  ничего не записано; заменить: node .claude/tools/graph.mjs refresh --apply");
   if (stale.length > 0 && apply) {
@@ -24152,6 +24161,7 @@ if (mode === "verify") {
   // проверенный в мастерской. Правленый файл — код проекта: пометка уходит,
   // файл получает тест. Без сверки пометка пережила бы правку без признака.
   const seedMarkLeft = [];
+  const seedMarkUnproven = [];
   checkStep(() => {
     checkHead("Пометка каркаса снята при правке", () => {
       let marked = 0;
@@ -24166,11 +24176,16 @@ if (mode === "verify") {
         const from = shelfAt(e.from);
         const seed = from !== null && existsSync(from) ? flatText(readFileSync(from, "utf8")) : null;
         const was = seatedTextOf(e.to);
-        if (now !== seed && (was === null || flatText(was) !== now)) seedMarkLeft.push(e.to);
+        if (now === seed || (was !== null && flatText(was) === now)) continue;
+        // Коммита посадки в мелкой копии нет: «правлен» не доказано.
+        if (was === null && cutAt(SEAT_BASE, REPO_AT)) seedMarkUnproven.push(e.to);
+        else seedMarkLeft.push(e.to);
       }
       return { n: marked, unit: "файлов каркаса с пометкой" };
     });
     console.log("  изменены после посадки, пометка на месте: " + seedMarkLeft.length);
+    if (seedMarkUnproven.length > 0)
+      console.log("  " + historyCutNote("не сверены с посадкой: " + seedMarkUnproven.join(", "), SEAT_BASE));
     for (const one of seedMarkLeft)
       console.log("    " + one + " — снять пометку `Stryker disable` каркаса и покрыть файл тестом");
   });
@@ -25281,6 +25296,7 @@ if (mode === "verify") {
   // проходят зелёными на живом проекте. Здесь предмет ищется на диске без
   // подсказки конфига, поэтому соврать нечем: он либо есть, либо нет.
   const disarmed = [];
+  const disarmedCut = [];
   let disarmedLooked = 0;
   const dirsUnder = (root, name) => {
     const found = [];
@@ -25433,6 +25449,8 @@ if (mode === "verify") {
             fixes +
             ", а CONFIG.findings пуст — «всё найденное починено» держится памятью",
         );
+      else if (isShallowAt(path.join(BASE, "..")))
+        disarmedCut.push(historyCutNote("починки при пустом CONFIG.findings не сочтены", null));
     }
     // Звёздная бочка выключает разбор мёртвых экспортов внутри себя, и пустое
     // поле выключает сверку целиком: `export *` появится — не скажет никто.
@@ -28892,6 +28910,7 @@ if (mode === "verify") {
       unit: "пустых полей настройки",
     }));
     console.log(`  выключено зря: ${disarmed.length}`);
+    for (const d of disarmedCut) console.log("  " + d);
     for (const d of disarmed) console.log("    " + d);
   });
   checkStep(() => {
@@ -30650,7 +30669,8 @@ if (mode === "verify") {
     if (seatEnd() !== null) {
       console.log(`  строк базовой линии правлено после посадки: ${rebaselined.length}`);
       for (const f of rebaselined) console.log("    " + f);
-    }
+    } else if (!seatingIsUp() && cutAt(SEAT_BASE, REPO_AT))
+      console.log("  " + historyCutNote("базовая линия с концом посадки не сверена", SEAT_BASE));
     if (seedDriftNote(frozenNumbers) !== "") console.log(seedDriftNote(frozenNumbers));
   });
   checkStep(() => {
@@ -31709,10 +31729,11 @@ if (mode === "verify") {
                 .filter(Boolean),
             );
           } catch {
-            barPastNote =
-              "коммита-основания серии " +
-              CONFIG.seriesSince +
-              " в истории этой копии нет — коммиты частей не сверены";
+            barPastNote = cutAt(CONFIG.seriesSince, REPO_AT)
+              ? historyCutNote("коммиты частей не сверены", CONFIG.seriesSince)
+              : "коммита-основания серии " +
+                CONFIG.seriesSince +
+                " в истории этой копии нет — коммиты частей не сверены";
           }
         // Пары «буква, путь», без поиска переименований — как у ворот.
         const touchedOf = (args) => {
@@ -31823,10 +31844,11 @@ if (mode === "verify") {
           return want.sort((x, y) => (x.file < y.file ? -1 : 1));
         };
         if (log === null)
-          barPastNote =
-            "коммита-основания " +
-            CONFIG.barSince +
-            " в истории этой копии нет — своды по истории не сверены";
+          barPastNote = cutAt(CONFIG.barSince, REPO_AT)
+            ? historyCutNote("своды по истории не сверены", CONFIG.barSince)
+            : "коммита-основания " +
+              CONFIG.barSince +
+              " в истории этой копии нет — своды по истории не сверены";
         else
           for (const hash of log) {
             let touched;
@@ -34969,7 +34991,9 @@ if (mode === "verify") {
             findingsNote =
               CONFIG.findings.since == null
                 ? "коммит-основание не объявлен — реестр копит находки, починки с историей не сверяются"
-                : "базового коммита " +
+                : cutAt(CONFIG.findings.since, REPO)
+                  ? historyCutNote("коммиты и непойманные починки не сверены", CONFIG.findings.since)
+                  : "базового коммита " +
                   CONFIG.findings.since +
                   " в истории этой копии нет — коммиты и непойманные починки не сверены";
           const named = new Set();
