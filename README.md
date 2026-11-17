@@ -516,7 +516,7 @@ it, each with its own question:
 
 ## Status
 
-**v0.5.2: ready for work.** Everything described here is in place and
+**v0.5.3: ready for work.** Everything described here is in place and
 checked on real runs rather than by description, in the acceptance run
 before this release:
 
@@ -533,16 +533,17 @@ before this release:
   was brought to the harness defaults until a machine check could not tell
   it from a project written from scratch;
 - the quality-bar pass on new planted defects, one per criterion: about
-  seven in ten were caught at first; the misses went to the holders of
-  their criteria, and the recheck caught the rest. Because the first passes
-  missed, no bound on the miss rate is claimed;
+  three in four were caught at first; the misses went to the holders of
+  their criteria, and the recheck caught all but one, whose planted defect
+  could not be told from a violation of another criterion. Because the
+  first passes missed, no bound on the miss rate is claimed;
 - a fresh session for each kind of task, and a session on the hooks, went
   through the order of work: every step is held by the machine or was seen
   done; the few steps no machine can see are held by attention with the
   reason written down;
-- the parts the daily loop never runs: around a dozen kinds of defect were
+- the parts the daily loop never runs: some fifteen kinds of defect were
   checked whole and are held by tests; samples of probes still found new
-  kinds - several at first, far fewer in the repeat - all fixed. Neither
+  kinds - a few at first, two in the confirming repeat - all fixed. Neither
   sample was clean, so no bound on what is still undetected there is
   claimed.
 
@@ -550,40 +551,33 @@ The architecture and the concept are settled. Next comes writing real
 projects on it; details of the rules, the checks and the tool's output may
 still change between versions.
 
-What changed since v0.5.1:
+What changed since v0.5.2:
 
-- **seating refuses files hidden from git** by an ignore rule of the
-  project or of the machine, naming the rule: it used to report success
-  and commit without the harness, so a clone came without it and without
-  the commit gate;
-- **a path the stack cannot run in is refused up front**: in a folder
-  whose path holds `#` or `?`, Vite and Vitest find no files, and seating
-  failed midway on an unrelated "cannot find module"; now it names the
-  character and the way on;
-- **an interrupted seating is named with the way on** from both entries
-  of the command, not only from the project folder;
-- **another machine and another project**: paths from git are read
-  NUL-separated, so a file named in Cyrillic is named readably; every
-  child process has an output limit, so a long history no longer reads as
-  "no history"; no check step throws on a machine without git;
-- **`refresh` offers to replace stale code seeds**: after the harness is
-  updated in a seated project by copying `.claude/`, a code seed left in
-  its earlier edition is named by the checks with the command - the plan
-  without `--apply`, the replacement with it; files the project edited are
-  never touched;
-- **project settings live in a folder named `config`**, where the tool
-  finds them and asks for a document per constant;
-- **the end of a turn holds a read-only review** until every finding it
-  proposes is recorded;
-- **the compiler seed explains its settings** in a note it names, like
-  the other config seeds;
-- **whole kinds are held by tests**, not by probes: every launch of an
-  external program, every temporary folder, every field and script of the
-  seeds and every copy of the verified versions, every condition of a
-  falsification recipe, every path and section the workshop rules name;
-- **the hot probe run goes holders first**: the `probe` skill checks every
-  machine holder by a list and puts probes only where a rule or attention
-  holds, so the number of probes follows from what is left to check.
+- **the quality-bar pass looks at the neighbours too**: the model of the
+  pass raises its signals over the files around the edit, so a violation
+  in an untouched neighbour is asked about, not passed over; a list built
+  by pushing markup in a loop and an argument typed `unknown` are seen;
+- **the styling scheme is held by a check**: a component with its own
+  sheet must accept a class map, and the class-map type is recognised in
+  more spellings - a record by string, keys by an alias, read-only;
+- **the end of a turn holds a reply about code read without the pass**,
+  and **the guard stops writing project files through the shell** -
+  redirection or `tee`; files are written by the editor tools;
+- **the baseline is frozen at the end of seating**: a baseline row edited
+  afterwards is named by the checks;
+- **seating brings the environment version to the verified set** with
+  consent - version file, `engines` range or `volta` field - by one plan;
+  code in a language the harness cannot read is named in the report;
+- **another machine and another state**: output order no longer follows
+  the machine's locale, git output is read the same under any git config
+  of the machine, a foreign `GIT_INDEX_FILE` is dropped, conflict markers
+  left by a merge are named, a series is not cut into parts mid-merge, and
+  a shallow clone names the history it could not check instead of
+  skipping it or turning red;
+- **every mode refuses a key it does not know** before doing any work;
+- **whole kinds are held by tests**, not by probes: every field the shelf
+  prose names, every copy of a seed, every function defined once, every
+  test name standing once, every commit and test the prose names.
 
 Earlier releases and what each brought -
 [GitHub releases](https://github.com/Igor-lx/claudeHarness/releases).
