@@ -3231,25 +3231,39 @@ const barKeysOf = (body) => {
           count.set(part, (count.get(part) ?? 0) + 1);
     const common = [...count].sort((a, b) => b[1] - a[1])[0];
     const shared = common !== undefined && common[1] > 1 ? common[0] : null;
-    out.push(
-      "исходы " +
-        (s === "" ? "без предмета" : barQuoted(s)) +
-        (shared === null
-          ? ""
-          : " (где не сказано иначе — строка уровня, " +
-            ONE_OF +
-            runOf(shared.slice(ONE_OF.length)) +
-            ")") +
-        ": " +
-        list
-          .map(({ id, tail }) => {
-            const rest = tail
-              .split("; ")
-              .filter((part) => part !== "" && part !== shared);
-            return rest.length === 0 ? id : id + " (" + rest.join("; ") + ")";
-          })
-          .join(", "),
-    );
+    // Общая «одна из» — умолчание только тем, чья строка её несёт: критерий
+    // без строки уровня под общим заголовком читался обязанным назвать её
+    // (свод `свод.3.3`, `2026-11-18`: «чисто» `A3`, `H7`, `D2` опирали на
+    // строки каталога).
+    const named = (one) =>
+      one.tail.split("; ").some((part) => part.startsWith(ONE_OF));
+    const show = ({ id, tail }) => {
+      const rest = tail
+        .split("; ")
+        .filter((part) => part !== "" && part !== shared);
+      return rest.length === 0 ? id : id + " (" + rest.join("; ") + ")";
+    };
+    const where = s === "" ? "без предмета" : barQuoted(s);
+    const withRow = shared === null ? [] : list.filter(named);
+    const without = shared === null ? list : list.filter((one) => !named(one));
+    if (withRow.length > 0)
+      out.push(
+        "исходы " +
+          where +
+          " (где не сказано иначе — строка уровня, " +
+          ONE_OF +
+          runOf(shared.slice(ONE_OF.length)) +
+          "): " +
+          withRow.map(show).join(", "),
+      );
+    if (without.length > 0)
+      out.push(
+        "исходы " +
+          where +
+          (withRow.length > 0 ? " без строки уровня" : "") +
+          ": " +
+          without.map(show).join(", "),
+      );
   }
   for (const [outcome, list] of set)
     out.push(
@@ -3726,6 +3740,29 @@ const sandboxTree = (from, to) => {
  * одного и того же с разными правилами — это гарантия однажды разойтись», —
  * и предупреждал о ДРУГОЙ паре. Поэтому чинится не корень пути, а пара.
  */
+/** Называет ли адрес из записи базы файл: путём целиком, от корня исходников
+ * либо от корня репозитория, либо именем с расширением, если оно в проекте
+ * одно (`base.md`: запись называет файл «путём или именем с расширением»).
+ * Один разбор на досье и на сверку «Предмет из кода назван в своём файле
+ * базы»: сверка не брала имени и короткого пути, которые досье засчитывало, и
+ * краснела на записанном состоянии (свод `свод.3.3`, `2026-11-18`). */
+let BASE_NAME_COUNTS = null;
+const tokenNamesFile = (t, f) => {
+  const r = rel(f);
+  if (t === r || (t.includes("/") && (r.endsWith("/" + t) || t.endsWith("/" + r))))
+    return true;
+  const base = r.slice(r.lastIndexOf("/") + 1);
+  if (t !== base) return false;
+  const count = files.length + styleFiles.length;
+  if (BASE_NAME_COUNTS === null || BASE_NAME_COUNTS.of !== count) {
+    BASE_NAME_COUNTS = { of: count, by: new Map() };
+    for (const one of [...files, ...styleFiles]) {
+      const name = path.posix.basename(rel(one));
+      BASE_NAME_COUNTS.by.set(name, (BASE_NAME_COUNTS.by.get(name) ?? 0) + 1);
+    }
+  }
+  return BASE_NAME_COUNTS.by.get(base) === 1;
+};
 const owedFor = (file) => {
   const out = [];
   const mapAt = shelfAt("seat/map.json");
@@ -3747,9 +3784,7 @@ const owedFor = (file) => {
     // состоянии называла файл в графе «Кто читает», а своё состояние того же
     // файла не описывала ни одна строка.
     const lines = readFileSync(at, "utf8").split(LF);
-    const r = rel(file);
-    const holds = (cell) =>
-      quotedIn(cell).some((t) => t === r || t.endsWith("/" + r));
+    const holds = (cell) => quotedIn(cell).some((t) => tokenNamesFile(t, file));
     // Файл, который только пишет чужой ключ хранилища, своего состояния не
     // держит: его называет графа «Кто пишет» строки владельца ключа. Своё
     // состояние рядом с записью по-прежнему спрашивает владельца.
@@ -5930,11 +5965,8 @@ const baseHitsFor = (target) => {
   const base = r.slice(r.lastIndexOf("/") + 1);
   const bare = base.replace(BARE_EXT, "");
   const dir = r.slice(0, r.lastIndexOf("/"));
-  // Голое имя засчитывается, только если оно в проекте одно: `index.ts` носят
-  // сорок один файл, `types.ts` — двадцать.
-  const uniqueBase =
-    [...files, ...styleFiles].filter((f) => rel(f).endsWith("/" + base))
-      .length === 1;
+  // Голое имя засчитывается, только если оно в проекте одно (`tokenNamesFile`):
+  // `index.ts` носят сорок один файл, `types.ts` — двадцать…
   // …но если та же строка называет соседа по папке, речь именно об этой бочке:
   // контекст строки снимает неоднозначность имени.
   const namesSibling = (line) =>
@@ -5949,17 +5981,11 @@ const baseHitsFor = (target) => {
   const records = dossierLines().base.filter(
     ([name]) => name !== CONFIG.barProtocol,
   );
+  // Адрес короче внутреннего, от папки слоя, и длиннее, от корня репозитория:
+  // так пишет база и так написано её семя.
   const exact = records.filter(([, , line]) =>
     quotedIn(line).some(
-      (t) =>
-        t === r ||
-        // Адрес записан КОРОЧЕ внутреннего: от папки слоя, без корня исходников.
-        (t.includes("/") && r.endsWith("/" + t)) ||
-        // …и ДЛИННЕЕ: от корня репозитория, вместе с корнем исходников. Именно
-        // так пишет база и так написано её семя, и без этой стороны запись
-        // карты о файле не считалась точной вовсе.
-        (t.includes("/") && t.endsWith("/" + r)) ||
-        (t === base && (uniqueBase || namesSibling(line))),
+      (t) => tokenNamesFile(t, target) || (t === base && namesSibling(line)),
     ),
   );
   // Строка, которая в кавычках называет ДРУГОЙ существующий файл, — про него, а
@@ -16269,9 +16295,11 @@ const barCatalogs = () => {
   BAR_CATALOGS = {
     records: stateRecords().length,
     stateFiles: stateFiles.length,
-    unrecorded: stateFiles.filter((f) =>
-      owedFor(f).some((o) => o.subject === "state"),
-    ).length,
+    // Незаписанные называются файлами: число без имён оставляло искать их
+    // вслепую (свод `свод.3.3`, `2026-11-18`).
+    unrecorded: stateFiles
+      .filter((f) => owedFor(f).some((o) => o.subject === "state"))
+      .map(rel),
     keys: keys.length,
     recordedKeys: recorded.length,
     links: CONFIG.domTables == null ? null : linkEnds().length,
@@ -16286,7 +16314,10 @@ const barCatalogLine = () => {
     ", файлов с состоянием " +
     barQuoted(String(c.stateFiles)) +
     ", из них без записи " +
-    barQuoted(String(c.unrecorded)) +
+    barQuoted(String(c.unrecorded.length)) +
+    (c.unrecorded.length === 0
+      ? ""
+      : ": " + c.unrecorded.map(barQuoted).join(", ")) +
     "; ключей хранилища " +
     barQuoted(String(c.keys)) +
     ", с записью " +
@@ -17577,10 +17608,27 @@ const barHolesOf = ({
       }
       // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
       // одну единицу переноса закрывал бы вопрос о другой.
-      if (subject !== "" && !barInsideOf(c.level, subject, abs, neighbours))
-        holes.push(
-          who + ": находка называет " + barQuoted(spot[1]) + " — вне этого предмета",
+      // Отказ называет строку, которой файл отвечает: сосед в тронутой
+      // единице отвечает её строкой, а не строкой `соседи`, и без адреса
+      // строки сессия подбирала её наугад (свод `свод.3.3`, `2026-11-18`).
+      if (subject !== "" && !barInsideOf(c.level, subject, abs, neighbours)) {
+        const home = expected.find(
+          (e) =>
+            e.c.id === c.id &&
+            e.subject !== "" &&
+            e.subject !== subject &&
+            barInsideOf(c.level, e.subject, abs, neighbours),
         );
+        holes.push(
+          who +
+            ": находка называет " +
+            barQuoted(spot[1]) +
+            " — вне этого предмета" +
+            (home === undefined
+              ? ""
+              : "; файл отвечает строкой " + barQuoted(c.id + "@" + home.subject)),
+        );
+      }
       if (one.fate === "починено" && !changedNow.has(abs))
         holes.push(
           who +
@@ -19454,6 +19502,42 @@ const barRefusalOf = async (was, repoRoot, checks = null) => {
   };
 };
 
+/** Правленое без вопроса о планке: файлы кода правки, чьё содержимое
+ * расходится со следом режима «правка против её тестов». Один разбор на
+ * сверку «Вопрос о планке задан на конечном виде правки» и на печать `bar`:
+ * печать звала `tested` и после него (свод `свод.3.3`, `2026-11-18`).
+ * Сравнивается содержимое, а не время: клон ставит всем файлам одну свежую
+ * метку. `null` — след не ведётся; `blind` — репозитория нет либо git
+ * недоступен: это не «правленого нет», а «смотреть нечем». */
+const testedLedgerGap = async () => {
+  if (CONFIG.testedLedger == null) return null;
+  const seen = jsonObjectOr(path.join(BASE, CONFIG.testedLedger), {});
+  const repoRoot = path.join(BASE, "..");
+  const changed = await changedPaths(repoRoot);
+  if (changed === null)
+    return { seen: Object.keys(seen).length, blind: true, unasked: [] };
+  const code = await withoutFormatOnly(
+    changed
+      .map((f) => trimmedPath(path.join(repoRoot, f)))
+      .filter((f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"))
+      // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
+      // вопроса о планке тоже. Признак общий со сводом намеренно.
+      .filter((f) => !untouchedSeed(f, repoRoot, seedOfPath())),
+    repoRoot,
+  );
+  const unasked = code
+    .filter(
+      (f) =>
+        seen[rel(f)] !==
+        createHash("sha1")
+          .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
+          .digest("hex")
+          .slice(0, 12),
+    )
+    .map(rel);
+  return { seen: Object.keys(seen).length, blind: false, unasked };
+};
+
 // --- gate: ворота перед коммитом --------------------------------------------
 //
 // Свод по планке спрашивался только с НЕЗАКОММИЧЕННОГО: предмет его —
@@ -20326,8 +20410,10 @@ if (mode === "bar") {
   }
   // Сверка «Вопрос о планке задан на конечном виде правки» ждёт режима
   // правки против её тестов на том же виде, и о нём говорят здесь: ревьюер
-  // пачки проб узнал об этом только из красной сверки.
-  if (kind === "на изменение" && CONFIG.testedLedger != null)
+  // пачки проб узнал об этом только из красной сверки. Говорят, только пока
+  // правленое без вопроса есть: после `tested` строка звала его снова.
+  const gap = kind === "на изменение" ? await testedLedgerGap() : null;
+  if (gap !== null && gap.unasked.length > 0)
     console.log(
       "  Дальше — `node .claude/tools/graph.mjs tested`: без него на этом виде правки красна сверка «Вопрос о планке задан на конечном виде правки».",
     );
@@ -20712,8 +20798,17 @@ if (mode === "bar-fill") {
     answersAt !== null && existsSync(answersAt)
       ? readFileSync(answersAt, "utf8").split(/\r?\n/)
       : null;
+  // Крайние черты строки таблицы — рамка, а не клетка: строку ответа писали
+  // строкой таблицы и получали «ключа «» нет» либо лишнюю клетку (свод
+  // `свод.3.3`, `2026-11-18`).
   const asked = (said ?? [])
-    .map((line, k) => ({ line: line.trim(), n: k + 1 }))
+    .map((line, k) => ({
+      line: line
+        .trim()
+        .replace(/^\|\s*/, "")
+        .replace(/\s*(?<!\\)\|$/, ""),
+      n: k + 1,
+    }))
     .filter(({ line }) => line !== "" && !line.startsWith("#"));
   sayLooked("строк в файле ответов", asked.length);
   const refuse = (...why) => {
@@ -31389,50 +31484,14 @@ if (mode === "verify") {
   //
   // Сравнивается содержимое, а не время: клон ставит всем файлам одну свежую
   // метку, и по времени всё выглядело бы устаревшим.
-  const unasked = [];
+  let unasked = [];
   let ledgerSeen = 0;
   // Слепота сверки — отдельное состояние, и держит его своя переменная:
   // «правленого нет» и «смотреть нечем» печатаются разными строками.
   let ledgerBlind = false;
   await checkStepAsync(async () => {
-    if (CONFIG.testedLedger != null) {
-      const at = path.join(BASE, CONFIG.testedLedger);
-      const seen = jsonObjectOr(at, {});
-      ledgerSeen = Object.keys(seen).length;
-      // Правка берётся у состояния репозитория тем же способом, что и в режиме
-      // «правка против её тестов»: без неё сверка спрашивала бы про весь код, а
-      // не про то, что тронуто сейчас.
-      let changedNow = await changedPaths(path.join(BASE, ".."));
-      if (changedNow === null)
-        // Репозитория нет или git недоступен. Это НЕ «правленого нет»: сверке
-        // нечего смотреть, и молчать об этом нельзя. Проект без репозитория
-        // существует — на таком стенде сверка печатала «правленого без вопроса
-        // нет» и проходила зелёной, то есть была зелена оттого, что ей нечего
-        // проверять. Прогон при этом не роняется: жить без репозитория законно,
-        // а красный навсегда перестают читать.
-        ledgerBlind = true;
-      else
-        changedNow = changedNow
-          .map((f) => trimmedPath(path.join(BASE, "..", f)))
-          .filter(
-            (f) => files.includes(f) && !isTest(f) && !f.endsWith(".d.ts"),
-          )
-          // Нетронутое семя — работа обвязки: свода на него не спрашивают, и
-          // вопроса о планке тоже. Признак общий со сводом намеренно.
-          .filter(
-            (f) => !untouchedSeed(f, path.join(BASE, ".."), seedOfPath()),
-          );
-      // Приведение формата вопроса о планке не требует — ответ общий с воротами.
-      if (changedNow !== null)
-        changedNow = await withoutFormatOnly(changedNow, path.join(BASE, ".."));
-      for (const f of changedNow ?? []) {
-        const now = createHash("sha1")
-          .update(readFileSync(f, "utf8").split("\r\n").join("\n"))
-          .digest("hex")
-          .slice(0, 12);
-        if (seen[rel(f)] !== now) unasked.push(rel(f));
-      }
-    }
+    const gap = await testedLedgerGap();
+    if (gap !== null) ({ seen: ledgerSeen, blind: ledgerBlind, unasked } = gap);
   });
   checkStep(() => {
     checkHead("Вопрос о планке задан на конечном виде правки", () => ({

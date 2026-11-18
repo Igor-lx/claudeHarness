@@ -351,6 +351,11 @@ describe("ворота конца хода", () => {
       expect(sealed).toContain(
         "Дальше — `node .claude/tools/graph.mjs tested`",
       );
+      // После `tested` печать его не зовёт: правленого без вопроса нет.
+      tool("tested");
+      expect(tool("bar")).not.toContain(
+        "Дальше — `node .claude/tools/graph.mjs tested`",
+      );
       expect(hook().status).toBe(0);
       expect(tool("stop", "--session")).toBe("");
       // Состояния хуков, порченые по форме, читаются пустыми и лечатся:
@@ -3010,6 +3015,17 @@ describe("база о своём: документы узла, сторона т
       expect(mute()).not.toContain("zzReader.ts");
       withRow("| счёт | `src/app/zzHolder.ts` | он же | он же | всегда |\n");
       expect(mute()).not.toContain("zzHolder.ts");
+      // Запись называет файл и именем с расширением, если оно одно в проекте,
+      // и путём короче внутреннего — так, как досье: сверка краснела на
+      // записанном состоянии (свод `свод.3.3`).
+      withRow("| счёт | `zzHolder.ts` | он же | он же | всегда |\n");
+      expect(mute()).not.toContain("zzHolder.ts");
+      fs.mkdirSync(path.join(box, "src", "shared", "zz"), { recursive: true });
+      fs.writeFileSync(path.join(box, "src", "shared", "zz", "zzHolder.ts"), "export const zz = 1;\n");
+      expect(mute()).toContain("не назван в графе «Владелец» app/zzHolder.ts");
+      fs.rmSync(path.join(box, "src", "shared", "zz"), { recursive: true });
+      withRow("| счёт | `zzHolder` | он же | он же | всегда |\n");
+      expect(mute()).toContain("не назван в графе «Владелец» app/zzHolder.ts");
       // Второй писатель чужого ключа своего состояния не держит: его называет
       // графа «Кто пишет». Файл со своим состоянием та же графа не называет.
       fs.writeFileSync(
@@ -3768,7 +3784,7 @@ describe("ядро по предметам уровня: правка, чтен�
         /A1 для `components\/zzBar`: чисто без опоры на модель своего уровня: назвать строку уровня «узел»/,
       );
       expect(refused).toContain(
-        "A1 для `components/zzCart`: находка называет `src/components/zzBar/zzBar.tsx` — вне этого предмета",
+        "A1 для `components/zzCart`: находка называет `src/components/zzBar/zzBar.tsx` — вне этого предмета; файл отвечает строкой `A1@components/zzBar`",
       );
       // Лишнее имя корзины — вопрос к её поверхности.
       fs.rmSync(protoAt);

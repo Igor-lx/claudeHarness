@@ -1065,7 +1065,7 @@ describe("происхождение строк модели и каталоги
       expect(resp).not.toBeNull();
       expect(printed).toMatch(/^\| П\d+ \| состояние \|[^\n]*\| код \|$/m);
       expect(printed).toContain(
-        "записей о состоянии `0`, файлов с состоянием `1`, из них без записи `1`",
+        "записей о состоянии `0`, файлов с состоянием `1`, из них без записи `1`: `app/zzTick.tsx`",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -2858,6 +2858,11 @@ describe("экономия свода по журналу пробы 2026-10-13"
       expect(row[4]).toBe("чисто");
       expect(row[5]).toBe("—");
       expect(row[6]).toBe("проба-1");
+      // Строка ответа строкой таблицы — крайние черты рамка, а не клетки
+      // (свод `свод.3.3`): прежде «ключа «» нет» и лишняя клетка.
+      fs.writeFileSync(answersAt, "| A3 | чисто | — | проба-2 | = |\n");
+      expect(tool("bar-fill", answersAt)).toContain("=== Ответы вписаны ===");
+      expect(rowOf()[6]).toBe("проба-2");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3004,8 +3009,32 @@ describe("экономия свода по журналу пробы 2026-10-13"
       expect(keys[1]).toMatch(
         /^ \(где не сказано иначе — строка уровня, одна из: П[0-9]+/,
       );
+      // Общая «одна из» стоит только над критериями, чья строка её несёт;
+      // критерий без строки уровня — своей строкой ключей (свод `свод.3.3`:
+      // «чисто» `A3`, `H7`, `D2` опирали на строки каталога).
+      const rowsNow = fs.readFileSync(protoAt, "utf8").split("\n");
+      for (const line of first.split("\n").filter((l) => l.includes("где не сказано иначе"))) {
+        const at = /^- исходы (?:без предмета|`([^`]+)`)/.exec(line);
+        const cell = at[1] === undefined ? "—" : "`" + at[1] + "`";
+        for (const id of line
+          .slice(line.indexOf("): ") + 3)
+          .split(", ")
+          .map((x) => x.split(" (")[0])
+          .filter((x) => /^[A-Z][0-9]/.test(x)))
+          expect(
+            rowsNow.find((l) => l.startsWith("| " + id + " | " + cell + " |")),
+            id,
+          ).toContain("одна из: ");
+      }
+      expect(first).toMatch(/^- исходы без предмета без строки уровня: (?:.*, )?A3\b/m);
       const named = [
-        ...new Set(keys[1].match(/(?:П|Св)[0-9]+(?:–Св[0-9]+)?/g)),
+        ...new Set(
+          first
+            .split("\n")
+            .filter((l) => l.startsWith("- исходы `app/zzWide.ts`"))
+            .join(" ")
+            .match(/(?:П|Св)[0-9]+(?:–Св[0-9]+)?/g),
+        ),
       ];
       const answersAt = path.join(box, "answers.txt");
       fs.writeFileSync(
