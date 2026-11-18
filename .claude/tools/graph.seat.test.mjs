@@ -2852,8 +2852,8 @@ describe("правила мастерской и метод плана назы�
         if (!platform(m[1]) && find(m[1]) === undefined) bare.push(rel + ": путь " + m[1]);
       for (const m of flat.matchAll(/(`([\w./-]+\.md)`,?\s+)?(?:справк[аеиу]|раздел[аеуы]?)\s+«([^»]+)»/g)) {
         const name = m[3].toLowerCase();
-        // Раздел прогона в todo заводят на прогон и снимают по его концу.
-        if (name === "прогон плана приёмки") continue;
+        // Раздел запуска в todo заводят на запуск и снимают по его концу.
+        if (name === "запуск прогона") continue;
         const at = m[2] === undefined ? null : find(m[2]);
         const heads = at === null ? own : at === undefined ? [] : headsOf(at);
         if (!heads.some((h) => h.includes(name))) bare.push(rel + ": раздел «" + m[3] + "»" + (m[2] ? " в " + m[2] : ""));
