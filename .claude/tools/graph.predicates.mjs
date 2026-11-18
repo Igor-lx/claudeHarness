@@ -691,6 +691,8 @@ export const MODEL_LEVEL = {
   обход: "единица",
   страж: "единица",
   бросок: "единица",
+  крайнее: "единица",
+  шаги: "узел",
   "текст отказа": "узел",
   раскладка: "единица",
   поиск: "единица",
@@ -1042,6 +1044,8 @@ export const BAR_SIGNALS = [
   // Конец жизни сохранённого: ключ, который пишет узел области, — кто его
   // снимает и снимаются ли с ним копии.
   { ids: ["K6"], sort: "хранение", words: "в области пишут ключ хранилища, и в основании не сказано, где кончается жизнь записи и снимаются ли её копии" },
+  // Отказ второго шага оставляет первый: оптимистичная запись без отката.
+  { ids: ["E12"], sort: "шаги", words: "функция пишет и в своё состояние, и наружу, и в основании не сказано, что останется при отказе второго шага: откат, повтор либо названное промежуточное" },
   { ids: ["C13", "L3", "E12"], sort: "запись", words: "предмет пишет наружу, и в основании не сказано, что даст повтор и сбой посередине" },
   { ids: ["Q3"], sort: "запись", mark: "хранилище", words: "предмет пишет в хранилище, и в основании не сказано, нет ли там чувствительного" },
   { ids: ["C10", "A14", "A9-кватер"], sort: "время", words: "предмет берёт время либо случай на месте, и в основании не сказано, почему не входом" },
@@ -1063,6 +1067,7 @@ export const BAR_SIGNALS = [
   { ids: ["O5", "O3"], sort: "раскладка", words: "предмет меряет раскладку кодом, и в основании не сказано, не спорит ли это с правилами стилей" },
   { ids: ["G5", "G1"], sort: "раскладка", mark: "чтение и запись", words: "чтение раскладки стоит рядом с записью в разметку, и в основании не сказано, сгруппированы ли они" },
   { ids: ["O4-тер"], sort: "раскладка", mark: "окно", words: "размер берётся у окна, и в основании не сказано, владеет ли окно этим размером" },
+  { ids: ["G1", "G6-кватер"], sort: "крайнее", words: "коллекцию сортируют ради одного крайнего элемента, и в основании не сказано, почему не один проход" },
   { ids: ["G6-кватер", "G1"], sort: "поиск", words: "поиск по коллекции стоит внутри обхода, и в основании не сказано, почему не словарь" },
   // Рост стоимости с объёмом данных: обход той же коллекции в её обходе,
   // состояние, которое только дописывают, подписка на каждый элемент списка,
@@ -1755,12 +1760,13 @@ export const BAR_FORMS = {
   ],
   E11: [UNSEEN.list, "пустое состояние без списка: пустой поиск, нет данных — признак спрашивает список"],
   E12: [
-    "многошаговое изменение через сеттеры, `dispatch` либо свою обёртку — признаки видят запись в сеть и в хранилище и пакет операций",
+    "многошаговое изменение через свою обёртку записи либо разнесённое по двум функциям — признак шагов видит сеттер либо `dispatch` и запись в сеть либо хранилище в теле одной функции",
   ],
   F1: [UNSEEN.resource],
   F2: [UNSEEN.resourceLinted, UNSEEN.releaseLinted],
   G1: [
-    "лишний проход отрисовки, лишняя подписка и лишняя аллокация вне названных признаков — признаки видят пересборку значения поставщика, чтение раскладки рядом с записью, поиск внутри обхода и эффект, в котором одни записи",
+    "лишний проход отрисовки, лишняя подписка и лишняя аллокация вне названных признаков — признаки видят пересборку значения поставщика, чтение раскладки рядом с записью, поиск внутри обхода, эффект, в котором одни записи, и сортировку, у которой тут же берут крайний элемент",
+    "крайний элемент сортировки, взятый другой строкой из переменной, — признак смотрит только на то, что стоит сразу за вызовом сортировки",
   ],
   G2: [
     "горячий путь не из частого события: обход длинного списка, расчёт на каждой отрисовке, сообщения сокета — признак видит обработчики частых событий, кадровый цикл и наблюдатель размера",
@@ -1797,6 +1803,7 @@ export const BAR_FORMS = {
   "G6-кватер": [
     "поиск по коллекции в обходе через свой помощник либо в обходе другого файла — признак видит методы поиска внутри обхода в одном теле",
     "повторная сортировка отсортированного и линейный обход на каждом кадре — признака у этих форм нет",
+    "крайний элемент сортировки, взятый другой строкой из переменной, — признак смотрит только на то, что стоит сразу за вызовом сортировки",
   ],
   G8: [
     "оптимизация без запоминания: ручной кэш, перенос работы в воркер, отказ от отрисовки — признак видит `useMemo`, `useCallback`, `memo`, `computed` и `memoize`",
@@ -4061,6 +4068,36 @@ const codeSignalsOf = (file, text, own) => {
     if (/\breturn\s+[^\s;}]/.test(inner) && writesRe.test(inner))
       at("команда", one.at, one.name);
   }
+  // Шаги одного изменения: функция пишет и в своё состояние, и наружу, и
+  // отказ второго шага оставляет первый (`E12`). Вложенные функции — не её
+  // шаги. Промах свода пробы `2026-11-18`.
+  const stateWrite = new RegExp(SETTER + "|\\bdispatch\\s*\\(");
+  const outsideWrite = new RegExp(
+    [...WRITE_KINDS.map(([, re]) => re.source), WRITE_METHOD.source].join("|"),
+    "i",
+  );
+  for (const one of bodies) {
+    if (one.to < 0) continue;
+    let code = bare.slice(one.from + 1, one.to);
+    let said = plain.slice(one.from + 1, one.to);
+    for (const m of code.matchAll(/=>\s*\{|\bfunction\b[^{]*\{/g)) {
+      const b = m.index + m[0].length - 1;
+      const e = closeOf(code, b);
+      if (e <= b) continue;
+      const blank = " ".repeat(e - b - 1);
+      code = code.slice(0, b + 1) + blank + code.slice(e);
+      said = said.slice(0, b + 1) + blank + said.slice(e);
+    }
+    if (stateWrite.test(code) && outsideWrite.test(said)) at("шаги", one.at, one.name);
+  }
+  // Сортировка ради одного крайнего элемента: полный порядок там, где хватит
+  // одного прохода (`G1`, `G6-кватер`). Промах свода пробы `2026-11-18`.
+  each(/\.(?:sort|toSorted)\s*\(/g, bare, (m) => {
+    const close = closeOf(bare, m.index + m[0].length - 1);
+    if (close < 0) return;
+    if (/^\s*(?:\[\s*0\s*\]|\.\s*(?:at|pop|shift)\s*\()/.test(bare.slice(close + 1, close + 40)))
+      at("крайнее", m.index, m[0]);
+  });
   // Счёт рядом с оформлением ответа: итог не проверить без строки (`A1-тер`).
   for (const one of bodies) {
     if (one.to < 0) continue;
@@ -5781,7 +5818,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const read = k => {\n  setLast(k);\n  return cache[k];\n};", "1:команда"],
   // Контейнер модуля, объявленный константой и меняемый методом либо полем:
   // промах свода пробы `2026-11-18`, посадка `B12` в соседе.
-  ["signalsSummary", "src/a.ts\nconst tagUses = new Map();\nexport const tagUseCount = (tag) => {\n  const next = (tagUses.get(tag) ?? 0) + 1;\n  tagUses.set(tag, next);\n  return next;\n};", "2:команда;1:кэш"],
+  ["signalsSummary", "src/a.ts\nconst hits = new Map();\nexport const hitCount = (tag) => {\n  const next = (hits.get(tag) ?? 0) + 1;\n  hits.set(tag, next);\n  return next;\n};", "2:команда;1:кэш"],
   ["signalsSummary", "src/a.ts\nimport { log } from \"./log\";\nconst seen = [];\nexport function remember(x) {\n  seen.push(x);\n  return seen.length;\n}", "3:команда;2:кэш"],
   ["signalsSummary", "src/a.ts\nconst counts = {};\nexport const bump = (k) => {\n  counts[k] = (counts[k] ?? 0) + 1;\n  return counts[k];\n};", "2:команда;1:кэш"],
   ["signalsSummary", "src/a.ts\nconst names = new Map([[\"a\", 1]]);\nexport const nameOf = (k) => {\n  const found = names.get(k);\n  return found;\n};", ""],
@@ -5789,6 +5826,13 @@ export const PREDICATE_CASES = [
   // Отказ различают по тексту сообщения (`I2`): промах свода пробы `2026-11-18`.
   ["signalsSummary", "src/a.ts\nexport const a = (e: Error) => e.message === \"Archive refused\";\nexport const b = (e: Error) => e.message != \"Gone\";\nexport const c = (e: Error) => e.message.includes(\"refused\");\nexport const d = (e: Error) => e.message.startsWith(\"No\");\nexport const f = (e: Error) => e.message.match(/no/);", "1:текст отказа;2:текст отказа;3:текст отказа;4:текст отказа;5:текст отказа"],
   ["signalsSummary", "src/a.ts\nexport const text = (e: Error) => e.message;\nexport const log = (e: Error) => report(e.message);", ""],
+  // Шаги одного изменения и сортировка ради крайнего: промахи свода пробы `2026-11-18`, `E12` и `G1`.
+  ["signalsSummary", "src/a.ts\nexport const useAdd = () => {\n  const add = async (title: string) => {\n    setTitles((c) => [...c, title]);\n    await fetch(\"/notes\", { method: \"POST\", body: title });\n  };\n  return add;\n};", "4:внешнее/сеть;4:запись/сеть;4:гонка/без отмены;2:шаги"],
+  ["signalsSummary", "src/a.ts\nexport function keep(item: string) {\n  dispatch({ type: \"kept\", item });\n  localStorage.setItem(\"kept\", item);\n}", "3:внешнее/хранилище;3:запись/хранилище;1:шаги"],
+  ["signalsSummary", "src/a.ts\nexport function save(item: string) {\n  const later = function () {\n    setItem(item);\n  };\n  localStorage.setItem(\"k\", item);\n  return later;\n}", "5:внешнее/хранилище;5:запись/хранилище;1:команда"],
+  ["signalsSummary", "src/a.ts\nexport const load = async () => {\n  setBusy(\"yes\");\n  return fetch(\"/notes\");\n};", "3:внешнее/сеть;1:команда"],
+  ["signalsSummary", "src/a.ts\nexport const a = (xs: number[]) => [...xs].sort((x, y) => y - x)[0];\nexport const b = (xs: number[]) => xs.toSorted().at(-1);\nexport const c = (xs: number[]) => xs.slice().sort().pop();\nexport const d = (xs: number[]) => xs.slice().sort().shift();", "1:копия;3:копия;4:копия;1:крайнее;2:крайнее;3:крайнее;4:крайнее"],
+  ["signalsSummary", "src/a.ts\nexport const order = (xs: number[]) => [...xs].sort((x, y) => x - y);", "1:копия"],
   // --- оформление: счёт рядом с оформлением строки ответа (`A1-тер`) ---
   ["signalsSummary", "src/a.ts\nexport const label = (xs) => {\n  const words = xs.reduce((s, x) => s + x.length, 0);\n  return `${String(words)} words`;\n};", "1:оформление"],
   ["signalsSummary", "src/a.ts\nexport const label = (xs) => \"Total: \" + xs.reduceRight((s, x) => s + x, 0);", "1:оформление"],
