@@ -12355,6 +12355,7 @@ const SIGNAL_TITLES = {
   "обход|без причины": "обход компилятора без причины в той же строке",
   страж: "ранний выход по сравнению",
   бросок: "бросок ошибки",
+  "текст отказа": "отказ различают по тексту его сообщения",
   пакет: "пакет операций",
   "гонка|без отмены": "асинхронный результат пишется в состояние, отмены не видно",
   гонка: "асинхронный результат пишется в состояние",
@@ -13624,7 +13625,7 @@ const pageChangesOf = (spec) => {
 /** Страницы протокола: тела его критериев, полный текст предмета и срезы
  * соседей. Описание страницы — её адрес: по нему `bar-read` печатает тот же
  * текст. */
-const barReadPagesOf = ({ ids, subject = [], neighbours = [] }) => {
+const barReadPagesOf = ({ ids, subject = [], neighbours = [], taken = new Map() }) => {
   const pages = [];
   {
     const list = policyBodies().filter((c) => ids.has(c.id));
@@ -13665,8 +13666,9 @@ const barReadPagesOf = ({ ids, subject = [], neighbours = [] }) => {
       continue;
     }
     // Имена между соседом и предметом — в обе стороны: что сосед берёт у
-    // предмета и что предмет берёт у соседа.
-    const names = new Set();
+    // предмета и что предмет берёт у соседа; удалённый файл предмета — по
+    // последнему коммиту.
+    const names = new Set([...(taken.get(n) ?? [])].filter((x) => x !== "default"));
     for (const f of subject) {
       for (const [from, to] of [
         [n, f],
@@ -14862,8 +14864,18 @@ const barModelOf = (
   // нём не спрашивали (находка Н-9 плана `2026-10-20`). Строка встаёт на
   // каждый такой файл; тесты потребителем не считаются: имя, которое держит
   // один тест, мёртвое в коде.
+  // Имя, которое потребитель ещё берёт, — тоже вопрос: удаление отняло у
+  // владельца потребителя, и абстракция, заведённая ради нескольких, стоит
+  // теперь ради оставшихся (`H8`). Промах свода пробы `2026-11-18`.
   if (change && want("поверхность")) {
     const orphans = new Map();
+    const fewer = new Map();
+    const note = (map, t, n, x) => {
+      const was = map.get(t) ?? { names: new Set(), from: new Set() };
+      was.names.add(n);
+      was.from.add(rel(x));
+      map.set(t, was);
+    };
     for (const x of subject.filter((f) => !existsSync(f) && !isTest(f))) {
       const h = headCode(x);
       if (typeof h !== "string") continue;
@@ -14871,14 +14883,8 @@ const barModelOf = (
         const t = resolve(x, one.spec);
         if (!t || !files.includes(t) || isTest(t) || inFocus.has(t)) continue;
         const { outside } = takenNamesOf(t);
-        const left = one.specifiers
-          .map((s) => s.there)
-          .filter((n) => !outside.has(n));
-        if (left.length === 0) continue;
-        const was = orphans.get(t) ?? { names: new Set(), from: new Set() };
-        for (const n of left) was.names.add(n);
-        was.from.add(rel(x));
-        orphans.set(t, was);
+        for (const n of one.specifiers.map((s) => s.there))
+          note(outside.has(n) ? fewer : orphans, t, n, x);
       }
     }
     for (const [t, { names, from }] of orphans)
@@ -14892,6 +14898,36 @@ const barModelOf = (
         "лишнее",
         "снято",
       );
+    for (const [t, { names, from }] of fewer) {
+      const takers = files
+        .filter(
+          (u) =>
+            u !== t &&
+            !isTest(u) &&
+            (namedImportsOf.get(u) ?? []).some(
+              (one) =>
+                Array.isArray(one.names) &&
+                one.names.some(
+                  (n) => names.has(n) && (one.target === t || definerOf(one.target, n) === t),
+                ),
+            ),
+        )
+        .map(rel)
+        .sort();
+      add(
+        "поверхность",
+        rel(t),
+        "после удаления " +
+          listCell([...from].sort()) +
+          " " +
+          listCell([...names].sort()) +
+          " берут " +
+          barQuoted(String(takers.length)) +
+          ": " +
+          listCell(takers),
+        "меньше потребителей",
+      );
+    }
   }
   for (const f of focus) {
     // Лист стилей: его признаки — о каскаде, движении и комментариях.
@@ -15922,6 +15958,41 @@ const barAreaOf = (focus) =>
         .map(trimmedPath),
     ),
   ].sort(barByRel);
+
+/** Что удалённые файлы предмета брали по последнему коммиту: файл на диске,
+ * где имя определено, и взятые имена; звезда и голый импорт имён не дают.
+ * Область строится из существующих файлов, и без этого владелец, у которого
+ * удаление отняло потребителя, в неё не входил: свод пробы `2026-11-18`,
+ * посадка `H8` удалением. */
+const goneTakesOf = (subject) => {
+  const out = new Map();
+  const put = (f, name) => {
+    if (!files.includes(f) || isTest(f)) return;
+    if (!out.has(f)) out.set(f, new Set());
+    if (name !== null) out.get(f).add(name);
+  };
+  for (const g of subject) {
+    if (existsSync(g) || isTest(g)) continue;
+    const text = headTextOf(g);
+    if (text === null || !BARE_EXT.test(g)) continue;
+    const parsed = parseModule(text, g);
+    for (const one of parsed.froms) {
+      const target = resolve(g, one.spec);
+      if (!target) continue;
+      const names = [
+        ...one.specifiers.map((s) => s.there),
+        ...(NAME_RE.test(one.defaultLocal ?? "") ? ["default"] : []),
+      ].filter((n) => NAME_RE.test(n));
+      if (one.star || names.length === 0) put(target, null);
+      for (const n of names) put(definerOf(target, n) ?? target, n);
+    }
+    for (const one of [...parsed.bare, ...parsed.dynamic]) {
+      const target = resolve(g, one.spec);
+      if (target) put(target, null);
+    }
+  }
+  return out;
+};
 
 /** Предмет строки ядра о соседях: файлы области вне единиц переноса (для
  * ядра узла) либо вне слоёв (для ядра слоя) самого предмета. Ядро о них
@@ -19196,7 +19267,13 @@ const barInputsOf = async ({
   // отпечатки сверяют ворота перед коммитом, а сосед, тронутый после печати,
   // сам становится правленым и гасит её.
   const work = focus ?? barWorkOf(subject);
-  const area = kind === "на изменение" ? barAreaOf(work) : subject;
+  // Удалённое предмета соседей не даёт по графу: то, что оно брало, —
+  // по последнему коммиту.
+  const goneTakes = kind === "на изменение" ? goneTakesOf(subject) : new Map();
+  const area =
+    kind === "на изменение"
+      ? [...new Set([...barAreaOf(work), ...goneTakes.keys()])].sort(barByRel)
+      : subject;
   const neighbours = barNeighboursOf(work, area);
   const marks = barMarks(subject);
   const model = barModelOf(work, {
@@ -19274,6 +19351,7 @@ const barInputsOf = async ({
     ),
     subject: work,
     neighbours: area.filter((f) => !work.includes(f)),
+    taken: goneTakes,
   });
   // Держатель «линт»: линт проекта по файлам кода работы. Строки о соседях
   // и строки по единицам переноса машина не заполняет: предмет правил
