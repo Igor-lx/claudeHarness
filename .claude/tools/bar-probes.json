@@ -3971,6 +3971,202 @@
           "ts": "export const noteCountLabel = (count: number): string =>\n  count.toLocaleString(\"en-US\") + \" notes\";"
         }
       ]
+    },
+    {
+      "criterion": "A1-тер",
+      "why": "функция и считает часы и минуты из длительности, и оформляет строку своим помощником: счёт не проверить отдельно от вида",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const MS_PER_MINUTE = 60_000;\nconst MINUTES_PER_HOUR = 60;\n\nconst padTwo = (value) => String(value).padStart(2, \"0\");\n\nexport const durationText = (ms) => {\n  const minutes = Math.round(ms / MS_PER_MINUTE);\n  return (\n    padTwo(Math.floor(minutes / MINUTES_PER_HOUR)) +\n    \":\" +\n    padTwo(minutes % MINUTES_PER_HOUR)\n  );\n};",
+          "ts": "const MS_PER_MINUTE = 60_000;\nconst MINUTES_PER_HOUR = 60;\n\nconst padTwo = (value: number): string => String(value).padStart(2, \"0\");\n\nexport const durationText = (ms: number): string => {\n  const minutes = Math.round(ms / MS_PER_MINUTE);\n  return (\n    padTwo(Math.floor(minutes / MINUTES_PER_HOUR)) +\n    \":\" +\n    padTwo(minutes % MINUTES_PER_HOUR)\n  );\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B13",
+      "why": "реализация источника заметок отказывает там, где контракт обещает undefined: потребитель контракта к отказу не готов",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const storedNotes = new Map();\n\nexport const keepNote = (id, text) => {\n  storedNotes.set(id, text);\n};\n\nexport const memorySource = {\n  load: (id) => {\n    const text = storedNotes.get(id);\n    return text === undefined\n      ? Promise.reject(new Error(\"No note \" + id))\n      : Promise.resolve(text);\n  },\n};",
+          "ts": "export type NoteReader = { load: (id: string) => Promise<string | undefined> };\n\nconst storedNotes = new Map<string, string>();\n\nexport const keepNote = (id: string, text: string): void => {\n  storedNotes.set(id, text);\n};\n\nexport const memorySource: NoteReader = {\n  load: (id) => {\n    const text = storedNotes.get(id);\n    return text === undefined\n      ? Promise.reject(new Error(\"No note \" + id))\n      : Promise.resolve(text);\n  },\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C7",
+      "why": "число меток хранится полем рядом со списком меток, и снятие последней метки его не правит: производное разошлось с источником",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const shelveTag = (list, tag) => ({\n  tags: [...list.tags, tag],\n  count: list.count + 1,\n});\n\nexport const dropLastTag = (list) => ({\n  tags: list.tags.slice(0, -1),\n  count: list.count,\n});",
+          "ts": "export type TagShelf = { tags: readonly string[]; count: number };\n\nexport const shelveTag = (list: TagShelf, tag: string): TagShelf => ({\n  tags: [...list.tags, tag],\n  count: list.count + 1,\n});\n\nexport const dropLastTag = (list: TagShelf): TagShelf => ({\n  tags: list.tags.slice(0, -1),\n  count: list.count,\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "Q3",
+      "why": "вход запоминается в хранилище браузера вместе с паролем: чувствительное лежит там без нужды",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const rememberLogin = (email, password) => {\n  localStorage.setItem(\"last-login\", JSON.stringify({ email, password }));\n};",
+          "ts": "export const rememberLogin = (email: string, password: string): void => {\n  localStorage.setItem(\"last-login\", JSON.stringify({ email, password }));\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "Q9",
+      "why": "служебный токен сервиса вписан строкой в код, который уезжает в браузер",
+      "create": {
+        "path": "app/searchClient.ts",
+        "text": "const SERVICE_TOKEN = \"svc_live_notes_7f3a91c0\";\n\nexport const searchUrl = (query: string): string =>\n  \"/api/search?token=\" + SERVICE_TOKEN + \"&q=\" + encodeURIComponent(query);\n"
+      }
+    },
+    {
+      "criterion": "O4-бис",
+      "why": "один и тот же цвет акцента вписан значением в три правила листа, переменной у него нет",
+      "create": {
+        "path": "app/badges.css",
+        "text": ".badgeNew {\n  color: #1d6fe0;\n  border: 1px solid #1d6fe0;\n}\n\n.badgeLink {\n  color: #1d6fe0;\n}\n"
+      }
+    },
+    {
+      "criterion": "G6-тер",
+      "why": "каждая строка списка вынесена в свой слой композитора подсказкой, причины которой нет",
+      "create": {
+        "path": "app/rowLayers.css",
+        "text": ".row {\n  will-change: transform;\n  transform: translateZ(0);\n}\n"
+      }
+    },
+    {
+      "criterion": "N6",
+      "why": "плавное появление идёт анимацией из кода без проверки просьбы о меньшем движении",
+      "create": {
+        "path": "app/useFadeIn.ts",
+        "text": "import { useEffect } from \"react\";\n\nconst FADE_MS = 400;\n\nexport const useFadeIn = (ref: {\n  readonly current: HTMLElement | null;\n}): void => {\n  useEffect(() => {\n    ref.current?.animate([{ opacity: 0 }, { opacity: 1 }], {\n      duration: FADE_MS,\n    });\n  }, [ref]);\n};\n"
+      }
+    },
+    {
+      "criterion": "B5",
+      "why": "функция с именем «загрузить черновик» черновик удаляет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const loadDraft = (key) => {\n  localStorage.removeItem(key);\n};",
+          "ts": "export const loadDraft = (key: string): void => {\n  localStorage.removeItem(key);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "H7-бис",
+      "why": "интервал автосохранения задан числом без единицы и уходит в таймер, который ждёт миллисекунды",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const AUTOSAVE_INTERVAL = 5;\n\nexport const scheduleAutosave = (save) =>\n  window.setTimeout(save, AUTOSAVE_INTERVAL);",
+          "ts": "export const AUTOSAVE_INTERVAL = 5;\n\nexport const scheduleAutosave = (save: () => void): number =>\n  window.setTimeout(save, AUTOSAVE_INTERVAL);"
+        }
+      ]
+    },
+    {
+      "criterion": "T3",
+      "why": "множественная форма собрана правилом английского «один и много», а не правилами языка",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const notesLabel = (count) =>\n  String(count) + (count === 1 ? \" note\" : \" notes\");",
+          "ts": "export const notesLabel = (count: number): string =>\n  String(count) + (count === 1 ? \" note\" : \" notes\");"
+        }
+      ]
+    },
+    {
+      "criterion": "H6-тер",
+      "why": "сосед правленого: имена из сокращений — cfg, vals, res",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const sumCfgVals = (cfg) => {\n  let res = 0;\n  for (const val of Object.values(cfg)) {\n    res += val;\n  }\n  return res;\n};",
+          "ts": "export const sumCfgVals = (cfg: Record<string, number>): number => {\n  let res = 0;\n  for (const val of Object.values(cfg)) {\n    res += val;\n  }\n  return res;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K1",
+      "why": "сосед правленого берёт номер страницы из адреса и отдаёт без проверки: NaN, ноль и отрицательное уходят дальше",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const pageFromAddress = () =>\n  Number(new URLSearchParams(window.location.search).get(\"page\") ?? \"1\");",
+          "ts": "export const pageFromAddress = (): number =>\n  Number(new URLSearchParams(window.location.search).get(\"page\") ?? \"1\");"
+        }
+      ]
+    },
+    {
+      "criterion": "G1",
+      "why": "сосед правленого сортирует копию всего массива, чтобы взять самое позднее время: работа и память сверх одного прохода",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const newestTime = (times) => [...times].sort((a, b) => b - a)[0];",
+          "ts": "export const newestTime = (times: readonly number[]): number | undefined =>\n  [...times].sort((a, b) => b - a)[0];"
+        }
+      ]
+    },
+    {
+      "criterion": "G6-кватер",
+      "why": "перенесённая функция ищет заметку перебором массива на каждый номер, где нужен словарь",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/lookup/titlesOf.ts",
+          "text": "export const titlesOf = (\n  ids: readonly string[],\n  notes: readonly { id: string; title: string }[],\n): string[] =>\n  ids.map((id) => notes.find((note) => note.id === id)?.title ?? \"\");\n"
+        },
+        {
+          "path": "app/pickedTitles.ts",
+          "text": "import { titlesOf } from \"../shared/lookup/titlesOf\";\n\nexport const pickedTitles = (\n  ids: readonly string[],\n  notes: readonly { id: string; title: string }[],\n): string => titlesOf(ids, notes).join(\", \");\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/lookup/titlesOf.ts",
+          "to": "shared/lookup/noteTitles.ts"
+        }
+      ],
+      "culprits": [
+        "shared/lookup/titlesOf.ts"
+      ]
+    },
+    {
+      "criterion": "J6",
+      "why": "тест очереди сохранения проверяет внутренний массив, а не то, что видит потребитель",
+      "create": [
+        {
+          "path": "shared/queue/saveQueue.ts",
+          "text": "export const createSaveQueue = (): {\n  push: (id: string) => void;\n  size: () => number;\n  pending: string[];\n} => {\n  const pending: string[] = [];\n  return {\n    push: (id) => {\n      pending.push(id);\n    },\n    size: () => pending.length,\n    pending,\n  };\n};\n"
+        },
+        {
+          "path": "shared/queue/tests/saveQueue.test.ts",
+          "text": "import { describe, expect, it } from \"vitest\";\n\nimport { createSaveQueue } from \"../saveQueue\";\n\ndescribe(\"createSaveQueue\", () => {\n  it(\"keeps a pushed note\", () => {\n    const queue = createSaveQueue();\n    queue.push(\"n1\");\n    expect(queue.pending).toEqual([\"n1\"]);\n  });\n});\n"
+        }
+      ],
+      "culprits": [
+        "shared/queue/tests/saveQueue.test.ts"
+      ]
     }
   ],
   "covers": [
