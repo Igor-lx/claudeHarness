@@ -3535,6 +3535,442 @@
         "подсказка",
         "порядок"
       ]
+    },
+    {
+      "criterion": "A1",
+      "why": "небольшой узел сводки меток отвечает на три вопроса сразу: текст подписи, превышен ли предел и каким цветом рисовать",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const TAG_LIMIT = 5;\n\nexport const tagSummary = (tags) => ({\n  label: tags.join(\", \"),\n  overLimit: tags.length > TAG_LIMIT,\n  color: tags.includes(\"urgent\") ? \"red\" : \"grey\",\n});",
+          "ts": "const TAG_LIMIT = 5;\n\nexport const tagSummary = (\n  tags: readonly string[],\n): { label: string; overLimit: boolean; color: string } => ({\n  label: tags.join(\", \"),\n  overLimit: tags.length > TAG_LIMIT,\n  color: tags.includes(\"urgent\") ? \"red\" : \"grey\",\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "A10",
+      "why": "контекст заведён ради одного значения, которое родитель отдаёт прямому ребёнку: хватило бы передачи значения",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "import { createContext, use } from \"react\";\n\nconst DensityContext = createContext(\"cozy\");\n\nconst DensityLabel = () => {\n  const density = use(DensityContext);\n  return <span>{density}</span>;\n};\n\nexport const DensityRow = ({ density }) => (\n  <DensityContext value={density}>\n    <DensityLabel />\n  </DensityContext>\n);",
+          "ts": "import { createContext, use } from \"react\";\n\nconst DensityContext = createContext<\"cozy\" | \"compact\">(\"cozy\");\n\nconst DensityLabel = () => {\n  const density = use(DensityContext);\n  return <span>{density}</span>;\n};\n\nexport const DensityRow = ({ density }: { density: \"cozy\" | \"compact\" }) => (\n  <DensityContext value={density}>\n    <DensityLabel />\n  </DensityContext>\n);"
+        }
+      ]
+    },
+    {
+      "criterion": "A14",
+      "why": "правило выбора плотного списка само спрашивает окружение браузера о ширине экрана, а не получает её входом",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const COMPACT_FROM = 20;\n\nexport const shouldUseCompactList = (count) =>\n  count > COMPACT_FROM || window.matchMedia(\"(max-width: 600px)\").matches;",
+          "ts": "const COMPACT_FROM = 20;\n\nexport const shouldUseCompactList = (count: number): boolean =>\n  count > COMPACT_FROM || window.matchMedia(\"(max-width: 600px)\").matches;"
+        }
+      ]
+    },
+    {
+      "criterion": "C1",
+      "why": "режим правки описан булевым полем рядом с черновиком: черновик без правки и правка без черновика выразимы",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const startEdit = (text) => ({ isEditing: true, draftText: text });\n\nexport const stopEdit = () => ({ isEditing: false, draftText: null });",
+          "ts": "export type EditState = { isEditing: boolean; draftText: string | null };\n\nexport const startEdit = (text: string): EditState => ({\n  isEditing: true,\n  draftText: text,\n});\n\nexport const stopEdit = (): EditState => ({\n  isEditing: false,\n  draftText: null,\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "C4",
+      "why": "функция отмечает заметку прочитанной, дописывая поле прямо во взятый вход через Object.assign: мутирует не владелец",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const markRead = (note) => Object.assign(note, { read: true });",
+          "ts": "export const markRead = (note: { read?: boolean }): { read?: boolean } =>\n  Object.assign(note, { read: true });"
+        }
+      ]
+    },
+    {
+      "criterion": "C8",
+      "why": "жизненный цикл выгрузки описан тремя булевыми полями класса: выгружено и упало могут стоять разом",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export class UploadJob {\n  started = false;\n\n  finished = false;\n\n  failed = false;\n\n  begin() {\n    this.started = true;\n  }\n\n  succeed() {\n    this.finished = true;\n  }\n\n  fail() {\n    this.failed = true;\n  }\n}",
+          "ts": "export class UploadJob {\n  started = false;\n\n  finished = false;\n\n  failed = false;\n\n  begin(): void {\n    this.started = true;\n  }\n\n  succeed(): void {\n    this.finished = true;\n  }\n\n  fail(): void {\n    this.failed = true;\n  }\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "B2",
+      "why": "поиск дня делением пополам требует от вызывающего отсортированный по времени массив, и это условие не записано нигде",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const SPLIT_IN_TWO = 2;\n\nexport const indexOfDay = (days, day) => {\n  let low = 0;\n  let high = days.length - 1;\n  while (low <= high) {\n    const middle = Math.floor((low + high) / SPLIT_IN_TWO);\n    const value = days[middle];\n    if (value === day) {\n      return middle;\n    }\n    if (value !== undefined && value < day) {\n      low = middle + 1;\n    } else {\n      high = middle - 1;\n    }\n  }\n  return -1;\n};",
+          "ts": "const SPLIT_IN_TWO = 2;\n\nexport const indexOfDay = (days: readonly number[], day: number): number => {\n  let low = 0;\n  let high = days.length - 1;\n  while (low <= high) {\n    const middle = Math.floor((low + high) / SPLIT_IN_TWO);\n    const value = days[middle];\n    if (value === day) {\n      return middle;\n    }\n    if (value !== undefined && value < day) {\n      low = middle + 1;\n    } else {\n      high = middle - 1;\n    }\n  }\n  return -1;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K2",
+      "why": "граница отдаёт ответ сервера непроверенным, и каждый потребитель проверяет своё поле сам: первый — вид и тип, второй — только наличие",
+      "into": [
+        {
+          "role": "граница",
+          "file": "модуль",
+          "text": "export const fetchLimits = async () => {\n  const response = await fetch(\"/limits\");\n  return response.json();\n};",
+          "ts": "export const fetchLimits = async (): Promise<unknown> => {\n  const response = await fetch(\"/limits\");\n  return response.json();\n};"
+        },
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "import { fetchLimits } from \"{{from:граница}}\";\n\nconst DEFAULT_TAG_LIMIT = 5;\n\nexport const loadTagLimit = async () => {\n  const raw = await fetchLimits();\n  if (\n    typeof raw === \"object\" &&\n    raw !== null &&\n    \"tags\" in raw &&\n    typeof raw.tags === \"number\"\n  ) {\n    return raw.tags;\n  }\n  return DEFAULT_TAG_LIMIT;\n};",
+          "ts": "import { fetchLimits } from \"{{from:граница}}\";\n\nconst DEFAULT_TAG_LIMIT = 5;\n\nexport const loadTagLimit = async (): Promise<number> => {\n  const raw = await fetchLimits();\n  if (\n    typeof raw === \"object\" &&\n    raw !== null &&\n    \"tags\" in raw &&\n    typeof raw.tags === \"number\"\n  ) {\n    return raw.tags;\n  }\n  return DEFAULT_TAG_LIMIT;\n};"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "import { fetchLimits } from \"{{from:граница}}\";\n\nexport const loadNoteLimit = async () => {\n  const raw = await fetchLimits();\n  return typeof raw === \"object\" && raw !== null && \"notes\" in raw\n    ? Number(raw.notes)\n    : 0;\n};",
+          "ts": "import { fetchLimits } from \"{{from:граница}}\";\n\nexport const loadNoteLimit = async (): Promise<number> => {\n  const raw = await fetchLimits();\n  return typeof raw === \"object\" && raw !== null && \"notes\" in raw\n    ? Number(raw.notes)\n    : 0;\n};"
+        }
+      ],
+      "culprits": [
+        "граница",
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "H8",
+      "why": "потребитель второго способа удалён: таблица способов и выбор по ключу остались ради одного живого способа",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "const titleStyles = {\n  plain: (title) => title,\n  loud: (title) => title.toUpperCase(),\n};\n\nexport const styleTitle = (title, style) => titleStyles[style](title);",
+          "ts": "const titleStyles = {\n  plain: (title: string): string => title,\n  loud: (title: string): string => title.toUpperCase(),\n};\n\nexport const styleTitle = (\n  title: string,\n  style: keyof typeof titleStyles,\n): string => titleStyles[style](title);"
+        },
+        {
+          "role": "живой",
+          "file": "модуль",
+          "text": "import { styleTitle } from \"{{from:владелец}}\";\n\nexport const plainHeading = (title) => styleTitle(title, \"plain\");",
+          "ts": "import { styleTitle } from \"{{from:владелец}}\";\n\nexport const plainHeading = (title: string): string =>\n  styleTitle(title, \"plain\");"
+        }
+      ],
+      "create": {
+        "path": "app/loudHeading.ts",
+        "text": "import { styleTitle } from \"{{from:владелец}}\";\n\nexport const loudHeading = (title: string): string => styleTitle(title, \"loud\");\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "C9",
+      "why": "сосед правленого кладёт ответ загрузки в ссылку без отмены: ответ, пришедший после ухода компонента или после второй загрузки, побеждает",
+      "held": "вопрос модели",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useRef } from \"react\";\n\nexport const useLatestCount = (load) => {\n  const countRef = useRef(0);\n  useEffect(() => {\n    void load().then((value) => {\n      countRef.current = value;\n    });\n  }, [load]);\n  return countRef;\n};",
+          "ts": "import { useEffect, useRef } from \"react\";\n\nexport const useLatestCount = (\n  load: () => Promise<number>,\n): { readonly current: number } => {\n  const countRef = useRef(0);\n  useEffect(() => {\n    void load().then((value) => {\n      countRef.current = value;\n    });\n  }, [load]);\n  return countRef;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B12",
+      "why": "сосед правленого: функция с именем запроса отвечает счётом метки и тут же увеличивает счётчик модуля — второй вызов отвечает иначе",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const tagUses = new Map();\n\nexport const tagUseCount = (tag) => {\n  const next = (tagUses.get(tag) ?? 0) + 1;\n  tagUses.set(tag, next);\n  return next;\n};",
+          "ts": "const tagUses = new Map<string, number>();\n\nexport const tagUseCount = (tag: string): number => {\n  const next = (tagUses.get(tag) ?? 0) + 1;\n  tagUses.set(tag, next);\n  return next;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C10",
+      "why": "сосед правленого решает, утренняя ли заметка, по часу в часовом поясе машины: тот же вход на другой машине даёт другой ответ",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const NOON = 12;\n\nexport const isMorningNote = (createdAt) =>\n  new Date(createdAt).getHours() < NOON;",
+          "ts": "const NOON = 12;\n\nexport const isMorningNote = (createdAt: number): boolean =>\n  new Date(createdAt).getHours() < NOON;"
+        }
+      ]
+    },
+    {
+      "criterion": "B6-бис",
+      "why": "сосед правленого: размер страницы помечен необязательным, а без него число страниц выходит бесконечным",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const pageCount = (total, perPage) => Math.ceil(total / (perPage ?? 0));",
+          "ts": "export const pageCount = (total: number, perPage?: number): number =>\n  Math.ceil(total / (perPage ?? 0));"
+        }
+      ]
+    },
+    {
+      "criterion": "I2",
+      "why": "потребитель различает отказ узла архивации по тексту его сообщения: замена текста внутри узла ломает потребителя, а узел переименован переносом",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/archive/archiveNote.ts",
+          "text": "export const archiveNote = async (id: string): Promise<void> => {\n  const response = await fetch(\"/archive/\" + id, { method: \"POST\" });\n  if (!response.ok) {\n    throw new Error(\"Archive refused\");\n  }\n};\n"
+        },
+        {
+          "path": "app/archiveAction.ts",
+          "text": "import { archiveNote } from \"../shared/archive/archiveNote\";\n\nexport const archiveOrExplain = async (id: string): Promise<string> => {\n  try {\n    await archiveNote(id);\n    return \"Archived\";\n  } catch (error) {\n    return error instanceof Error && error.message === \"Archive refused\"\n      ? \"Not allowed\"\n      : \"Try again\";\n  }\n};\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/archive/archiveNote.ts",
+          "to": "shared/archive/storeNote.ts"
+        }
+      ],
+      "culprits": [
+        "app/archiveAction.ts",
+        "shared/archive/archiveNote.ts"
+      ]
+    },
+    {
+      "criterion": "B4",
+      "why": "перенесённая функция отдаёт пару из числа слов и подписи, где подпись не способ изменить число: кортеж на всякий случай",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/stats/wordStats.ts",
+          "text": "export const wordStats = (text: string): [number, string] => {\n  const count = text.split(/\\s+/).filter(Boolean).length;\n  return [count, String(count) + \" words\"];\n};\n"
+        },
+        {
+          "path": "app/statsLine.ts",
+          "text": "import { wordStats } from \"../shared/stats/wordStats\";\n\nexport const statsLine = (text: string): string => wordStats(text)[1];\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/stats/wordStats.ts",
+          "to": "shared/stats/textStats.ts"
+        }
+      ],
+      "culprits": [
+        "shared/stats/wordStats.ts"
+      ]
+    },
+    {
+      "criterion": "E12",
+      "why": "заметка добавляется в список до ответа сервера, а при отказе сервера остаётся в списке: отката у первого шага нет",
+      "create": {
+        "path": "app/useAddNote.ts",
+        "text": "import { useState } from \"react\";\n\nexport const useAddNote = (): {\n  titles: readonly string[];\n  addNote: (title: string) => Promise<void>;\n} => {\n  const [titles, setTitles] = useState<readonly string[]>([]);\n  const addNote = async (title: string): Promise<void> => {\n    setTitles((current) => [...current, title]);\n    await fetch(\"/notes\", { method: \"POST\", body: title });\n  };\n  return { titles, addNote };\n};\n"
+      }
+    },
+    {
+      "criterion": "Q8",
+      "why": "право удалять заметку решает параметр адреса, который клиент пишет сам, и тот же параметр уходит серверу вместо удостоверенной личности",
+      "create": {
+        "path": "app/deleteNote.ts",
+        "text": "export const mayDeleteNotes = (): boolean =>\n  new URLSearchParams(window.location.search).get(\"role\") === \"admin\";\n\nexport const deleteNote = async (id: string): Promise<void> => {\n  if (!mayDeleteNotes()) {\n    return;\n  }\n  await fetch(\"/notes/\" + id + \"?role=admin\", { method: \"DELETE\" });\n};\n"
+      }
+    },
+    {
+      "criterion": "H8-тер",
+      "why": "свои хуки монтирования, размонтирования и обновления повторяют эффект React под другими именами",
+      "create": {
+        "path": "shared/lifecycle/lifecycle.ts",
+        "text": "import { useEffect } from \"react\";\n\nexport const useMount = (run: () => void): void => {\n  useEffect(() => {\n    run();\n  }, [run]);\n};\n\nexport const useUnmount = (run: () => void): void => {\n  useEffect(() => run, [run]);\n};\n\nexport const useUpdate = (run: () => void, value: unknown): void => {\n  useEffect(() => {\n    run();\n  }, [run, value]);\n};\n"
+      }
+    },
+    {
+      "criterion": "E14",
+      "why": "ошибка ввода формы метки говорит «неверный ввод», не называя ни поля, ни того, что исправить",
+      "create": {
+        "path": "app/TagForm.tsx",
+        "text": "import { useState } from \"react\";\n\nconst MAX_TAG_LENGTH = 24;\n\nexport const TagForm = ({\n  onSave,\n}: {\n  onSave: (name: string, color: string) => void;\n}) => {\n  const [name, setName] = useState(\"\");\n  const [color, setColor] = useState(\"\");\n  const [error, setError] = useState(\"\");\n  const save = (): void => {\n    if (\n      name.length === 0 ||\n      name.length > MAX_TAG_LENGTH ||\n      !color.startsWith(\"#\")\n    ) {\n      setError(\"Invalid input\");\n      return;\n    }\n    onSave(name, color);\n  };\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        save();\n      }}\n    >\n      <input\n        aria-label=\"Tag name\"\n        value={name}\n        onChange={(event) => {\n          setName(event.target.value);\n        }}\n      />\n      <input\n        aria-label=\"Tag color\"\n        value={color}\n        onChange={(event) => {\n          setColor(event.target.value);\n        }}\n      />\n      {error === \"\" ? null : <p>{error}</p>}\n      <button type=\"submit\">Save</button>\n    </form>\n  );\n};\n"
+      }
+    },
+    {
+      "criterion": "E13",
+      "why": "виджет недавних меток разбирает сохранённое без защиты, и битое значение роняет всю панель: границы отказа нет",
+      "create": [
+        {
+          "path": "app/RecentTags.tsx",
+          "text": "export const RecentTags = () => {\n  const parsed: unknown = JSON.parse(\n    localStorage.getItem(\"recent-tags\") ?? \"[]\",\n  );\n  const tags = Array.isArray(parsed) ? parsed.map(String) : [];\n  return (\n    <ul>\n      {tags.map((tag) => (\n        <li key={tag}>{tag}</li>\n      ))}\n    </ul>\n  );\n};\n"
+        },
+        {
+          "path": "app/TagsPanel.tsx",
+          "text": "import { RecentTags } from \"./RecentTags\";\n\nexport const TagsPanel = () => (\n  <aside>\n    <h2>Tags</h2>\n    <RecentTags />\n  </aside>\n);\n"
+        }
+      ],
+      "culprits": [
+        "app/RecentTags.tsx",
+        "app/TagsPanel.tsx"
+      ]
+    },
+    {
+      "criterion": "J13",
+      "why": "ожидаемое в тесте посчитано той же функцией, которую тест проверяет: ошибка в весе сдвигает обе стороны утверждения",
+      "create": [
+        {
+          "path": "shared/score/noteScore.ts",
+          "text": "const WORD_WEIGHT = 2;\n\nexport const noteScore = (words: number, tags: number): number =>\n  words * WORD_WEIGHT + tags;\n"
+        },
+        {
+          "path": "shared/score/tests/noteScore.test.ts",
+          "text": "import { describe, expect, it } from \"vitest\";\n\nimport { noteScore } from \"../noteScore\";\n\ndescribe(\"noteScore\", () => {\n  it(\"adds the word part and the tag part\", () => {\n    const words = 3;\n    const tags = 1;\n    expect(noteScore(words, tags)).toBe(\n      noteScore(words, 0) + noteScore(0, tags),\n    );\n  });\n});\n"
+        }
+      ],
+      "culprits": [
+        "shared/score/tests/noteScore.test.ts"
+      ]
+    },
+    {
+      "criterion": "S2-бис",
+      "why": "метка обращения заведена в начале синхронизации и записана первой строкой, а в шаг сохранения не передана: его записи к цепочке не привязать",
+      "create": {
+        "path": "app/pushNotes.ts",
+        "text": "type Log = (event: string, fields: Record<string, string>) => void;\n\nconst saveAll = async (ids: readonly string[], log: Log): Promise<void> => {\n  await Promise.all(\n    ids.map(async (id) => {\n      await fetch(\"/notes/\" + id, { method: \"PUT\" });\n      log(\"note saved\", { id });\n    }),\n  );\n};\n\nexport const pushNotes = async (\n  ids: readonly string[],\n  log: Log,\n): Promise<void> => {\n  const syncTraceId = crypto.randomUUID();\n  log(\"sync started\", { syncTraceId });\n  await saveAll(ids, log);\n};\n"
+      }
+    },
+    {
+      "criterion": "B2-бис",
+      "why": "две выборки по номеру отвечают на отсутствие по-разному: метка отдаёт undefined, папка бросает",
+      "create": [
+        {
+          "path": "shared/tags/tagById.ts",
+          "text": "export const tagById = (\n  tags: ReadonlyMap<string, string>,\n  id: string,\n): string | undefined => tags.get(id);\n"
+        },
+        {
+          "path": "shared/folders/folderById.ts",
+          "text": "export const folderById = (\n  folders: ReadonlyMap<string, string>,\n  id: string,\n): string => {\n  const folder = folders.get(id);\n  if (folder === undefined) {\n    throw new Error(\"No folder \" + id);\n  }\n  return folder;\n};\n"
+        }
+      ],
+      "culprits": [
+        "shared/tags/tagById.ts",
+        "shared/folders/folderById.ts"
+      ]
+    },
+    {
+      "criterion": "A11",
+      "why": "правило, показывать ли значок непрочитанного, импортирует клиент сети и само его зовёт",
+      "into": [
+        {
+          "role": "клиент",
+          "file": "модуль",
+          "text": "export const fetchUnreadCount = async () => {\n  const response = await fetch(\"/unread\");\n  return Number(await response.text());\n};",
+          "ts": "export const fetchUnreadCount = async (): Promise<number> => {\n  const response = await fetch(\"/unread\");\n  return Number(await response.text());\n};"
+        },
+        {
+          "role": "правило",
+          "file": "модуль",
+          "text": "import { fetchUnreadCount } from \"{{from:клиент}}\";\n\nexport const shouldShowUnreadBadge = async () => (await fetchUnreadCount()) > 0;",
+          "ts": "import { fetchUnreadCount } from \"{{from:клиент}}\";\n\nexport const shouldShowUnreadBadge = async (): Promise<boolean> =>\n  (await fetchUnreadCount()) > 0;"
+        }
+      ],
+      "culprits": [
+        "правило"
+      ]
+    },
+    {
+      "criterion": "K4",
+      "why": "кэш названий отдаёт undefined и когда название ещё не загружено, и когда у заметки его нет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const titles = new Map();\n\nexport const rememberTitle = (id, title) => {\n  titles.set(id, title);\n};\n\nexport const cachedTitle = (id) => titles.get(id);",
+          "ts": "const titles = new Map<string, string | undefined>();\n\nexport const rememberTitle = (id: string, title: string | undefined): void => {\n  titles.set(id, title);\n};\n\nexport const cachedTitle = (id: string): string | undefined => titles.get(id);"
+        }
+      ]
+    },
+    {
+      "criterion": "E6",
+      "why": "загрузка заметки бросает одну и ту же ошибку и на «такой заметки нет», и на отказ сервера",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const fetchNoteText = async (id) => {\n  const response = await fetch(\"/notes/\" + id);\n  if (!response.ok) {\n    throw new Error(\"Load failed\");\n  }\n  return response.text();\n};",
+          "ts": "export const fetchNoteText = async (id: string): Promise<string> => {\n  const response = await fetch(\"/notes/\" + id);\n  if (!response.ok) {\n    throw new Error(\"Load failed\");\n  }\n  return response.text();\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "T4",
+      "why": "значок держит ширину под английское слово и отступ физической стороной: длинный перевод обрежется, письмо справа налево зеркала не получит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "стиль",
+          "text": ".badge {\n  width: 48px;\n  margin-left: 8px;\n  overflow: hidden;\n  white-space: nowrap;\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "D4",
+      "why": "запрос переноса заметки в папку принимает два числа-номера подряд: номер заметки и номер папки перепутаются без признака",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const moveNoteRequest = (noteId, folderId) =>\n  \"/folders/\" + String(folderId) + \"/notes/\" + String(noteId);",
+          "ts": "export const moveNoteRequest = (noteId: number, folderId: number): string =>\n  \"/folders/\" + String(folderId) + \"/notes/\" + String(noteId);"
+        }
+      ]
+    },
+    {
+      "criterion": "B11",
+      "why": "настройки выдачи отданы изменяемым объектом, и другой модуль переписывает размер страницы во время работы",
+      "into": [
+        {
+          "role": "настройки",
+          "file": "модуль",
+          "text": "const BASE_PAGE_SIZE = 20;\n\nexport const listSettings = { pageSize: BASE_PAGE_SIZE, sortBy: \"date\" };",
+          "ts": "const BASE_PAGE_SIZE = 20;\n\nexport const listSettings = { pageSize: BASE_PAGE_SIZE, sortBy: \"date\" };"
+        },
+        {
+          "role": "писатель",
+          "file": "модуль",
+          "text": "import { listSettings } from \"{{from:настройки}}\";\n\nconst WIDE_PAGE_SIZE = 50;\n\nexport const enableWidePages = () => {\n  listSettings.pageSize = WIDE_PAGE_SIZE;\n};",
+          "ts": "import { listSettings } from \"{{from:настройки}}\";\n\nconst WIDE_PAGE_SIZE = 50;\n\nexport const enableWidePages = (): void => {\n  listSettings.pageSize = WIDE_PAGE_SIZE;\n};"
+        }
+      ],
+      "culprits": [
+        "настройки",
+        "писатель"
+      ]
+    },
+    {
+      "criterion": "T2",
+      "why": "счётчик заметок форматируется жёстко заданным регионом en-US, а не регионом пользователя",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const noteCountLabel = (count) =>\n  count.toLocaleString(\"en-US\") + \" notes\";",
+          "ts": "export const noteCountLabel = (count: number): string =>\n  count.toLocaleString(\"en-US\") + \" notes\";"
+        }
+      ]
     }
   ],
   "covers": [
