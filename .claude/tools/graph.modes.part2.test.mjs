@@ -5433,6 +5433,7 @@ describe("признаки по всей планке в модели свода
           'export const zzWide = (kind: string) => (kind === "plain" ? 1 : 2);',
           'export const zzTall = (kind: string) => kind !== "list";',
           "export const zzHalf = (n: number) => n / 2;",
+          "export const zzArchived = (ids: readonly string[]) => ids.slice(1);",
           "",
         ].join("\n"),
       );
@@ -5457,6 +5458,7 @@ describe("признаки по всей планке в модели свода
           "export const zzSize = (xs: readonly number[]) => xs.length;",
           'export const zzMark = (kind: string): string => (kind === "plain" ? "p" : "q");',
           "export const zzHalf = (n: number) => n / 2;",
+          "export const zzArchiveFile = (ids: readonly string[]) => ids.join();",
           "",
         ].join("\n"),
       );
@@ -5491,6 +5493,11 @@ describe("признаки по всей планке в модели свода
       expect(has(rows, "метка", "", "shared/zzMath/zzMath.ts:13")).toBe(true);
       expect(text).toContain("`kind === plain` — та же метка в `app/zzUse.ts:7`");
       expect(text).not.toContain("kind === list");
+      // Одно слово в именах двух единиц переноса — вопрос, одно ли понятие
+      // (`H6`); слово одной единицы — нет.
+      expect(has(rows, "слово", "", "shared/zzMath/zzMath.ts:16")).toBe(true);
+      expect(text).toContain("слово `archiv`: `zzArchived` и `zzArchiveFile` в `app/zzUse.ts:9`");
+      expect(text).not.toContain("слово `frame`");
       // Кадры есть, а приглушённого движения нет нигде в проекте.
       expect(has(rows, "приглушение", "нет", "проект")).toBe(true);
 

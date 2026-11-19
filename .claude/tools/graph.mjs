@@ -72,6 +72,8 @@ import {
   bareCodeOf,
   commentlessOf,
   closeOf,
+  afterReturnType,
+  nameStemsSummary,
   topLevelParts,
   signalsOf,
   tagComparisonsOf,
@@ -12157,13 +12159,14 @@ const symptomsOf = (f) => {
   for (let p = bare.indexOf("("); p >= 0; p = bare.indexOf("(", p + 1)) {
     const q = closeOf(bare, p);
     if (q < 0) continue;
-    const after = bare.slice(q + 1, q + 160);
+    const t = afterReturnType(bare, q + 1);
     const head = bare.slice(Math.max(0, p - 80), p).replace(/<[^<>]*>\s*$/, "");
     const word = /([\w$]+)\s*$/.exec(head)?.[1] ?? "";
     const isFunction = /\bfunction\s*\*?\s*[\w$]*\s*$/.test(head);
-    const isArrow = /^\s*(?::\s*[^{;=()]+?)?\s*=>/.test(after);
+    const isArrow = t >= 0 && bare.startsWith("=>", t);
     const isBody =
-      /^\s*(?::\s*[^{;=()]+?)?\s*\{/.test(after) &&
+      t >= 0 &&
+      bare[t] === "{" &&
       (isFunction || (word !== "" && !NOT_A_CALLEE.has(word)));
     if (!isArrow && !isBody) continue;
     for (const part of topLevelParts(bare.slice(p + 1, q), p + 1)) {
@@ -12194,8 +12197,8 @@ const symptomsOf = (f) => {
     const p = m.index + m[0].length - 1;
     const q = closeOf(bare, p);
     if (q < 0) continue;
-    if (/^\s*(?::\s*[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 160)))
-      continue;
+    const t = afterReturnType(bare, q + 1);
+    if (t >= 0 && (bare.startsWith("=>", t) || bare[t] === "{")) continue;
     if (
       topLevelParts(bare.slice(p + 1, q), p + 1).some((a) =>
         /^(?:true|false)$/.test(a.text.trim()),
@@ -12488,6 +12491,7 @@ const SIGNAL_TITLES = {
   "тест|различие": "тест проверяет «изменилось»",
   "тест|снимок": "сверка снимка",
   "тест|ожидание из кода": "ожидаемое взято из проверяемого кода",
+  "тест|помощник": "тест судит своим помощником проверки",
   целое: "вход берут целиком ради одного поля",
   дубль: "у числа в файле уже есть имя",
   всегда: "условие истинно либо ложно всегда",
@@ -12496,6 +12500,10 @@ const SIGNAL_TITLES = {
   сквозь: "цепочка сквозь соседей",
   кэш: "контейнер модуля растёт и не чистится",
   пустота: "пустота в типе значения контейнера",
+  замыкание: "долгоживущий обработчик держит захваченный объект",
+  проход: "ссылка — флаг первого прохода",
+  отмена: "чтение отмены",
+  режим: "параметр-режим строкой",
   порядок: "несколько эффектов одного узла",
   идентификаторы: "однотипные идентификаторы",
   необязательные: "россыпь необязательных полей",
@@ -12510,6 +12518,7 @@ const QUESTION_SORTS = new Set([
   "близнец",
   "повтор",
   "метка",
+  "слово",
   "постоянный",
   "зависимость",
   "настройка",
@@ -12642,9 +12651,8 @@ const topBodiesOf = (code) => {
     else {
       const open = bare.indexOf("(", after);
       const close = open < 0 ? -1 : closeOf(bare, open);
-      const brace = close < 0 ? -1 : bare.indexOf("{", close);
-      if (brace >= 0 && /^\s*(?::[^{;]*)?$/.test(bare.slice(close + 1, brace)))
-        start = brace;
+      const brace = close < 0 ? -1 : afterReturnType(bare, close + 1);
+      if (brace >= 0 && bare[brace] === "{") start = brace;
     }
     if (start < 0) continue;
     while (/\s/.test(bare[start] ?? "")) start += 1;
@@ -12828,6 +12836,64 @@ const tagRepeatsOf = (f, seen = new Set()) => {
   return out;
 };
 
+/** Основы слов в именах, отданных наружу: основа → места. Одно слово в
+ * именах нескольких единиц переноса — вопрос, одно ли у него понятие (`H6`).
+ * Промах свода пробы `2026-11-19`: «архив» значил скрытые заметки в одной
+ * единице и выгрузку файлом в другой. */
+let WORDS_CACHE = null;
+const wordIndex = () => {
+  if (WORDS_CACHE !== null) return WORDS_CACHE;
+  WORDS_CACHE = new Map();
+  for (const f of files) {
+    if (isTest(f) || isBarrel(f) || f.endsWith(".d.ts")) continue;
+    readFileSync(f, "utf8")
+      .split(LF)
+      .forEach((line, i) => {
+        const m =
+          /^export\s+(?:default\s+)?(?:async\s+)?(?:const|let|function\*?|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/.exec(
+            line,
+          );
+        if (m === null) return;
+        for (const stem of nameStemsSummary(m[1]).split(";").filter(Boolean)) {
+          const list = WORDS_CACHE.get(stem) ?? [];
+          list.push({ file: f, line: i + 1, name: m[1], text: line });
+          WORDS_CACHE.set(stem, list);
+        }
+      });
+  }
+  return WORDS_CACHE;
+};
+/** Больше единиц под одним словом — слово предметное и общее всему проекту:
+ * вопрос о нём встал бы у каждого имени. */
+const WORD_UNITS_MAX = 3;
+/** Слова имён файла, которые стоят и в именах других единиц переноса.
+ * `fresh` — строка объявления, о которой спрашивают: на правке — новая.
+ * Группа слова встаёт раз на протокол, как у метки. */
+const wordRepeatsOf = (f, seen, fresh) => {
+  const out = [];
+  for (const [stem, list] of wordIndex()) {
+    const mine = list.find((x) => x.file === f && fresh(x.text));
+    if (mine === undefined || seen.has(list)) continue;
+    const units = new Set(list.map((x) => unitOf(x.file)));
+    if (units.size < 2 || units.size > WORD_UNITS_MAX) continue;
+    seen.add(list);
+    out.push({
+      line: mine.line,
+      what:
+        "слово " +
+        barQuoted(stem) +
+        ": " +
+        barQuoted(mine.name) +
+        " и " +
+        list
+          .filter((x) => unitOf(x.file) !== unitOf(f))
+          .map((x) => barQuoted(x.name) + " в " + barQuoted(rel(x.file) + ":" + x.line))
+          .join(", "),
+    });
+  }
+  return out;
+};
+
 /** Литерал места вызова: число, булево, пустота, строка без подстановки. */
 const LITERAL =
   /^(?:-?\d[\d_]*(?:\.\d+)?|true|false|null|undefined|"[^"\n]*"|'[^'\n]*'|`[^`$\n]*`)$/;
@@ -12849,8 +12915,8 @@ const callSitesIn = (text, wanted, calls, tags) => {
       continue;
     const p = m.index + m[0].length - 1;
     const q = closeOf(bare, p);
-    if (q < 0 || /^\s*(?::[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 120)))
-      continue;
+    const t = q < 0 ? -1 : afterReturnType(bare, q + 1);
+    if (q < 0 || (t >= 0 && (bare.startsWith("=>", t) || bare[t] === "{"))) continue;
     calls.get(name).push(
       topLevelParts(bare.slice(p + 1, q), p + 1).map((a) =>
         text.slice(a.at, a.at + a.text.length).trim(),
@@ -13153,6 +13219,7 @@ const SYMPTOM_SORTS = [
         "близнец",
         "повтор",
         "метка",
+        "слово",
         "постоянный",
         "зависимость",
         "настройка",
@@ -13223,7 +13290,8 @@ const declarationsOf = (f) => {
       const p = at + head[0].length - 1;
       if (wrapped || /^\s*(?:async\s+)?function\b/.test(rest)) return countAt(p);
       const q = closeOf(bare, p);
-      return q >= 0 && /^\s*(?::[^=;]+?)?\s*=>/.test(bare.slice(q + 1, q + 200))
+      const t = q < 0 ? -1 : afterReturnType(bare, q + 1);
+      return t >= 0 && bare.startsWith("=>", t)
         ? countAt(p)
         : 0;
     }
@@ -15301,6 +15369,10 @@ const barModelOf = (
       add("повтор", where + ":" + r.line, r.what, r.mark);
     for (const r of want("метка") ? tagRepeatsOf(f, seenRepeats) : [])
       add("метка", where + ":" + r.line, r.what);
+    for (const r of want("слово")
+      ? wordRepeatsOf(f, seenRepeats, change ? isNewLine : () => true)
+      : [])
+      add("слово", where + ":" + r.line, r.what);
     // Вход, о котором уже встала строка удаления, второй строкой не встаёт.
     const goneKeys = goneConstant.get(f) ?? [];
     for (const what of want("постоянный") ? constantInputsOf(f) : [])

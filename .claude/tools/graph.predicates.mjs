@@ -737,6 +737,10 @@ export const MODEL_LEVEL = {
   сквозь: "узел",
   кэш: "узел",
   пустота: "узел",
+  замыкание: "единица",
+  проход: "единица",
+  отмена: "единица",
+  режим: "единица",
   рост: "узел",
   права: "единица",
   секрет: "единица",
@@ -747,6 +751,7 @@ export const MODEL_LEVEL = {
   близнец: "приложение",
   повтор: "приложение",
   метка: "приложение",
+  слово: "приложение",
   зависимость: "приложение",
   приглушение: "приложение",
   настройка: "приложение",
@@ -1115,6 +1120,12 @@ export const BAR_SIGNALS = [
   // Пустота в типе значения контейнера: «нет записи» и «записано пусто»
   // отвечают одним `undefined`. Промах свода пробы `2026-11-18`, посадка `K4`.
   { ids: ["K4"], sort: "пустота", words: "в типе значения контейнера есть пустота, и в основании не сказано, чем «нет записи» отличается от «записано пусто»" },
+  // Формы, которых держатели не видели: промахи свода пробы `2026-11-19`.
+  { ids: ["F3"], sort: "замыкание", words: "долгоживущий обработчик берёт поле захваченного объекта, и в основании не сказано, почему замыкание держит весь объект" },
+  { ids: ["M1", "M2"], sort: "проход", words: "ссылка служит флагом первого прохода, и в основании не сказано, что при повторном монтаже" },
+  { ids: ["E9"], sort: "отмена", words: "код читает отмену, и в основании не сказано, смотрят ли её на каждом шаге и уходит ли сигнал дальше" },
+  { ids: ["A4"], sort: "режим", words: "параметр-режим строкой, и в основании не сказано, не делит ли он функцию надвое" },
+  { ids: ["H8-бис"], sort: "режим", words: "параметр-режим строкой, и в основании не сказано, одно ли понятие у его веток" },
   { ids: ["C5"], sort: "порядок", words: "у узла несколько эффектов, и в основании не сказано, не держится ли результат на их порядке" },
   // Поиск элемента во всём документе берёт чужую разметку по имени: находит
   // её, только пока её владелец смонтирован раньше.
@@ -1139,6 +1150,7 @@ export const BAR_SIGNALS = [
   { ids: ["A9-тер"], sort: "повтор", mark: "условие", words: "условие повторено в другом месте, и в основании не сказано, где собрано правило" },
   // Метка, разобранная в нескольких единицах переноса: новый вариант
   // потребует правки в каждой.
+  { ids: ["H6"], sort: "слово", words: "одно слово стоит в именах нескольких единиц переноса, и в основании не сказано, одно ли у него понятие" },
   { ids: ["I1", "A9-тер", "D5"], sort: "метка", words: "одна метка сравнивается в нескольких единицах переноса, и в основании не сказано, где естественное место нового варианта" },
   { ids: ["R1", "R2", "R3"], sort: "зависимость", words: "правка добавила зависимость, и в основании нет её обоснования, размера и проверки на дубль" },
   { ids: ["R1-бис"], sort: "зависимость", mark: "диапазон", words: "версия зависимости задана диапазоном, и в основании это не названо" },
@@ -1149,6 +1161,7 @@ export const BAR_SIGNALS = [
   { ids: ["J1"], sort: "тест", mark: "без утверждения", words: "тест без утверждения, и в основании не сказано, чем он падает" },
   { ids: ["J7"], sort: "тест", mark: "подмена", words: "тест подменяет часть системы, и в основании не сказано, что подмена не прячет" },
   { ids: ["J5"], sort: "тест", mark: "различие", words: "тест проверяет «изменилось», и в основании не сказано, различает ли значение" },
+  { ids: ["J4"], sort: "тест", mark: "помощник", words: "тест судит своим помощником проверки, и в основании не назван известный неверный пример, на котором помощник сверен" },
   { ids: ["J6"], sort: "тест", mark: "снимок", words: "тест сверяет снимок, и в основании не сказано, наблюдаемое ли это поведение" },
   // Оракул теста: ожидаемое из самого кода сдвигается вместе с ним, а
   // утверждение, правленое той же работой, могло быть подогнано под код.
@@ -1420,15 +1433,11 @@ export const BAR_ATTENTION = {
   C2: "соглашение на месте вызова без знания инварианта неотличимо от конструкции",
   E13: "граница отказа — свойство композиции целиком, её отсутствие не видно ни в одной строке",
   E14: "подтверждено ли необратимое и сохранён ли ввод — суждение о сценарии, в строке их отсутствие не видно",
-  F3: "что замыканию нужно, а что нет, — суждение о времени жизни захваченного",
   F4: "ссылка на элемент в коллекции без знания, удалён ли он, неотличима от законной",
   G7: "бюджет живёт в записях проекта числом; есть ли он — вопрос к базе, а не к строке",
   H2: "второй способ одного выглядит как первый: идиомы проекта сверяют чтением `10-idioms.md`",
-  H6: "одно слово в двух смыслах опознаётся только смыслом",
-  "H8-бис": "устойчиво ли понятие под абстракцией — суждение; свидетель «упрощает» отвечает о цене, а не о смысле",
   "H8-тер": "свой слой поверх готового механизма текстом неотличим от законной обёртки",
   J2: "правило о правилах: исполняется тем, что правило заводится вместе с крючком",
-  J4: "метод проверки и пример для него — работа, а не текст кода",
   J8: "сложность оснастки против сложности кода — суждение; размер её не мерит",
   J9: "на какой вопрос отвечает тест — суждение о том, что он проверяет",
   "O5-бис": "что закреплять визуальным контрактом, решает проект",
@@ -1516,7 +1525,7 @@ export const BAR_FORMS = {
   ],
   A4: [
     UNSEEN.flag,
-    "режим строкой либо перечислением, который делит тело надвое, — признак и правило линта знают только булево",
+    "режим перечислением либо строкой без пометки типа объединением строк — признак режима видит параметр, помеченный объединением строк, а правило линта — булево",
     "флаг полем объекта входа — разбор на поля из признака исключён, а правило линта судит доводы функции: это замена, которую советует политика, а флаг, делящий тело, ею остаётся",
   ],
   A5: [
@@ -1771,7 +1780,7 @@ export const BAR_FORMS = {
     "ошибка с текстом без контекста (`throw new Error(\"failed\")`) вне перехвата — правила линта видят бросок не-ошибки и причину, не переданную из перехвата, а смысл текста — нет",
   ],
   E9: [
-    "краевое событие без асинхронной записи: поворот, уход вкладки, двойное срабатывание — признак гонки видит асинхронный результат, который пишут в состояние",
+    "краевое событие без асинхронной записи и без сигнала отмены: поворот, уход вкладки, двойное срабатывание, отмена своим флагом — признак гонки видит асинхронный результат, который пишут в состояние, а признак отмены — чтение `aborted` и сигнал `AbortSignal`",
   ],
   E10: [
     "пакет операций без `Promise.all` и без `await` в цикле: цепочка вызовов, `then` подряд — признак видит `Promise.all` и родственные, `forEach(async` и `await` в цикле",
@@ -1781,6 +1790,10 @@ export const BAR_FORMS = {
     "многошаговое изменение через свою обёртку записи либо разнесённое по двум функциям — признак шагов видит сеттер либо `dispatch` и запись в сеть либо хранилище в теле одной функции",
   ],
   F1: [UNSEEN.resource],
+  F3: [
+    "долгоживущий обработчик, отданный не по имени либо объявленный функцией, и обработчик подписки, которой нет в образце, — признак видит слушатель, `subscribe`, `on` и `setInterval` с обработчиком-константой",
+    "тяжёлый объект, который обработчик держит целиком, а не полем: передаёт дальше либо обходит — признак видит одно чтение поля захваченного имени",
+  ],
   F2: [UNSEEN.resourceLinted, UNSEEN.releaseLinted],
   G1: [
     "лишний проход отрисовки, лишняя подписка и лишняя аллокация вне названных признаков — признаки видят пересборку значения поставщика, чтение раскладки рядом с записью, поиск внутри обхода, эффект, в котором одни записи, и сортировку, у которой тут же берут крайний элемент",
@@ -1853,6 +1866,14 @@ export const BAR_FORMS = {
     "величина параметром функции либо обратного вызова (`(time) => …` у кадра) — признак видит объявление и поле с литералом",
   ],
   H8: [UNSEEN.witness("абстракция, которая переносит сложность, а не уменьшает её,", "упрощает ли")],
+  H6: [
+    "одно слово в двух смыслах вне имён, отданных наружу: в местных именах, тексте для человека, ключах, записях базы — признак видит основу слова в именах, отданных наружу",
+    "слово в именах больше чем трёх единиц переноса и слово короче пяти букв — признак их не спрашивает: предметное слово стоит в именах всего проекта",
+    "одно понятие под двумя словами — признак видит совпадение слова, а не смысла; второй способ сказать одно спрашивает `H2`",
+  ],
+  "H8-бис": [
+    "абстракция на внешнем сходстве без параметра-режима строкой: булев флаг, параметр-функция, общий базовый узел, два понятия под одним типом — признак режима видит объединение строк в сигнатуре, а булев параметр спрашивает `A4`",
+  ],
   I1: [
     "естественного места нет, а правка мала — размах считает тронутые узлы, единицы и слои, а не то, сколько придётся тронуть следующей возможности",
     "вариант, разобранный `switch`, сравнением метки слева либо в одной единице переноса, — строка о метке ловит сравнение имени с меткой-словом между единицами",
@@ -1871,6 +1892,10 @@ export const BAR_FORMS = {
   ],
   J3: [
     "покрытие строк без покрытия смысла — строка тестов называет тесты файла, а какие ветви они держат, решает чтение",
+  ],
+  J4: [
+    "метод проверки вне теста: измеритель, сверка, скрипт замера — признака текста нет",
+    "помощник проверки без булевой пометки ответа и без имени-утверждения, либо не внутри утверждения — признак видит предикат с `: boolean` либо именем на `is` либо `has` и его вызов внутри `expect` и `assert`",
   ],
   J5: [
     "«значение различает», проверенное без отрицания: два равенства с разными входами — признак видит `.not.toBe` и `.not.toEqual`",
@@ -1944,10 +1969,10 @@ export const BAR_FORMS = {
     "общее изменяемое, к которому обращаются операции на сервере, в воркере либо в другой вкладке, — признак гонки смотрит один файл",
   ],
   M1: [
-    "код в расчёте на один вызов вне эффекта с пустыми зависимостями: ссылка как флаг первого прохода — признак видит эффект с пустым списком зависимостей и изменяемое модуля",
+    "код в расчёте на один вызов вне эффекта с пустыми зависимостями и без ссылки-флага: флаг в состоянии, в поле объекта либо ссылка не булевой — признак видит эффект с пустым списком зависимостей, изменяемое модуля и ссылку, заведённую булевой и переписанную обратным значением",
   ],
   M2: [
-    "предположение о числе проходов вне эффекта: счётчик отрисовок, ссылка как флаг — признак видит эффект с пустым списком зависимостей",
+    "предположение о числе проходов вне эффекта: счётчик отрисовок, флаг не булевой ссылкой — признак видит эффект с пустым списком зависимостей и ссылку, заведённую булевой и переписанную обратным значением",
   ],
   M3: [UNSEEN.resourceLinted, UNSEEN.releaseLinted],
   M4: [
@@ -3197,6 +3222,56 @@ export const closeOf = (text, at) => {
   return -1;
 };
 
+/** Позиция первого знака после пометки типа ответа, начиная с `from` — места
+ * сразу за списком параметров: там стоит стрелка либо тело. Пометки нет —
+ * первый непробельный знак; пометка не кончилась стрелкой либо телом —
+ * -1. Тип со скобками, стрелкой и литералом объекта — `(() => void)`,
+ * `Promise<() => void>`, `{ a: number }` — разбор регулярным выражением
+ * обрывал, и функция выпадала из признаков по её телу. Промах свода пробы
+ * `2026-11-19`, посадка `F3`. */
+/** Основы слов имени: верблюжий регистр делит слова, окончания `ing`, `ed`,
+ * `s` и конечное `e` снимаются, короче `WORD_STEM_FROM` — служебные и
+ * предметные слова вроде `id`, `note`, — не в счёт. */
+const WORD_STEM_FROM = 5;
+const nameStemsOf = (name) => [
+  ...new Set(
+    name
+      .replace(/([a-z\d])([A-Z])/g, "$1 $2")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .split(/[\s_$\d]+/)
+      .map((w) => w.toLowerCase().replace(/(?:ing|ed|s)$/, "").replace(/e$/, ""))
+      .filter((w) => w.length >= WORD_STEM_FROM),
+  ),
+];
+
+/** Основы слов имени строкой — для таблицы случаев. */
+export const nameStemsSummary = (name) => nameStemsOf(name).join(SEP1);
+
+export const afterReturnType = (text, from) => {
+  let k = from;
+  while (/\s/.test(text[k] ?? "")) k += 1;
+  if (text[k] !== ":") return k < text.length ? k : -1;
+  let depth = 0;
+  let last = ":";
+  for (k += 1; k < text.length && k < from + 400; k += 1) {
+    const c = text[k];
+    if (text.startsWith("=>", k)) {
+      if (depth === 0) return k;
+      k += 1;
+      last = ">";
+      continue;
+    }
+    if (/\s/.test(c)) continue;
+    if (depth === 0 && c === "{" && !":|&,<(".includes(last)) return k;
+    if ("([{<".includes(c)) depth += 1;
+    else if (")]}>".includes(c)) depth -= 1;
+    else if (depth === 0 && (c === ";" || c === "=")) return -1;
+    if (depth < 0) return -1;
+    last = c;
+  }
+  return -1;
+};
+
 /** `>` на позиции `at` кончает тег разметки, а не список параметров типа и не
  * сравнение: назад до `<` на своём уровне скобок, и `<` открывает тег. Конец
  * обобщения `useState<…>(` и сравнение читались концом тега, а код за ними —
@@ -3569,6 +3644,15 @@ const TRANSITIONS_FROM = 3;
 const FORWARD_FREE = new Set(["children", "className", "style", "key", "ref", "id", "as"]);
 /** Входы, которые берут ради одного поля законно: событие, пропы, служебное. */
 const WHOLE_FREE = /^(?:e|ev|evt|event|props|_[\w$]*|args|rest|ctx|context)$/;
+/** Подписка, которая живёт до снятия: слушатель, интервал, подписчик. Первая
+ * группа — имя обработчика, отданного по имени. */
+const LONG_LIVED =
+  /\.\s*(?:addEventListener\s*\(\s*["'`][^"'`]*["'`]\s*,|subscribe\s*\(|on\s*\(\s*["'`][^"'`]*["'`]\s*,)\s*([\w$]+)\s*[,)]|\bsetInterval\s*\(\s*([\w$]+)\s*,/g;
+/** Имена, поле которых обработчик берёт, не держа объекта в замыкании:
+ * среда и встроенные объекты. */
+const CLOSURE_FREE = new Set(
+  "document window navigator globalThis self location history console performance localStorage sessionStorage screen crypto".split(" "),
+);
 /** Начала цепочек, которые не соседи, а среда: глобальные объекты и модули. */
 const GLOBAL_BASES = new Set(
   "window document process console navigator location globalThis this styles classes theme import module exports require event e ev evt".split(" "),
@@ -3900,7 +3984,11 @@ const codeSignalsOf = (file, text, own) => {
       if (ABBREVIATIONS.has(m[1].toLowerCase()))
         nameHit(m[1], m.index + m[0].indexOf(m[1]), "сокращение");
     });
-  each(/\(([^()]*)\)\s*(?::[^=;{()]+)?=>|\bfunction\s*\*?\s*[\w$]*\s*\(([^()]*)\)/g, bare, (m) => {
+  each(/\(([^()]*)\)|\bfunction\s*\*?\s*[\w$]*\s*\(([^()]*)\)/g, bare, (m) => {
+    if (m[1] !== undefined) {
+      const t = afterReturnType(bare, m.index + m[0].length);
+      if (t < 0 || !bare.startsWith("=>", t)) return;
+    }
     const list = m[1] ?? m[2] ?? "";
     for (const one of list.split(/[\s,{}[\]:=.]+/))
       if (ABBREVIATIONS.has(one.toLowerCase()))
@@ -4055,8 +4143,8 @@ const codeSignalsOf = (file, text, own) => {
       const p = m.index + m[0].length - 1;
       const q = closeOf(bare, p);
       if (q < 0) return;
-      const b = bare.indexOf("{", q);
-      if (b < 0 || !/^\s*(?::[^{]*)?$/.test(bare.slice(q + 1, b))) return;
+      const b = afterReturnType(bare, q + 1);
+      if (b < 0 || bare[b] !== "{") return;
       bodies.push({
         name: m[1],
         at: m.index + m[0].indexOf(m[1]),
@@ -4077,12 +4165,13 @@ const codeSignalsOf = (file, text, own) => {
         const p = m.index + m[0].length - 1;
         const q = closeOf(bare, p);
         if (q < 0) return;
-        const arrow = /^\s*(?::[^=;{()]+?)?\s*=>\s*(\{)?/.exec(bare.slice(q + 1, q + 200));
+        const t = afterReturnType(bare, q + 1);
+        const arrow = t < 0 ? null : /^=>\s*(\{)?/.exec(bare.slice(t, t + 200));
         if (arrow === null) return;
         params = bare.slice(p + 1, q);
         if (arrow[1] === undefined) {
           // Тело-выражение: от стрелки до точки с запятой верхнего уровня.
-          const from = q + arrow[0].length;
+          const from = t - 1 + arrow[0].length;
           let depth = 0;
           let end = from;
           for (; end < bare.length; end += 1) {
@@ -4094,7 +4183,7 @@ const codeSignalsOf = (file, text, own) => {
           bodies.push({ name: m[1], at: m.index + m[0].indexOf(m[1]), params, from: from - 1, to: end });
           return;
         }
-        b = q + arrow[0].length;
+        b = t - 1 + arrow[0].length;
       }
       bodies.push({
         name: m[1],
@@ -4229,6 +4318,55 @@ const codeSignalsOf = (file, text, own) => {
   // на «нет записи», и на «записано пусто». Промах свода пробы `2026-11-18`.
   each(/\b(?:Map|WeakMap|Record)\s*<\s*[^,<>]+,\s*[^<>]*\|\s*(?:undefined|null)\b[^<>]*>/g, bare, (m) =>
     at("пустота", m.index, m[0].replace(/\s+/g, " ").split("|").join("/")),
+  );
+  // Долгоживущий обработчик, чьё тело берёт поле захваченного объекта
+  // (`F3`): замыкание держит весь объект, пока обработчик подписан. Промах
+  // свода пробы `2026-11-19`, посадка в соседе.
+  each(LONG_LIVED, bare, (m) => {
+    const handler = m[1] ?? m[2];
+    const def = new RegExp(
+      "\\b(?:const|let|var)\\s+" + escapeRe(handler) + "\\s*(?::[^=\\n]+)?=\\s*(?:async\\s+)?(?:\\(([^()]*)\\)|([\\w$]+))",
+    ).exec(bare);
+    if (def === null) return;
+    const t = afterReturnType(bare, def.index + def[0].length);
+    if (t < 0 || !bare.startsWith("=>", t)) return;
+    let s = t + 2;
+    while (/\s/.test(bare[s] ?? "")) s += 1;
+    const end = bare[s] === "{" ? closeOf(bare, s) : bare.indexOf(NEWLINE, s);
+    if (end < 0) return;
+    const body = bare.slice(s, end);
+    const own = new Set(
+      [def[1] ?? def[2] ?? "", ...[...body.matchAll(/\bconst\s+([\w$]+)/g)].map((x) => x[1])]
+        .join(",")
+        .split(/[\s,{}[\]:=.?]+/)
+        .filter((x) => x !== ""),
+    );
+    const held = [...body.matchAll(new RegExp(NAME_START + "([a-z_$][\\w$]*)\\s*\\??\\.\\s*([\\w$]+)(?!\\s*\\()", "g"))].find(
+      (x) => !own.has(x[1]) && !CLOSURE_FREE.has(x[1]),
+    );
+    if (held !== undefined) at("замыкание", m.index, held[1] + "." + held[2]);
+  });
+  // Ссылка — флаг первого прохода (`M1`): заведена булевой, обратное значение
+  // ей пишут один раз, и повторный монтаж её не повторит. Промах свода пробы
+  // `2026-11-19`, посадка в соседе.
+  each(/\bconst\s+([\w$]+)\s*=\s*useRef\s*(?:<\s*boolean\s*>\s*)?\(\s*(true|false)\s*\)/g, bare, (m) => {
+    const flip = m[2] === "true" ? "false" : "true";
+    if (new RegExp(NAME_START + escapeRe(m[1]) + "\\s*\\.\\s*current\\s*=\\s*" + flip + "\\b").test(bare))
+      at("проход", m.index, m[1]);
+  });
+  // Отмена, которую читают (`E9`): смотрят ли её на каждом шаге и уходит ли
+  // сигнал дальше. Промах свода пробы `2026-11-19`: отмену смотрели один раз
+  // до начала.
+  each(/\b[\w$]+\s*\??\.\s*(?:aborted\b|throwIfAborted\s*\()|:\s*AbortSignal\b/g, bare, (m) =>
+    at("отмена", m.index, m[0].replace(/^:\s*/, "").replace(/\s+/g, "")),
+  );
+  // Режим строкой в сигнатуре (`A4`, `H8-бис`): параметр из объединения
+  // строк делит функцию на ветки — либо на два понятия под одним именем.
+  // Промах свода пробы `2026-11-19`.
+  each(
+    /[(,]\s*([\w$]+)\s*\??\s*:\s*(["'][^"'\n]*["'](?:\s*\|\s*["'][^"'\n]*["'])+)\s*(?=[,)=])/g,
+    plain,
+    (m) => at("режим", m.index + m[0].indexOf(m[1]), m[1] + ": " + m[2].replace(/\s+/g, " ")),
   );
   // Число, у которого в этом файле уже есть имя: второе место для одного
   // значения, и разойдутся они при первой правке одного из двух.
@@ -4473,6 +4611,17 @@ const testSignalsOf = (text, own) => {
     at("тест", m.index, m[0].replace(/^\.\s*/, "").replace(/\s*\($/, ""), "различие");
   for (const m of bare.matchAll(/\.\s*toMatch(?:Inline)?Snapshot\s*\(/g))
     at("тест", m.index, "snapshot", "снимок");
+  // Помощник проверки: тест судит своим предикатом, и вывод теста стоит на
+  // нём (`J4`). Промах свода пробы `2026-11-19`: предикат сравнивал каждый
+  // элемент только с первым.
+  for (const m of bare.matchAll(
+    /(?<![\w$.])(?:const\s+([\w$]+)\s*=\s*\([^()]*\)\s*(:\s*boolean\s*)?=>|function\s+([\w$]+)\s*\([^()]*\)\s*(:\s*boolean))/g,
+  )) {
+    const name = m[1] ?? m[3];
+    if (m[2] === undefined && m[4] === undefined && !/^(?:is|has)[A-Z]/.test(name)) continue;
+    if (new RegExp("\\b(?:expect|assert)\\w*\\s*\\([^;]*" + NAME_START + escapeRe(name) + "\\s*\\(").test(bare))
+      at("тест", m.index + m[0].indexOf(name), name, "помощник");
+  }
   // Ожидаемое, взятое из проверяемого кода — его функцией либо константой,
   // — сдвигается вместе с кодом: тест сверяет код с ним самим. Имена
   // проекта — то, что тест берёт импортом из файлов проекта, не из тестов.
@@ -5667,7 +5816,7 @@ export const PREDICATE_CASES = [
   ["barHoldOf", "G3|лозунг", "лозунг"],
   ["barHoldOf", "B4|", "вопрос модели: кортеж"],
   ["barHoldOf", "D1|", "сверка: «Строгость компилятора там, где проверяются типы»"],
-  ["barHoldOf", "J4|", "вниманием: метод проверки и пример для него — работа, а не текст кода"],
+  ["barHoldOf", "J8|", "вниманием: сложность оснастки против сложности кода — суждение; размер её не мерит"],
   ["barHoldOf", "Z9|", ""],
   ["barHoldOf", "H7|", "вопрос модели: число · линт: @typescript-eslint/no-magic-numbers"],
   ["barGripOf", "D1|", "сверка"],
@@ -5719,7 +5868,7 @@ export const PREDICATE_CASES = [
   // Две записанные и общая о точечном исключении линта; о тестовом файле
   // формы нет — линт тесты читает.
   ["barFormsOf", "E2", "форм: 3"],
-  ["barFormsOf", "J4", ""],
+  ["barFormsOf", "J8", ""],
   ["barFormsOf", "Z9", ""],
   // --- commentlessOf, escapeRe, joinsTwo: общие помощники разбора ---
   ["commentlessOf", "a // b", "a     "],
@@ -5918,6 +6067,34 @@ export const PREDICATE_CASES = [
   // Пустота в типе значения контейнера (`K4`): промах свода пробы `2026-11-18`.
   ["signalsSummary", "src/a.ts\nexport const titles = new Map<string, string | undefined>();\nexport type Seen = Record<string, number | null>;\nexport type Held = WeakMap<object, Date | undefined>;", "1:пустота;2:пустота;3:пустота"],
   ["signalsSummary", "src/a.ts\nexport const titles = new Map<string, string>();\nexport type Pick = (x: string | undefined) => void;", ""],
+  // Формы, которых держатели не видели: промахи свода пробы `2026-11-19`.
+  // Тип ответа со стрелкой либо литералом объекта не обрывает разбор тела.
+  ["signalsSummary", "src/a.ts\nexport const w = (snapshot: P): (() => string) => {\n  const f = () => String(snapshot.savedAt);\n  return f;\n};", "1:целое"],
+  ["signalsSummary", "src/a.ts\nexport function w(snapshot: P): { at: number } {\n  return { at: snapshot.savedAt };\n}", "1:целое"],
+  // Долгоживущий обработчик берёт поле захваченного объекта (`F3`).
+  ["signalsSummary", "src/a.ts\nexport const watch = (snapshot: S) => {\n  const onShown = () => {\n    document.title = String(snapshot.savedAt);\n  };\n  document.addEventListener(\"visibilitychange\", onShown);\n};", "1:целое;5:замыкание"],
+  ["signalsSummary", "src/a.ts\nexport const watch = (savedAt: number) => {\n  const onShown = (event: Event) => {\n    document.title = String(savedAt) + event.type;\n  };\n  document.addEventListener(\"visibilitychange\", onShown);\n};", ""],
+  ["signalsSummary", "src/a.ts\nexport const tick = (clock: C) => {\n  const step = () => clock.now;\n  setInterval(step, 10);\n};", "1:целое;3:замыкание"],
+  // Ссылка — флаг первого прохода (`M1`).
+  ["signalsSummary", "src/a.ts\nexport const useOnce = (show: () => void) => {\n  const seenRef = useRef(false);\n  useEffect(() => {\n    if (seenRef.current) return;\n    seenRef.current = true;\n    show();\n  }, [show]);\n};", "2:проход"],
+  ["signalsSummary", "src/a.ts\nexport const useLive = () => {\n  const liveRef = useRef(false);\n  useEffect(() => {\n    liveRef.current = false;\n  }, []);\n};", "3:однократно"],
+  // Отмена, которую читают (`E9`).
+  ["signalsSummary", "src/a.ts\nexport const each = async (urls: string[], signal: AbortSignal) => {\n  if (signal.aborted) return;\n  signal.throwIfAborted();\n};", "1:отмена;2:отмена;3:отмена"],
+  ["signalsSummary", "src/a.ts\nexport const stop = (controller: AbortController) => controller.abort();", ""],
+  // Параметр-режим строкой (`A4`, `H8-бис`).
+  ["signalsSummary", "src/a.ts\nexport const label = (ms: number, purpose: \"note\" | 'backup') => purpose;", "1:режим"],
+  ["signalsSummary", "src/a.ts\nexport const label = (ms: number, purpose: \"note\") => purpose;\nexport const pick = (kind: Kind) => kind;", ""],
+  // Помощник проверки в тесте (`J4`).
+  ["signalsSummary", "src/tests/a.test.ts\nconst isAscending = (xs: number[]) => xs.every((x, i) => i === 0 || x >= (xs[0] ?? x));\nit(\"sorts\", () => {\n  expect(isAscending(order([2, 1]))).toBe(true);\n});", "1:тест/помощник"],
+  // Основы слов имени (`H6`): промах свода пробы `2026-11-19`.
+  ["nameStemsSummary", "exceptRemoved", "except;remov"],
+  ["nameStemsSummary", "removeNotes", "remov"],
+  ["nameStemsSummary", "renderingHTMLDocuments", "render;document"],
+  ["nameStemsSummary", "id_note", ""],
+  ["signalsSummary", "src/tests/a.test.ts\nconst hasNote = (xs: number[]) => xs.length > 0;\nconst inOrder = (xs: number[]): boolean => xs.length > 1;\nfunction sameSize(a: number[], b: number[]): boolean {\n  return a.length === b.length;\n}\nit(\"orders\", () => {\n  expect(hasNote([1]) && inOrder([1, 2]) && sameSize([1], [2])).toBe(true);\n});", "1:тест/помощник;2:тест/помощник;3:тест/помощник"],
+  ["signalsSummary", "src/a.ts\nexport const useFirst = () => {\n  const freshRef = useRef(true);\n  useEffect(() => {\n    freshRef.current = false;\n  }, []);\n};", "3:однократно;2:проход"],
+  ["signalsSummary", "src/a.ts\nexport const follow = (store: S, bus: B, snapshot: N) => {\n  const onChange = () => snapshot.id;\n  const onPing = () => {\n    const now = new Date();\n    document.title = String(now.valueOf);\n  };\n  const onPong = () => snapshot.title;\n  store.subscribe(onChange);\n  bus.on(\"ping\", onPing);\n  bus.on(\"pong\", onPong);\n};", "4:время;8:замыкание;10:замыкание"],
+  ["signalsSummary", "src/tests/a.test.ts\nconst noteOf = (id: string) => ({ id });\nit(\"keeps\", () => {\n  expect(keep(noteOf(\"a\"))).toEqual({ id: \"a\" });\n});", ""],
   // --- оформление: счёт рядом с оформлением строки ответа (`A1-тер`) ---
   ["signalsSummary", "src/a.ts\nexport const label = (xs) => {\n  const words = xs.reduce((s, x) => s + x.length, 0);\n  return `${String(words)} words`;\n};", "1:оформление"],
   ["signalsSummary", "src/a.ts\nexport const label = (xs) => \"Total: \" + xs.reduceRight((s, x) => s + x, 0);", "1:оформление"],
