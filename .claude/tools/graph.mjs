@@ -223,6 +223,9 @@ import {
   protocolShellFault,
   rulesFreshnessOf,
   codeReadOf,
+  sessionsIn,
+  sessionRecordOf,
+  withSessionRecord,
   codeNamedIn,
   lastAnswerOf,
   rulesFreshnessText,
@@ -670,6 +673,15 @@ const codeReadAt = (root) => {
     return null;
   }
 };
+/** Записи сессий из состояния хука; нет файла либо он не по форме — пустой
+ * список, а порчу называет сверка «Файл, написанный обвязкой, читается». */
+const readSessions = (at, isRecord, form) =>
+  sessionsIn(
+    readOwn(at, { sessions: [] }, (one) =>
+      sessionsIn(one, isRecord) !== null ? "" : "состояние не по форме " + form + " на сессию: " + recordText(one),
+    ),
+    isRecord,
+  ) ?? [];
 /** Шаг стража на `Read`: прочитанный файл кода проекта ложится в состояние
  * сессии, его спрашивают ворота конца хода. */
 const codeReadStep = (said) => {
@@ -687,13 +699,11 @@ const codeReadStep = (said) => {
   } else if (!commit) return;
   const at = codeReadAt(root);
   if (at === null) return;
-  const state = commit
-    ? null
-    : readOwn(at, null, (one) =>
-        isCodeReadState(one) ? "" : "состояние не по форме { session, files }: " + recordText(one),
-      );
+  const sessions = readSessions(at, isCodeReadState, "{ session, files }");
+  // Коммит снимает прочитанное своей сессии: прочитанное чужой к нему не относится.
+  const record = commit ? null : codeReadOf(sessionRecordOf(sessions, session), { session, file });
   try {
-    writeFileSync(at, JSON.stringify(codeReadOf(state, { session, file })) + "\n");
+    writeFileSync(at, JSON.stringify(withSessionRecord(sessions, session, record)) + "\n");
   } catch {
     // Не легло — ворота конца хода этого чтения не увидят.
   }
@@ -727,10 +737,9 @@ const rulesFreshnessStep = (said) => {
       return "";
     }
   }
-  // Нет состояния либо оно не по форме — снимок с этого вызова.
-  const state = readOwn(at, null, (one) =>
-    isRulesState(one) ? "" : "состояние не по форме { session, seen, own }: " + recordText(one),
-  );
+  // Нет записи этой сессии либо состояние не по форме — снимок с этого вызова.
+  const sessions = readSessions(at, isRulesState, "{ session, seen, own }");
+  const state = sessionRecordOf(sessions, session);
   const fileAt = said?.tool_input?.file_path ?? said?.tool_input?.notebook_path;
   const file =
     typeof fileAt === "string"
@@ -742,7 +751,7 @@ const rulesFreshnessStep = (said) => {
     file,
   });
   try {
-    writeFileSync(at, JSON.stringify(step.state) + "\n");
+    writeFileSync(at, JSON.stringify(withSessionRecord(sessions, session, step.state)) + "\n");
   } catch {
     // Состояние не легло — следующий вызов сделает снимок заново.
   }
@@ -8995,15 +9004,14 @@ if (mode === "stop") {
   // работа, и проверяется так же»). Прочитанное пишет страж на `Read`; свод
   // чтения, начатый этой работой, судит `readFault`. Решено разработчиком
   // `2026-11-16`: работник шага 4.5 прогона приёмки утверждал о коде без свода.
+  // Хук судит прочитанное своей сессии; ручной вызов сессии не знает и берёт
+  // свежую запись.
+  const readSessionsNow =
+    gitDir === null ? [] : readSessions(path.join(gitDir, "claude-harness-read.json"), isCodeReadState, "{ session, files }");
   const codeRead =
-    gitDir === null
-      ? null
-      : readOwn(path.join(gitDir, "claude-harness-read.json"), null, (one) =>
-          isCodeReadState(one) ? "" : "состояние не по форме { session, files }: " + recordText(one),
-        );
+    flag === "--hook" ? sessionRecordOf(readSessionsNow, String(event.session_id ?? "")) : (readSessionsNow[0] ?? null);
   const readNamed = (() => {
     if (flag !== "--hook" || want.length > 0 || readFault !== "" || codeRead === null) return [];
-    if (codeRead.session !== String(event.session_id ?? "")) return [];
     if (protoAt !== null && body !== null) {
       let dirty = "";
       try {

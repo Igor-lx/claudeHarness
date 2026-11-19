@@ -121,6 +121,36 @@ export const codeReadOf = (state, call) => {
   return { session: call.session, files };
 };
 
+/** Сколько сессий проекта держит состояние хука. Сессии одного проекта идут
+ * и одновременно, и подряд — `/clear` заводит новую, — а файл состояния у
+ * проекта один: запись одной сессии, затёртая другой, снимала с первой ворота
+ * конца хода и напоминание о правилах без признака. Старшая сверх предела
+ * выпадает: файл не растёт без края. Прогон холодной оси `2026-11-19`. */
+export const SESSIONS_KEPT = 8;
+
+/** Записи сессий из состояния хука: `{ sessions: [запись, …] }`, свежая
+ * первой; прежняя форма — одна запись — читается списком из неё. Не по
+ * форме — `null`. */
+export const sessionsIn = (state, isRecord) => {
+  if (isRecord(state)) return [state];
+  if (state !== null && typeof state === "object" && Array.isArray(state.sessions) && state.sessions.every(isRecord))
+    return state.sessions;
+  return null;
+};
+
+/** Запись своей сессии либо `null`. */
+export const sessionRecordOf = (sessions, session) =>
+  sessions.find((one) => one.session === session) ?? null;
+
+/** Состояние хука с записью сессии на месте прежней её записи: свежая первой,
+ * чужие сессии нетронуты; `record === null` снимает запись сессии `session`. */
+export const withSessionRecord = (sessions, session, record) => ({
+  sessions: [...(record === null ? [] : [record]), ...sessions.filter((one) => one.session !== session)].slice(
+    0,
+    SESSIONS_KEPT,
+  ),
+});
+
 /** Прочитанные файлы, которые текст ответа называет — путём от корня либо
  * именем с расширением как отдельным словом. */
 export const codeNamedIn = (files, text) =>

@@ -9,6 +9,10 @@ import {
   codeReadOf,
   codeNamedIn,
   lastAnswerOf,
+  SESSIONS_KEPT,
+  sessionsIn,
+  sessionRecordOf,
+  withSessionRecord,
 } from "./graph.guard.mjs";
 
 /** Протокол, в котором модель занимает строки 6–10 (заголовок — строка 6). */
@@ -190,6 +194,35 @@ describe("правила, изменённые после начала сесс�
     expect(text).toContain("правила изменились после начала сессии");
     expect(text).toContain("`.claude/rules/loop.md` (изменён), `CLAUDE.md` (новый)");
     expect(text).toContain("перечитать инструментом Read");
+  });
+});
+
+describe("состояние хука держит запись на каждую сессию проекта", () => {
+  const isRecord = (one) => one !== null && typeof one === "object" && typeof one.session === "string";
+  it("запись одной сессии не затирает другую; снятие и предел трогают только своё и старшее", () => {
+    const a = { session: "a", files: ["src/a.ts"] };
+    const b = { session: "b", files: ["src/b.ts"] };
+    const both = withSessionRecord(withSessionRecord([], "a", a).sessions, "b", b).sessions;
+    expect(sessionRecordOf(both, "a")).toEqual(a);
+    expect(sessionRecordOf(both, "b")).toEqual(b);
+    expect(sessionRecordOf(both, "c")).toBe(null);
+    // Своя запись встаёт на место прежней, свежей первой.
+    const again = withSessionRecord(both, "a", { session: "a", files: [] }).sessions;
+    expect(again.map((one) => one.session)).toEqual(["a", "b"]);
+    expect(withSessionRecord(again, "a", null).sessions).toEqual([b]);
+    // Сверх предела выпадает старшая, а не свежая.
+    let many = [];
+    for (let k = 0; k <= SESSIONS_KEPT; k += 1) many = withSessionRecord(many, "s" + k, { session: "s" + k, files: [] }).sessions;
+    expect(many).toHaveLength(SESSIONS_KEPT);
+    expect(sessionRecordOf(many, "s0")).toBe(null);
+    expect(sessionRecordOf(many, "s" + SESSIONS_KEPT)).not.toBe(null);
+  });
+  it("прежняя форма — одна запись — читается списком; иное не по форме", () => {
+    expect(sessionsIn({ session: "a", files: [] }, isRecord)).toEqual([{ session: "a", files: [] }]);
+    expect(sessionsIn({ sessions: [{ session: "a" }] }, isRecord)).toEqual([{ session: "a" }]);
+    expect(sessionsIn({ sessions: [{ session: 1 }] }, isRecord)).toBe(null);
+    expect(sessionsIn({ sessions: 5 }, isRecord)).toBe(null);
+    expect(sessionsIn(null, isRecord)).toBe(null);
   });
 });
 

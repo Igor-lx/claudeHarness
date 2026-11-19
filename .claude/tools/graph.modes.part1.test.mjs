@@ -185,6 +185,13 @@ describe("ворота конца хода", () => {
       // Ответ, не назвавший прочитанного, хода не держит; другая сессия — тоже.
       expect(stop("s1", "Готово.").status).toBe(0);
       expect(stop("s2", "`App.tsx` рисует заголовок.").status).toBe(0);
+      // Вторая сессия в том же проекте читает и коммитит своё — прочитанное
+      // первой держит её ход по-прежнему; запись о правилах тоже у каждой своя.
+      read("s2", "src/app/main.tsx");
+      event(["guard", "--hook"], { session_id: "s2", tool_name: "Bash", tool_input: { command: "git commit -m y" } });
+      expect(stop("s1", "`App.tsx` рисует заголовок.").status).toBe(2);
+      const rules = JSON.parse(fs.readFileSync(path.join(box, ".git", "claude-harness-rules.json"), "utf8"));
+      expect(rules.sessions.map((one) => one.session).sort()).toEqual(["s1", "s2"]);
       // Ответ берётся из журнала, когда событие его не несёт.
       const journal = path.join(box, "journal.jsonl");
       fs.writeFileSync(
@@ -378,8 +385,10 @@ describe("ворота конца хода", () => {
       expect(isStopState(JSON.parse(fs.readFileSync(stopAt, "utf8")))).toBe(true);
       const guard = run("guard", "--hook");
       expect(guard.status, guard.stderr).toBe(0);
-      expect(guard.stderr).toContain("состояние не по форме { session, seen, own }");
-      expect(isRulesState(JSON.parse(fs.readFileSync(rulesAt, "utf8")))).toBe(true);
+      expect(guard.stderr).toContain("состояние не по форме { session, seen, own } на сессию");
+      const healed = JSON.parse(fs.readFileSync(rulesAt, "utf8")).sessions;
+      expect(healed.map((one) => one.session)).toEqual(["s1"]);
+      expect(healed.every(isRulesState)).toBe(true);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
