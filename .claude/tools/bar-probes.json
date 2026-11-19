@@ -4167,6 +4167,670 @@
       "culprits": [
         "shared/queue/tests/saveQueue.test.ts"
       ]
+    },
+    {
+      "criterion": "K4",
+      "why": "метки до загрузки и метки, пришедшие пустым списком, отданы одним пустым массивом: потребитель не отличит «ещё не пришло» от «пусто»",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let loadedTags = [];\nexport const loadTags = async () => {\n  const response = await fetch(\"/tags\");\n  loadedTags = await response.json();\n};\nexport const knownTags = () => loadedTags;",
+          "ts": "let loadedTags: readonly string[] = [];\n\nexport const loadTags = async (): Promise<void> => {\n  const response = await fetch(\"/tags\");\n  loadedTags = (await response.json()) as string[];\n};\n\nexport const knownTags = (): readonly string[] => loadedTags;"
+        }
+      ]
+    },
+    {
+      "criterion": "C4",
+      "why": "функция закрепляет заметку, дописывая её в начало массива, пришедшего входом: мутирует не владелец, и вызывающий узнаёт об этом по своему изменившемуся списку",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const withPinnedFirst = (ids, pinned) => {\n  if (!ids.includes(pinned)) ids.unshift(pinned);\n  return ids;\n};",
+          "ts": "export const withPinnedFirst = (ids: string[], pinned: string): string[] => {\n  if (!ids.includes(pinned)) ids.unshift(pinned);\n  return ids;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A1-тер",
+      "why": "функция и считает долю прочитанного, и записывает её в хранилище браузера: счёт не проверить без записи",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const PERCENT = 100;\nexport const recordReadShare = (read, total) => {\n  const share = Math.round((read / total) * PERCENT);\n  localStorage.setItem(\"readShare\", String(share));\n  return share;\n};",
+          "ts": "const PERCENT = 100;\n\nexport const recordReadShare = (read: number, total: number): number => {\n  const share = Math.round((read / total) * PERCENT);\n  localStorage.setItem(\"readShare\", String(share));\n  return share;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A1",
+      "why": "одна небольшая функция и отбирает свежие отметки, и считает устаревшие: два вопроса в одном узле, имя держит союз",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const STALE_AFTER_MS = 2_592_000_000;\nexport const pruneAndCountStale = (stamps, now) => {\n  const fresh = stamps.filter((stamp) => now - stamp < STALE_AFTER_MS);\n  return { fresh, staleCount: stamps.length - fresh.length };\n};",
+          "ts": "const STALE_AFTER_MS = 2_592_000_000;\n\nexport const pruneAndCountStale = (\n  stamps: readonly number[],\n  now: number,\n): { fresh: number[]; staleCount: number } => {\n  const fresh = stamps.filter((stamp) => now - stamp < STALE_AFTER_MS);\n  return { fresh, staleCount: stamps.length - fresh.length };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B13",
+      "why": "богатый отрисовщик требует заранее экранированный текст, которого контракт не требует: потребитель экранирует только для него, сравнивая метку",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const renderPreview = (renderer, text) =>\n  renderer.kind === \"rich\"\n    ? renderer.render(text.replaceAll(\"<\", \"&lt;\"))\n    : renderer.render(text);",
+          "ts": "type NoteRenderer = {\n  readonly kind: \"plain\" | \"rich\";\n  readonly render: (text: string) => string;\n};\n\nexport const renderPreview = (renderer: NoteRenderer, text: string): string =>\n  renderer.kind === \"rich\"\n    ? renderer.render(text.replaceAll(\"<\", \"&lt;\"))\n    : renderer.render(text);"
+        }
+      ]
+    },
+    {
+      "criterion": "C1",
+      "why": "состояние сохранения — статус, ошибка и время рядом: «сохраняется» с ошибкой прошлой попытки и «сохранено» без времени выразимы",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const savingFrom = (previous) => ({\n  ...previous,\n  status: \"saving\",\n});",
+          "ts": "export type SaveState = {\n  readonly status: \"idle\" | \"saving\" | \"saved\" | \"failed\";\n  readonly error: string | null;\n  readonly savedAt: number | null;\n};\n\nexport const savingFrom = (previous: SaveState): SaveState => ({\n  ...previous,\n  status: \"saving\",\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "C8-тер",
+      "why": "переходы фазы выгрузки решают три функции, каждая со своей проверкой: завершить можно и из покоя, и вопрос «возможен ли такой переход» не собран нигде",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let uploadPhase = \"idle\";\nexport const startUpload = () => {\n  if (uploadPhase !== \"sending\") uploadPhase = \"sending\";\n};\nexport const finishUpload = (outcome) => {\n  uploadPhase = outcome;\n};\nexport const resetUpload = () => {\n  if (uploadPhase === \"done\") uploadPhase = \"idle\";\n};\nexport const currentUploadPhase = () => uploadPhase;",
+          "ts": "type UploadPhase = \"idle\" | \"sending\" | \"done\" | \"failed\";\n\nlet uploadPhase: UploadPhase = \"idle\";\n\nexport const startUpload = (): void => {\n  if (uploadPhase !== \"sending\") uploadPhase = \"sending\";\n};\n\nexport const finishUpload = (outcome: \"done\" | \"failed\"): void => {\n  uploadPhase = outcome;\n};\n\nexport const resetUpload = (): void => {\n  if (uploadPhase === \"done\") uploadPhase = \"idle\";\n};\n\nexport const currentUploadPhase = (): UploadPhase => uploadPhase;"
+        }
+      ]
+    },
+    {
+      "criterion": "E3",
+      "why": "масштаб из адреса страницы молча зажимается в допустимые пределы: неверный вход вызывающего исправлен без уведомления",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const MAX_ZOOM = 4;\nexport const zoomFromAddress = () => {\n  const asked = Number(new URLSearchParams(window.location.search).get(\"zoom\"));\n  return Math.min(Math.max(asked, 1), MAX_ZOOM);\n};",
+          "ts": "const MAX_ZOOM = 4;\n\nexport const zoomFromAddress = (): number => {\n  const asked = Number(new URLSearchParams(window.location.search).get(\"zoom\"));\n  return Math.min(Math.max(asked, 1), MAX_ZOOM);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B11",
+      "why": "потребитель настроек синхронизации переопределяет число повторов своей копией: настройка разнесена по потребителю, и правка общей его не тронет",
+      "into": [
+        {
+          "role": "настройки",
+          "file": "модуль",
+          "text": "export const syncSettings = Object.freeze({ intervalMs: 30_000, retries: 3 });",
+          "ts": "export const syncSettings = Object.freeze({ intervalMs: 30_000, retries: 3 });"
+        },
+        {
+          "role": "потребитель",
+          "file": "модуль",
+          "text": "import { syncSettings } from \"{{from:настройки}}\";\nconst localSync = { ...syncSettings, retries: 5 };\nexport const syncRetryLimit = () => localSync.retries;",
+          "ts": "import { syncSettings } from \"{{from:настройки}}\";\n\nconst localSync = { ...syncSettings, retries: 5 };\n\nexport const syncRetryLimit = (): number => localSync.retries;"
+        }
+      ],
+      "culprits": [
+        "потребитель"
+      ]
+    },
+    {
+      "criterion": "A6",
+      "why": "число закреплённых хранится счётчиком рядом со списком, а не считается: открепление забывает его уменьшить, и два места расходятся",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const pinnedIds = [];\nlet pinnedCount = 0;\nexport const pinNoteId = (id) => {\n  pinnedIds.push(id);\n  pinnedCount += 1;\n};\nexport const unpinNoteId = (id) => {\n  const at = pinnedIds.indexOf(id);\n  if (at >= 0) pinnedIds.splice(at, 1);\n};\nexport const pinnedTotal = () => pinnedCount;",
+          "ts": "const pinnedIds: string[] = [];\nlet pinnedCount = 0;\n\nexport const pinNoteId = (id: string): void => {\n  pinnedIds.push(id);\n  pinnedCount += 1;\n};\n\nexport const unpinNoteId = (id: string): void => {\n  const at = pinnedIds.indexOf(id);\n  if (at >= 0) pinnedIds.splice(at, 1);\n};\n\nexport const pinnedTotal = (): number => pinnedCount;"
+        }
+      ]
+    },
+    {
+      "criterion": "I1",
+      "why": "новый формат выгрузки требует правки трёх файлов: союз форматов и два разбора по вариантам — расширение и тип содержимого — живут порознь",
+      "into": [
+        {
+          "role": "вид",
+          "file": "модуль",
+          "text": "export {};",
+          "ts": "export type ExportFormat = \"csv\" | \"markdown\";"
+        },
+        {
+          "role": "расширение",
+          "file": "модуль",
+          "text": "export const exportExtension = (format) => {\n  switch (format) {\n    case \"csv\":\n      return \".csv\";\n    case \"markdown\":\n      return \".md\";\n  }\n};",
+          "ts": "import type { ExportFormat } from \"{{from:вид}}\";\n\nexport const exportExtension = (format: ExportFormat): string => {\n  switch (format) {\n    case \"csv\":\n      return \".csv\";\n    case \"markdown\":\n      return \".md\";\n  }\n};"
+        },
+        {
+          "role": "тип",
+          "file": "модуль",
+          "text": "export const exportMimeType = (format) => {\n  switch (format) {\n    case \"csv\":\n      return \"text/csv\";\n    case \"markdown\":\n      return \"text/markdown\";\n  }\n};",
+          "ts": "import type { ExportFormat } from \"{{from:вид}}\";\n\nexport const exportMimeType = (format: ExportFormat): string => {\n  switch (format) {\n    case \"csv\":\n      return \"text/csv\";\n    case \"markdown\":\n      return \"text/markdown\";\n  }\n};"
+        }
+      ],
+      "culprits": [
+        "расширение",
+        "тип"
+      ]
+    },
+    {
+      "criterion": "H8",
+      "why": "потребитель длинной цепочки удалён: помощник сборки шагов остался ради одного шага, который зовут через него",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const pipeTitle =\n  (...steps) =>\n  (title) =>\n    steps.reduce((current, step) => step(current), title);",
+          "ts": "export const pipeTitle =\n  (...steps: readonly ((title: string) => string)[]) =>\n  (title: string): string =>\n    steps.reduce((current, step) => step(current), title);"
+        },
+        {
+          "role": "живой",
+          "file": "модуль",
+          "text": "import { pipeTitle } from \"{{from:владелец}}\";\nexport const trimmedTitle = pipeTitle((title) => title.trim());",
+          "ts": "import { pipeTitle } from \"{{from:владелец}}\";\n\nexport const trimmedTitle = pipeTitle((title) => title.trim());"
+        }
+      ],
+      "create": {
+        "path": "app/shoutTitle.ts",
+        "text": "import { pipeTitle } from \"{{from:владелец}}\";\n\nexport const shoutTitle = pipeTitle(\n  (title) => title.trim(),\n  (title) => title.toUpperCase(),\n  (title) => title + \"!\",\n);\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "A3",
+      "why": "единственный потребитель другого числа знаков удалён: два оставшихся передают одно и то же, и вход стал постоянным",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const fixedAmount = (value, digits) => value.toFixed(digits);",
+          "ts": "export const fixedAmount = (value: number, digits: number): string =>\n  value.toFixed(digits);"
+        },
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "import { fixedAmount } from \"{{from:владелец}}\";\nexport const priceLabel = (price) => fixedAmount(price, 2);",
+          "ts": "import { fixedAmount } from \"{{from:владелец}}\";\n\nexport const priceLabel = (price: number): string => fixedAmount(price, 2);"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "import { fixedAmount } from \"{{from:владелец}}\";\nexport const taxLabel = (tax) => fixedAmount(tax, 2);",
+          "ts": "import { fixedAmount } from \"{{from:владелец}}\";\n\nexport const taxLabel = (tax: number): string => fixedAmount(tax, 2);"
+        }
+      ],
+      "create": {
+        "path": "app/roundedTotal.ts",
+        "text": "import { fixedAmount } from \"{{from:владелец}}\";\n\nexport const roundedTotal = (total: number): string => fixedAmount(total, 0);\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "B12",
+      "why": "сосед правленого: функция с именем запроса отдаёт отложенную цель и тут же стирает её из хранилища — второй вызов отвечает иначе",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const PENDING_SHARE_KEY = \"pendingShare\";\nexport const pendingShareTarget = () => {\n  const target = localStorage.getItem(PENDING_SHARE_KEY);\n  localStorage.removeItem(PENDING_SHARE_KEY);\n  return target;\n};",
+          "ts": "const PENDING_SHARE_KEY = \"pendingShare\";\n\nexport const pendingShareTarget = (): string | null => {\n  const target = localStorage.getItem(PENDING_SHARE_KEY);\n  localStorage.removeItem(PENDING_SHARE_KEY);\n  return target;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G1",
+      "why": "сосед правленого отбирает все просроченные сроки, чтобы взять первый: проход и новый массив там, где хватило бы поиска до первого",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const firstOverdue = (dues, now) => dues.filter((due) => due < now)[0];",
+          "ts": "export const firstOverdue = (\n  dues: readonly number[],\n  now: number,\n): number | undefined => dues.filter((due) => due < now)[0];"
+        }
+      ]
+    },
+    {
+      "criterion": "E6",
+      "why": "сосед правленого отвечает одним undefined и когда названия нет, и когда сеть отказала: ожидаемый и неожиданный отказ не различены",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const remoteTitle = async (id) => {\n  try {\n    const response = await fetch(\"/notes/\" + id + \"/title\");\n    return response.ok ? await response.text() : undefined;\n  } catch {\n    return undefined;\n  }\n};",
+          "ts": "export const remoteTitle = async (id: string): Promise<string | undefined> => {\n  try {\n    const response = await fetch(\"/notes/\" + id + \"/title\");\n    return response.ok ? await response.text() : undefined;\n  } catch {\n    return undefined;\n  }\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "F3",
+      "why": "сосед правленого: обработчик видимости живёт до снятия и держит весь снимок с текстом заметки, хотя ему нужно одно время сохранения",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const watchSavedStamp = (snapshot) => {\n  const onVisible = () => {\n    if (document.visibilityState === \"visible\")\n      document.title = String(snapshot.savedAt);\n  };\n  document.addEventListener(\"visibilitychange\", onVisible);\n  return () => {\n    document.removeEventListener(\"visibilitychange\", onVisible);\n  };\n};",
+          "ts": "export const watchSavedStamp = (snapshot: {\n  readonly body: string;\n  readonly savedAt: number;\n}): (() => void) => {\n  const onVisible = (): void => {\n    if (document.visibilityState === \"visible\")\n      document.title = String(snapshot.savedAt);\n  };\n  document.addEventListener(\"visibilitychange\", onVisible);\n  return () => {\n    document.removeEventListener(\"visibilitychange\", onVisible);\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "M1",
+      "why": "сосед правленого показывает приветствие под ссылкой-флагом первого прохода: работает в расчёте на один монтаж, повторный монтаж его не повторит",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useRef } from \"react\";\nexport const useWelcomeOnce = (show) => {\n  const shownRef = useRef(false);\n  useEffect(() => {\n    if (shownRef.current) return;\n    shownRef.current = true;\n    show();\n  }, [show]);\n};",
+          "ts": "import { useEffect, useRef } from \"react\";\n\nexport const useWelcomeOnce = (show: () => void): void => {\n  const shownRef = useRef(false);\n  useEffect(() => {\n    if (shownRef.current) return;\n    shownRef.current = true;\n    show();\n  }, [show]);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "I2",
+      "why": "потребитель различает переполнение по тексту отказа через String(error): замена текста внутри узла сохранения ломает потребителя, а узел переименован переносом",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/backup/saveBackup.ts",
+          "text": "export const saveBackup = (key: string, text: string): void => {\n  try {\n    localStorage.setItem(key, text);\n  } catch (error) {\n    throw new Error(\"quota exceeded for \" + key, { cause: error });\n  }\n};\n"
+        },
+        {
+          "path": "app/backupNow.ts",
+          "text": "import { saveBackup } from \"../shared/backup/saveBackup\";\n\nexport const backupNow = (text: string): \"saved\" | \"full\" => {\n  try {\n    saveBackup(\"backup\", text);\n    return \"saved\";\n  } catch (error) {\n    if (String(error).includes(\"quota\")) return \"full\";\n    throw error;\n  }\n};\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/backup/saveBackup.ts",
+          "to": "shared/backup/backupStore.ts"
+        }
+      ],
+      "culprits": [
+        "app/backupNow.ts",
+        "shared/backup/saveBackup.ts"
+      ]
+    },
+    {
+      "criterion": "H6-бис",
+      "why": "перенесённая проверка пустоты черновика возвращает булево, а названа существительным: по имени не понять, что это вопрос",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/text/draftEmptiness.ts",
+          "text": "export const draftEmptiness = (draft: string): boolean => draft.trim() === \"\";\n"
+        },
+        {
+          "path": "app/submitState.ts",
+          "text": "import { draftEmptiness } from \"../shared/text/draftEmptiness\";\n\nexport const submitLabelKey = (draft: string): string =>\n  draftEmptiness(draft) ? \"draft.empty\" : \"draft.ready\";\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/text/draftEmptiness.ts",
+          "to": "shared/text/emptiness.ts"
+        }
+      ],
+      "culprits": [
+        "shared/text/draftEmptiness.ts"
+      ]
+    },
+    {
+      "criterion": "B10",
+      "why": "перенесённое сравнение снимков принимает любой тип, а для функций, Map и Set JSON.stringify даёт одно и то же: разные значения выходят равными, и ошибка всплывёт внутри, а не на месте вызова",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/text/sameSnapshot.ts",
+          "text": "export const sameSnapshot = <T>(left: T, right: T): boolean =>\n  JSON.stringify(left) === JSON.stringify(right);\n"
+        },
+        {
+          "path": "app/draftChanged.ts",
+          "text": "import { sameSnapshot } from \"../shared/text/sameSnapshot\";\n\ntype DraftShape = { readonly title: string; readonly body: string };\n\nexport const draftChanged = (before: DraftShape, after: DraftShape): boolean =>\n  !sameSnapshot(before, after);\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/text/sameSnapshot.ts",
+          "to": "shared/text/compare.ts"
+        }
+      ],
+      "culprits": [
+        "shared/text/sameSnapshot.ts"
+      ]
+    },
+    {
+      "criterion": "C3",
+      "why": "перенесённый измеритель копит ширины заголовков в словаре замыкания, и никто из него не удаляет: кэш без правила вытеснения",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/text/titleMeasurer.ts",
+          "text": "const AVERAGE_CHAR_WIDTH = 7;\n\nexport const createTitleMeasurer = (): ((title: string) => number) => {\n  const widths = new Map<string, number>();\n  return (title) => {\n    const known = widths.get(title);\n    if (known !== undefined) return known;\n    const width = title.length * AVERAGE_CHAR_WIDTH;\n    widths.set(title, width);\n    return width;\n  };\n};\n"
+        },
+        {
+          "path": "app/measureTitle.ts",
+          "text": "import { createTitleMeasurer } from \"../shared/text/titleMeasurer\";\n\nexport const measureTitle = createTitleMeasurer();\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/text/titleMeasurer.ts",
+          "to": "shared/text/measure.ts"
+        }
+      ],
+      "culprits": [
+        "shared/text/titleMeasurer.ts"
+      ]
+    },
+    {
+      "criterion": "E12",
+      "why": "архивация — отметка в хранилище браузера, затем запрос серверу, шаги в двух функциях: отказ сервера оставляет заметку отмеченной архивной без отката",
+      "create": {
+        "path": "shared/sync/archiveLocally.ts",
+        "text": "const ARCHIVE_KEY = \"archivedIds\";\n\nconst markArchived = (id: string): void => {\n  const ids = JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? \"[]\") as string[];\n  localStorage.setItem(ARCHIVE_KEY, JSON.stringify([...ids, id]));\n};\n\nconst sendArchive = async (id: string): Promise<void> => {\n  const response = await fetch(\"/notes/\" + id + \"/archive\", { method: \"POST\" });\n  if (!response.ok)\n    throw new Error(\"archive failed: \" + String(response.status));\n};\n\nexport const archiveEverywhere = async (id: string): Promise<void> => {\n  markArchived(id);\n  await sendArchive(id);\n};\n"
+      }
+    },
+    {
+      "criterion": "L4",
+      "why": "ожидание ведущей вкладки по каналу вкладок без предела: нет ответа — обещание висит вечно, и правила, сколько ждать, нет",
+      "create": {
+        "path": "shared/sync/waitForLeader.ts",
+        "text": "export const waitForLeader = (channel: BroadcastChannel): Promise<string> =>\n  new Promise((resolve) => {\n    channel.addEventListener(\n      \"message\",\n      (event: MessageEvent<string>) => {\n        resolve(event.data);\n      },\n      { once: true },\n    );\n  });\n"
+      }
+    },
+    {
+      "criterion": "Q7",
+      "why": "право переименовать заметку проверено прямым сравнением ролей рядом с местом прав, а не через него: правка правила редактирования это место не тронет",
+      "create": [
+        {
+          "path": "shared/access/noteAccess.ts",
+          "text": "export type NoteRole = \"owner\" | \"editor\" | \"viewer\";\n\nexport const canEditNote = (role: NoteRole): boolean => role !== \"viewer\";\n"
+        },
+        {
+          "path": "app/renameGuard.ts",
+          "text": "import type { NoteRole } from \"../shared/access/noteAccess\";\n\nexport const mayRenameNote = (role: NoteRole): boolean =>\n  role === \"owner\" || role === \"editor\";\n"
+        }
+      ],
+      "culprits": [
+        "app/renameGuard.ts"
+      ]
+    },
+    {
+      "criterion": "S7",
+      "why": "переполнение хранилища при записи закреплённых перехвачено, записано в журнал и брошено дальше тем же исключением: ответа на исчерпание нет",
+      "create": {
+        "path": "shared/storage/pinStore.ts",
+        "text": "const PINS_KEY = \"pins\";\n\nexport const savePins = (ids: readonly string[]): void => {\n  try {\n    localStorage.setItem(PINS_KEY, JSON.stringify(ids));\n  } catch (error) {\n    console.error(error);\n    throw error;\n  }\n};\n"
+      }
+    },
+    {
+      "criterion": "C16",
+      "why": "масштаб шрифта лежит и в свойстве стиля документа, и в хранилище браузера, а читается из обоих по очереди: какая копия авторитетна, не названо",
+      "create": {
+        "path": "shared/display/fontScale.ts",
+        "text": "const SCALE_KEY = \"fontScale\";\n\nexport const applyFontScale = (scale: number): void => {\n  document.documentElement.style.setProperty(\"--font-scale\", String(scale));\n  localStorage.setItem(SCALE_KEY, String(scale));\n};\n\nexport const currentFontScale = (): number =>\n  Number(\n    document.documentElement.style.getPropertyValue(\"--font-scale\") ||\n      localStorage.getItem(SCALE_KEY) ||\n      1,\n  );\n"
+      }
+    },
+    {
+      "criterion": "C14",
+      "why": "масштаб редактора и масштаб просмотра подписаны друг на друга: каждая ячейка пишет в другую, и откуда пришло значение, не ответить",
+      "create": {
+        "path": "shared/sync/zoomCells.ts",
+        "text": "type Listener = (value: number) => void;\n\nconst createCell = (initial: number) => {\n  let value = initial;\n  const listeners = new Set<Listener>();\n  return {\n    get: (): number => value,\n    set: (next: number): void => {\n      if (next === value) return;\n      value = next;\n      listeners.forEach((listener) => {\n        listener(next);\n      });\n    },\n    subscribe: (listener: Listener): void => {\n      listeners.add(listener);\n    },\n  };\n};\n\nexport const editorZoom = createCell(1);\nexport const previewZoom = createCell(1);\n\neditorZoom.subscribe((value) => {\n  previewZoom.set(value);\n});\npreviewZoom.subscribe((value) => {\n  editorZoom.set(value);\n});\n"
+      }
+    },
+    {
+      "criterion": "H6",
+      "why": "«архив» в одном узле — заметки, скрытые из списка, в другом — выгрузка заметок файлом: одно слово, два понятия",
+      "create": [
+        {
+          "path": "shared/notes/archivedOut.ts",
+          "text": "import type { Note } from \"./notes\";\n\nexport const withoutArchived = (\n  notes: readonly Note[],\n  archived: ReadonlySet<string>,\n): Note[] => notes.filter((note) => !archived.has(note.id));\n"
+        },
+        {
+          "path": "app/archiveFile.ts",
+          "text": "import type { Note } from \"../shared/notes/notes\";\n\nexport const archiveNotes = (notes: readonly Note[]): Blob =>\n  new Blob([JSON.stringify(notes)], { type: \"application/json\" });\n"
+        }
+      ],
+      "culprits": [
+        "app/archiveFile.ts",
+        "shared/notes/archivedOut.ts"
+      ]
+    },
+    {
+      "criterion": "K3",
+      "why": "предметное правило популярных меток берёт тип ответа сервера с его именами полей: схема сервера протекла в домен общим типом",
+      "create": [
+        {
+          "path": "shared/api/tagDto.ts",
+          "text": "export type TagDto = { readonly tag_name: string; readonly use_count: number };\n"
+        },
+        {
+          "path": "shared/notes/popularTags.ts",
+          "text": "import type { TagDto } from \"../api/tagDto\";\n\nconst POPULAR_FROM = 3;\n\nexport const popularTags = (tags: readonly TagDto[]): string[] =>\n  tags\n    .filter((tag) => tag.use_count >= POPULAR_FROM)\n    .map((tag) => tag.tag_name);\n"
+        }
+      ],
+      "culprits": [
+        "shared/notes/popularTags.ts"
+      ]
+    },
+    {
+      "criterion": "A7",
+      "why": "правило «заметку можно опубликовать» живёт в обработчике нажатия компонента: без слоя представления его не проверить",
+      "create": {
+        "path": "app/ShareButton.tsx",
+        "text": "import type { ReactNode } from \"react\";\n\nconst MIN_SHARE_LENGTH = 40;\n\ntype Props = {\n  readonly title: string;\n  readonly body: string;\n  readonly onShare: () => void;\n  readonly children: ReactNode;\n};\n\nexport function ShareButton({ title, body, onShare, children }: Props) {\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        if (title.trim() !== \"\" && body.length >= MIN_SHARE_LENGTH) onShare();\n      }}\n    >\n      {children}\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "J4",
+      "why": "помощник теста сравнивает каждую отметку только с первой, и порядок 3, 1, 2 он тоже признаёт верным; на известном неверном примере он не сверен, а тест стоит на нём",
+      "create": {
+        "path": "shared/notes/tests/latestFirst.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { newestFirst } from \"../notes\";\n\nconst isLatestFirst = (stamps: readonly number[]): boolean =>\n  stamps.every((stamp, at) => at === 0 || stamp <= (stamps[0] ?? stamp));\n\ndescribe(\"newestFirst order\", () => {\n  it(\"puts the latest note first\", () => {\n    const notes = [1, 3, 2].map((createdAt) => ({\n      id: String(createdAt),\n      title: \"\",\n      body: \"\",\n      createdAt,\n    }));\n    expect(\n      isLatestFirst(newestFirst(notes).map((note) => note.createdAt)),\n    ).toBe(true);\n  });\n});\n"
+      },
+      "culprits": [
+        "shared/notes/tests/latestFirst.test.ts"
+      ]
+    },
+    {
+      "criterion": "H8-бис",
+      "why": "одна функция подписи времени служит и дате заметки для человека, и имени файла копии: два понятия, сведённые по сходству формы, режимом «чтобы подошло»",
+      "create": {
+        "path": "shared/notes/stampText.ts",
+        "text": "export const stampText = (ms: number, purpose: \"note\" | \"backup\"): string =>\n  purpose === \"note\"\n    ? new Date(ms).toLocaleDateString()\n    : new Date(ms).toISOString().replaceAll(\":\", \"-\");\n"
+      }
+    },
+    {
+      "criterion": "P4-бис",
+      "why": "кнопка выгрузки во время выгрузки только получает класс: для вспомогательной технологии она обычная, хотя соседняя кнопка выключается атрибутом",
+      "create": {
+        "path": "app/DraftActions.tsx",
+        "text": "type Props = {\n  readonly canSave: boolean;\n  readonly exporting: boolean;\n  readonly onSave: () => void;\n  readonly onExport: () => void;\n  readonly saveLabel: string;\n  readonly exportLabel: string;\n};\n\nexport function DraftActions({\n  canSave,\n  exporting,\n  onSave,\n  onExport,\n  saveLabel,\n  exportLabel,\n}: Props) {\n  return (\n    <div>\n      <button type=\"button\" disabled={!canSave} onClick={onSave}>\n        {saveLabel}\n      </button>\n      <button\n        type=\"button\"\n        className={exporting ? \"is-busy\" : undefined}\n        onClick={onExport}\n      >\n        {exportLabel}\n      </button>\n    </div>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "A10",
+      "why": "карточка раздроблена на две обёртки, у которых нет своего смысла: каждая только кладёт детей в блок",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "const CardStart = ({ children }) => <div>{children}</div>;\nconst CardEnd = ({ children }) => <div>{children}</div>;\nexport const SummaryCard = ({ heading, detail }) => (\n  <section>\n    <CardStart>\n      <h3>{heading}</h3>\n    </CardStart>\n    <CardEnd>\n      <p>{detail}</p>\n    </CardEnd>\n  </section>\n);",
+          "ts": "import type { ReactNode } from \"react\";\n\nconst CardStart = ({ children }: { readonly children: ReactNode }) => (\n  <div>{children}</div>\n);\n\nconst CardEnd = ({ children }: { readonly children: ReactNode }) => (\n  <div>{children}</div>\n);\n\nexport const SummaryCard = ({\n  heading,\n  detail,\n}: {\n  readonly heading: string;\n  readonly detail: string;\n}) => (\n  <section>\n    <CardStart>\n      <h3>{heading}</h3>\n    </CardStart>\n    <CardEnd>\n      <p>{detail}</p>\n    </CardEnd>\n  </section>\n);"
+        }
+      ]
+    },
+    {
+      "criterion": "C5",
+      "why": "объявление сохранённого заголовка верно, только пока микрозадача записи успевает раньше таймера чтения: их связывает переменная модуля",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let lastSavedTitle = \"\";\nexport const saveTitleSoon = (title) => {\n  queueMicrotask(() => {\n    lastSavedTitle = title;\n  });\n};\nexport const announceSavedTitle = (announce) => {\n  setTimeout(() => {\n    announce(lastSavedTitle);\n  }, 0);\n};",
+          "ts": "let lastSavedTitle = \"\";\n\nexport const saveTitleSoon = (title: string): void => {\n  queueMicrotask(() => {\n    lastSavedTitle = title;\n  });\n};\n\nexport const announceSavedTitle = (announce: (title: string) => void): void => {\n  setTimeout(() => {\n    announce(lastSavedTitle);\n  }, 0);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A6-бис",
+      "why": "время чтения считается в двух файлах под разными именами — свёрткой и циклом: правка правила в одном не тронет другой",
+      "into": [
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "const WORDS_PER_MINUTE = 200;\nexport const readingMinutes = (wordCounts) =>\n  wordCounts.reduce(\n    (total, words) => total + Math.ceil(words / WORDS_PER_MINUTE),\n    0,\n  );",
+          "ts": "const WORDS_PER_MINUTE = 200;\n\nexport const readingMinutes = (wordCounts: readonly number[]): number =>\n  wordCounts.reduce(\n    (total, words) => total + Math.ceil(words / WORDS_PER_MINUTE),\n    0,\n  );"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "const WORDS_A_MINUTE = 200;\nexport const minutesToRead = (counts) => {\n  let minutes = 0;\n  for (const count of counts) minutes += Math.ceil(count / WORDS_A_MINUTE);\n  return minutes;\n};",
+          "ts": "const WORDS_A_MINUTE = 200;\n\nexport const minutesToRead = (counts: readonly number[]): number => {\n  let minutes = 0;\n  for (const count of counts) minutes += Math.ceil(count / WORDS_A_MINUTE);\n  return minutes;\n};"
+        }
+      ],
+      "culprits": [
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "A9-тер",
+      "why": "правило «заголовок слишком длинный» записано в двух узлах: сравнением длины и регулярным выражением с тем же пределом",
+      "into": [
+        {
+          "role": "проверка",
+          "file": "модуль",
+          "text": "const MAX_TITLE_LENGTH = 80;\nexport const titleTooLong = (title) => title.length > MAX_TITLE_LENGTH;",
+          "ts": "const MAX_TITLE_LENGTH = 80;\n\nexport const titleTooLong = (title: string): boolean =>\n  title.length > MAX_TITLE_LENGTH;"
+        },
+        {
+          "role": "подсказка",
+          "file": "модуль",
+          "text": "export const titleHint = (title) => (/^.{0,80}$/su.test(title) ? \"ok\" : \"long\");",
+          "ts": "export const titleHint = (title: string): \"ok\" | \"long\" =>\n  /^.{0,80}$/su.test(title) ? \"ok\" : \"long\";"
+        }
+      ],
+      "culprits": [
+        "проверка",
+        "подсказка"
+      ]
+    },
+    {
+      "criterion": "E9",
+      "why": "отмена выгрузки смотрится один раз до начала: отменённая на лету выгрузка продолжает слать оставшиеся запросы",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const uploadEach = async (urls, signal) => {\n  if (signal.aborted) return 0;\n  let sent = 0;\n  for (const url of urls) {\n    await fetch(url, { method: \"PUT\" });\n    sent += 1;\n  }\n  return sent;\n};",
+          "ts": "export const uploadEach = async (\n  urls: readonly string[],\n  signal: AbortSignal,\n): Promise<number> => {\n  if (signal.aborted) return 0;\n  let sent = 0;\n  for (const url of urls) {\n    await fetch(url, { method: \"PUT\" });\n    sent += 1;\n  }\n  return sent;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G5",
+      "why": "обход читает ширину подписи и тут же пишет её текст: каждое чтение после записи заново считает раскладку",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const NARROW_WIDTH = 120;\nconst SHORT_LENGTH = 12;\nexport const fitLabels = (labels, text) => {\n  for (const label of labels) {\n    label.textContent =\n      label.offsetWidth < NARROW_WIDTH ? text.slice(0, SHORT_LENGTH) : text;\n  }\n};",
+          "ts": "const NARROW_WIDTH = 120;\nconst SHORT_LENGTH = 12;\n\nexport const fitLabels = (\n  labels: readonly HTMLElement[],\n  text: string,\n): void => {\n  for (const label of labels) {\n    label.textContent =\n      label.offsetWidth < NARROW_WIDTH ? text.slice(0, SHORT_LENGTH) : text;\n  }\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "H1",
+      "why": "склейка меток обёрнута в перехват на всякий случай: join массива строк не бросает, строке нечем объясниться",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const tagLine = (tags) => {\n  try {\n    return tags.join(\" · \");\n  } catch {\n    return \"\";\n  }\n};",
+          "ts": "export const tagLine = (tags: readonly string[]): string => {\n  try {\n    return tags.join(\" · \");\n  } catch {\n    return \"\";\n  }\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "T1",
+      "why": "подсказка и подпись поля поиска вписаны строками в разметку, мимо словаря переводов",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "export const SearchBox = ({ value, onChange }) => (\n  <input\n    type=\"search\"\n    placeholder=\"Search notes\"\n    aria-label=\"Search notes\"\n    value={value}\n    onChange={(event) => {\n      onChange(event.target.value);\n    }}\n  />\n);",
+          "ts": "export const SearchBox = ({\n  value,\n  onChange,\n}: {\n  readonly value: string;\n  readonly onChange: (next: string) => void;\n}) => (\n  <input\n    type=\"search\"\n    placeholder=\"Search notes\"\n    aria-label=\"Search notes\"\n    value={value}\n    onChange={(event) => {\n      onChange(event.target.value);\n    }}\n  />\n);"
+        }
+      ]
+    },
+    {
+      "criterion": "B1",
+      "why": "булев вход прокручивания передан дальше как есть, и на месте вызова revealNote(last, false) не говорит ничего",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const revealNote = (element, alignTop) => {\n  element.scrollIntoView(alignTop);\n};\nexport const revealLastNote = (list) => {\n  const last = list.lastElementChild;\n  if (last instanceof HTMLElement) revealNote(last, false);\n};",
+          "ts": "export const revealNote = (element: HTMLElement, alignTop: boolean): void => {\n  element.scrollIntoView(alignTop);\n};\n\nexport const revealLastNote = (list: HTMLElement): void => {\n  const last = list.lastElementChild;\n  if (last instanceof HTMLElement) revealNote(last, false);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K5",
+      "why": "поле текста в записи черновика переименовано без нового номера схемы: черновик, сохранённый прежней версией с тем же номером, молча не читается",
+      "patch": [
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "  title: z.string(),\n  body: z.string(),\n});",
+          "replace": "  title: z.string(),\n  content: z.string(),\n});"
+        },
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "    return { title: latest.data.title, body: latest.data.body };",
+          "replace": "    return { title: latest.data.title, body: latest.data.content };"
+        },
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "    localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 2, ...draft }));",
+          "replace": "    localStorage.setItem(\n      DRAFT_KEY,\n      JSON.stringify({ version: 2, title: draft.title, content: draft.body }),\n    );"
+        }
+      ]
+    },
+    {
+      "criterion": "J9-тер",
+      "why": "нормализация запроса теперь снимает диакритику, а заголовки в поиске сравниваются с ней: запрос «café» больше ничего не находит, и тест потребителя этого не проверяет",
+      "patch": [
+        {
+          "path": "src/shared/notes/normalizeQuery.ts",
+          "find": "  query.trim().toLowerCase();",
+          "replace": "  query\n    .trim()\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/\\p{Diacritic}/gu, \"\");"
+        }
+      ]
     }
   ],
   "covers": [
