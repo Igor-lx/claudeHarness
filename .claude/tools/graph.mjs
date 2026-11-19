@@ -14224,13 +14224,40 @@ const mapResponsibilityOf = (f) => {
       (line.match(/`[^`]+`/g) ?? []).length === 1 &&
       namesFileIn(line, f)
     )
-      for (let j = i + 1; j < lines.length; j += 1) {
-        const t = lines[j].trim();
-        if (t.startsWith("#")) break;
-        if (t !== "") return t;
+      {
+        const body = [];
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const t = lines[j].trim();
+          if (t.startsWith("#")) break;
+          if (t === "") continue;
+          if (!whole) return t;
+          body.push(t);
+        }
+        if (body.length > 0) return body.join(" ");
       }
   }
   return null;
+};
+
+/** Записи карты, которые описывают прежний код: имя, которое правка сняла с
+ * поверхности файла, запись называет в обратных кавычках — именем либо
+ * вызовом. Ключ — путь от корня базы, как в таблице «база и документация». */
+const barMapStaleOf = (area) => {
+  const out = new Map();
+  for (const f of area) {
+    if (!existsSync(f) || isTest(f) || !files.includes(f)) continue;
+    const h = headTextOf(f);
+    if (h === null) continue;
+    const now = exportsOf.get(f) ?? new Set();
+    const gone = [...surfaceOfText(codeOf(h), f)].filter((n) => !now.has(n));
+    if (gone.length === 0) continue;
+    const said = mapResponsibilityOf(f, { whole: true });
+    if (said === null) continue;
+    const named = new Set(quotedIn(said).map((q) => q.replace(/\(.*$/, "").trim()));
+    const stale = gone.filter((n) => named.has(n)).sort();
+    if (stale.length > 0) out.set(rel(f), stale);
+  }
+  return out;
 };
 
 /** Записи о состоянии: строки таблицы файла базы, чей предмет — состояние.
@@ -17223,6 +17250,8 @@ const barSkeletonOf = ({
         " — с адресом «путь:строка», словами и судьбой.",
       "Нарушений критерия несколько, а строка одна — адрес у первого, прочие",
       "в конце колонки «что»: «ещё мест: `путь:строка`, `путь:строка`».",
+      "Находка, назвавшая номером строку модели, о которой спрашивает её",
+      "критерий, называет и файл этой строки — адресом либо в «ещё мест:».",
       "Найденное по одному критерию — находка в каждом, чьё тело его называет:",
       "«чисто» со ссылкой на находку другого критерия режим не принимает.",
       ...(transition
@@ -17352,7 +17381,8 @@ const barSkeletonOf = ({
               " о базе не принимается у файла, о котором база заведомо молчит",
             "либо неверна: у файла без своей записи в карте; у файла, чью запись",
             "опровергает сверка «Запись карты не спорит с кодом»; у файла, на",
-            "который съехал якорь по сверке «Якоря». Такую запись правят — строку",
+            "который съехал якорь по сверке «Якоря»; у файла, чья запись карты",
+            "называет имя, которое правка сняла с файла. Такую запись правят — строку",
             "карты, отрицание, номер якоря режимом " +
               barQuoted("repoint") +
               ", — и ответ " +
@@ -18353,6 +18383,7 @@ const barAcceptOf = ({
   checkRow = null,
   mapDisputed = new Set(),
   anchorBroken = new Set(),
+  mapStale = new Map(),
   partsOf = null,
   ground = null,
 }) => {
@@ -18405,6 +18436,7 @@ const barAcceptOf = ({
     checkRow,
     mapDisputed,
     anchorBroken,
+    mapStale,
   });
   found.holes.push(...(parts?.holes ?? []));
   return {
@@ -18579,6 +18611,7 @@ const barProcess = ({
       checkRow,
       mapDisputed,
       anchorBroken,
+      mapStale,
       partsOf,
       ground,
     });
@@ -19588,6 +19621,10 @@ const barInputsOf = async ({
         (line) => [...sourceNamedIn(line)].map(rel),
       ),
     ),
+    // Запись карты, называющая имя, которое правка сняла с файла, описывает
+    // прежний код: «не требуется» при ней ложно без суждения. Замечание
+    // сессии перепроверки свода проб `2026-11-19`.
+    mapStale: kind === "на изменение" ? barMapStaleOf(area) : new Map(),
     // Съехавший якорь базы на файл тоже не освобождает его базу: прежде его
     // видела одна сверка, и свод принимал «не требуется». Найдено пробой.
     anchorBroken: new Set(
@@ -20362,6 +20399,20 @@ if (mode === "bar") {
         if ([...sourceNamedIn(line)].some((f) => mapArea.has(rel(f))))
           console.log("    " + line.trim());
     }
+    // Запись карты, называющая снятое правкой имя, правится тем же порядком:
+    // протокол её «не требуется» не примет.
+    const mapStaleAhead =
+      kind === "на изменение"
+        ? barMapStaleOf(files.filter((f) => mapArea.has(rel(f))))
+        : new Map();
+    if (mapStaleAhead.size > 0)
+      console.log(
+        "  Сначала база: запись карты называет имена, которые правка сняла, — " +
+          [...mapStaleAhead]
+            .map(([f, names]) => barQuoted(f) + " (" + names.map(barQuoted).join(", ") + ")")
+            .join(", ") +
+          ". Поправить строки карты до ответов: правка карты меняет модель и снимает ответы, стоящие на ней.",
+      );
     // Запись, которой нет, протокол тоже потребует, и её появление меняет
     // модель так же: свод пробы `2026-11-02` дописал карту после ответов и
     // ответил заново `108` исходов.

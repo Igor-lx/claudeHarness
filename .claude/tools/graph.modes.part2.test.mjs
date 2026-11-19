@@ -3366,6 +3366,78 @@ describe("запись карты не спорит с кодом", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 240000);
+
+  // Правка сняла имя, которое называет запись карты: запись описывает прежний
+  // код, и «не требуется» ложно без суждения. Имя, которое запись не
+  // называет, освобождения не отнимает (замечание свода проб `2026-11-19`).
+  it("«не требуется» у файла, чья запись карты называет снятое правкой имя, не принимается", () => {
+    const box = seatEmpty("base-stale-");
+    try {
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=u", "-c", "user.email=u@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      const bar = () => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar"], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const code = path.join(box, "src", "app", "zzWays.ts");
+      const other = path.join(box, "src", "app", "zzOther.ts");
+      fs.writeFileSync(code, "export const zzLoud = 1;\nexport const zzQuiet = 2;\n");
+      fs.writeFileSync(other, "export const zzFirst = 1;\nexport const zzSecond = 2;\n");
+      const map = path.join(box, ".context", "00-map.md");
+      const head = "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      fs.writeFileSync(
+        map,
+        fs
+          .readFileSync(map, "utf8")
+          .replace(
+            head,
+            head +
+              "\n| `src/app/zzWays.ts` | способы: `zzLoud` и `zzQuiet` | нет | нет |" +
+              "\n| `src/app/zzOther.ts` | первое: `zzFirst` | нет | нет |",
+          ),
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      fs.writeFileSync(code, "export const zzQuiet = 2;\n");
+      fs.writeFileSync(other, "export const zzFirst = 1;\n");
+      const first = bar();
+      expect(first).toContain(
+        "Сначала база: запись карты называет имена, которые правка сняла, — `app/zzWays.ts` (`zzLoud`).",
+      );
+      expect(first).not.toMatch(/правка сняла, —[^\n]*zzOther/);
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const proto = fs.readFileSync(protoAt, "utf8");
+      expect(proto).toContain("называет имя, которое правка сняла с файла");
+      const rowOf = (name) => new RegExp("^\\| `app/" + name + "\\.ts` \\| {2}\\| {2}\\| {2}\\|$", "m");
+      expect(proto).toMatch(rowOf("zzWays"));
+      expect(proto).toMatch(rowOf("zzOther"));
+      fs.writeFileSync(
+        protoAt,
+        proto
+          .replace(rowOf("zzWays"), "| `app/zzWays.ts` | не требуется | не требуется | запись верна |")
+          .replace(rowOf("zzOther"), "| `app/zzOther.ts` | не требуется | не требуется | запись верна |"),
+      );
+      const second = bar();
+      expect(second).toMatch(
+        /app\/zzWays\.ts, база: .не требуется., а запись карты называет имена, которые правка сняла с файла: .zzLoud. — строка карты правится/,
+      );
+      expect(second).not.toMatch(/app\/zzOther\.ts, база: .не требуется., а запись карты/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
 });
 
 /**
