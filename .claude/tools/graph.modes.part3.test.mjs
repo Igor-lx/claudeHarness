@@ -3113,6 +3113,65 @@ describe("экономия свода по журналу пробы 2026-10-13"
     }
   }, 300000);
 
+  it("«одна из» — не перечень: строки уровня сверх показанных названы числом и в протоколе, и в ключах", () => {
+    const box = seatEmpty("oneofmore-");
+    try {
+      const tool = toolIn(box);
+      // Восемь узлов слоя с записями карты — каталог слоя нового файла в
+      // восемь строк уровня приложения: больше, чем показывает подсказка.
+      const names = ["a", "b", "c", "d", "e", "f", "g", "h"].map((k) => "zzUnit" + k.toUpperCase());
+      for (const name of names)
+        fs.writeFileSync(
+          path.join(box, "src", "app", name + ".ts"),
+          "export const " + name + " = (): string => \"" + name + "\";\n",
+        );
+      const mapAt = path.join(box, ".context", "00-map.md");
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(
+            "| `src/app/App.tsx` | корневой компонент | нет | нет |",
+            "| `src/app/App.tsx` | корневой компонент | нет | нет |\n" +
+              names.map((n) => "| `src/app/" + n + ".ts` | имя узла " + n + " | нет | нет |").join("\n"),
+          ),
+      );
+      const git = (...args) =>
+        execFileSync("git", ["-c", "user.name=zz", "-c", "user.email=zz@local", "-c", "core.hooksPath=", ...args], {
+          cwd: box,
+          stdio: "ignore",
+        });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "units");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzKeys.ts"),
+        'export const zzSaveAll = (value: string): void => {\n  localStorage.setItem("zz-keys", value);\n};\n',
+      );
+      const printed = tool("bar");
+      const keys = fs.readFileSync(
+        /ключи к заполнению — файлом, открыть Read: (.+)$/m.exec(printed)[1],
+        "utf8",
+      );
+      const line = /^- исходы без предмета \(где не сказано иначе — строка уровня, одна из: (.+?)\): /m.exec(
+        keys,
+      );
+      expect(line, keys).not.toBeNull();
+      const more = / и ещё ([0-9]+) строк уровня$/.exec(line[1]);
+      expect(more, line[1]).not.toBeNull();
+      const proto = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+      const c6 = proto.split("\n").find((l) => l.startsWith("| C6 | — |"));
+      expect(c6).toContain("и ещё " + more[1]);
+      // Названо столько, сколько строк уровня в модели: показанные и число.
+      const shown = /одна из: ((?:П[0-9]+, )*П[0-9]+) и ещё/.exec(c6)[1].split(", ");
+      const rows = proto.split("\n").filter((l) => /^\| П[0-9]+ \| каталог \| `app\/zzUnit/.test(l));
+      expect(rows.length).toBe(names.length);
+      expect(shown.length + Number(more[1])).toBeGreaterThan(names.length);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("строки «также» вписываются тем же файлом, что исходы; ответ о находке, которой нет, снимается и называется", () => {
     const box = seatEmpty("crossfill-");
     try {

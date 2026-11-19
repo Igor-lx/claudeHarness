@@ -83,6 +83,51 @@ const PARSERS = [
   ["компилятор", (src, file = "m.tsx") => parseModuleTs(src, ts, file)],
 ];
 
+describe.each(PARSERS)("разбор модуля (%s): из одних типов", (_, parse) => {
+  const typesOnly = (src) => parse(src, "m.ts").typesOnly;
+
+  it("псевдонимы, интерфейсы, импорт и переотдача типов — из одних типов", () => {
+    expect(
+      typesOnly(
+        [
+          "// shape of the server answer",
+          'import type { Tag } from "./tag";',
+          'import { type Note, type Id } from "./note";',
+          "export type TagDto = { readonly tag_name: string; readonly use_count: number };",
+          "export interface Page {",
+          "  readonly items: readonly Note[];",
+          "  readonly next: (at: Id) => Promise<Page>;",
+          "}",
+          "type Union =",
+          '  | "a"',
+          '  | "b"',
+          'export type { Tag } from "./tag";',
+          "export type { Union };",
+          "",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+  });
+
+  it("хоть одна строка кода — не из одних типов", () => {
+    for (const code of [
+      "export const LIMIT = 3;",
+      "export function f() {}",
+      "export enum Kind { A }",
+      'import { Note } from "./note";',
+      'import { type Note, read } from "./note";',
+      'export { read } from "./note";',
+      'import "./side";',
+    ])
+      expect(typesOnly("export type T = number;\n" + code + "\n")).toBe(false);
+  });
+
+  it("пустой модуль и модуль из одних комментариев — не из типов", () => {
+    expect(typesOnly("")).toBe(false);
+    expect(typesOnly("// nothing here\n")).toBe(false);
+  });
+});
+
 describe.each(PARSERS)("разбор модуля (%s): строки импорта", (_, parse) => {
   const one = (src) => parse(src).froms[0];
 

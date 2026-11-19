@@ -166,6 +166,81 @@ const bindingNamesOf = (pattern) =>
     return NAME.test(part) ? [part] : [];
   });
 
+/** Начало строки верхнего уровня, с которого идёт следующее объявление:
+ * объявление типа без точки с запятой кончается переводом строки перед ним. */
+const STATEMENT_START =
+  /^(?:export|import|type|interface|declare|const|let|var|function|class|enum|async|abstract|namespace|module)\b/;
+/** Объявление типа верхнего уровня с начала `text[at]`: псевдоним либо
+ * интерфейс, с `export` и `declare` впереди. */
+const TYPE_DECLARATION =
+  /^(?:export\s+)?(?:declare\s+)?(?:type\s+[A-Za-z_$][\w$]*|interface\s+[A-Za-z_$][\w$]*)/;
+/** Длина строки импорта либо переотдачи одних типов с начала `rest`, иначе
+ * ноль: `import type …`, `export type { … }` — с источником и без, — либо
+ * скобки, где каждое имя помечено `type`. */
+const typeTransferAt = (rest) => {
+  const whole = /^import\s+type\b[^;"']*?from\s*["'][^"']+["']\s*;?/.exec(rest);
+  if (whole !== null) return whole[0].length;
+  const braced =
+    /^(import|export)\s*(type\s*)?\{([^}]*)\}(\s*from\s*["'][^"']+["'])?\s*;?/.exec(
+      rest,
+    );
+  if (braced === null || (braced[1] === "import" && braced[4] === undefined))
+    return 0;
+  const parts = braced[3]
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p !== "");
+  return parts.length > 0 &&
+    (braced[2] !== undefined || parts.every((p) => /^type\s/.test(p)))
+    ? braced[0].length
+    : 0;
+};
+
+/** Модуль из одних объявлений типов: каждая строка верхнего уровня —
+ * псевдоним типа, интерфейс, импорт либо переотдача одних типов. Сборка
+ * стирает такой модуль целиком, и тесту в нём проверять нечего. Пустой
+ * модуль — не из типов. Разбор не уверен — не из типов: такой модуль
+ * считается кодом, как и прежде. */
+const typesOnlyOf = (src) => {
+  const text = commentlessOf(src);
+  let at = 0;
+  let seen = 0;
+  for (;;) {
+    while (at < text.length && /\s/.test(text[at])) at += 1;
+    if (at >= text.length) return seen > 0;
+    const rest = text.slice(at);
+    const transfer = typeTransferAt(rest);
+    if (transfer > 0) {
+      at += transfer;
+      seen += 1;
+      continue;
+    }
+    if (!TYPE_DECLARATION.test(rest)) return false;
+    // До конца объявления: точка с запятой вне скобок либо перевод строки
+    // вне скобок перед началом следующего объявления.
+    let depth = 0;
+    let i = at;
+    for (; i < text.length; i += 1) {
+      const ch = text[i];
+      if ("{[(<".includes(ch)) depth += 1;
+      else if ("}])>".includes(ch) && !(ch === ">" && text[i - 1] === "="))
+        depth -= 1;
+      else if (depth === 0 && ch === ";") {
+        i += 1;
+        break;
+      } else if (
+        depth === 0 &&
+        ch === "\n" &&
+        STATEMENT_START.test(text.slice(i + 1).trimStart())
+      )
+        break;
+      if (depth < 0) return false;
+    }
+    at = i;
+    seen += 1;
+  }
+};
+
 /** Разбор текста модуля регулярными выражениями.
  *
  * `froms` — строки `import`/`export … from` по порядку: ключевое слово,
@@ -179,7 +254,8 @@ const bindingNamesOf = (pattern) =>
  * источника: имя здесь и имя наружу; `surface` — всё, что модуль отдаёт по
  * имени; `constants` — константы, отданные с начала строки; `dynamic` —
  * импорты во время работы: адрес, `end` и вызов — `import` либо `require`;
- * `computed` — импорты во время работы с адресом, собранным выражением. */
+ * `computed` — импорты во время работы с адресом, собранным выражением;
+ * `typesOnly` — модуль из одних объявлений типов. */
 export const parseModuleRegex = (src) => {
   const froms = [];
   for (const m of src.matchAll(FROM)) {
@@ -236,6 +312,7 @@ export const parseModuleRegex = (src) => {
     constants,
     dynamic: dynamicOf(src),
     computed: computedOf(src),
+    typesOnly: typesOnlyOf(src),
   };
 };
 
@@ -396,6 +473,29 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
     ts.forEachChild(node, visit);
   };
   visit(source);
+  // Из одних типов: псевдоним, интерфейс, импорт и переотдача, где о типах
+  // вся строка либо каждое имя в скобках.
+  const typeOnlyNames = (elements) =>
+    elements.length > 0 && elements.every((e) => e.isTypeOnly);
+  const typesOnly =
+    source.statements.length > 0 &&
+    source.statements.every(
+      (st) =>
+        ts.isInterfaceDeclaration(st) ||
+        ts.isTypeAliasDeclaration(st) ||
+        (ts.isImportDeclaration(st) &&
+          st.importClause !== undefined &&
+          (st.importClause.isTypeOnly ||
+            (st.importClause.name === undefined &&
+              st.importClause.namedBindings !== undefined &&
+              ts.isNamedImports(st.importClause.namedBindings) &&
+              typeOnlyNames(st.importClause.namedBindings.elements)))) ||
+        (ts.isExportDeclaration(st) &&
+          (st.isTypeOnly ||
+            (st.exportClause !== undefined &&
+              ts.isNamedExports(st.exportClause) &&
+              typeOnlyNames(st.exportClause.elements)))),
+    );
   return {
     froms,
     bare,
@@ -407,6 +507,7 @@ export const parseModuleTs = (src, ts, file = "module.tsx") => {
     constants,
     dynamic,
     computed,
+    typesOnly,
   };
 };
 

@@ -3227,11 +3227,12 @@ const barKeysOf = (body) => {
   // вдвое (девятый прогон пробы `2026-10-16`).
   const ONE_OF = "одна из: ";
   const runOf = (group) => {
-    const ns = group.split(", ").map((t) => Number(t.slice(1)));
+    const [list, more] = group.split(" и ещё ");
+    const ns = list.split(", ").map((t) => Number(t.slice(1)));
     const steady = ns.every((n, k) => k === 0 || n === ns[k - 1] + 1);
-    return steady && ns.length > 2
-      ? "П" + ns[0] + "–П" + ns[ns.length - 1]
-      : group;
+    const head =
+      steady && ns.length > 2 ? "П" + ns[0] + "–П" + ns[ns.length - 1] : list;
+    return more === undefined ? head : head + " и ещё " + more + " строк уровня";
   };
   for (const [s, list] of bySubject) {
     const count = new Map();
@@ -5376,6 +5377,20 @@ for (const [f, deps] of usesOf)
     usedBy.get(d).add(f);
   }
 /** Бочка: файл, который отдаёт наружу чужое и сам ничего не объявляет. */
+/** Модуль из одних объявлений типов, `.d.ts` в том числе: сборка его стирает,
+ * и тесту проверять в нём нечего. О тестах такого файла режимы не тревожат:
+ * правила проекта освобождают его от тестов, а тревога «не гоняет ни один
+ * тест» на нём учит не читать её строку (свод `свод.3.3`, `2026-11-19`). */
+const typesOnlyMemo = new Map();
+const isTypesOnly = (f) => {
+  if (f.endsWith(".d.ts")) return true;
+  if (!typesOnlyMemo.has(f))
+    typesOnlyMemo.set(
+      f,
+      existsSync(f) && parseModule(readFileSync(f, "utf8"), f).typesOnly === true,
+    );
+  return typesOnlyMemo.get(f);
+};
 const isBarrel = (f) => {
   const re = reexportsOf.get(f);
   return (
@@ -8503,7 +8518,9 @@ if (mode === "plan") {
           ? "  " + runners.join(LF + "  ")
           : near.length > 0
             ? "  напрямую никто; гоняют через узлы, которыми пользуются, — ниже"
-            : transitive === 0
+            : !isStyle && isTypesOnly(target)
+              ? "  нет: файл из одних типов — тесту проверять в нём нечего"
+              : transitive === 0
               ? "  нет ни одного — правку проверять руками, и это пункт отчёта"
               : "  никто: дотягиваются только сквозь бочки, имён этого файла не берут",
       );
@@ -8682,7 +8699,7 @@ if (mode === "open") {
     console.log(`  ${f}${NEWLINE}      → ${docs.join(", ")}`);
   console.log(`  всего: ${unanchored.length}`);
 
-  const code = files.filter((f) => !isTest(f) && !f.endsWith(".d.ts"));
+  const code = files.filter((f) => !isTest(f) && !isTypesOnly(f));
   const cold = code.filter((f) => !reached.has(f));
   console.log("=== Файлы, до которых не дотягивается ни один тест ===");
   for (const f of cold) console.log("  " + rel(f));
@@ -9513,10 +9530,16 @@ if (mode === "tested") {
 
     const naked = [];
     const stale = [];
+    const typesOnly = [];
     let covered = 0;
     // Тот же разбор, что у `plan` и `brief`, — `runnersOf`: один вопрос,
-    // один ответ.
+    // один ответ. Файл из одних типов в вопрос о тестах не идёт, но остаётся
+    // тронутым кодом: его имена — поверхность.
     for (const f of touchedCode) {
+      if (isTypesOnly(f)) {
+        typesOnly.push(rel(f));
+        continue;
+      }
       const tests = runnersOf(f);
       if (tests.length === 0) {
         naked.push(rel(f));
@@ -9559,6 +9582,10 @@ if (mode === "tested") {
     console.log(
       `  тронуто файлов кода: ${touchedCode.length}, из них с тестами в этой же правке: ${covered}`,
     );
+    if (typesOnly.length > 0)
+      console.log(
+        "  из одних типов — тесту проверять нечего: " + typesOnly.join(", "),
+      );
     if (
       touchedCode.length === 0 &&
       deletedCode.length === 0 &&
@@ -9615,7 +9642,7 @@ if (mode === "tested") {
           "  закрывать нечем — причина называется вслух, а не умалчивается.",
       );
     }
-    if (touchedCode.length && !stale.length && !naked.length)
+    if (touchedCode.length > typesOnly.length && !stale.length && !naked.length)
       console.log("  каждый тронутый файл правился вместе со своими тестами");
 
     // Публичная поверхность пакета. Спрашивается ПОСЛЕ правки, потому что
@@ -15238,7 +15265,7 @@ const barModelOf = (
     // Чем файл проверен: тесты, называющие его, и мутационный замер. Нет
     // тестов — вопрос о закреплённых инвариантах; замер не мерен, устарел
     // либо оставил выживших — вопрос о том, умеют ли тесты падать.
-    if (want("тесты") && !f.endsWith(".d.ts") && !isBarrel(f)) {
+    if (want("тесты") && !isTypesOnly(f) && !isBarrel(f)) {
       const { direct, byName, near } = testsFor(f);
       const named = [...direct, ...byName];
       add(
@@ -17056,7 +17083,12 @@ const barSkeletonOf = ({
       const fresh = fault.includes("годятся")
         ? found.slice(0, 1)
         : found.filter((t) => !named.includes(t));
-      if (fault.includes("годятся")) oneOf.push(found.join(", "));
+      // Подсказка называет первые строки уровня и «и ещё N»: без хвоста
+      // перечень читался полным, и при сдвиге нумерации те же номера
+      // казались старыми (свод `свод.3.3`, `2026-11-19`).
+      const more = / и ещё ([0-9]+)/.exec(fault);
+      if (fault.includes("годятся"))
+        oneOf.push(found.join(", ") + (more === null ? "" : " и ещё " + more[1]));
       else named.push(...fresh);
       if (fresh.length === 0) break;
       what = [...named, ...oneOf.map((g) => g.split(", ")[0])].join(", ");
@@ -22092,7 +22124,9 @@ if (mode === "brief") {
           // имён, — не гоняет никто по-настоящему.
           if (direct.length + byName.length + near.length === 0)
             console.log(
-              transitive === 0
+              isTypesOnly(target)
+                ? "  тестов нет: файл из одних типов — тесту проверять в нём нечего"
+                : transitive === 0
                 ? "  Внимание: файл не гоняет ни один тест — правку проверять руками"
                 : "  Внимание: имён файла не берёт ни один тест — его достают только сквозь бочки",
             );

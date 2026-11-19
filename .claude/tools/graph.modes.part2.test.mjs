@@ -2936,6 +2936,59 @@ describe("реестр мутаций считает так же, как отч�
   }, 180000);
 });
 
+describe("файл из одних типов: тестам проверять нечего", () => {
+  it("tested, plan, brief и open не тревожат о его тестах, а о файле с кодом рядом — тревожат", () => {
+    const box = seatEmpty("tipy-");
+    try {
+      const api = path.join(box, "src", "shared", "zzApi");
+      fs.mkdirSync(api, { recursive: true });
+      fs.writeFileSync(
+        path.join(api, "zzDto.ts"),
+        "export type ZzDto = { readonly zz_name: string };\nexport interface ZzPage {\n  readonly items: readonly ZzDto[];\n}\n",
+      );
+      fs.writeFileSync(
+        path.join(api, "zzName.ts"),
+        'import type { ZzDto } from "./zzDto.js";\nexport const zzName = (dto: ZzDto): string => dto.zz_name;\n',
+      );
+      const run = (...args) =>
+        execFileSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tested = run("tested", "src/shared/zzApi/zzDto.ts", "src/shared/zzApi/zzName.ts");
+      expect(tested).toContain("тронуто файлов кода: 2");
+      expect(tested).toContain("из одних типов — тесту проверять нечего: shared/zzApi/zzDto.ts");
+      const naked =
+        (tested.split("ни один тест на это не смотрит")[1] ?? "").split(
+          "Новая ветка логики",
+        )[0];
+      expect(naked).toMatch(/^ {4}shared\/zzApi\/zzName\.ts$/m);
+      expect(naked).not.toContain("zzDto.ts");
+      expect(run("plan", "shared/zzApi/zzDto.ts")).toContain(
+        "нет: файл из одних типов — тесту проверять в нём нечего",
+      );
+      expect(run("plan", "shared/zzApi/zzName.ts")).toContain(
+        "нет ни одного — правку проверять руками",
+      );
+      expect(run("brief", "shared/zzApi/zzDto.ts")).toContain(
+        "тестов нет: файл из одних типов",
+      );
+      expect(run("brief", "shared/zzApi/zzName.ts")).toContain(
+        "Внимание: файл не гоняет ни один тест",
+      );
+      const cold =
+        run("open")
+          .split("=== Файлы, до которых не дотягивается ни один тест ===")[1]
+          ?.split("\n===")[0] ?? "";
+      expect(cold).toContain("shared/zzApi/zzName.ts");
+      expect(cold).not.toContain("zzDto.ts");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
+});
+
 describe("граф по именам: сквозь бочку до объявления", () => {
   it("радиус, зависимости и тесты считаются по взятым именам, а не по строке импорта", () => {
     const box = seatEmpty("imena-");
