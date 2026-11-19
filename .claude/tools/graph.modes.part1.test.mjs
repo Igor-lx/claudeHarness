@@ -1397,7 +1397,7 @@ describe("красная сверка-держатель режет печать
       );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       expect(run("bar").stdout).toContain(
-        "красна сверка-держатель о предмете строки: D1 («Строгость компилятора там, где проверяются типы»)",
+        "красна сверка-держатель о предмете строки: D1 («Строгость компилятора там, где проверяются типы»: tsconfig.json",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -1444,6 +1444,76 @@ describe("красная сверка-держатель режет печать
       expect(run("bar").stdout).toContain("печать поставлена");
       seriesStaged(box);
       expect(run("gate").status).toBe(0);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
+  it("отказ по сверке, чья строка счёта стоит раньше строк с файлами, называет файл предмета, а не счёт", () => {
+    const box = seatEmpty("derzh-c6-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=derzh",
+            "-c",
+            "user.email=derzh@local",
+            "-c",
+            "core.hooksPath=",
+            ...args,
+          ],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const run = (...args) =>
+        spawnSync(process.execPath, [graph, ...args], {
+          cwd: box,
+          encoding: "utf8",
+          input: "{}",
+        });
+      fakeCheck(box);
+      // Файл состояния заведён: без него предмет уходит в соседнюю сверку,
+      // а здесь нужна та, что печатает счёт раньше строк с файлами.
+      fs.copyFileSync(
+        path.join(box, ".claude", "seat", "templates", "04-state.md"),
+        path.join(box, ".context", "04-state.md"),
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      fs.writeFileSync(
+        path.join(box, "src", "app", "useZzTally.ts"),
+        'import { useState } from "react";\n\n' +
+          "export const useZzTally = (): number => {\n" +
+          "  const [tally] = useState(0);\n" +
+          "  return tally;\n" +
+          "};\n",
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      // Место нарушения стоит уже в уведомлении, а не только в отказе печати:
+      // иначе сессия узнаёт его, лишь поставив «чисто».
+      const notice = run("bar")
+        .stdout.split("\n")
+        .find((l) => l.includes("красна сверка-держатель о предмете строки: C6"));
+      expect(notice).toBeDefined();
+      expect(notice).toContain("useZzTally.ts");
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { C6: "чисто |  | состояние описано | " },
+      });
+      const refused = run("bar").stdout;
+      expect(refused).not.toContain("печать поставлена");
+      const line = refused
+        .split("\n")
+        .find((l) =>
+          l.includes(
+            "C6: сверка «Предмет из кода назван в своём файле базы» видит нарушение",
+          ),
+        );
+      expect(line).toBeDefined();
+      expect(line).toContain("useZzTally.ts");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

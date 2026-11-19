@@ -20103,7 +20103,9 @@ if (mode === "bar") {
       expected
         .map(({ c, subject: one }) => ({ c, row: checkRow(c, one) }))
         .filter((x) => x.row !== null)
-        .map((x) => x.c.id + " («" + x.row.name + "»)"),
+        // Строка сверки — то же место, что называет отказ печати: без неё
+        // сессия узнаёт место, лишь поставив «чисто».
+        .map((x) => x.c.id + " («" + x.row.name + "»: " + x.row.line.trim() + ")"),
     ),
   ];
   if (r.state === "напечатан") {
