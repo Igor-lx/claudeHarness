@@ -1339,6 +1339,72 @@ describe("поверхность бочки в модели свода", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  // Находка назвала строку модели о владельце, а местом поставила
+  // потребителя: строку увидели, виновника не назвали. Печать требует файл
+  // строки адресом либо в «ещё мест:» (промах `H8` перепроверки свода проб,
+  // решено разработчиком `2026-11-19`).
+  it("находка, назвавшая строку модели своего критерия, называет и её файл", () => {
+    const box = seatEmpty("strokafail-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=s", "-c", "user.email=s@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const tool = (...args) => {
+        try {
+          return execFileSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+            cwd: box,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      const area = path.join(box, "src", "shared", "zzLib");
+      fs.mkdirSync(area, { recursive: true });
+      fs.writeFileSync(path.join(area, "zzLib.ts"), "export const zzKept = (n: number): number => n - 1;\n");
+      fs.writeFileSync(
+        path.join(area, "zzOther.ts"),
+        'import { zzKept } from "./zzLib";\n\nexport const zzOther = (n: number): number => zzKept(n);\n',
+      );
+      fs.mkdirSync(path.join(box, "src", "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzUser.ts"),
+        'import { zzKept } from "../shared/zzLib/zzLib";\n\nexport const zzUser = (n: number): number => zzKept(n);\n',
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "база", "--no-verify");
+      git("rm", "-q", "src/app/zzUser.ts");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      const lost = /H8(?:@[^:]*)?: нашлось, а файл строки модели, на которую она ссылается, не назван: П\d+ \(`shared\/zzLib\/zzLib\.ts`\)/;
+      const found = (places) => {
+        fs.rmSync(protoAt, { force: true });
+        tool("bar");
+        const text = fs.readFileSync(protoAt, "utf8");
+        const id = /\| (П\d+) \| поверхность \| `shared\/zzLib\/zzLib\.ts` \|[^\n]*меньше потребителей/.exec(text)[1];
+        const subject = /^\| H8 \| (`?[^|]*?`?) \|/m.exec(text)[1].replace(/`/g, "");
+        fillBar(protoAt, {
+          release: "не нужно: проба",
+          pick: { ["H8@" + subject]: "нашлось | " + places.replace("{П}", id) + " | вопрос" },
+        });
+        return tool("bar");
+      };
+      expect(found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного ({П})")).toMatch(lost);
+      expect(
+        found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного ({П}); ещё мест: `shared/zzLib/zzLib.ts:1`"),
+      ).not.toMatch(lost);
+      expect(found("shared/zzLib/zzLib.ts:1 | абстракция осталась ради одного ({П})")).not.toMatch(lost);
+      // Без номера строки требования нет: файл называют за строку, а не за слово.
+      expect(found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного")).not.toMatch(lost);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 /**

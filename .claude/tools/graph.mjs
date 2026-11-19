@@ -59,6 +59,7 @@ import {
   testEnumeratesInputs,
   barModelFault,
   barRadiusFault,
+  barRowSpotFault,
   barRestsOn,
   barLevelFault,
   barDeltaFault,
@@ -3036,7 +3037,7 @@ const BAR_FILL_FORMS = {
     from: 3,
     key: "критерий@предмет",
     cells: ["исход", "адрес", "что", "судьба"],
-    rule: "`чисто` — адрес `—`; в «что» — почему чисто, со всем, что ключ называет в скобках ниже: строку `ПN` — своим номером, не диапазоном, свидетеля `СвN` — номером, из «одна из» — хотя бы одну; `нет предмета` — адрес `—`, в «что» — причина; `нашлось` — адрес `путь:строка`, в «что» — что не так, прочие места в конце: «ещё мест: `путь:строка`, `путь:строка`», без пояснений после адреса; судьба находки — `вопрос`, `починено`, `отложено`, на чтении ещё `предложено`, на переходе `долг`; у «чисто» и «нет предмета» судьбы нет — `=`",
+    rule: "`чисто` — адрес `—`; в «что» — почему чисто, со всем, что ключ называет в скобках ниже: строку `ПN` — своим номером, не диапазоном, свидетеля `СвN` — номером, из «одна из» — хотя бы одну; `нет предмета` — адрес `—`, в «что» — причина; `нашлось` — адрес `путь:строка`, в «что» — что не так, прочие места в конце: «ещё мест: `путь:строка`, `путь:строка`», без пояснений после адреса; строку `ПN`, о которой спрашивает критерий, — и её файлом среди мест; судьба находки — `вопрос`, `починено`, `отложено`, на чтении ещё `предложено`, на переходе `долг`; у «чисто» и «нет предмета» судьбы нет — `=`",
   },
   cross: {
     from: 3,
@@ -14178,7 +14179,7 @@ const levelFacts = () => {
 /** Что узел делает — словами карты: графа ответственности у строки, где он
  * назван первой графой, либо первая строка под заголовком, называющим его.
  * Не описан — `null`. */
-const mapResponsibilityOf = (f) => {
+const mapResponsibilityOf = (f, { whole = false } = {}) => {
   const at = CONFIG.map == null ? null : path.join(BASE, CONFIG.map);
   if (at === null || !existsSync(at)) return null;
   const lines = readFileSync(at, "utf8").split(LF);
@@ -14208,7 +14209,7 @@ const mapResponsibilityOf = (f) => {
       const k = head.findIndex((h) =>
         /отвеча|ответствен|назначен|responsib|purpose/i.test(h),
       );
-      const said = (cells[k >= 1 ? k : 1] ?? "").trim();
+      const said = (whole ? cells.slice(1).join(" | ") : (cells[k >= 1 ? k : 1] ?? "")).trim();
       return said === "" ? null : said;
     }
     head = null;
@@ -17476,6 +17477,7 @@ const barHolesOf = ({
   checkRow = null,
   mapDisputed = new Set(),
   anchorBroken = new Set(),
+  mapStale = new Map(),
 }) => {
   const holes = [];
   const said = new Map();
@@ -17989,6 +17991,35 @@ const barHolesOf = ({
       );
       if (late !== "") holes.push(barWho(c.id, subject) + ": " + late);
     }
+    // Строка модели, которую находка называет номером и о которой спрашивает
+    // её критерий, — о своём файле: он стоит местом находки. Решено
+    // разработчиком `2026-11-19` по промаху `H8` перепроверки свода проб.
+    if (one.outcome === "нашлось") {
+      const fileOf = (p) => {
+        const abs = spotFile(p.replace(/`/g, "").trim().replace(/:[0-9]+$/, ""));
+        return abs === null ? null : rel(abs);
+      };
+      const asked = parsed.model
+        .filter((r) =>
+          [...BAR_SIGNALS, ...BAR_CUTS].some(
+            (s) =>
+              s.ids.includes(c.id) &&
+              s.sort === r.sort &&
+              (s.mark === undefined ||
+                [s.mark].flat().includes(r.mark.split(" · ")[0].trim())),
+          ),
+        )
+        .flatMap((r) => {
+          const at = fileOf(r.where);
+          return at === null ? [] : [r.id + "=" + at];
+        });
+      const more = barMorePlacesOf(one.what);
+      const places = [one.addr, ...(more === "" ? [] : more.split(","))]
+        .map((p) => fileOf(p) ?? p.trim())
+        .join(",");
+      const lost = barRowSpotFault(places + "|" + flat(one.what) + "|" + asked.join(";"));
+      if (lost !== "") holes.push(barWho(c.id, subject) + ": " + lost);
+    }
   }
   // Итог по уровням: строка на предмет уровня, согласная с моделью и с
   // исходами. Открытая находка предмета — по её адресу.
@@ -18184,6 +18215,15 @@ const barHolesOf = ({
               ", база: " +
               barQuoted("не требуется") +
               ", а сверка «Якоря» называет съехавший якорь на него — якорь правится, режим `repoint`",
+          );
+        else if (i === 0 && one === "не требуется" && mapStale.has(file))
+          holes.push(
+            file +
+              ", база: " +
+              barQuoted("не требуется") +
+              ", а запись карты называет имена, которые правка сняла с файла: " +
+              mapStale.get(file).map(barQuoted).join(", ") +
+              " — строка карты правится",
           );
         if (c[2] === "")
           holes.push(
@@ -18531,6 +18571,7 @@ const barProcess = ({
   checkRow = null,
   mapDisputed = new Set(),
   anchorBroken = new Set(),
+  mapStale = new Map(),
   partsOf = null,
   machineRow = null,
   guide = null,
