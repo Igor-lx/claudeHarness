@@ -1267,6 +1267,78 @@ describe("поверхность бочки в модели свода", () => {
       fs.rmSync(box, { recursive: true, force: true });
     }
   }, 180000);
+
+  // Удалённый передавал довод иначе, чем оставшиеся: вход владельца стал
+  // одним значением, а ветка того значения — без вызова. Владелец — сосед,
+  // обычная строка «постоянный» его не спрашивает, а у одного оставшегося
+  // места её порог не поднимался (замечание свода пробы `2026-11-19`, `H8`).
+  it("удаление: довод, который передавал удалённый, — строка «постоянный» владельца, без повтора обычной", () => {
+    const box = seatEmpty("dovod-");
+    try {
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=s", "-c", "user.email=s@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const area = path.join(box, "src", "shared", "zzLib");
+      fs.mkdirSync(area, { recursive: true });
+      fs.writeFileSync(
+        path.join(area, "zzLib.ts"),
+        'const zzWays = {\n  plain: (t: string): string => t,\n  loud: (t: string): string => t.toUpperCase(),\n};\n\nexport const zzStyle = (t: string, way: keyof typeof zzWays, n: number): string =>\n  zzWays[way](t).repeat(n);\n',
+      );
+      fs.writeFileSync(
+        path.join(area, "zzPlain.ts"),
+        'import { zzStyle } from "./zzLib";\n\nexport const zzPlain = (t: string): string => zzStyle(t, "plain", 1);\nexport const zzPlainToo = (t: string): string => zzStyle(t, "plain", 1);\n',
+      );
+      fs.mkdirSync(path.join(box, "src", "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzLoud.ts"),
+        'import { zzStyle as style } from "../shared/zzLib/zzLib";\n\nexport const zzLoud = (t: string): string => style(t, "loud", 1);\n',
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "база", "--no-verify");
+      git("rm", "-q", "src/app/zzLoud.ts");
+      const constantRows = () => {
+        fs.rmSync(path.join(box, ".context", "bar-protocol.md"), { force: true });
+        spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), "bar"], {
+          cwd: box,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const text = fs.readFileSync(path.join(box, ".context", "bar-protocol.md"), "utf8");
+        const rows = text
+          .split("\n")
+          .filter((l) => /\| постоянный \| `shared\/zzLib\/zzLib\.ts` \|/.test(l));
+        rows.text = text;
+        return rows;
+      };
+      const gone =
+        'после удаления app/zzLoud.ts: zzStyle(…): довод 2 после удаления всегда `"plain"`, мест вызова `2`; удалённое передавало `"loud"` |';
+      // Владелец — сосед: встаёт одна строка удаления. Довод 3 удалённый
+      // передавал тем же — о нём строки удаления нет: ветки он не оставлял.
+      const aside = constantRows();
+      expect(aside).toHaveLength(1);
+      expect(aside[0]).toContain(gone);
+      expect(aside[0]).toMatch(/\|  \| после удаления \|/);
+      // Строку спрашивают оба: вход — `A3`, ветка без вызова — `H4`.
+      const number = aside[0].split("|")[1].trim();
+      for (const id of ["A3", "H4"])
+        expect(aside.text.split("\n").find((l) => l.startsWith("| " + id + " |"))).toMatch(
+          new RegExp("спрашивают: (?:[^|]*, )?" + number + "(?!\\d)"),
+        );
+      // Владелец в предмете: обычная строка о доводе 3 встаёт, а о доводе 2
+      // — только строка удаления, без повтора.
+      fs.appendFileSync(path.join(area, "zzLib.ts"), "\nexport const zzWayCount = 2;\n");
+      const inside = constantRows();
+      expect(inside).toHaveLength(2);
+      expect(inside.filter((l) => l.includes(gone))).toHaveLength(1);
+      expect(inside.some((l) => l.includes("zzStyle(…): довод 3 всегда `1`, мест вызова `2`"))).toBe(true);
+      expect(inside.some((l) => l.includes('довод 2 всегда `"plain"`'))).toBe(false);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 180000);
 });
 
 /**

@@ -12797,68 +12797,81 @@ const LITERAL =
   /^(?:-?\d[\d_]*(?:\.\d+)?|true|false|null|undefined|"[^"\n]*"|'[^'\n]*'|`[^`$\n]*`)$/;
 /** Мест вызова не меньше двух: у одного вызова любой довод «всегда один». */
 const CONSTANT_SITES_FROM = 2;
-/** Входы, что на каждом месте вызова приходят одним значением: не вход, а
- * константа внутри либо ветка, которой нет. Места вызова — сам файл и те,
- * кто берёт имя у него, сквозь бочки; переименованный импорт не виден. */
-const constantInputsOf = (f) => {
-  const out = [];
+/** Места вызова имён узла в одном тексте: доводы каждого вызова и атрибуты
+ * каждого тега. `wanted` — имя в тексте → имя узла: удалённый файл зовёт имя
+ * так, как его импортировал. */
+const callSitesIn = (text, wanted, calls, tags) => {
+  const bare = bareCodeOf(text);
+  for (const m of bare.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const name = wanted.get(m[1]);
+    if (name === undefined) continue;
+    if (
+      /\b(?:function\s*\*?|const|let|var)\s+$/.test(
+        bare.slice(Math.max(0, m.index - 20), m.index),
+      )
+    )
+      continue;
+    const p = m.index + m[0].length - 1;
+    const q = closeOf(bare, p);
+    if (q < 0 || /^\s*(?::[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 120)))
+      continue;
+    calls.get(name).push(
+      topLevelParts(bare.slice(p + 1, q), p + 1).map((a) =>
+        text.slice(a.at, a.at + a.text.length).trim(),
+      ),
+    );
+  }
+  for (const m of bare.matchAll(/<([A-Za-z_$][\w$]*)(?![\w$.])([^<>]*?)\/?>/g)) {
+    const name = wanted.get(m[1]);
+    if (name === undefined) continue;
+    const attrs = new Map();
+    for (const a of text
+      .slice(m.index, m.index + m[0].length)
+      .matchAll(/([\w-]+)=(?:("[^"]*"|'[^']*')|\{\s*([^{}]*?)\s*\})/g))
+      attrs.set(a[1], (a[2] ?? a[3] ?? "").trim());
+    tags.get(name).push(attrs);
+  }
+};
+
+/** Места вызова имён узла по живому дереву: сам файл и те, кто берёт имя у
+ * него, сквозь бочки; переименованный импорт не виден. */
+const callSitesOf = (f) => {
   const names = [...(exportsOf.get(f) ?? [])].filter(
     (n) => NAME_RE.test(n) && n !== "default",
   );
-  if (names.length === 0) return out;
+  const calls = new Map(names.map((n) => [n, []]));
+  const tags = new Map(names.map((n) => [n, []]));
+  if (names.length === 0) return { names, calls, tags };
   const pool = [
     f,
     ...[...dependentsOf(f)].filter((u) => !isTest(u) && files.includes(u)),
   ];
   // Имена узла, которые файл берёт у него; свой файл — все.
   const takenBy = (u) => {
-    if (u === f) return new Set(names);
-    const got = new Set();
+    if (u === f) return new Map(names.map((n) => [n, n]));
+    const got = new Map();
     for (const one of namedImportsOf.get(u) ?? [])
       if (Array.isArray(one.names))
         for (const n of one.names)
-          if (calls.has(n) && definerOf(one.target, n) === f) got.add(n);
+          if (calls.has(n) && definerOf(one.target, n) === f) got.set(n, n);
     return got;
   };
   // Файл читается и разбирается ОДИН раз, и вызовы и теги всех имён узла
   // собираются одним проходом. Прежде файл перечитывался и разбирался заново
   // на каждое имя — работа росла как квадрат его длины: замерено на файле в
   // `3000` строк, `25` с из `27` всего свода.
-  const calls = new Map(names.map((n) => [n, []]));
-  const tags = new Map(names.map((n) => [n, []]));
   for (const u of pool) {
     const wanted = takenBy(u);
-    if (wanted.size === 0) continue;
-    const text = readFileSync(u, "utf8");
-    const bare = bareCodeOf(text);
-    for (const m of bare.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
-      if (!wanted.has(m[1])) continue;
-      if (
-        /\b(?:function\s*\*?|const|let|var)\s+$/.test(
-          bare.slice(Math.max(0, m.index - 20), m.index),
-        )
-      )
-        continue;
-      const p = m.index + m[0].length - 1;
-      const q = closeOf(bare, p);
-      if (q < 0 || /^\s*(?::[^{;=()]+?)?\s*(?:=>|\{)/.test(bare.slice(q + 1, q + 120)))
-        continue;
-      calls.get(m[1]).push(
-        topLevelParts(bare.slice(p + 1, q), p + 1).map((a) =>
-          text.slice(a.at, a.at + a.text.length).trim(),
-        ),
-      );
-    }
-    for (const m of bare.matchAll(/<([A-Za-z_$][\w$]*)(?![\w$.])([^<>]*?)\/?>/g)) {
-      if (!wanted.has(m[1])) continue;
-      const attrs = new Map();
-      for (const a of text
-        .slice(m.index, m.index + m[0].length)
-        .matchAll(/([\w-]+)=(?:("[^"]*"|'[^']*')|\{\s*([^{}]*?)\s*\})/g))
-        attrs.set(a[1], (a[2] ?? a[3] ?? "").trim());
-      tags.get(m[1]).push(attrs);
-    }
+    if (wanted.size > 0) callSitesIn(readFileSync(u, "utf8"), wanted, calls, tags);
   }
+  return { names, calls, tags };
+};
+
+/** Входы, что на каждом месте вызова приходят одним значением: не вход, а
+ * константа внутри либо ветка, которой нет. */
+const constantInputsOf = (f) => {
+  const out = [];
+  const { names, calls, tags } = callSitesOf(f);
   for (const name of names) {
     const sites = calls.get(name);
     if (sites.length >= CONSTANT_SITES_FROM) {
@@ -12880,6 +12893,62 @@ const constantInputsOf = (f) => {
             "<" + name + "> " + attr + " всегда " + barQuoted(first) +
               ", мест " + barQuoted(String(marks.length)),
           );
+  }
+  return out;
+};
+
+/** Входы, которые постоянными сделало удаление: оставшиеся места вызова
+ * передают одно значение, а удалённый файл передавал другое. Вход стал
+ * константой, а ветка другого значения — мёртвой (`A3`, `H4`); порог двух
+ * мест здесь не нужен: второе место и было удалённым. `gone` — тексты
+ * удалённых файлов с именами, которые они брали у узла. Строка несёт и ключ,
+ * по которому обычная строка о том же входе снимается как повтор. */
+const goneConstantInputsOf = (f, gone) => {
+  const out = [];
+  const { names, calls, tags } = callSitesOf(f);
+  const wasCalls = new Map(names.map((n) => [n, []]));
+  const wasTags = new Map(names.map((n) => [n, []]));
+  for (const one of gone) {
+    const wanted = new Map([...one.wanted].filter(([, n]) => wasCalls.has(n)));
+    if (wanted.size > 0) callSitesIn(one.text, wanted, wasCalls, wasTags);
+  }
+  const quotedAll = (list) => [...new Set(list)].map((v) => barQuoted(v ?? "нет")).join(", ");
+  for (const name of names) {
+    const sites = calls.get(name);
+    const was = wasCalls.get(name);
+    if (sites.length > 0 && was.length > 0) {
+      const width = Math.min(...sites.map((c) => c.length));
+      for (let i = 0; i < width; i += 1) {
+        const first = sites[0][i];
+        if (!LITERAL.test(first) || !sites.every((c) => c[i] === first)) continue;
+        const other = was.map((c) => c[i]).filter((v) => v !== first);
+        if (other.length === 0) continue;
+        const key = name + "(…): довод " + (i + 1);
+        out.push({
+          key,
+          what:
+            key + " после удаления всегда " + barQuoted(first) +
+            ", мест вызова " + barQuoted(String(sites.length)) +
+            "; удалённое передавало " + quotedAll(other),
+        });
+      }
+    }
+    const marks = tags.get(name);
+    const wasMarks = wasTags.get(name);
+    if (marks.length > 0 && wasMarks.length > 0)
+      for (const [attr, first] of marks[0]) {
+        if (!LITERAL.test(first) || !marks.every((t) => t.get(attr) === first)) continue;
+        const other = wasMarks.map((t) => t.get(attr)).filter((v) => v !== first);
+        if (other.length === 0) continue;
+        const key = "<" + name + "> " + attr;
+        out.push({
+          key,
+          what:
+            key + " после удаления всегда " + barQuoted(first) +
+            ", мест " + barQuoted(String(marks.length)) +
+            "; удалённое передавало " + quotedAll(other),
+        });
+      }
   }
   return out;
 };
@@ -14958,6 +15027,49 @@ const barModelOf = (
       );
     }
   }
+  // Удаление отняло у владельца место вызова: вход, который удалённый
+  // передавал иначе, на оставшихся местах стал одним значением (`A3`), а
+  // ветка того значения — мёртвой (`H4`). Строка встаёт и у владельца вне
+  // фокуса: обычная строка «постоянный» соседа не спрашивает, а у одного
+  // оставшегося места порог двух её не поднимал. Промах свода пробы
+  // `2026-11-19`, посадка `H8`: таблица способов и выбор по ключу остались
+  // ради одного способа, и вопроса о ветке не было.
+  const goneConstant = new Map();
+  if (change && want("постоянный")) {
+    const gone = new Map();
+    for (const x of subject.filter((f) => !existsSync(f) && !isTest(f))) {
+      const text = headTextOf(x);
+      if (typeof text !== "string") continue;
+      for (const one of parseModule(codeOf(text), x).froms) {
+        const t = resolve(x, one.spec);
+        if (!t) continue;
+        for (const s of one.specifiers) {
+          if (s.typeOnly) continue;
+          const d = definerOf(t, s.there) ?? t;
+          if (!files.includes(d) || isTest(d)) continue;
+          const list = gone.get(d) ?? [];
+          let mine = list.find((g) => g.from === x);
+          if (mine === undefined) {
+            mine = { from: x, text, wanted: new Map() };
+            list.push(mine);
+          }
+          mine.wanted.set(s.here, s.there);
+          gone.set(d, list);
+        }
+      }
+    }
+    for (const [d, list] of gone) {
+      const rows = goneConstantInputsOf(d, list);
+      goneConstant.set(d, rows.map((r) => r.key));
+      for (const r of rows)
+        add(
+          "постоянный",
+          rel(d),
+          "после удаления " + listCell(list.map((g) => rel(g.from)).sort()) + ": " + r.what,
+          "после удаления",
+        );
+    }
+  }
   for (const f of focus) {
     // Лист стилей: его признаки — о каскаде, движении и комментариях.
     if (styleFiles.includes(f)) {
@@ -15126,8 +15238,11 @@ const barModelOf = (
       add("повтор", where + ":" + r.line, r.what, r.mark);
     for (const r of want("метка") ? tagRepeatsOf(f, seenRepeats) : [])
       add("метка", where + ":" + r.line, r.what);
+    // Вход, о котором уже встала строка удаления, второй строкой не встаёт.
+    const goneKeys = goneConstant.get(f) ?? [];
     for (const what of want("постоянный") ? constantInputsOf(f) : [])
-      add("постоянный", where, what);
+      if (!goneKeys.some((k) => what.startsWith(k + " всегда ")))
+        add("постоянный", where, what);
 
     // --- слой ------------------------------------------------------------
     const layer = layerOf(f);
