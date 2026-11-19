@@ -93,7 +93,7 @@ describe.each(PARSERS)("разбор модуля (%s): из одних типо
           "// shape of the server answer",
           'import type { Tag } from "./tag";',
           'import { type Note, type Id } from "./note";',
-          "export type TagDto = { readonly tag_name: string; readonly use_count: number };",
+          "export type ShelfRow = { readonly row_title: string; readonly row_size: number };",
           "export interface Page {",
           "  readonly items: readonly Note[];",
           "  readonly next: (at: Id) => Promise<Page>;",
