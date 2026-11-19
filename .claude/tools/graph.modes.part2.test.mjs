@@ -263,7 +263,7 @@ describe("свод на правке — по той же области, что
       );
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
-        "\nВопрос о `src/shared/zzStore/zzStore.ts`.\n",
+        "\nВопрос о `src/shared/zzStore/zzStore.ts`: A5.\n",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -1594,7 +1594,7 @@ describe("проба планки из нескольких файлов", () =>
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(/\| направление \|[^\n]*\| против правила \|/);
       fs.appendFileSync(
         path.join(sandbox, ".context", "13-questions.md"),
-        "\nВопрос о `src/shared/zzBadge/zzBadge.ts`.\n",
+        "\nВопрос о `src/shared/zzBadge/zzBadge.ts`: A5.\n",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -1822,7 +1822,7 @@ describe("проба планки в существующем коде", () => {
       const line = text.split("\n").findIndex((l) => l.includes("tally.keys.push")) + 1;
       fs.appendFileSync(
         path.join(sandbox, ".context", "13-questions.md"),
-        "\nВопрос о `src/" + relCulprit + "`.\n",
+        "\nВопрос о `src/" + relCulprit + "`: C4.\n",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -2094,7 +2094,7 @@ describe("проба планки удалением и в соседе", () => 
         .find((l) => l.includes("| поверхность | `" + relOf(sandbox, owner) + "` |"));
       expect(surface).toContain("после удаления app/zzUser.ts снаружи не берут: zzGone");
       const row = /^\| (П\d+) \|/.exec(surface)[1];
-      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/" + relOf(sandbox, owner) + "`.\n");
+      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/" + relOf(sandbox, owner) + "`: H4, B7.\n");
       const found = "нашлось | src/" + relOf(sandbox, owner) + ":1 | zzGone без потребителя | вопрос";
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -2161,7 +2161,7 @@ describe("проба планки удалением и в соседе", () => 
       expect(fs.existsSync(path.join(sandbox, "src", "shared", "zzDates"))).toBe(false);
       run(sandbox, "bar");
       const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
-      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/shared/zzTime/zzDays.ts`.\n");
+      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/shared/zzTime/zzDays.ts`: H7.\n");
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: { H7: "нашлось | src/shared/zzTime/zzDays.ts:3 | 86400000 без имени | вопрос" },
@@ -2197,7 +2197,7 @@ describe("проба планки удалением и в соседе", () => 
       run(sandbox, "bar");
       const protoAt = path.join(sandbox, ".context", "bar-protocol.md");
       const line = fs.readFileSync(culprit, "utf8").split("\n").findIndex((l) => l.includes("zzEmptiness")) + 1;
-      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/" + relOf(sandbox, culprit) + "`.\n");
+      fs.appendFileSync(path.join(sandbox, ".context", "13-questions.md"), "\nВопрос о `src/" + relOf(sandbox, culprit) + "`: H6-бис.\n");
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: { "H6-бис": "нашлось | src/" + relOf(sandbox, culprit) + ":" + line + " | булева функция названа существительным | вопрос" },

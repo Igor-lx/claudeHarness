@@ -1575,7 +1575,7 @@ describe("красная сверка-держатель режет печать
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
         "\n## Вопрос 1. Строгость снята\n\n**Задан:** проба, `tsconfig.json`.\n\n" +
-          "**Что решить.** Вернуть ли строгость.\n\n" +
+          "**Что решить.** `D1` — вернуть ли строгость.\n\n" +
           "**Последствие отсутствия ответа.** Типы проверяются без строгости.\n",
       );
       fillBar(protoAt, {
@@ -1638,6 +1638,16 @@ describe("красная сверка-держатель режет печать
           "  return tally;\n" +
           "};\n",
       );
+      // Второй файл без записи: сверка красна на обоих, и спор называет
+      // оба, а не первый (свод `свод.3.1`, `2026-11-19`).
+      fs.writeFileSync(
+        path.join(box, "src", "app", "useZzCount.ts"),
+        'import { useState } from "react";\n\n' +
+          "export const useZzCount = (): number => {\n" +
+          "  const [count] = useState(1);\n" +
+          "  return count;\n" +
+          "};\n",
+      );
       const protoAt = path.join(box, ".context", "bar-protocol.md");
       // Место нарушения стоит уже в уведомлении, а не только в отказе печати:
       // иначе сессия узнаёт его, лишь поставив «чисто».
@@ -1646,6 +1656,8 @@ describe("красная сверка-держатель режет печать
         .find((l) => l.includes("красна сверка-держатель о предмете строки: C6"));
       expect(notice).toBeDefined();
       expect(notice).toContain("useZzTally.ts");
+      expect(notice).toContain("строк сверки о предмете `2`");
+      expect(notice).toContain("useZzCount.ts");
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: { C6: "чисто |  | состояние описано | " },
@@ -1661,6 +1673,21 @@ describe("красная сверка-держатель режет печать
         );
       expect(line).toBeDefined();
       expect(line).toContain("useZzTally.ts");
+      // «Нашлось» об одном из двух мест сверки печати не получает: второе
+      // место — адресом либо в «ещё мест:».
+      fillBar(protoAt, {
+        release: "не нужно: проба",
+        pick: { C6: "нашлось | src/app/useZzTally.ts:4 | состояние без записи | вопрос" },
+      });
+      fs.appendFileSync(
+        path.join(box, ".context", "13-questions.md"),
+        "\nВопрос о `src/app/useZzTally.ts` и `src/app/useZzCount.ts`: C6.\n",
+      );
+      const half = run("bar").stdout;
+      expect(half).toContain(
+        "C6: сверка «Предмет из кода назван в своём файле базы» нашла `app/useZzCount.ts`, а находка его не называет",
+      );
+      expect(half).not.toMatch(/нашла[^\n]*`app\/useZzTally\.ts`/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -3424,7 +3451,7 @@ describe("свод по планке от модели предмета", () => 
       );
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
-        "\nВопрос о `src/app/zzClock.ts`.\n",
+        "\nВопрос о `src/app/zzClock.ts`: H7.\n",
       );
       expect(tool("bar", "app/zzClock.ts")).toContain("печать поставлена");
     } finally {
@@ -3461,7 +3488,7 @@ describe("свод по планке от модели предмета", () => 
         release: "не нужно: проба",
         pick: { B1: "нашлось | src/app/zzWide.ts:1 | булев параметр делит функцию надвое; ещё мест: " + more + " | вопрос" },
       });
-      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzWide.ts`.\n");
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzWide.ts`: B1.\n");
       fillBar(protoAt, found("`src/app/zzNope.ts:1`"));
       expect(tool("bar", "app/zzWide.ts")).toContain("B1: файла `src/app/zzNope.ts` нет");
       fillBar(protoAt, found("`zzTall`"));
@@ -3470,7 +3497,7 @@ describe("свод по планке от модели предмета", () => 
       const unnamed = tool("bar", "app/zzWide.ts");
       expect(unnamed).toContain("B1: «вопрос», а список вопросов");
       expect(unnamed).toContain("zzTall.ts");
-      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzTall.ts`.\n");
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzTall.ts`: B1.\n");
       expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
       // Найденное по одному критерию — находка в каждом, чьё тело его
       // называет: «чисто» со ссылкой на чужую находку не принимается.
@@ -3501,6 +3528,11 @@ describe("свод по планке от модели предмета", () => 
       expect(named).toMatch(/перекрёстная сверка, B1 — `src\/app\/zzWide\.ts:1`: кандидаты без ответа — [^;]*A4/);
       also("Z99");
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «Z99» — не критерий этого свода");
+      // Предмет, названный ответом, сверяется, а не снимается не глядя.
+      also("H6 для `app`");
+      expect(tool("bar", "app/zzWide.ts")).toContain(
+        "перекрёстная сверка, " + finding + ": «H6 для `app`» — у H6 нет строки с предметом `app`",
+      );
       also("никакие, A4");
       expect(tool("bar", "app/zzWide.ts")).toContain("перекрёстная сверка, " + finding + ": «никакие» вместе с названными критериями");
       also("");
@@ -3520,6 +3552,7 @@ describe("свод по планке от модели предмета", () => 
         pick: { H6: "нашлось | src/app/zzWide.ts:1 | имя не говорит, что считают | вопрос" },
         holds: { приложение: "нет" },
       });
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/app/zzWide.ts`: H6.\n");
       also(["H6", ...candidates().map((id) => "не " + id)].join(", "));
       expect(tool("bar", "app/zzWide.ts")).toContain("печать поставлена");
     } finally {
@@ -3564,7 +3597,7 @@ describe("свод по планке от модели предмета", () => 
       );
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
-        "\nВопрос о `src/app/zzTwo.ts`.\n\nВопрос о `src/app/zzTall.ts`.\n",
+        "\nВопрос о `src/app/zzTwo.ts`: B1.\n\nВопрос о `src/app/zzTall.ts`: B1, A4.\n",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -3798,7 +3831,7 @@ describe("свод по планке от модели предмета", () => 
       tool("bar");
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
-        "\nВопрос о `src/shared/zzPrefs/zzPrefs.ts` и `src/app/zzTitle.ts`.\n",
+        "\nВопрос о `src/shared/zzPrefs/zzPrefs.ts` и `src/app/zzTitle.ts`: A5, A9-бис, C6-бис, A1.\n",
       );
       fillBar(protoAt, {
         release: "не нужно: проба",
@@ -3909,7 +3942,7 @@ describe("что завела сама правка, режет само", () =>
       );
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
-        "\nВопрос о `src/components/ZzB/ZzB.tsx`.\n",
+        "\nВопрос о `src/components/ZzB/ZzB.tsx`: C6-бис.\n",
       );
       tool("bar");
       expect(fs.readFileSync(protoAt, "utf8")).toMatch(/\| граница \|[^\n]*ZzA\/zzClamp\.ts[^\n]*\| мимо входа · решение \|/);
@@ -4026,7 +4059,7 @@ describe("ядро по предметам уровня: правка, чтен�
       // Находка открыта для каждой единицы, где лежит любое её место: второе
       // место в панели делает панель «не держится», хотя адрес — в корзине.
       fs.writeFileSync(protoAt, fs.readFileSync(protoAt, "utf8").replace(/^- печать: .*$/m, "- печать: `нет`"));
-      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/components/zzCart/zzTotal.ts` и `src/components/zzBar/zzBar.tsx`.\n");
+      fs.appendFileSync(path.join(box, ".context", "13-questions.md"), "\nВопрос о `src/components/zzCart/zzTotal.ts` и `src/components/zzBar/zzBar.tsx`: H4.\n");
       fillBar(protoAt, {
         release: "не нужно: проба",
         pick: {
@@ -4848,6 +4881,16 @@ describe("ответы свода файлом", () => {
         [
           key + " | чисто | Св1, П2: проба",
           "у исхода «чисто» адрес — `—`, а в клетке адреса «Св1, П2: проба»",
+        ],
+        // Форма мест находки — та же, что сверяет `bar`, и отказ — здесь, а
+        // не на проходе `bar` после вписанного.
+        [
+          key + " | нашлось | src/app/App.tsx | проба | вопрос",
+          "место находки не вида путь:строка — «src/app/App.tsx»",
+        ],
+        [
+          key + " | нашлось | src/app/App.tsx:1 | проба; ещё мест: `App`, `src/app/App.tsx:2` | вопрос",
+          "место находки не вида путь:строка — «App»",
         ],
       ]) {
         fs.writeFileSync(protoAt, blank);

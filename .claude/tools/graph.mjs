@@ -3052,7 +3052,7 @@ const BAR_FILL_FORMS = {
     from: 3,
     key: "также <находка дословно>",
     cells: ["также"],
-    rule: "о каждом кандидате `X` либо `не X` через запятую и любой другой критерий, чьё тело называет то же нарушение, либо `никакие`; находка в ключе — критерий, « для » и предмет в обратных кавычках (у критерия без предмета — без «для»), « — » и основной адрес находки в обратных кавычках — от корня репозитория либо исходников; строки «также» пишут тем же файлом, что исходы: таблицу режим допишет сам",
+    rule: "о каждом кандидате `X` либо `не X` через запятую и любой другой критерий, чьё тело называет то же нарушение, либо `никакие`; критерий с предметом — голым именем либо «X для `предмет`», и предмет — тот, под которым X стоит «нашлось» с этим местом; находка в ключе — критерий, « для » и предмет в обратных кавычках (у критерия без предмета — без «для»), « — » и основной адрес находки в обратных кавычках — от корня репозитория либо исходников; строки «также» пишут тем же файлом, что исходы: таблицу режим допишет сам",
   },
   level: {
     from: 2,
@@ -16767,7 +16767,10 @@ const sourceNamedIn = (line) => {
  * целиком. Исход, который с ней спорит, печати не получает, как и исход,
  * спорящий с линтом. Предупреждение прогон не роняет и спором не служит;
  * сверка, чьи факты несёт модель, не спорит — их строку судит модель; у
- * сверки многих критериев спорит находка своего вида. `null` — спора нет. */
+ * сверки многих критериев спорит находка своего вида. `null` — спора нет.
+ * `lines` — все строки сверки о предмете, `line` — первая: сверка, красная
+ * на пяти файлах, называла в споре один, и находка о прочих не спрашивалась
+ * (свод `свод.3.1`, `2026-11-19`). */
 const barCheckRowOf = ({ checks, c, scope }) => {
   const names = BAR_CHECKS[c.id];
   if (checks === null || names === undefined) return null;
@@ -16776,15 +16779,30 @@ const barCheckRowOf = ({ checks, c, scope }) => {
     if (name.includes("предупреждение") || BAR_CHECKS_MODELLED.has(name))
       continue;
     const kind = BAR_CHECK_KINDS[name]?.[c.id];
-    for (const line of checks.get(name)?.lines ?? []) {
-      if (kind !== undefined && !kind.test(line)) continue;
+    const lines = (checks.get(name)?.lines ?? []).filter((line) => {
+      if (kind !== undefined && !kind.test(line)) return false;
       const named = sourceNamedIn(line);
-      if (named.size === 0 || [...named].some((f) => inScope.has(f)))
-        return { name, line };
-    }
+      return named.size === 0 || [...named].some((f) => inScope.has(f));
+    });
+    if (lines.length > 0) return { name, line: lines[0], lines, inScope };
   }
   return null;
 };
+
+/** Места, которые строки красной сверки-держателя называют в предмете:
+ * адрес `путь:строка`, а у строки без номера — файлы предмета, которые она
+ * называет. Находка критерия называет каждое — адресом либо в «ещё мест:». */
+const barCheckPlacesOf = (checked) => [
+  ...new Set(
+    checked.lines.flatMap((line) => {
+      const spot = barCheckSpotOf(line);
+      if (spot !== null) return [spot];
+      return [...sourceNamedIn(line)]
+        .filter((f) => checked.inScope.has(f))
+        .map(rel);
+    }),
+  ),
+];
 
 /** Место находки сверки — первый адрес `путь:строка` в её строке, иначе
  * `null`: по нему машина ставит исход, и его обязан назвать ответ. */
@@ -16871,13 +16889,25 @@ const barMachineVerdictOf = ({ lint, checks, c, files, model, asked, disputed })
   // проходило, а её находка в протокол не вставала. Выведено: проба планки
   // `2026-10-26` — пустое «Время жизни» записи о ключе темы.
   const spot = barCheckSpotOf(disputed?.line);
-  if (spot !== null)
+  if (spot !== null) {
+    const rest = barCheckPlacesOf(disputed).filter((p) => p !== spot);
     return {
       outcome: "нашлось",
       addr: spot,
-      what: ("сверка «" + disputed.name + "»: " + disputed.line).split("|").join("/"),
+      what: (
+        "сверка «" +
+        disputed.name +
+        "»: " +
+        disputed.line +
+        (rest.length > 0
+          ? "; ещё мест `" + rest.length + "`: " + rest.join(", ")
+          : "")
+      )
+        .split("|")
+        .join("/"),
       by: "сверка",
     };
+  }
   if (asked || lintSays === null) return null;
   const names = BAR_CHECKS[c.id];
   if (names === undefined)
@@ -17270,7 +17300,8 @@ const barSkeletonOf = ({
               " — файл перехода называет файл находки: переход код",
             "не трогает, и находка ложится пунктом долга с планом; " +
               barQuoted("вопрос"),
-            "— развилка разработчика, и список вопросов называет файл находки.",
+            "— развилка разработчика, и раздел списка вопросов называет файл",
+            "находки и её критерий.",
           ]
         : [
             "Судьба: " +
@@ -17283,7 +17314,8 @@ const barSkeletonOf = ({
             "отложенного и реестр решений называют файл находки; " +
               barQuoted("вопрос") +
               " — развилка разработчика, и список",
-            "вопросов называет файл находки. Находка, которую уже держит пункт",
+            "вопросов — раздел под заголовком — называет файл находки и её",
+            "критерий. Находка, которую уже держит пункт",
             "долга перехода, на правке чинится, и пункт правится той же правкой: " +
               barQuoted("чисто"),
             "и " + barQuoted("отложено") + " при ней не принимаются.",
@@ -17574,14 +17606,31 @@ const barHolesOf = ({
   // и файл: решение откладывает находку, а не файл. Прежде реестр, с первого
   // дня называющий точку входа и корневой компонент, держал «отложено» по
   // любой находке в них. Найдено прогоном проб.
-  const namedIn = (field, what, spot, abs, id = null) => {
+  // Вопрос — раздел под заголовком: заголовок называет файл, графа «Что
+  // решить» — находки файла, и жирное начало графы раздела не делит. Прежде
+  // список называл один файл, и новая находка того же файла вставала под
+  // печать, не попав в вопрос (свод `свод.3.1`, `2026-11-19`).
+  const sectionsOf = (text) => {
+    const out = [];
+    let lines = [];
+    for (const line of text.split(/\r?\n/)) {
+      if (/^#{1,6}\s/.test(line) && lines.length > 0) {
+        out.push(lines.join("\n"));
+        lines = [];
+      }
+      lines.push(line);
+    }
+    if (lines.length > 0) out.push(lines.join("\n"));
+    return out;
+  };
+  const namedIn = (field, what, spot, abs, id = null, split = recordsOf) => {
     const file = field === "transition" ? CONFIG.transition?.file : CONFIG[field];
     const at = file == null ? null : path.join(BASE, file);
     const text = at !== null && existsSync(at) ? readFileSync(at, "utf8") : null;
     const names = (piece) => formsOf(spot, abs).some((f) => piece.includes(f));
     if (text !== null && id === null && names(text)) return "";
     if (text !== null && id !== null)
-      if (recordsOf(text).some((r) => names(r) && idIn(r, id))) return "";
+      if (split(text).some((r) => names(r) && idIn(r, id))) return "";
     if (text === null) return what + " нет (поле `" + field + "`)";
     return (
       what +
@@ -17597,6 +17646,8 @@ const barHolesOf = ({
   const placeKey = (abs, line) =>
     trimmedPath(path.relative(repoRoot, abs)) + ":" + Number(line);
   const placesFound = new Map();
+  // То же место по строке протокола: критерий и его предмет.
+  const placesFoundBy = new Map();
   const findingsAt = [];
   for (const { c, subject } of expected) {
     const who = barWho(c.id, subject);
@@ -17665,6 +17716,12 @@ const barHolesOf = ({
           checked.name +
           "» видит нарушение (" +
           checked.line +
+          (checked.lines.length > 1
+            ? "; строк сверки о предмете `" +
+              checked.lines.length +
+              "`, места: " +
+              barCheckPlacesOf(checked).join(", ")
+            : "") +
           "), а " +
           (one.outcome === "нашлось" ? "судьба" : "исход") +
           " «" +
@@ -17674,22 +17731,33 @@ const barHolesOf = ({
     // «Нашлось» о другом месте находку сверки не закрывает: её место —
     // адресом либо в «ещё мест». Выведено: проба планки `2026-10-26` —
     // машина поставила адрес записи, а сессия переписала его на код.
-    const checkSpot = checked === null ? null : barCheckSpotOf(checked.line);
-    if (
-      checkSpot !== null &&
-      one.outcome === "нашлось" &&
-      ![one.addr, ...barMorePlacesOf(one.what).split(",")].some(
-        (place) => place.trim() !== "" && place.includes(checkSpot),
-      )
-    )
-      holes.push(
-        who +
-          ": сверка «" +
-          checked.name +
-          "» нашла `" +
-          checkSpot +
-          "`, а находка его не называет — адресом либо в «ещё мест:»",
+    // Мест бывает несколько, и находка называет каждое: у строки без номера
+    // — её файл предмета.
+    if (checked !== null && one.outcome === "нашлось") {
+      const said = [one.addr, ...barMorePlacesOf(one.what).split(",")]
+        .map((place) => place.trim().replace(/^`|`$/g, ""))
+        .filter((place) => place !== "");
+      // Место с номером — то же место, у файла — любая его строка; путь
+      // бывает от корня репозитория и от корня исходников.
+      const hits = (place, spot) =>
+        (/:[0-9]+$/.test(spot) ? [place] : [place.replace(/:[0-9]+$/, "")]).some(
+          (p) => p === spot || p.endsWith("/" + spot),
+        );
+      const unnamed = barCheckPlacesOf(checked).filter(
+        (spot) => !said.some((place) => hits(place, spot)),
       );
+      if (unnamed.length > 0)
+        holes.push(
+          who +
+            ": сверка «" +
+            checked.name +
+            "» нашла " +
+            unnamed.map(barQuoted).join(", ") +
+            ", а находка " +
+            (unnamed.length === 1 ? "его" : "их") +
+            " не называет — адресом либо в «ещё мест:»",
+        );
+    }
     const known = debtNaming(c, subject);
     if (
       known.length > 0 &&
@@ -17760,6 +17828,10 @@ const barHolesOf = ({
       else {
         const key = placeKey(abs, spot[2]);
         placesFound.set(key, (placesFound.get(key) ?? new Set()).add(c.id));
+        placesFoundBy.set(
+          key,
+          (placesFoundBy.get(key) ?? new Set()).add(barKey(c.id, subject)),
+        );
         keysOf.push(key);
       }
       // Находка строки предмета называет файл ЭТОГО предмета: иначе ответ про
@@ -17792,23 +17864,27 @@ const barHolesOf = ({
             barQuoted(spot[1]) +
             " в правленом не числится",
         );
-      // «Вопрос» — развилка разработчика: список вопросов называет файл
-      // находки, иначе вопрос живёт только в протоколе и исчезнет с ним.
+      // «Вопрос» — развилка разработчика: раздел списка вопросов называет
+      // файл находки и её критерий, иначе вопрос живёт только в протоколе и
+      // исчезнет с ним.
       // «Отложено» — после ответа разработчика, и запись уходит в отложенное:
       // прежде судьба принималась голой, и отложенная находка исчезала со
       // следующим проходом. «Долг» — находка перехода: план называет её файл.
       for (const [fate, field, what, own] of [
-        ["вопрос", "questions", "список вопросов", false],
+        ["вопрос", "questions", "список вопросов", sectionsOf],
         ["отложено", "todo", "отложенное", false],
         // Откладывают по ответу разработчика, и ответ записан решением:
         // строка отложенного, которую сессия дописала себе сама, судьбы не
         // держит — замерено на стенде, находка линта ушла под печать так.
         // Решение — о самой находке: его запись называет и её критерий.
-        ["отложено", "decisions", "реестр решений", true],
+        ["отложено", "decisions", "реестр решений", recordsOf],
         ["долг", "transition", "файл перехода", false],
       ]) {
         if (one.fate !== fate) continue;
-        const loose = namedIn(field, what, spot, abs, own ? c.id : null);
+        const loose =
+          own === false
+            ? namedIn(field, what, spot, abs)
+            : namedIn(field, what, spot, abs, c.id, own);
         if (loose !== "") holes.push(who + ": «" + fate + "», а " + loose);
       }
     }
@@ -17898,18 +17974,49 @@ const barHolesOf = ({
         }
         const not = token.startsWith(BAR_CROSS_NOT);
         // «X для `предмет`» — та форма, какой находку называют ключи и дыры.
-        const id = (not ? token.slice(BAR_CROSS_NOT.length).trim() : token).replace(
-          /\s+для\s+`[^`]*`$/,
-          "",
-        );
+        // Предмет, названный ответом, сверяется: прежде он снимался не глядя,
+        // и «X для `чужой`» проходил наравне с верным (свод `свод.3.1`,
+        // `2026-11-19`). Голое имя законно: место находки называет предмет.
+        const bare = not ? token.slice(BAR_CROSS_NOT.length).trim() : token;
+        const forOne = /^(.+?)\s+для\s+`([^`]*)`$/.exec(bare);
+        const id = forOne === null ? bare : forOne[1];
         said.add(id);
         if (!criterionIds.has(id))
           holes.push(
             "перекрёстная сверка, " + finding + ": «" + id + "» — не критерий этого свода",
           );
+        else if (
+          forOne !== null &&
+          !expected.some((e) => e.c.id === id && e.subject === forOne[2])
+        )
+          holes.push(
+            "перекрёстная сверка, " +
+              finding +
+              ": «" +
+              bare +
+              "» — у " +
+              id +
+              " нет строки с предметом " +
+              barQuoted(forOne[2]),
+          );
         else if (!not) {
           named += 1;
-          if (!atMain.has(id))
+          if (
+            forOne !== null &&
+            atMain.has(id) &&
+            !(placesFoundBy.get(one.keys[0]) ?? new Set()).has(
+              barKey(id, forOne[2]),
+            )
+          )
+            holes.push(
+              barWho(id, forOne[2]) +
+                ": назван у находки " +
+                finding +
+                " перекрёстной сверкой, а «нашлось» с её основным местом стоит у " +
+                id +
+                " другого предмета — назвать тот предмет либо голое имя",
+            );
+          else if (!atMain.has(id))
             holes.push(
               id +
                 ": назван у находки " +
@@ -20319,7 +20426,23 @@ if (mode === "bar") {
         .filter((x) => x.row !== null)
         // Строка сверки — то же место, что называет отказ печати: без неё
         // сессия узнаёт место, лишь поставив «чисто».
-        .map((x) => x.c.id + " («" + x.row.name + "»: " + x.row.line.trim() + ")"),
+        .map((x) => {
+          const places = barCheckPlacesOf(x.row);
+          return (
+            x.c.id +
+            " («" +
+            x.row.name +
+            "»: " +
+            x.row.line.trim() +
+            (x.row.lines.length > 1
+              ? "; строк сверки о предмете `" +
+                x.row.lines.length +
+                "`" +
+                (places.length > 0 ? ", места: " + places.join(", ") : "")
+              : "") +
+            ")"
+          );
+        }),
     ),
   ];
   if (r.state === "напечатан") {
@@ -21304,6 +21427,28 @@ if (mode === "bar-fill") {
           " | — | основание`",
       );
       continue;
+    }
+    // Форма мест находки — та же, что сверяет `bar`: адрес и каждое место
+    // «ещё мест:» вида `путь:строка`. Прежде ошибку называл только `bar`, на
+    // третьем проходе после вписанных ответов (свод `свод.3.1`, `2026-11-19`).
+    if (row.section === "## Исходы" && given[0] === "нашлось") {
+      const more = barMorePlacesOf(given[2] ?? "");
+      const loose = [
+        ...(given.length > 1 && given[1] !== "=" ? [given[1]] : []),
+        ...(more === "" ? [] : more.split(",")),
+      ]
+        .map((place) => place.trim())
+        .filter((place) => !/^`?.+?:[0-9]+`?$/.test(place));
+      if (loose.length > 0) {
+        faults.push(
+          "строка " +
+            n +
+            ": место находки не вида путь:строка — " +
+            loose.map((place) => "«" + place + "»").join(", ") +
+            "; адрес — `путь:строка`, прочие места — в конце «что»: «ещё мест: `путь:строка`, `путь:строка`»",
+        );
+        continue;
+      }
     }
     row.fill.forEach((col, k) => {
       if (k < given.length && given[k] !== "=") row.cells[col] = given[k];

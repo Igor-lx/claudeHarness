@@ -2481,7 +2481,7 @@ describe("починки по пробе планки 2026-10-13", () => {
       );
       fs.appendFileSync(
         path.join(box, ".context", "13-questions.md"),
-        "\nВопрос о `src/app/zzUni/zzA.ts` и `src/app/zzUni/zzB.ts`.\n",
+        "\nВопрос о `src/app/zzUni/zzA.ts` и `src/app/zzUni/zzB.ts`: A1.\n",
       );
       const found = (what) => ({
         release: "не нужно: проба",
