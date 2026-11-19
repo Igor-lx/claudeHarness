@@ -4831,6 +4831,677 @@
           "replace": "  query\n    .trim()\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/\\p{Diacritic}/gu, \"\");"
         }
       ]
+    },
+    {
+      "criterion": "M1",
+      "why": "автосохранение заведено под ссылкой-флагом первого прохода, а снимается при размонтировании: после повторного монтажа флаг уже поднят, интервал снят и больше не заводится",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useRef } from \"react\";\nexport const useDraftAutosave = (save, everyMs) => {\n  const startedRef = useRef(false);\n  useEffect(() => {\n    if (startedRef.current) return;\n    startedRef.current = true;\n    const timer = setInterval(save, everyMs);\n    return () => {\n      clearInterval(timer);\n    };\n  }, [save, everyMs]);\n};",
+          "ts": "import { useEffect, useRef } from \"react\";\n\nexport const useDraftAutosave = (save: () => void, everyMs: number): void => {\n  const startedRef = useRef(false);\n  useEffect(() => {\n    if (startedRef.current) return;\n    startedRef.current = true;\n    const timer = setInterval(save, everyMs);\n    return () => {\n      clearInterval(timer);\n    };\n  }, [save, everyMs]);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "F3",
+      "why": "обработчик ухода со страницы живёт до снятия и держит весь черновик с историей правок, хотя ему нужен один признак непустоты",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const warnBeforeLeaving = (draft) => {\n  const warn = (event) => {\n    if (draft.body !== \"\") event.preventDefault();\n  };\n  window.addEventListener(\"beforeunload\", warn);\n  return () => {\n    window.removeEventListener(\"beforeunload\", warn);\n  };\n};",
+          "ts": "export const warnBeforeLeaving = (draft: {\n  readonly title: string;\n  readonly body: string;\n  readonly history: readonly string[];\n}): (() => void) => {\n  const warn = (event: BeforeUnloadEvent) => {\n    if (draft.body !== \"\") event.preventDefault();\n  };\n  window.addEventListener(\"beforeunload\", warn);\n  return () => {\n    window.removeEventListener(\"beforeunload\", warn);\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "E9",
+      "why": "таймер сброса отметки «скопировано» не снимается и не сбрасывается: размонтирование в эти две секунды и второе нажатие не проверены — второе нажатие гасит отметку раньше срока первым таймером",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useState } from \"react\";\nconst COPIED_FOR_MS = 2000;\nexport const useCopyStatus = () => {\n  const [copied, setCopied] = useState(false);\n  const copy = async (text) => {\n    await navigator.clipboard.writeText(text);\n    setCopied(true);\n    setTimeout(() => {\n      setCopied(false);\n    }, COPIED_FOR_MS);\n  };\n  return { copied, copy };\n};",
+          "ts": "import { useState } from \"react\";\n\nconst COPIED_FOR_MS = 2000;\n\nexport const useCopyStatus = (): {\n  readonly copied: boolean;\n  readonly copy: (text: string) => Promise<void>;\n} => {\n  const [copied, setCopied] = useState(false);\n  const copy = async (text: string): Promise<void> => {\n    await navigator.clipboard.writeText(text);\n    setCopied(true);\n    setTimeout(() => {\n      setCopied(false);\n    }, COPIED_FOR_MS);\n  };\n  return { copied, copy };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B6",
+      "why": "без размера страницы отдаётся весь список: отсутствие данных значит «загрузить всё»",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const firstPage = (items, size) => items.slice(0, size ?? items.length);",
+          "ts": "export const firstPage = <T>(items: readonly T[], size?: number): T[] =>\n  items.slice(0, size ?? items.length);"
+        }
+      ]
+    },
+    {
+      "criterion": "C2",
+      "why": "«громкость в пределах от нуля до ста» держится сравнением на каждом месте изменения, а не одной функцией, которая зажимает значение",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const VOLUME_STEP = 10;\nconst MAX_VOLUME = 100;\nexport const louder = (volume) =>\n  volume + VOLUME_STEP > MAX_VOLUME ? MAX_VOLUME : volume + VOLUME_STEP;\nexport const quieter = (volume) =>\n  volume - VOLUME_STEP < 0 ? 0 : volume - VOLUME_STEP;\nexport const boosted = (volume, boost) =>\n  volume + boost > MAX_VOLUME ? MAX_VOLUME : volume + boost;",
+          "ts": "const VOLUME_STEP = 10;\nconst MAX_VOLUME = 100;\n\nexport const louder = (volume: number): number =>\n  volume + VOLUME_STEP > MAX_VOLUME ? MAX_VOLUME : volume + VOLUME_STEP;\n\nexport const quieter = (volume: number): number =>\n  volume - VOLUME_STEP < 0 ? 0 : volume - VOLUME_STEP;\n\nexport const boosted = (volume: number, boost: number): number =>\n  volume + boost > MAX_VOLUME ? MAX_VOLUME : volume + boost;"
+        }
+      ]
+    },
+    {
+      "criterion": "G6",
+      "why": "на каждом нажатии клавиши в поиске для каждого заголовка заново собирается одно и то же регулярное выражение",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const titlesMatching = (titles, pattern) =>\n  titles.filter((title) => new RegExp(pattern, \"i\").test(title));",
+          "ts": "export const titlesMatching = (\n  titles: readonly string[],\n  pattern: string,\n): string[] => titles.filter((title) => new RegExp(pattern, \"i\").test(title));"
+        }
+      ]
+    },
+    {
+      "criterion": "A2",
+      "why": "кнопка сохранения сама собирает «можно сохранить» из трёх входов, которые зовущий уже знает: правило размазано между формой и кнопкой",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "export const SaveButton = ({ dirty, saving, valid, onSave }) => (\n  <button type=\"button\" disabled={!dirty || saving || !valid} onClick={onSave}>\n    Save\n  </button>\n);",
+          "ts": "export const SaveButton = ({\n  dirty,\n  saving,\n  valid,\n  onSave,\n}: {\n  readonly dirty: boolean;\n  readonly saving: boolean;\n  readonly valid: boolean;\n  readonly onSave: () => void;\n}) => (\n  <button type=\"button\" disabled={!dirty || saving || !valid} onClick={onSave}>\n    Save\n  </button>\n);"
+        }
+      ]
+    },
+    {
+      "criterion": "B14",
+      "why": "узел достаёт заголовок заметки сквозь хранилище, его срез и словарь по номеру: знает устройство трёх чужих узлов",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const titleFromStore = (store, id) =>\n  store.getState().notes.byId[id]?.title ?? \"\";",
+          "ts": "type NotesState = {\n  readonly notes: {\n    readonly byId: Readonly<Record<string, { readonly title: string }>>;\n  };\n};\n\nexport const titleFromStore = (\n  store: { readonly getState: () => NotesState },\n  id: string,\n): string => store.getState().notes.byId[id]?.title ?? \"\";"
+        }
+      ]
+    },
+    {
+      "criterion": "E11",
+      "why": "результаты поиска без совпадений не рисуются вовсе: «ничего не найдено» не задумано, экран выглядит не ответившим",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "export const SearchResults = ({ titles }) =>\n  titles.length === 0 ? null : (\n    <ul>\n      {titles.map((title) => (\n        <li key={title}>{title}</li>\n      ))}\n    </ul>\n  );",
+          "ts": "export const SearchResults = ({\n  titles,\n}: {\n  readonly titles: readonly string[];\n}) =>\n  titles.length === 0 ? null : (\n    <ul>\n      {titles.map((title) => (\n        <li key={title}>{title}</li>\n      ))}\n    </ul>\n  );"
+        }
+      ]
+    },
+    {
+      "criterion": "I4",
+      "why": "общий помощник объявлений пишет в элемент с адресом одной страницы: работает только у потребителя, чью разметку он знает",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const announce = (text) => {\n  document.querySelector(\"#notes-page-status\")?.replaceChildren(text);\n};",
+          "ts": "export const announce = (text: string): void => {\n  document.querySelector(\"#notes-page-status\")?.replaceChildren(text);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A1-бис",
+      "why": "правило «заметка устарела, если старше месяца и не закреплена» вычисляется прямо в разметке значка",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "const STALE_AFTER_MS = 2_592_000_000;\nexport const AgeBadge = ({ createdAt, pinned, now }) => (\n  <span>{!pinned && now - createdAt > STALE_AFTER_MS ? \"stale\" : \"fresh\"}</span>\n);",
+          "ts": "const STALE_AFTER_MS = 2_592_000_000;\n\nexport const AgeBadge = ({\n  createdAt,\n  pinned,\n  now,\n}: {\n  readonly createdAt: number;\n  readonly pinned: boolean;\n  readonly now: number;\n}) => (\n  <span>{!pinned && now - createdAt > STALE_AFTER_MS ? \"stale\" : \"fresh\"}</span>\n);"
+        }
+      ]
+    },
+    {
+      "criterion": "H8-бис",
+      "why": "одна функция чистки текста служит и заголовку для показа, и адресу страницы режимом «чтобы подошло»: два понятия сведены по сходству формы; потребитель адреса удалён, режим остался",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const cleanText = (text, purpose) =>\n  purpose === \"slug\"\n    ? encodeURIComponent(text.trim().toLowerCase())\n    : text.trim();",
+          "ts": "export const cleanText = (text: string, purpose: \"title\" | \"slug\"): string =>\n  purpose === \"slug\"\n    ? encodeURIComponent(text.trim().toLowerCase())\n    : text.trim();"
+        },
+        {
+          "role": "живой",
+          "file": "модуль",
+          "text": "import { cleanText } from \"{{from:владелец}}\";\nexport const shownTitle = (title) => cleanText(title, \"title\");",
+          "ts": "import { cleanText } from \"{{from:владелец}}\";\n\nexport const shownTitle = (title: string): string => cleanText(title, \"title\");"
+        }
+      ],
+      "create": {
+        "path": "app/slugFor.ts",
+        "text": "import { cleanText } from \"{{from:владелец}}\";\n\nexport const slugFor = (title: string): string => cleanText(title, \"slug\");\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "A9-кватер",
+      "why": "выбор подсказки берёт случайность внутри, хотя она могла прийти входом: функцию не проверить без подмены глобального; второй потребитель удалён",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const pickTip = (tips) => {\n  const [value = 0] = crypto.getRandomValues(new Uint32Array(1));\n  return tips[value % tips.length] ?? \"\";\n};",
+          "ts": "export const pickTip = (tips: readonly string[]): string => {\n  const [value = 0] = crypto.getRandomValues(new Uint32Array(1));\n  return tips[value % tips.length] ?? \"\";\n};"
+        },
+        {
+          "role": "живой",
+          "file": "модуль",
+          "text": "import { pickTip } from \"{{from:владелец}}\";\nexport const welcomeTip = () =>\n  pickTip([\"Press N for a new note\", \"Drag to reorder\"]);",
+          "ts": "import { pickTip } from \"{{from:владелец}}\";\n\nexport const welcomeTip = (): string =>\n  pickTip([\"Press N for a new note\", \"Drag to reorder\"]);"
+        }
+      ],
+      "create": {
+        "path": "app/emptyTip.ts",
+        "text": "import { pickTip } from \"{{from:владелец}}\";\n\nexport const emptyTip = (): string =>\n  pickTip([\"Nothing here yet\", \"Start with a title\"]);\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "L5",
+      "why": "сосед правленого: отметка сохранённого заголовка ставится по завершении запроса, и ответ раньше начатого сохранения, пришедший позже, затирает новый заголовок старым",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let lastSavedTitle = \"\";\nexport const saveTitle = async (title) => {\n  const response = await fetch(\"/title\", { method: \"PUT\", body: title });\n  if (response.ok) lastSavedTitle = title;\n};\nexport const savedTitle = () => lastSavedTitle;",
+          "ts": "let lastSavedTitle = \"\";\n\nexport const saveTitle = async (title: string): Promise<void> => {\n  const response = await fetch(\"/title\", { method: \"PUT\", body: title });\n  if (response.ok) lastSavedTitle = title;\n};\n\nexport const savedTitle = (): string => lastSavedTitle;"
+        }
+      ]
+    },
+    {
+      "criterion": "M2",
+      "why": "сосед правленого заводит подписку на клавиши на каждый вызов и не снимает её: код рассчитывает, что его позовут один раз",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const listenForSave = (onSave) => {\n  document.addEventListener(\"keydown\", (event) => {\n    if (event.key === \"s\" && event.ctrlKey) onSave();\n  });\n};",
+          "ts": "export const listenForSave = (onSave: () => void): void => {\n  document.addEventListener(\"keydown\", (event) => {\n    if (event.key === \"s\" && event.ctrlKey) onSave();\n  });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "F4",
+      "why": "сосед правленого запоминает элементы строк по номеру заметки и не забывает их: удалённая заметка оставляет в карте модуля отсоединённый элемент",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const rowElements = new Map();\nexport const rememberRow = (id, row) => {\n  rowElements.set(id, row);\n};\nexport const rowFor = (id) => rowElements.get(id);",
+          "ts": "const rowElements = new Map<string, HTMLElement>();\n\nexport const rememberRow = (id: string, row: HTMLElement): void => {\n  rowElements.set(id, row);\n};\n\nexport const rowFor = (id: string): HTMLElement | undefined =>\n  rowElements.get(id);"
+        }
+      ]
+    },
+    {
+      "criterion": "N1",
+      "why": "сосед правленого угадывает конец сворачивания таймером на длительность анимации стилей: завершение — побочный эффект часов, отмены и прерывания нет",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const COLLAPSE_MS = 300;\nexport const collapse = (element, done) => {\n  element.classList.add(\"collapsing\");\n  setTimeout(done, COLLAPSE_MS);\n};",
+          "ts": "const COLLAPSE_MS = 300;\n\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.classList.add(\"collapsing\");\n  setTimeout(done, COLLAPSE_MS);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "S4",
+      "why": "сосед правленого: замер медленного шага сам включает облегчённый режим продукта — диагностика меняет поведение",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const SLOW_STEP_MS = 500;\nexport const traceSlow = (label, startedAt) => {\n  const took = performance.now() - startedAt;\n  navigator.sendBeacon(\"/metrics\", JSON.stringify({ label, took }));\n  if (took > SLOW_STEP_MS) localStorage.setItem(\"lowPowerMode\", \"1\");\n};",
+          "ts": "const SLOW_STEP_MS = 500;\n\nexport const traceSlow = (label: string, startedAt: number): void => {\n  const took = performance.now() - startedAt;\n  navigator.sendBeacon(\"/metrics\", JSON.stringify({ label, took }));\n  if (took > SLOW_STEP_MS) localStorage.setItem(\"lowPowerMode\", \"1\");\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "H6",
+      "why": "«Loaded» в перенесённом узле — окно уже показанных заметок, а в проекте Loaded — исход загрузки: одно слово, два понятия",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/notes/visibleCount.ts",
+          "text": "import type { Note } from \"./notes\";\n\nexport type Loaded = {\n  readonly notes: readonly Note[];\n  readonly shown: number;\n};\n\nexport const loadedMore = (loaded: Loaded, step: number): Loaded => ({\n  ...loaded,\n  shown: Math.min(loaded.notes.length, loaded.shown + step),\n});\n"
+        },
+        {
+          "path": "app/moreNotes.ts",
+          "text": "import { type Loaded, loadedMore } from \"../shared/notes/visibleCount\";\n\nconst PAGE_STEP = 20;\n\nexport const nextPage = (loaded: Loaded): Loaded =>\n  loadedMore(loaded, PAGE_STEP);\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/notes/visibleCount.ts",
+          "to": "shared/notes/pageWindow.ts"
+        }
+      ],
+      "culprits": [
+        "shared/notes/visibleCount.ts"
+      ]
+    },
+    {
+      "criterion": "A15",
+      "why": "перенесённый узел сам заводит себе канал вкладок внутри функции, а не получает его входом: подменить канал нечем",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/sync/announceSaved.ts",
+          "text": "export const announceSaved = (id: string): void => {\n  const channel = new BroadcastChannel(\"notes\");\n  channel.postMessage({ saved: id });\n  channel.close();\n};\n"
+        },
+        {
+          "path": "app/afterSave.ts",
+          "text": "import { announceSaved } from \"../shared/sync/announceSaved\";\n\nexport const afterSave = (id: string): void => {\n  announceSaved(id);\n};\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/sync/announceSaved.ts",
+          "to": "shared/sync/savedSignal.ts"
+        }
+      ],
+      "culprits": [
+        "shared/sync/announceSaved.ts"
+      ]
+    },
+    {
+      "criterion": "I5",
+      "why": "в перенесённом файле один расчёт повторён в двух функциях одного узла и выдан комментарием за цену переносимости папки",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/keys/textKeys.ts",
+          "text": "// Repeated on purpose: this folder is carried to other apps by copying.\nexport const titleKey = (title: string): string =>\n  title.trim().toLowerCase().split(\" \").filter(Boolean).join(\"-\");\n\nexport const bodyKey = (body: string): string =>\n  body.trim().toLowerCase().split(\" \").filter(Boolean).join(\"-\");\n"
+        },
+        {
+          "path": "app/noteKey.ts",
+          "text": "import { bodyKey, titleKey } from \"../shared/keys/textKeys\";\n\nexport const noteAddress = (title: string, body: string): string =>\n  titleKey(title) + \"/\" + bodyKey(body);\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/keys/textKeys.ts",
+          "to": "shared/keys/slugKeys.ts"
+        }
+      ],
+      "culprits": [
+        "shared/keys/textKeys.ts"
+      ]
+    },
+    {
+      "criterion": "H5",
+      "why": "перенесённый разбор меток знает, что режет метку с запятой надвое, и описывает это комментарием вместо разбора, который запятую держит",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/tags/parseTags.ts",
+          "text": "// Tags with a comma come out split in two; callers avoid such tags.\nexport const parseTags = (line: string): string[] =>\n  line.split(\",\").map((tag) => tag.trim());\n"
+        },
+        {
+          "path": "app/tagsOf.ts",
+          "text": "import { parseTags } from \"../shared/tags/parseTags\";\n\nexport const tagsOf = (line: string): string[] =>\n  parseTags(line).filter((tag) => tag !== \"\");\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/tags/parseTags.ts",
+          "to": "shared/tags/splitTags.ts"
+        }
+      ],
+      "culprits": [
+        "shared/tags/parseTags.ts"
+      ]
+    },
+    {
+      "criterion": "J4",
+      "why": "помощник теста «все номера разные» сравнивает размер множества с нулём и признаёт верным и список повторов; на известном неверном примере он не сверен, а тест стоит на нём",
+      "create": {
+        "path": "shared/notes/tests/newestFirstIds.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { newestFirst } from \"../notes\";\n\nconst allDifferent = (ids: readonly string[]): boolean => new Set(ids).size > 0;\n\ndescribe(\"newestFirst ids\", () => {\n  it(\"keeps every note once\", () => {\n    const sorted = newestFirst([\n      { id: \"a\", title: \"A\", body: \"\", createdAt: 1 },\n      { id: \"b\", title: \"B\", body: \"\", createdAt: 2 },\n    ]);\n    expect(allDifferent(sorted.map((note) => note.id))).toBe(true);\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J5",
+      "why": "тест ключа черновика берёт входы, разные и по заголовку, и по тексту: он проходит и без разделителя, и без текста в ключе — склейка «ab»+«» против «a»+«b» не проверена",
+      "create": [
+        {
+          "path": "shared/storage/draftKey.ts",
+          "text": "export const draftKey = (title: string, body: string): string =>\n  title + \"\\u0000\" + body;\n"
+        },
+        {
+          "path": "shared/storage/tests/draftKey.test.ts",
+          "text": "import { describe, expect, it } from \"vitest\";\n\nimport { draftKey } from \"../draftKey\";\n\ndescribe(\"draftKey\", () => {\n  it(\"tells drafts apart\", () => {\n    expect(draftKey(\"a\", \"x\")).not.toBe(draftKey(\"b\", \"y\"));\n  });\n});\n"
+        }
+      ],
+      "culprits": [
+        "shared/storage/tests/draftKey.test.ts"
+      ]
+    },
+    {
+      "criterion": "J7",
+      "why": "тест сохранения черновика подменяет запись в хранилище, а сохранение и есть эта запись: тест проверяет заглушку, полное хранилище не встречает никогда",
+      "create": {
+        "path": "app/tests/saveDraftStubbed.test.ts",
+        "text": "import { describe, expect, it, vi } from \"vitest\";\n\nimport { saveDraft } from \"../saveDraft\";\n\nvi.mock(\"../../shared/storage/draftStorage\", () => ({\n  writeDraft: () => \"saved\",\n}));\n\ndescribe(\"saveDraft with storage stubbed\", () => {\n  it(\"saves the draft\", async () => {\n    await expect(saveDraft({ title: \"t\", body: \"b\" })).resolves.toBe(\"saved\");\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J3",
+      "why": "ветка поиска исполнена тестом ради покрытия строк, а утверждение стоит только на пустом запросе: покрытие полное, поведение поиска не проверено",
+      "create": {
+        "path": "shared/notes/tests/matchingBranches.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { matching } from \"../notes\";\n\nconst notes = [\n  { id: \"a\", title: \"Alpha\", body: \"\", createdAt: 1 },\n  { id: \"b\", title: \"Beta\", body: \"\", createdAt: 2 },\n];\n\ndescribe(\"matching branches\", () => {\n  it(\"runs both branches\", () => {\n    matching(notes, \"zzz\");\n    expect(matching(notes, \"\")).toHaveLength(2);\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "N4",
+      "why": "доля заполнения полосы живёт дважды: в стиле элемента и копией в состоянии для подписи — при прерывании они расходятся",
+      "create": {
+        "path": "shared/motion/useFill.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nconst PERCENT = 100;\n\nexport const useFill = (\n  bar: { readonly current: HTMLElement | null },\n  durationMs: number,\n): number => {\n  const [shownPercent, setShownPercent] = useState(0);\n  useEffect(() => {\n    const element = bar.current;\n    if (element === null) return;\n    const started = performance.now();\n    let frame = 0;\n    const step = (time: number) => {\n      const part = Math.min(1, (time - started) / durationMs);\n      element.style.width = String(part * PERCENT) + \"%\";\n      setShownPercent(Math.round(part * PERCENT));\n      if (part < 1) frame = requestAnimationFrame(step);\n    };\n    frame = requestAnimationFrame(step);\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  }, [bar, durationMs]);\n  return shownPercent;\n};\n"
+      }
+    },
+    {
+      "criterion": "O1",
+      "why": "лист панели инструментов меняет начертание всех кнопок документа: область компонента не кончается на его элементах",
+      "create": [
+        {
+          "path": "components/NoteList/parts/Toolbar.module.scss",
+          "text": "@layer components {\n  .toolbar {\n    display: flex;\n    gap: var(--gap-small);\n  }\n\n  :global(button) {\n    font-weight: 600;\n  }\n}\n"
+        },
+        {
+          "path": "components/NoteList/parts/Toolbar.tsx",
+          "text": "import type { ReactNode } from \"react\";\n\nimport css from \"./Toolbar.module.scss\";\n\nexport function Toolbar({ children }: { readonly children: ReactNode }) {\n  return <div className={css.toolbar}>{children}</div>;\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteList/parts/Toolbar.module.scss"
+      ]
+    },
+    {
+      "criterion": "O3",
+      "why": "прокрутка к заметке вычитает высоту шапки числом 56, а та же высота задана в листе шапки: связь двух чисел не видна ни компилятору, ни тесту",
+      "create": [
+        {
+          "path": "components/NoteList/parts/Header.module.scss",
+          "text": "@layer components {\n  .header {\n    position: sticky;\n    top: 0;\n    height: 56px;\n  }\n}\n"
+        },
+        {
+          "path": "components/NoteList/parts/Header.tsx",
+          "text": "import css from \"./Header.module.scss\";\n\nexport function Header({ title }: { readonly title: string }) {\n  return <header className={css.header}>{title}</header>;\n}\n"
+        },
+        {
+          "path": "components/NoteList/parts/scrollToNote.ts",
+          "text": "const HEADER_HEIGHT_PX = 56;\n\nexport const scrollToNote = (element: HTMLElement): void => {\n  window.scrollTo({\n    top: element.offsetTop - HEADER_HEIGHT_PX,\n    behavior: \"smooth\",\n  });\n};\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteList/parts/scrollToNote.ts"
+      ]
+    },
+    {
+      "criterion": "O5",
+      "why": "код считает три колонки от ширины 900, а лист сетки ставит две колонки от 720: один вопрос решён в двух местах по-разному",
+      "create": [
+        {
+          "path": "components/NoteList/parts/Grid.module.scss",
+          "text": "@layer components {\n  .grid {\n    display: grid;\n    grid-template-columns: 1fr;\n  }\n\n  @media (min-width: 720px) {\n    .grid {\n      grid-template-columns: repeat(2, 1fr);\n    }\n  }\n}\n"
+        },
+        {
+          "path": "components/NoteList/parts/Grid.tsx",
+          "text": "import type { ReactNode } from \"react\";\n\nimport css from \"./Grid.module.scss\";\n\nexport function Grid({ children }: { readonly children: ReactNode }) {\n  return <div className={css.grid}>{children}</div>;\n}\n"
+        },
+        {
+          "path": "components/NoteList/parts/columnsFor.ts",
+          "text": "const WIDE_FROM_PX = 900;\nconst WIDE_COLUMNS = 3;\n\nexport const columnsFor = (width: number): number =>\n  width >= WIDE_FROM_PX ? WIDE_COLUMNS : 1;\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteList/parts/columnsFor.ts"
+      ]
+    },
+    {
+      "criterion": "A5-бис",
+      "why": "в одной копии пары адрес заметки кодируется, в другой нет: заголовок с косой чертой ломает адрес лёгкой сборки — починено в одной копии",
+      "create": [
+        {
+          "path": "shared/links/noteLink.ts",
+          "text": "export const noteLink = (title: string): string =>\n  \"/notes/\" + encodeURIComponent(title);\n"
+        },
+        {
+          "path": "shared/linksLite/noteLink.ts",
+          "text": "export const noteLink = (title: string): string => \"/notes/\" + title;\n"
+        }
+      ],
+      "patch": [
+        {
+          "path": ".context/graph.config.mjs",
+          "find": "  forks: [],",
+          "replace": "  forks: [{ from: \"shared/links\", to: \"shared/linksLite\" }],"
+        }
+      ],
+      "culprits": [
+        "shared/linksLite/noteLink.ts"
+      ]
+    },
+    {
+      "criterion": "J9",
+      "why": "правило поиска заметок проверено через отрисовку разметки в тестовом окружении, а не отдельным тестом без окружения",
+      "create": {
+        "path": "shared/notes/tests/matchingRendered.test.tsx",
+        "text": "import { render, screen } from \"@testing-library/react\";\nimport { describe, expect, it } from \"vitest\";\n\nimport { matching } from \"../notes\";\n\nconst notes = [\n  { id: \"a\", title: \"Alpha\", body: \"\", createdAt: 1 },\n  { id: \"b\", title: \"Beta\", body: \"\", createdAt: 2 },\n];\n\nfunction Found({ query }: { readonly query: string }) {\n  return (\n    <ul>\n      {matching(notes, query).map((note) => (\n        <li key={note.id}>{note.title}</li>\n      ))}\n    </ul>\n  );\n}\n\ndescribe(\"matching on screen\", () => {\n  it(\"shows only the matching note\", () => {\n    render(<Found query=\"be\" />);\n    expect(screen.getAllByRole(\"listitem\")).toHaveLength(1);\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "A12",
+      "why": "основа поиска, которую берут все, берёт узел одной возможности — приветственной заметки, у которого свои исходящие связи: устойчивое зависит от изменчивого",
+      "create": {
+        "path": "shared/onboarding/welcomeNote.ts",
+        "text": "import { formatDay } from \"../i18n/formatDay\";\nimport { parseJsonOrNull } from \"../storage/parseJson\";\n\nexport const WELCOME_ID = \"welcome\";\n\nexport const welcomeShownOn = (\n  stored: string,\n  locale: string,\n): string | null => {\n  const time = parseJsonOrNull(stored);\n  return typeof time === \"number\" ? formatDay(time, locale) : null;\n};\n"
+      },
+      "patch": [
+        {
+          "path": "src/shared/notes/notes.ts",
+          "find": "import { normalizeQuery } from \"./normalizeQuery\";",
+          "replace": "import { WELCOME_ID } from \"../onboarding/welcomeNote\";\nimport { normalizeQuery } from \"./normalizeQuery\";"
+        },
+        {
+          "path": "src/shared/notes/notes.ts",
+          "find": "    ? [...notes]",
+          "replace": "    ? notes.filter((note) => note.id !== WELCOME_ID)"
+        }
+      ],
+      "culprits": [
+        "src/shared/notes/notes.ts"
+      ]
+    },
+    {
+      "criterion": "O2-бис",
+      "why": "лист подсказки объявляет себя в слой подсказок, которого нет в объявленном порядке слоёв: он встаёт последним без признака",
+      "create": [
+        {
+          "path": "components/NoteForm/parts/Tip.module.scss",
+          "text": "@layer hints {\n  .tip {\n    color: var(--text-muted);\n  }\n}\n"
+        },
+        {
+          "path": "components/NoteForm/parts/Tip.tsx",
+          "text": "import css from \"./Tip.module.scss\";\n\nexport function Tip({ text }: { readonly text: string }) {\n  return <p className={css.tip}>{text}</p>;\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteForm/parts/Tip.module.scss"
+      ]
+    },
+    {
+      "criterion": "H2",
+      "why": "список меток берётся через axios, а проект ходит в сеть через fetch: вторая идиома одной задачи",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import axios from \"axios\";\nexport const fetchTagList = async () => {\n  const response = await axios.get(\"/tags\");\n  return response.data;\n};",
+          "ts": "import axios from \"axios\";\n\nexport const fetchTagList = async (): Promise<string[]> => {\n  const response = await axios.get<string[]>(\"/tags\");\n  return response.data;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "J2",
+      "why": "порядок списка языков держит комментарий «держать по алфавиту», хотя его проверяет одна строка теста",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "// Keep these in alphabetical order: the settings screen lists them as is.\nexport const LANGUAGES = [\"de\", \"en\", \"fr\", \"ru\"];",
+          "ts": "// Keep these in alphabetical order: the settings screen lists them as is.\nexport const LANGUAGES = [\"de\", \"en\", \"fr\", \"ru\"] as const;"
+        }
+      ]
+    },
+    {
+      "criterion": "S1",
+      "why": "необработанные отказы обещаний гасятся без следа: отказ в бою не обнаруживается ни сбором ошибок, ни консолью",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const quietRejections = (target) => {\n  target.addEventListener(\"unhandledrejection\", (event) => {\n    event.preventDefault();\n  });\n};",
+          "ts": "export const quietRejections = (target: Window): void => {\n  target.addEventListener(\"unhandledrejection\", (event) => {\n    event.preventDefault();\n  });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "S2",
+      "why": "вход пишет в консоль адрес и пароль одной строкой: запись без уровня и структуры, с чувствительным",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const logSignIn = (email, password) => {\n  console.info(\"sign in \" + email + \" \" + password);\n};",
+          "ts": "export const logSignIn = (email: string, password: string): void => {\n  console.info(\"sign in \" + email + \" \" + password);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "S6",
+      "why": "при уходе со страницы текст черновика уходит обычным запросом без keepalive, а заголовок пишется локально: остановка обрывает отправку и оставляет черновик половиной",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const saveOnLeave = (title, body) => {\n  window.addEventListener(\"pagehide\", () => {\n    localStorage.setItem(\"leftTitle\", title);\n    void fetch(\"/drafts\", { method: \"POST\", body });\n  });\n};",
+          "ts": "export const saveOnLeave = (title: string, body: string): void => {\n  window.addEventListener(\"pagehide\", () => {\n    localStorage.setItem(\"leftTitle\", title);\n    void fetch(\"/drafts\", { method: \"POST\", body });\n  });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G2",
+      "why": "на каждом событии прокрутки меряется каждая строка списка: горячий путь не назван и не измерен",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const watchVisibleRows = (list, onVisible) => {\n  const count = () => {\n    const box = list.getBoundingClientRect();\n    onVisible(\n      [...list.children].filter((child) => {\n        const row = child.getBoundingClientRect();\n        return row.bottom > box.top && row.top < box.bottom;\n      }).length,\n    );\n  };\n  list.addEventListener(\"scroll\", count);\n  return () => {\n    list.removeEventListener(\"scroll\", count);\n  };\n};",
+          "ts": "export const watchVisibleRows = (\n  list: HTMLElement,\n  onVisible: (count: number) => void,\n): (() => void) => {\n  const count = () => {\n    const box = list.getBoundingClientRect();\n    onVisible(\n      [...list.children].filter((child) => {\n        const row = child.getBoundingClientRect();\n        return row.bottom > box.top && row.top < box.bottom;\n      }).length,\n    );\n  };\n  list.addEventListener(\"scroll\", count);\n  return () => {\n    list.removeEventListener(\"scroll\", count);\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B9",
+      "why": "поле pretty осталось в типе настроек выгрузки, но больше ничего не делает: снятие не объявлено, замены нет, потребители получают сжатый вывод без признака",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const exportTitles = (titles, options = {}) =>\n  options.format === \"text\" ? titles.join(\"\\n\") : JSON.stringify(titles);",
+          "ts": "export type ExportOptions = {\n  readonly format?: \"json\" | \"text\";\n  readonly pretty?: boolean;\n};\n\nexport const exportTitles = (\n  titles: readonly string[],\n  options: ExportOptions = {},\n): string =>\n  options.format === \"text\" ? titles.join(\"\\n\") : JSON.stringify(titles);"
+        }
+      ]
+    },
+    {
+      "criterion": "E5",
+      "why": "ответ на нулевой срок сменён: прежде запрос отменялся сразу, теперь ждёт без срока — краевой ответ поменян без записанного решения",
+      "patch": [
+        {
+          "path": "src/shared/api/withTimeout.ts",
+          "find": "): AbortSignal => AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);",
+          "replace": "): AbortSignal =>\n  timeoutMs > 0\n    ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])\n    : signal;"
+        }
+      ],
+      "culprits": [
+        "src/shared/api/withTimeout.ts"
+      ]
+    },
+    {
+      "criterion": "N5",
+      "why": "часы догоняют пропущенное: вернувшись из фона, цикл разом отыгрывает каждый тик, пропущенный в скрытой вкладке",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const runClock = (onTick, periodMs) => {\n  let due = performance.now() + periodMs;\n  const timer = setInterval(() => {\n    while (performance.now() >= due) {\n      onTick();\n      due += periodMs;\n    }\n  }, periodMs);\n  return () => {\n    clearInterval(timer);\n  };\n};",
+          "ts": "export const runClock = (\n  onTick: () => void,\n  periodMs: number,\n): (() => void) => {\n  let due = performance.now() + periodMs;\n  const timer = setInterval(() => {\n    while (performance.now() >= due) {\n      onTick();\n      due += periodMs;\n    }\n  }, periodMs);\n  return () => {\n    clearInterval(timer);\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "R1",
+      "why": "зависимость для дат добавлена, хотя даты форматирует Intl через formatDay: обоснования нет",
+      "create": {
+        "path": "shared/notes/titleLength.ts",
+        "text": "export const titleLength = (title: string): number => title.trim().length;\n"
+      },
+      "patch": [
+        {
+          "path": "package.json",
+          "find": "\"i18next\": \"26.5.6\",",
+          "replace": "\"i18next\": \"26.5.6\",\n    \"moment\": \"2.30.1\","
+        }
+      ],
+      "culprits": [
+        "package.json"
+      ]
+    },
+    {
+      "criterion": "Q6",
+      "why": "политика источников разрешила странице встроенные скрипты: любая вставка разметки со скриптом исполнится",
+      "create": {
+        "path": "shared/notes/hasBody.ts",
+        "text": "export const hasBody = (body: string): boolean => body.trim() !== \"\";\n"
+      },
+      "patch": [
+        {
+          "path": "index.html",
+          "find": "default-src 'self'; connect-src",
+          "replace": "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src"
+        }
+      ],
+      "culprits": [
+        "index.html"
+      ]
     }
   ],
   "covers": [
