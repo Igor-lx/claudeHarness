@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BAR_CUTS,
   BAR_SIGNALS,
+  barGripOf,
   commentRunsOf,
   isToolModule,
 } from "./graph.predicates.mjs";
@@ -1095,6 +1096,67 @@ describe("происхождение строк модели и каталоги
       expect(rose).toBeGreaterThan(0);
       expect(quiet).toBeGreaterThan(0);
       expect(sealed).toMatch(/«чисто» о целом по каталогам: [1-9]\d*; каталоги — записей о состоянии 0, файлов с состоянием 1, из них без записи 1/);
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("«чисто» строки без свидетелей печать не числит «свидетелем»: строка соседей стоит на следующей опоре", () => {
+    const box = seatEmpty("grip-");
+    try {
+      const tool = (...args) => {
+        try {
+          return execFileSync(
+            process.execPath,
+            [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+            { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+          );
+        } catch (e) {
+          return String(e.stdout ?? "");
+        }
+      };
+      // Предмет берёт соседа: у строки `соседи` свидетелей нет по построению.
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzStep.ts"),
+        "export const zzStep = (n: number): number => n + 1;\n",
+      );
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzTick.tsx"),
+        'import { useState } from "react";\nimport { zzStep } from "./zzStep";\n\n' +
+          "export function ZzTick() {\n  const [n, setN] = useState(0);\n" +
+          "  return <button onClick={() => setN(zzStep(n))}>{n}</button>;\n}\n",
+      );
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const MAP_HEAD = "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(
+            MAP_HEAD,
+            MAP_HEAD +
+              "\n| `app/zzTick.tsx` | счётчик нажатий | `n` | нет |" +
+              "\n| `app/zzStep.ts` | шаг счётчика | нет | нет |",
+          ),
+      );
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar", "app/zzTick.tsx");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      const sealed = tool("bar", "app/zzTick.tsx");
+      expect(sealed).toContain("печать поставлена");
+      const witness = Number(
+        /«чисто» по самой сильной опоре критерия: [^\n]*свидетелем — (\d+);/.exec(sealed)?.[1],
+      );
+      // Строки исходов: критерий, предмет, …, исход в четвёртой клетке.
+      const rows = fs
+        .readFileSync(protoAt, "utf8")
+        .split("\n")
+        .map((l) => l.split("|").map((x) => x.trim()))
+        .filter((cells) => cells.length === 9 && cells[4] === "чисто")
+        .filter((cells) => barGripOf(cells[1] + "|") === "свидетель");
+      const onNeighbours = rows.filter((cells) => cells[2] === "`соседи`").length;
+      expect(onNeighbours).toBeGreaterThan(0);
+      expect(witness).toBe(rows.length - onNeighbours);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

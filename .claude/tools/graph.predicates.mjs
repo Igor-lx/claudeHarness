@@ -2258,9 +2258,10 @@ export const BAR_TIERS = [
 ];
 /** Самая сильная опора критерия — на чём стоит его «чисто»: одно слово из
  * `BAR_GRIPS`, `лозунг` либо пустая строка, когда решения нет. Вход — тот
- * же, что у `barHoldOf`: `критерий|лозунг`. */
+ * же, что у `barHoldOf`: `критерий|лозунг`, и третьим полем `без свидетелей`
+ * у строки протокола, где свидетелей нет. */
 export const barGripOf = (row) => {
-  const [id, flag] = row.split("|");
+  const [id, flag, witnessed] = row.split("|");
   if (flag === "лозунг") return "лозунг";
   if (
     BAR_CHECKS[id] !== undefined ||
@@ -2270,7 +2271,12 @@ export const barGripOf = (row) => {
     return "сверка";
   if (BAR_LINT[id] !== undefined) return "линт";
   if (BAR_SIGNALS.some((s) => s.ids.includes(id))) return "вопрос модели";
-  if (WITNESS_COLUMNS[id] !== undefined) return "свидетель";
+  if (WITNESS_COLUMNS[id] !== undefined)
+    return witnessed !== "без свидетелей"
+      ? "свидетель"
+      : BAR_CORE.has(id)
+        ? "ядро"
+        : "вниманием";
   if (BAR_CORE.has(id)) return "ядро";
   if (BAR_ATTENTION[id] !== undefined) return "вниманием";
   return "";
@@ -5625,6 +5631,12 @@ export const PREDICATE_CASES = [
   ["barGripOf", "A1|", "вопрос модели"],
   ["barGripOf", "A2|", "свидетель"],
   ["barGripOf", "B5|", "свидетель"],
+  // Строка без свидетелей — соседи, удаление без объявлений — на свидетеле не
+  // стоит: опора опускается до следующей у критерия. Замечание свода пробы
+  // `2026-11-18`: печать числила «свидетелем», а строк свидетелей не было.
+  ["barGripOf", "A2||без свидетелей", "ядро"],
+  ["barGripOf", "B5||без свидетелей", "вниманием"],
+  ["barGripOf", "A1||без свидетелей", "вопрос модели"],
   ["barGripOf", "I2|", "вопрос модели"],
   ["barGripOf", "I1|", "вопрос модели"],
   ["barGripOf", "J9|", "вниманием"],
