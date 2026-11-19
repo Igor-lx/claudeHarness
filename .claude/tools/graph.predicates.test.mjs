@@ -71,6 +71,16 @@ describe("словарь области", () => {
     expect(hits.filter((h) => h.sort === "список").map((h) => h.sample)).toEqual(["push"]);
   });
 
+  // Тип в клетке модели: черта союза — косой, иначе строка распалась бы
+  // по графам таблицы. Замыкание запуска `2026-11-19`, выживший мутант.
+  it("пустота в типе значения названа типом с косой вместо черты", () => {
+    const text = "export const titles = new Map<string, string | undefined>();\n";
+    const hits = vocabulary.signalsOf("src/a.ts", text, { kind: "код", own: new Set() });
+    expect(hits.filter((h) => h.sort === "пустота").map((h) => h.sample)).toEqual([
+      "Map<string, string / undefined>",
+    ]);
+  });
+
   it("самопроверка не находит расхождений", () => {
     expect(selfCheck()).toEqual([]);
   });
