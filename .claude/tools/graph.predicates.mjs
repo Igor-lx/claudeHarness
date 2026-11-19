@@ -2630,20 +2630,56 @@ export const barRadiusFault = (row) => {
  * «меньше потребителей» о владельце назвали, а местом поставили потребителя;
  * решено разработчиком `2026-11-19`. */
 export const barRowSpotFault = (row) => {
-  const [placesText, what = "", rowsText = ""] = row.split("|");
+  const [placesText, whatText = "", rowsText = "", ownText = ""] = row.split("|");
   const norm = (p) => p.replace(/`/g, "").trim().replace(/:\d+$/, "");
   const places = new Set(placesText.split(",").map(norm).filter(Boolean));
+  const { what, past, bare } = barPastOf(whatText);
+  if (bare.length > 0)
+    return "в «мимо:» строка без причины: " + bare.map((n) => "П" + n).join(", ") + " — «мимо: П" + bare[0] + " — почему не нарушение»";
   const cited = citedIds(what, true);
-  const open = rowsText
-    .split(";")
-    .filter(Boolean)
-    .map((one) => one.split("="))
-    .filter(([mid, at]) => cited.has(Number(mid.slice(1))) && norm(at ?? "") !== "" && !places.has(norm(at)));
-  return open.length === 0
+  const rowsOf = (text) =>
+    text
+      .split(";")
+      .filter(Boolean)
+      .map((one) => one.split("="))
+      .filter(([, at]) => norm(at ?? "") !== "" && !places.has(norm(at)));
+  const open = rowsOf(rowsText).filter(([mid]) => cited.has(Number(mid.slice(1))));
+  if (open.length > 0)
+    return (
+      "нашлось, а файл строки модели, на которую она ссылается, не назван: " +
+      open.map(([mid, at]) => mid + " (`" + norm(at) + "`)").join(", ") +
+      " — адресом либо в «ещё мест:»; строку не о нарушении номером не называют"
+    );
+  // Строка, о которой спрашивает критерий, вне мест находки получает ответ, как
+  // у «чисто»: иначе нашлось одно место, а строку в другом файле прошли мимо.
+  // Выведено: промах `M1` перепроверки свода проб `2026-11-19`.
+  const silent = rowsOf(ownText).filter(([mid]) => !cited.has(Number(mid.slice(1))) && !past.has(Number(mid.slice(1))));
+  return silent.length === 0
     ? ""
-    : "нашлось, а файл строки модели, на которую она ссылается, не назван: " +
-        open.map(([mid, at]) => mid + " (`" + norm(at) + "`)").join(", ") +
-        " — адресом либо в «ещё мест:»; строку не о нарушении номером не называют";
+    : "нашлось, а строки модели, о которых спрашивает критерий, без ответа: " +
+        silent.map(([mid, at]) => mid + " (`" + norm(at) + "`)").join(", ") +
+        " — адресом, в «ещё мест:» либо «мимо: " +
+        silent[0][0] +
+        " — почему не нарушение»";
+};
+
+/** Хвост «мимо:» графы «что» находки: строки модели, о которых спрашивает
+ * критерий, — не нарушение, каждая со своей причиной после тире:
+ * «мимо: П23 — флаг сбрасывается при монтаже; П24, П25 — константы». Выход —
+ * «что» без хвоста, номера с причиной и номера без неё. Хвост идёт после
+ * описания, до конца графы либо перед «ещё мест:» — путей с номерами строк
+ * модели там нет, и разбор их не задевает. */
+const barPastOf = (whatText) => {
+  const m = /;\s*мимо\s*:\s*(.*)$/.exec(whatText ?? "");
+  if (m === null) return { what: whatText ?? "", past: new Set(), bare: [] };
+  const what = (whatText.slice(0, m.index) + whatText.slice(m.index + m[0].length)).trim();
+  const past = new Set();
+  for (const g of m[1].matchAll(
+    /((?:П[0-9]+\s*,\s*)*П[0-9]+)\s+[—–-]\s+(?!П?[0-9])(\S.*?)(?=[;,]\s*(?:П[0-9]+\s*,\s*)*П[0-9]+\s+[—–-]\s|$)/g,
+  ))
+    for (const n of citedIds(g[1], true)) past.add(n);
+  const bare = [...citedIds(m[1], true)].filter((n) => !past.has(n));
+  return { what, past, bare };
 };
 
 /** Сдвиги модели без ответа.
@@ -2932,7 +2968,7 @@ export const testEnumeratesInputs = (block) => INPUTS_ENUMERATED.test(block);
  * «ещё нарушений» и «ещё мест» с числом в обратных кавычках. Выход — места
  * через запятую, без обратных кавычек, как написаны; вид проверяет режим. */
 export const barMorePlacesOf = (what) => {
-  const m = /ещё (?:мест|нарушений)(?:\s*`[0-9]+`)?\s*:\s*(.+)$/.exec(what);
+  const m = /ещё (?:мест|нарушений)(?:\s*`[0-9]+`)?\s*:\s*(.+?)(?:;\s*мимо\s*:.*)?$/.exec(what);
   if (m === null) return "";
   return m[1]
     .split(",")
@@ -5104,6 +5140,34 @@ export const PREDICATE_CASES = [
   ["barRowSpotFault", "", ""],
   // Строка без файла — о целом, а не о файле: её файла не требуют.
   ["barRowSpotFault", "app/use.ts:3|см. П1|П1", ""],
+  // Строка, о которой спрашивает критерий, вне мест находки получает ответ:
+  // местом, номером в «что» с файлом местом либо «мимо:» с причиной.
+  [
+    "barRowSpotFault",
+    "app/use.ts:3|флаг модуля переживает монтаж||П1=app/use.ts;П4=shared/loaded.ts",
+    "нашлось, а строки модели, о которых спрашивает критерий, без ответа: П4 (`shared/loaded.ts`) — адресом, в «ещё мест:» либо «мимо: П4 — почему не нарушение»",
+  ],
+  ["barRowSpotFault", "app/use.ts:3|флаг модуля переживает монтаж; мимо: П4 — флаг сбрасывает эффект при каждом монтаже||П4=shared/loaded.ts", ""],
+  ["barRowSpotFault", "app/use.ts:3, shared/loaded.ts:2|флаг модуля переживает монтаж||П4=shared/loaded.ts", ""],
+  [
+    "barRowSpotFault",
+    "app/use.ts:3|флаг модуля; мимо: П4, П6 — константы, П7 — сброс в эффекте; ещё мест: `app/b.ts:1`||П4=shared/a.ts;П6=shared/b.ts;П7=shared/c.ts;П8=shared/d.ts",
+    "нашлось, а строки модели, о которых спрашивает критерий, без ответа: П8 (`shared/d.ts`) — адресом, в «ещё мест:» либо «мимо: П8 — почему не нарушение»",
+  ],
+  // Номер в «мимо:» без причины, диапазон в «мимо:» — не ответ.
+  ["barRowSpotFault", "app/use.ts:3|флаг модуля; мимо: П4||П4=shared/loaded.ts", "в «мимо:» строка без причины: П4 — «мимо: П4 — почему не нарушение»"],
+  [
+    "barRowSpotFault",
+    "app/use.ts:3|флаг модуля; мимо: П4–П5 — константы||П4=shared/a.ts",
+    "нашлось, а строки модели, о которых спрашивает критерий, без ответа: П4 (`shared/a.ts`) — адресом, в «ещё мест:» либо «мимо: П4 — почему не нарушение»",
+  ],
+  // Номер в «мимо:» файла местом не требует; тот же номер в «что» — требует.
+  ["barRowSpotFault", "app/use.ts:3|флаг; мимо: П2 — не о нарушении|П2=shared/own.ts|П2=shared/own.ts", ""],
+  [
+    "barRowSpotFault",
+    "app/use.ts:3|см. П2; мимо: П2 — не о нарушении|П2=shared/own.ts|",
+    "нашлось, а файл строки модели, на которую она ссылается, не назван: П2 (`shared/own.ts`) — адресом либо в «ещё мест:»; строку не о нарушении номером не называют",
+  ],
   [
     "barRadiusFault",
     "a/A.tsx:3|П1–П2 не сдвинуто|П1=a/A.tsx;П2=b/b.ts",
@@ -5585,6 +5649,8 @@ export const PREDICATE_CASES = [
   ["barMorePlacesOf", "два источника; ещё мест: `shared/a.ts:8`, `app/b.tsx:9`", "shared/a.ts:8,app/b.tsx:9"],
   ["barMorePlacesOf", "линт: r — x; ещё нарушений `2`: src/a.ts:3, src/b.ts:4", "src/a.ts:3,src/b.ts:4"],
   ["barMorePlacesOf", "два источника номера страницы", ""],
+  ["barMorePlacesOf", "флаг; ещё мест: `a.ts:2`, `b.ts:3`; мимо: П4 — константа", "a.ts:2,b.ts:3"],
+  ["barMorePlacesOf", "флаг; мимо: П4 — константа; ещё мест: `a.ts:2`", "a.ts:2"],
   // --- pathUnder: файл под папкой в любом виде записи пути ---
   ["pathUnder", "D:/a/wseat/src/app/tests/App.test.tsx\nD:\\a\\wseat", true],
   ["pathUnder", "D:/a/wseat/src/x.test.ts\nD:\\a\\wseat\\src\\", true],

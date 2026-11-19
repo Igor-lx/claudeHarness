@@ -1408,8 +1408,17 @@ describe("поверхность бочки в модели свода", () => {
         found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного ({П}); ещё мест: `shared/zzLib/zzLib.ts:1`"),
       ).not.toMatch(lost);
       expect(found("shared/zzLib/zzLib.ts:1 | абстракция осталась ради одного ({П})")).not.toMatch(lost);
-      // Без номера строки требования нет: файл называют за строку, а не за слово.
-      expect(found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного")).not.toMatch(lost);
+      // Строку не назвали вовсе — её всё равно спрашивают, как у «чисто»:
+      // местом либо «мимо:» с причиной (промах `M1` перепроверки свода проб
+      // `2026-11-19`: нашлось одно место, строку соседа прошли мимо).
+      const silent = /H8(?:@[^:]*)?: нашлось, а строки модели, о которых спрашивает критерий, без ответа: П\d+ \(`shared\/zzLib\/zzLib\.ts`\)/;
+      const bare = found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного");
+      expect(bare).not.toMatch(lost);
+      expect(bare).toMatch(silent);
+      const past = found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного; мимо: {П} — владелец отдаёт имя двоим");
+      expect(past).not.toMatch(lost);
+      expect(past).not.toMatch(silent);
+      expect(found("shared/zzLib/zzOther.ts:3 | абстракция осталась ради одного; мимо: {П}")).toMatch(/H8(?:@[^:]*)?: в «мимо:» строка без причины/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -4213,12 +4222,19 @@ describe("ядро по предметам уровня: правка, чтен�
       const barrel = fs.readFileSync(path.join(dir, "node--components--index.ts.md"), "utf8");
       expect(barrel).toContain("| B7 | `components/index.ts` |");
       expect(barrel).not.toMatch(/^\| A1 \|/m);
-      // Находка ложится долгом, и план обязан её назвать.
+      // Находка ложится долгом, и план обязан её назвать. Строки модели о
+      // втором файле единицы находка проходит «мимо:» с причиной.
+      const total = [...cart.matchAll(/^\| (П\d+) \| [^|]+ \| `components\/zzCart\/zzTotal\.ts[^`]*` \|/gm)]
+        .map((m) => m[1] + " — имя берёт соседний файл единицы")
+        .join("; ");
+      expect(total).not.toBe("");
       for (const one of readdirOf(dir))
         fillBar(path.join(dir, one), {
           release: "не нужно: проба",
           holds: { "узел@components/zzCart": "нет" },
-          pick: { "B7@components/zzCart": "нашлось | src/components/zzCart/zzCart.tsx:3 | лишнее имя | долг" },
+          pick: {
+            "B7@components/zzCart": "нашлось | src/components/zzCart/zzCart.tsx:3 | лишнее имя; мимо: " + total + " | долг",
+          },
         });
       const again = tool("bar", "--transition");
       expect(again).toContain(

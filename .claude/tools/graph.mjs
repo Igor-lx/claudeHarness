@@ -17395,6 +17395,8 @@ const barSkeletonOf = ({
       "в конце колонки «что»: «ещё мест: `путь:строка`, `путь:строка`».",
       "Находка, назвавшая номером строку модели, о которой спрашивает её",
       "критерий, называет и файл этой строки — адресом либо в «ещё мест:».",
+      "Прочие строки, о которых спрашивает критерий, — в конце «что»:",
+      "«мимо: П23 — почему не нарушение», по причине на номер.",
       "Найденное по одному критерию — находка в каждом, чьё тело его называет:",
       "«чисто» со ссылкой на находку другого критерия режим не принимает.",
       ...(transition
@@ -18232,11 +18234,33 @@ const barHolesOf = ({
           const at = fileOf(r.where);
           return at === null ? [] : [r.id + "=" + at];
         });
+      // Строки модели предмета, на которые «чисто» обязано было бы ответить, —
+      // тем же отбором, что у вопроса модели: охват и сдвиг из записи данных.
+      const change = kind === "на изменение";
+      const own = barModelFor(parsed.model, c.level, subject, neighbours)
+        .filter((r) =>
+          [...BAR_SIGNALS, ...BAR_CUTS.filter((s) => !s.change || change)].some(
+            (s) =>
+              s.ids.includes(c.id) &&
+              s.sort === r.sort &&
+              (s.mark === undefined ||
+                [s.mark].flat().includes(r.mark.split(" · ")[0].trim())) &&
+              (s.delta === undefined || r.delta.split(", ").includes(s.delta)) &&
+              (s.scope !== "fresh" || r.delta !== "") &&
+              (s.scope !== "brought" || !change || r.delta !== ""),
+          ),
+        )
+        .flatMap((r) => {
+          const at = fileOf(r.where);
+          return at === null ? [] : [r.id + "=" + at];
+        });
       const more = barMorePlacesOf(one.what);
       const places = [one.addr, ...(more === "" ? [] : more.split(","))]
         .map((p) => fileOf(p) ?? p.trim())
         .join(",");
-      const lost = barRowSpotFault(places + "|" + flat(one.what) + "|" + asked.join(";"));
+      const lost = barRowSpotFault(
+        places + "|" + flat(one.what) + "|" + asked.join(";") + "|" + own.join(";"),
+      );
       if (lost !== "") holes.push(barWho(c.id, subject) + ": " + lost);
     }
   }
