@@ -696,6 +696,7 @@ export const MODEL_LEVEL = {
   "текст отказа": "узел",
   раскладка: "единица",
   поиск: "единица",
+  аллокация: "единица",
   комментарий: "единица",
   имя: "единица",
   величина: "единица",
@@ -1089,6 +1090,7 @@ export const BAR_SIGNALS = [
   // контейнер без вытеснения и поиск внутри обхода.
   { ids: ["G9"], sort: "рост", words: "работа растёт с объёмом данных, и в основании не назван её рост и то, что его ограничивает" },
   { ids: ["G9"], sort: "поиск", words: "поиск по коллекции стоит внутри обхода, и в основании не назван рост с длиной коллекции" },
+  { ids: ["G6", "G1"], sort: "аллокация", words: "на каждом шаге обхода создаётся регулярное выражение либо форматтер, и в основании не сказано, почему его нельзя создать один раз" },
   { ids: ["G9"], sort: "кэш", words: "контейнер модуля растёт и не чистится, и в основании не сказано, чем ограничен его рост" },
   { ids: ["H3"], sort: "комментарий", words: "в предмете есть комментарии, и в основании не сказано, что каждый прошёл четыре вопроса" },
   { ids: ["H5"], sort: "комментарий", mark: "предупреждение", words: "комментарий предупреждает о слабом месте, и в основании не сказано, почему оно описано, а не переписано" },
@@ -1817,7 +1819,7 @@ export const BAR_FORMS = {
     "запись свойствами, которых нет в образце: `textContent`, `innerText` — образец записи — `style` и `classList`",
   ],
   G6: [
-    "аллокация на горячем пути не из частого события: обход списка, отрисовка элемента — признак видит обработчики частых событий",
+    "аллокация на горячем пути не из частого события: отрисовка элемента, объект либо массив на каждом шаге обхода — признак видит обработчики частых событий и регулярное выражение либо форматтер `Intl`, созданные внутри обхода в одном теле",
     "аллокация в функции, которую кадровый цикл зовёт из другого файла, — признак видит кадровый цикл в своём файле",
   ],
   "G6-бис": [UNSEEN.list],
@@ -3951,6 +3953,18 @@ const codeSignalsOf = (file, text, own) => {
       searched.add(from + m.index);
       at("поиск", from + m.index, m[1] + "." + m[2]);
     }
+  // Регулярное выражение и форматтер, созданные на каждом шаге обхода: от
+  // шага они обычно не зависят. Свод `свод.2-3.1` назвал `new RegExp` на
+  // каждый заголовок `G1` и `E2`, а `G6` держатель «частое» не спросил.
+  const made = new Set();
+  for (const [from, to] of loops)
+    for (const m of bare
+      .slice(from, to)
+      .matchAll(/(?<![\w$.])(?:new\s+)?RegExp\s*\(|\bnew\s+Intl\s*\.\s*[\w$]+\s*\(/g)) {
+      if (made.has(from + m.index)) continue;
+      made.add(from + m.index);
+      at("аллокация", from + m.index, m[0].replace(/\s*\($/, "").replace(/\s+/g, " ") + " в обходе");
+    }
 
   // --- рост с объёмом данных ------------------------------------------------
   // Обход той же коллекции внутри её обхода — работа растёт квадратом длины.
@@ -6011,6 +6025,10 @@ export const PREDICATE_CASES = [
   ["bareCodeOf", "s = `a ${k * 2} b`", "s = `  ${k * 2}  `"],
   ["bareCodeOf", "s = `a ${f(\"x\")} ${g({ y: 1 })} b`", "s = `  ${f(\" \")} ${g({ y: 1 })}  `"],
   // --- signalsSummary: признаки по всей планке ---
+  // Регулярное выражение и форматтер на каждом шаге обхода — `G6` (свод `свод.2-3.1`).
+  ["signalsSummary", "src/a.ts\nexport const pick = (heads: string[], query: string) =>\n  heads.filter((head) => new RegExp(query).test(head));", "2:аллокация"],
+  ["signalsSummary", "src/a.ts\nexport const label = (counts: number[]) =>\n  counts.map((count) => new Intl.NumberFormat(\"en\").format(count));", "2:аллокация"],
+  ["signalsSummary", "src/a.ts\nconst pattern = /x/;\nexport const pick = (heads: string[]) => heads.filter((head) => pattern.test(head));", ""],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / 8;", "2:дубль"],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / slots;", ""],
   ["signalsSummary", "src/a.ts\nexport const visible = (entries: string[]) => entries.length >= 0 && entries.length > 0;", "1:всегда"],

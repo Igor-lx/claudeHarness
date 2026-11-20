@@ -71,6 +71,21 @@ describe("словарь области", () => {
     expect(hits.filter((h) => h.sort === "список").map((h) => h.sample)).toEqual(["push"]);
   });
 
+  // Регулярное выражение и форматтер на каждом шаге обхода — строка `G6`;
+  // вне обхода строки нет. Свод `свод.2-3.1`, промах `G6`.
+  it("регулярное выражение и форматтер в обходе названы аллокацией, вне обхода — нет", () => {
+    const text =
+      "const once = new RegExp(\"x\");\n" +
+      "export const pick = (heads: string[], q: string) =>\n" +
+      "  heads.filter((h) => new RegExp(q, \"i\").test(h)).map((h) => new Intl.NumberFormat(\"en\").format(h.length) + RegExp(q).source);\n";
+    const hits = vocabulary.signalsOf("src/a.ts", text, { kind: "код", own: new Set() });
+    expect(hits.filter((h) => h.sort === "аллокация").map((h) => h.sample)).toEqual([
+      "new RegExp в обходе",
+      "new Intl.NumberFormat в обходе",
+      "RegExp в обходе",
+    ]);
+  });
+
   // Тип в клетке модели: черта союза — косой, иначе строка распалась бы
   // по графам таблицы. Замыкание запуска `2026-11-19`, выживший мутант.
   it("пустота в типе значения названа типом с косой вместо черты", () => {
