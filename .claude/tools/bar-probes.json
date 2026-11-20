@@ -5504,6 +5504,697 @@
       "culprits": [
         "index.html"
       ]
+    },
+    {
+      "criterion": "G6",
+      "why": "подписи дней списка: на каждом шаге обхода заново создаётся форматтер Intl с одними и теми же настройками — аллокация на каждом элементе, хотя форматтер один на локаль",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const dayLabels = (notes, locale) =>\n  notes.map((note) =>\n    new Intl.DateTimeFormat(locale, { dateStyle: \"short\" }).format(\n      note.createdAt,\n    ),\n  );",
+          "ts": "export const dayLabels = (\n  notes: readonly { readonly createdAt: number }[],\n  locale: string,\n): string[] =>\n  notes.map((note) =>\n    new Intl.DateTimeFormat(locale, { dateStyle: \"short\" }).format(\n      note.createdAt,\n    ),\n  );"
+        }
+      ]
+    },
+    {
+      "criterion": "N1",
+      "why": "исчезновение элемента запускает анимацию и угадывает её конец таймером той же длительности: завершение — побочный эффект часов, прерывание и отмена анимации вызов done не меняют",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const FADE_MS = 300;\nexport const fadeOutThen = (element, done) => {\n  element.animate([{ opacity: 1 }, { opacity: 0 }], {\n    duration: FADE_MS,\n    fill: \"forwards\",\n  });\n  setTimeout(done, FADE_MS);\n};",
+          "ts": "const FADE_MS = 300;\nexport const fadeOutThen = (element: HTMLElement, done: () => void): void => {\n  element.animate([{ opacity: 1 }, { opacity: 0 }], {\n    duration: FADE_MS,\n    fill: \"forwards\",\n  });\n  setTimeout(done, FADE_MS);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A15",
+      "why": "узел сам открывает себе сокет синхронизации внутри функции, а не получает канал входом: проверить его без сети и собрать с другим каналом нельзя",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const SYNC_URL = \"wss://sync.example.test/notes\";\nexport const announceNoteSaved = (noteId) => {\n  const socket = new WebSocket(SYNC_URL);\n  socket.addEventListener(\"open\", () => {\n    socket.send(noteId);\n    socket.close();\n  });\n};",
+          "ts": "const SYNC_URL = \"wss://sync.example.test/notes\";\nexport const announceNoteSaved = (noteId: string): void => {\n  const socket = new WebSocket(SYNC_URL);\n  socket.addEventListener(\"open\", () => {\n    socket.send(noteId);\n    socket.close();\n  });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C13",
+      "why": "отметка «прочитано» дописывает номер заметки в список без проверки: второе открытие той же заметки кладёт номер повторно, и счёт прочитанного растёт от повтора",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const withReadMark = (readIds, noteId) => [...readIds, noteId];",
+          "ts": "export const withReadMark = (\n  readIds: readonly string[],\n  noteId: string,\n): string[] => [...readIds, noteId];"
+        }
+      ]
+    },
+    {
+      "criterion": "E10",
+      "why": "пакет сохранения сводит исходы к одному булеву: при частичном отказе зовущий не знает, какие заметки сохранились, — частичный отказ сведён к «всё или ничего»",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const saveAllNotes = async (noteIds, saveOne) => {\n  const outcomes = await Promise.allSettled(\n    noteIds.map((noteId) => saveOne(noteId)),\n  );\n  return outcomes.every((outcome) => outcome.status === \"fulfilled\");\n};",
+          "ts": "export const saveAllNotes = async (\n  noteIds: readonly string[],\n  saveOne: (noteId: string) => Promise<void>,\n): Promise<boolean> => {\n  const outcomes = await Promise.allSettled(\n    noteIds.map((noteId) => saveOne(noteId)),\n  );\n  return outcomes.every((outcome) => outcome.status === \"fulfilled\");\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "E7",
+      "why": "удаление на сервере отправляется без ожидания: ни ответ не проверен, ни отказ не перехвачен — стратегии восстановления нет, отказ теряется без признака",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const deleteNoteRemote = (baseUrl, noteId) => {\n  void fetch(`${baseUrl}/notes/${encodeURIComponent(noteId)}`, {\n    method: \"DELETE\",\n  });\n};",
+          "ts": "export const deleteNoteRemote = (baseUrl: string, noteId: string): void => {\n  void fetch(`${baseUrl}/notes/${encodeURIComponent(noteId)}`, {\n    method: \"DELETE\",\n  });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "F1",
+      "why": "наблюдатель размера заводится внутри функции и наружу не отдаётся: снять его некому — у ресурса нет владельца жизненного цикла",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const watchWidth = (element, onWidth) => {\n  const observer = new ResizeObserver((entries) => {\n    for (const entry of entries) onWidth(entry.contentRect.width);\n  });\n  observer.observe(element);\n};",
+          "ts": "export const watchWidth = (\n  element: Element,\n  onWidth: (width: number) => void,\n): void => {\n  const observer = new ResizeObserver((entries) => {\n    for (const entry of entries) onWidth(entry.contentRect.width);\n  });\n  observer.observe(element);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G9",
+      "why": "кэш совпадений поиска на уровне модуля пополняется каждым новым запросом и не имеет предела: рост памяти с числом запросов не назван и ничем не ограничен",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const titleMatches = new Map();\nexport const cachedMatches = (query, titles) => {\n  const known = titleMatches.get(query);\n  if (known !== undefined) return known;\n  const found = titles.filter((title) => title.includes(query));\n  titleMatches.set(query, found);\n  return found;\n};",
+          "ts": "const titleMatches = new Map<string, readonly string[]>();\nexport const cachedMatches = (\n  query: string,\n  titles: readonly string[],\n): readonly string[] => {\n  const known = titleMatches.get(query);\n  if (known !== undefined) return known;\n  const found = titles.filter((title) => title.includes(query));\n  titleMatches.set(query, found);\n  return found;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K1",
+      "why": "сообщение из соседней вкладки разбирается и приводится к типу без проверки формы: чужое содержимое считается доверенным, и неверная форма всплывёт дальше",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const titleFromNotice = (event) => JSON.parse(event.data).title;",
+          "ts": "type SyncNotice = { readonly noteId: string; readonly title: string };\nexport const titleFromNotice = (event: MessageEvent<string>): string =>\n  (JSON.parse(event.data) as SyncNotice).title;"
+        }
+      ]
+    },
+    {
+      "criterion": "H1",
+      "why": "ключ поиска обрезается дважды: вторая обрезка уже обрезанной строки ничего не меняет и ничем не объяснима",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const searchKey = (query) => {\n  const lowered = query.trim().toLowerCase();\n  return lowered.trim();\n};",
+          "ts": "export const searchKey = (query: string): string => {\n  const lowered = query.trim().toLowerCase();\n  return lowered.trim();\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C8-бис",
+      "why": "команда «сохранить сейчас» хранится полем состояния редактора: намерение смешано с тем, что есть, и после исполнения команды флаг остаётся в состоянии",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const afterTyping = (state, text) => ({\n  ...state,\n  text,\n  saveNow: text.endsWith(\"\\n\"),\n});",
+          "ts": "export type EditorState = { readonly text: string; readonly saveNow: boolean };\nexport const afterTyping = (state: EditorState, text: string): EditorState => ({\n  ...state,\n  text,\n  saveNow: text.endsWith(\"\\n\"),\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "A9",
+      "why": "сборная утилита: разбор заголовка на слова и подпись размера файла лежат одним узлом, хотя потребители у них разные; потребитель подписи удалён, вторая половина осталась без потребителя",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "const BYTES_PER_KB = 1024;\nexport const titleWords = (title) => title.split(/\\s+/).filter(Boolean);\nexport const sizeLabel = (bytes) =>\n  `${String(Math.ceil(bytes / BYTES_PER_KB))} KB`;",
+          "ts": "const BYTES_PER_KB = 1024;\nexport const titleWords = (title: string): string[] =>\n  title.split(/\\s+/).filter(Boolean);\nexport const sizeLabel = (bytes: number): string =>\n  `${String(Math.ceil(bytes / BYTES_PER_KB))} KB`;"
+        },
+        {
+          "role": "живой",
+          "file": "модуль",
+          "text": "import { titleWords } from \"{{from:владелец}}\";\nexport const firstTitleWord = (title) => titleWords(title).at(0) ?? \"\";",
+          "ts": "import { titleWords } from \"{{from:владелец}}\";\nexport const firstTitleWord = (title: string): string =>\n  titleWords(title).at(0) ?? \"\";"
+        }
+      ],
+      "create": {
+        "path": "app/attachmentSize.ts",
+        "text": "import { sizeLabel } from \"{{from:владелец}}\";\n\nexport const attachmentSize = (bytes: number): string => sizeLabel(bytes);\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "B10",
+      "why": "поиск по номеру объявлен для любого типа, а внутри приводит элемент к объекту с полем id: тип без ограничения обещает всё, и ошибка всплывёт внутри, а не на месте вызова; один из потребителей удалён",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const byIdOf = (items, id) => items.find((item) => item.id === id);",
+          "ts": "export const byIdOf = <T>(items: readonly T[], id: string): T | undefined =>\n  items.find((item) => (item as { readonly id?: unknown }).id === id);"
+        },
+        {
+          "role": "живой",
+          "file": "модуль",
+          "text": "import { byIdOf } from \"{{from:владелец}}\";\nexport const tagLabelById = (tags, id) => byIdOf(tags, id)?.label ?? \"\";",
+          "ts": "import { byIdOf } from \"{{from:владелец}}\";\nexport const tagLabelById = (\n  tags: readonly { readonly id: string; readonly label: string }[],\n  id: string,\n): string => byIdOf(tags, id)?.label ?? \"\";"
+        }
+      ],
+      "create": {
+        "path": "app/hasDraftWithId.ts",
+        "text": "import { byIdOf } from \"{{from:владелец}}\";\n\nexport const hasDraftWithId = (\n  drafts: readonly { readonly id: string }[],\n  id: string,\n): boolean => byIdOf(drafts, id) !== undefined;\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "N2",
+      "why": "сосед правленого: новая команда сдвига доводит прежнее движение до конца рывком (finish) и только потом начинает новое — прерывание даёт скачок в конечную точку вместо продолжения с текущей позиции",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const SLIDE_MS = 250;\nlet slideInFlight = null;\nexport const slidePanelTo = (panel, offsetPx) => {\n  slideInFlight?.finish();\n  slideInFlight = panel.animate(\n    [{ transform: `translateX(${String(offsetPx)}px)` }],\n    {\n      duration: SLIDE_MS,\n      fill: \"forwards\",\n    },\n  );\n};",
+          "ts": "const SLIDE_MS = 250;\nlet slideInFlight: Animation | null = null;\nexport const slidePanelTo = (panel: HTMLElement, offsetPx: number): void => {\n  slideInFlight?.finish();\n  slideInFlight = panel.animate(\n    [{ transform: `translateX(${String(offsetPx)}px)` }],\n    {\n      duration: SLIDE_MS,\n      fill: \"forwards\",\n    },\n  );\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G4",
+      "why": "сосед правленого: положение прокрутки на каждом событии кладётся в состояние, и каждый кадр прокрутки становится проходом рендера",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useState } from \"react\";\nexport const useScrollTop = () => {\n  const [top, setTop] = useState(0);\n  useEffect(() => {\n    const followScroll = () => {\n      setTop(window.scrollY);\n    };\n    window.addEventListener(\"scroll\", followScroll);\n    return () => {\n      window.removeEventListener(\"scroll\", followScroll);\n    };\n  }, []);\n  return top;\n};",
+          "ts": "import { useEffect, useState } from \"react\";\nexport const useScrollTop = (): number => {\n  const [top, setTop] = useState(0);\n  useEffect(() => {\n    const followScroll = () => {\n      setTop(window.scrollY);\n    };\n    window.addEventListener(\"scroll\", followScroll);\n    return () => {\n      window.removeEventListener(\"scroll\", followScroll);\n    };\n  }, []);\n  return top;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "E14",
+      "why": "сосед правленого: поле метки очищается до ответа сохранения, и при отказе введённое потеряно — ошибка сервера стоит человеку набранного",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const submitTagInput = async (input, save) => {\n  const tag = input.value;\n  input.value = \"\";\n  return save(tag);\n};",
+          "ts": "export const submitTagInput = async (\n  input: HTMLInputElement,\n  save: (tag: string) => Promise<boolean>,\n): Promise<boolean> => {\n  const tag = input.value;\n  input.value = \"\";\n  return save(tag);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "S3",
+      "why": "сосед правленого: замер отрисовки сам вызывает принудительный пересчёт раскладки, чтобы её «дождаться», — измерение создаёт ту работу, которую мерит",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const drawTimed = (element, draw) => {\n  const started = performance.now();\n  draw();\n  element.getBoundingClientRect();\n  return performance.now() - started;\n};",
+          "ts": "export const drawTimed = (element: HTMLElement, draw: () => void): number => {\n  const started = performance.now();\n  draw();\n  element.getBoundingClientRect();\n  return performance.now() - started;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "O4-тер",
+      "why": "сосед правленого: число колонок панели считается от ширины окна, хотя ширину панели задают её соседи по раскладке: рядом с боковой колонкой расчёт неверен",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const CARD_COLUMN_PX = 240;\nexport const panelColumns = () =>\n  Math.max(1, Math.floor(window.innerWidth / CARD_COLUMN_PX));",
+          "ts": "const CARD_COLUMN_PX = 240;\nexport const panelColumns = (): number =>\n  Math.max(1, Math.floor(window.innerWidth / CARD_COLUMN_PX));"
+        }
+      ]
+    },
+    {
+      "criterion": "A7-бис",
+      "why": "перенесённый импорт заметок сам решает порядок шагов — прочесть, снять метку порядка байтов, разобрать строки, сохранить — и сам исполняет каждый: поменять порядок или разбор нельзя, не трогая исполнения",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/notes/importNotes.ts",
+          "text": "import type { Note } from \"./notes\";\n\nconst BYTE_ORDER_MARK = 0xfeff;\n\nexport const importNotes = async (\n  file: File,\n  save: (notes: readonly Note[]) => Promise<void>,\n): Promise<number> => {\n  const text = await file.text();\n  const body = text.codePointAt(0) === BYTE_ORDER_MARK ? text.slice(1) : text;\n  const notes = body\n    .split(\"\\n\")\n    .filter((line) => line.trim() !== \"\")\n    .map((line, index) => ({\n      id: `imported-${String(index)}`,\n      title: line.trim(),\n      body: \"\",\n      createdAt: 0,\n    }));\n  await save(notes);\n  return notes.length;\n};\n"
+        },
+        {
+          "path": "app/importFromPicker.ts",
+          "text": "import { importNotes } from \"../shared/notes/importNotes\";\n\nexport const importFromPicker = (file: File): Promise<number> =>\n  importNotes(file, () => Promise.resolve());\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/notes/importNotes.ts",
+          "to": "shared/notes/notesImport.ts"
+        }
+      ],
+      "culprits": [
+        "shared/notes/importNotes.ts"
+      ]
+    },
+    {
+      "criterion": "M6",
+      "why": "перенесённый значок обёрнут в memo, а единственный потребитель передаёт ему новый объект на каждой отрисовке: сравнение входов идёт каждый раз и ни разу не экономит — мемоизация поставлена механически",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "components/Badge/Badge.tsx",
+          "text": "import { memo } from \"react\";\n\ntype Props = { readonly label: { readonly text: string } };\n\nexport const Badge = memo(function Badge({ label }: Props) {\n  return <span>{label.text}</span>;\n});\n"
+        },
+        {
+          "path": "app/NoteCountBadge.tsx",
+          "text": "import { Badge } from \"../components/Badge/Badge\";\n\nexport function NoteCountBadge({ count }: { readonly count: number }) {\n  return <Badge label={{ text: String(count) }} />;\n}\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "components/Badge/Badge.tsx",
+          "to": "components/Badge/LabelBadge.tsx"
+        }
+      ],
+      "culprits": [
+        "components/Badge/Badge.tsx"
+      ]
+    },
+    {
+      "criterion": "G8",
+      "why": "перенесённый отбор заголовков переписан вручную «быстрее, чем filter и map», и комментарий это обещает: замера до и после нет — изменение выдано за улучшение",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/notes/visibleTitles.ts",
+          "text": "import type { Note } from \"./notes\";\n\n// One pass instead of filter and map: faster on long lists.\nexport const visibleTitles = (notes: readonly Note[]): string[] => {\n  const titles: string[] = [];\n  for (const note of notes) if (note.title !== \"\") titles.push(note.title);\n  return titles;\n};\n"
+        },
+        {
+          "path": "app/titleLine.ts",
+          "text": "import type { Note } from \"../shared/notes/notes\";\nimport { visibleTitles } from \"../shared/notes/visibleTitles\";\n\nexport const titleLine = (notes: readonly Note[]): string =>\n  visibleTitles(notes).join(\", \");\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/notes/visibleTitles.ts",
+          "to": "shared/notes/titlesShown.ts"
+        }
+      ],
+      "culprits": [
+        "shared/notes/visibleTitles.ts"
+      ]
+    },
+    {
+      "criterion": "A5-тер",
+      "why": "перенесённый компонент списка сам собирает адрес запроса с сортировкой и пределом и ходит в сеть: форма запроса — не дело того, кто рисует",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "components/Recent/Recent.tsx",
+          "text": "import { useEffect, useState } from \"react\";\n\nconst RECENT_URL = \"https://api.example.test/notes?limit=5&sort=-createdAt\";\n\ntype Row = { readonly id: string; readonly title: string };\n\nexport function Recent() {\n  const [rows, setRows] = useState<readonly Row[]>([]);\n  useEffect(() => {\n    const controller = new AbortController();\n    void fetch(RECENT_URL, { signal: controller.signal }).then(\n      async (response) => {\n        setRows((await response.json()) as Row[]);\n      },\n    );\n    return () => {\n      controller.abort();\n    };\n  }, []);\n  return (\n    <ul>\n      {rows.map((row) => (\n        <li key={row.id}>{row.title}</li>\n      ))}\n    </ul>\n  );\n}\n"
+        },
+        {
+          "path": "app/RecentSlot.tsx",
+          "text": "import { Recent } from \"../components/Recent/Recent\";\n\nexport function RecentSlot() {\n  return (\n    <aside>\n      <Recent />\n    </aside>\n  );\n}\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "components/Recent/Recent.tsx",
+          "to": "components/Recent/RecentNotes.tsx"
+        }
+      ],
+      "culprits": [
+        "components/Recent/Recent.tsx"
+      ]
+    },
+    {
+      "criterion": "J3",
+      "why": "тест поиска заметки по номеру исполняет каждую ветку, но утверждает только «не бросает»: какую заметку вернул поиск, не проверено ни в одной ветке",
+      "create": {
+        "path": "shared/notes/tests/noteByIdCases.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { noteById } from \"../noteById\";\n\nconst notes = [{ id: \"a\", title: \"Alpha\", body: \"\", createdAt: 1 }];\n\ndescribe(\"noteById cases\", () => {\n  it(\"handles every kind of id\", () => {\n    for (const id of [\"a\", \"missing\", null])\n      expect(() => noteById(notes, id)).not.toThrow();\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J8",
+      "why": "тест сравнения по времени строит объект из одного поля цепочкой построителя с изменяемым замыканием: оснастка сложнее проверяемой строки, и её саму приходится читать и отлаживать",
+      "create": {
+        "path": "shared/notes/tests/newerFirstBuilder.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { newerFirst } from \"../newerFirst\";\n\ntype Stamp = { readonly createdAt: number };\n\nconst stamp = () => {\n  let stampedAt = 0;\n  const builder = {\n    at(time: number) {\n      stampedAt = time;\n      return builder;\n    },\n    build: (): Stamp => ({ createdAt: stampedAt }),\n  };\n  return builder;\n};\n\ndescribe(\"newerFirst with builders\", () => {\n  it(\"puts the later one first\", () => {\n    const older = stamp().at(1).build();\n    const newer = stamp().at(2).build();\n    expect([older, newer].sort(newerFirst)).toEqual([newer, older]);\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J6",
+      "why": "тест чтения черновика подменяет разбор и проверяет, что его позвали с текстом, а не что вернул readDraft: переименование помощника ломает тест, а неверный черновик на выходе — нет",
+      "create": {
+        "path": "shared/storage/tests/readDraftParse.test.ts",
+        "text": "import { afterEach, describe, expect, it, vi } from \"vitest\";\n\nimport { readDraft } from \"../draftStorage\";\nimport { parseJsonOrNull } from \"../parseJson\";\n\nvi.mock(\"../parseJson\", () => ({ parseJsonOrNull: vi.fn(() => null) }));\n\ndescribe(\"readDraft parsing\", () => {\n  afterEach(() => {\n    localStorage.clear();\n  });\n\n  it(\"hands the stored text to the parser\", () => {\n    localStorage.setItem(\"notes-draft\", \"{}\");\n    readDraft();\n    expect(parseJsonOrNull).toHaveBeenCalledWith(\"{}\");\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "J13",
+      "why": "ожидаемое в тесте нормализации получено той же функцией, что проверяют: функция, отдающая пустую строку на любой вход, проходит тест",
+      "create": {
+        "path": "shared/notes/tests/normalizeQuerySame.test.ts",
+        "text": "import { describe, expect, it } from \"vitest\";\n\nimport { normalizeQuery } from \"../normalizeQuery\";\n\ndescribe(\"normalizeQuery agreement\", () => {\n  it(\"treats spacing and case alike\", () => {\n    expect(normalizeQuery(\"  Hello \")).toBe(normalizeQuery(\"hello\"));\n  });\n});\n"
+      }
+    },
+    {
+      "criterion": "O5-бис",
+      "why": "полоса хода рисует долю шириной заливки, а единственный тест проверяет только, что полоса есть: доля заливки — главный видимый контракт — ничем не закреплена",
+      "create": [
+        {
+          "path": "components/Progress/types.ts",
+          "text": "export type ProgressClasses = {\n  readonly track: string;\n  readonly fill: string;\n  readonly [key: string]: string;\n};\n"
+        },
+        {
+          "path": "components/Progress/Progress.module.scss",
+          "text": "@layer components {\n  .track {\n    height: var(--gap-small);\n    background: var(--text-muted);\n  }\n\n  .fill {\n    display: block;\n    height: 100%;\n    background: var(--accent);\n  }\n}\n"
+        },
+        {
+          "path": "components/Progress/Progress.tsx",
+          "text": "import { mergeStyleMaps } from \"../../shared/styles/mergeStyleMaps\";\nimport own from \"./Progress.module.scss\";\nimport type { ProgressClasses } from \"./types\";\n\nconst FULL_PERCENT = 100;\n\ntype Props = {\n  readonly done: number;\n  readonly total: number;\n  readonly classes?: Partial<ProgressClasses>;\n};\n\nexport function Progress({ done, total, classes }: Props) {\n  const css = mergeStyleMaps<ProgressClasses>(own, classes);\n  const percent = total === 0 ? 0 : Math.round((done / total) * FULL_PERCENT);\n  return (\n    <div\n      className={css.track}\n      role=\"progressbar\"\n      aria-valuenow={percent}\n      aria-valuemin={0}\n      aria-valuemax={FULL_PERCENT}\n    >\n      <span className={css.fill} style={{ width: `${String(percent)}%` }} />\n    </div>\n  );\n}\n"
+        },
+        {
+          "path": "components/Progress/tests/Progress.test.tsx",
+          "text": "import { render, screen } from \"@testing-library/react\";\nimport { describe, expect, it } from \"vitest\";\n\nimport { Progress } from \"../Progress\";\n\ndescribe(\"Progress\", () => {\n  it(\"shows a progress bar\", () => {\n    render(<Progress done={1} total={4} />);\n    expect(screen.getByRole(\"progressbar\")).toBeInTheDocument();\n  });\n});\n"
+        }
+      ],
+      "culprits": [
+        "components/Progress/Progress.tsx",
+        "components/Progress/tests/Progress.test.tsx"
+      ]
+    },
+    {
+      "criterion": "G5-бис",
+      "why": "выдвижная панель раскрывается переходом наибольшей высоты: свойство раскладки пересчитывает раскладку и перерисовывает на каждом кадре, хотя то же движение даёт сдвиг",
+      "create": [
+        {
+          "path": "components/Drawer/types.ts",
+          "text": "export type DrawerClasses = {\n  readonly drawer: string;\n  readonly open: string;\n  readonly [key: string]: string;\n};\n"
+        },
+        {
+          "path": "components/Drawer/Drawer.module.scss",
+          "text": "@layer components {\n  .drawer {\n    overflow: hidden;\n    max-height: 0;\n    transition: max-height 250ms ease;\n  }\n\n  .open {\n    max-height: 20rem;\n  }\n}\n"
+        },
+        {
+          "path": "components/Drawer/Drawer.tsx",
+          "text": "import type { ReactNode } from \"react\";\n\nimport { mergeStyleMaps } from \"../../shared/styles/mergeStyleMaps\";\nimport own from \"./Drawer.module.scss\";\nimport type { DrawerClasses } from \"./types\";\n\ntype Props = {\n  readonly open: boolean;\n  readonly children: ReactNode;\n  readonly classes?: Partial<DrawerClasses>;\n};\n\nexport function Drawer({ open, children, classes }: Props) {\n  const css = mergeStyleMaps<DrawerClasses>(own, classes);\n  return (\n    <div className={open ? `${css.drawer} ${css.open}` : css.drawer}>\n      {children}\n    </div>\n  );\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/Drawer/Drawer.module.scss"
+      ]
+    },
+    {
+      "criterion": "O4",
+      "why": "точка перелома раскладки записана голым числом в строке запроса: что меняется на этой ширине и почему именно 600, не сказано",
+      "create": {
+        "path": "shared/layout/isWideScreen.ts",
+        "text": "export const isWideScreen = (): boolean =>\n  window.matchMedia(\"(min-width: 600px)\").matches;\n"
+      }
+    },
+    {
+      "criterion": "O4-кватер",
+      "why": "лист карточки зовёт классы через дефис и двойное подчёркивание, а остальные листы проекта — одним словом в верблюжьем регистре: соглашение именования классов нарушено, и разметка берёт их строкой в скобках",
+      "create": [
+        {
+          "path": "components/NoteCard/types.ts",
+          "text": "export type NoteCardClasses = {\n  readonly \"note-card\": string;\n  readonly \"note-card__title\": string;\n  readonly [key: string]: string;\n};\n"
+        },
+        {
+          "path": "components/NoteCard/NoteCard.module.scss",
+          "text": "@layer components {\n  .note-card {\n    padding: var(--gap-small);\n  }\n\n  .note-card__title {\n    font-weight: bold;\n  }\n}\n"
+        },
+        {
+          "path": "components/NoteCard/NoteCard.tsx",
+          "text": "import { mergeStyleMaps } from \"../../shared/styles/mergeStyleMaps\";\nimport own from \"./NoteCard.module.scss\";\nimport type { NoteCardClasses } from \"./types\";\n\ntype Props = {\n  readonly title: string;\n  readonly classes?: Partial<NoteCardClasses>;\n};\n\nexport function NoteCard({ title, classes }: Props) {\n  const css = mergeStyleMaps<NoteCardClasses>(own, classes);\n  return (\n    <article className={css[\"note-card\"]}>\n      <h2 className={css[\"note-card__title\"]}>{title}</h2>\n    </article>\n  );\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/NoteCard/NoteCard.module.scss"
+      ]
+    },
+    {
+      "criterion": "A8-бис",
+      "why": "в область заметок легла сессия входа — ключ токена и выход: чужая предметная область, граница которой не названа ни в коде, ни в базе",
+      "create": {
+        "path": "shared/notes/sessionToken.ts",
+        "text": "const TOKEN_KEY = \"session-token\";\n\nexport const sessionToken = (): string | null =>\n  localStorage.getItem(TOKEN_KEY);\n\nexport const forgetSession = (): void => {\n  localStorage.removeItem(TOKEN_KEY);\n};\n"
+      }
+    },
+    {
+      "criterion": "C7",
+      "why": "заголовок в нижнем регистре хранится полем рядом с заголовком, и переименование правит только заголовок: производное разошлось с источником",
+      "create": {
+        "path": "shared/notes/searchable.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport type SearchableNote = Note & { readonly titleLower: string };\n\nexport const toSearchable = (note: Note): SearchableNote => ({\n  ...note,\n  titleLower: note.title.toLowerCase(),\n});\n\nexport const renamed = (\n  note: SearchableNote,\n  title: string,\n): SearchableNote => ({\n  ...note,\n  title,\n});\n"
+      }
+    },
+    {
+      "criterion": "P6",
+      "why": "вращение индикатора бесконечно и не смотрит на просьбу о меньшем движении: приглушённое движение не соблюдено",
+      "create": [
+        {
+          "path": "components/Spinner/types.ts",
+          "text": "export type SpinnerClasses = {\n  readonly spinner: string;\n  readonly [key: string]: string;\n};\n"
+        },
+        {
+          "path": "components/Spinner/Spinner.module.scss",
+          "text": "@layer components {\n  .spinner {\n    display: inline-block;\n    width: var(--gap-small);\n    height: var(--gap-small);\n    border: 2px solid var(--accent);\n    border-top-color: transparent;\n    border-radius: 50%;\n    animation: spin 800ms linear infinite;\n  }\n\n  @keyframes spin {\n    to {\n      transform: rotate(1turn);\n    }\n  }\n}\n"
+        },
+        {
+          "path": "components/Spinner/Spinner.tsx",
+          "text": "import { mergeStyleMaps } from \"../../shared/styles/mergeStyleMaps\";\nimport own from \"./Spinner.module.scss\";\nimport type { SpinnerClasses } from \"./types\";\n\ntype Props = {\n  readonly label: string;\n  readonly classes?: Partial<SpinnerClasses>;\n};\n\nexport function Spinner({ label, classes }: Props) {\n  const css = mergeStyleMaps<SpinnerClasses>(own, classes);\n  return <span className={css.spinner} role=\"status\" aria-label={label} />;\n}\n"
+        }
+      ],
+      "culprits": [
+        "components/Spinner/Spinner.module.scss"
+      ]
+    },
+    {
+      "criterion": "R4-бис",
+      "why": "переводы грузятся запросом с отказом от кэша на каждом визите: неизменное содержимое повторный визит привозит заново — стратегии кэширования нет, а запрет кэша стоит явно",
+      "create": {
+        "path": "shared/i18n/loadTranslations.ts",
+        "text": "export const loadTranslations = async (\n  locale: string,\n): Promise<Record<string, string>> => {\n  const response = await fetch(`/locales/${locale}.json`, {\n    cache: \"no-store\",\n  });\n  return (await response.json()) as Record<string, string>;\n};\n"
+      }
+    },
+    {
+      "criterion": "M2",
+      "why": "хук считает секунды открытия, заводя таймер прямо в теле: каждый проход отрисовки ставит ещё один таймер, и код рассчитывает, что тело выполнится раз в секунду",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useState } from \"react\";\nconst TICK_MS = 1000;\nexport const useSecondsOpen = () => {\n  const [seconds, setSeconds] = useState(0);\n  setTimeout(() => {\n    setSeconds((value) => value + 1);\n  }, TICK_MS);\n  return seconds;\n};",
+          "ts": "import { useState } from \"react\";\nconst TICK_MS = 1000;\nexport const useSecondsOpen = (): number => {\n  const [seconds, setSeconds] = useState(0);\n  setTimeout(() => {\n    setSeconds((value) => value + 1);\n  }, TICK_MS);\n  return seconds;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "B9",
+      "why": "поле draft осталось в данных страницы, но загрузчик перестал его заполнять: восстановление черновика снято без объявления и замены, а потребитель по-прежнему его читает",
+      "patch": [
+        {
+          "path": "src/app/notesLoader.ts",
+          "find": "import { readDraft, type Draft } from \"../shared/storage/draftStorage\";",
+          "replace": "import type { Draft } from \"../shared/storage/draftStorage\";"
+        },
+        {
+          "path": "src/app/notesLoader.ts",
+          "find": "  draft: readDraft(),",
+          "replace": "  draft: null,"
+        }
+      ],
+      "culprits": [
+        "src/app/notesLoader.ts"
+      ]
+    },
+    {
+      "criterion": "J2",
+      "why": "согласие строки списка с типом заметки держит комментарий «держать в согласии», хотя тип выводится из Note выбором полей, и тогда расхождение остановил бы компилятор",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export {};",
+          "ts": "// Keep these fields in sync with the Note type of the notes area.\nexport type NoteRow = {\n  readonly id: string;\n  readonly title: string;\n  readonly createdAt: number;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "S6",
+      "why": "отложенное сохранение черновика ждёт полсекунды после ввода, и закрытие вкладки в это время теряет последний ввод: остановка не дописывает начатое, сброса при уходе нет",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const SAVE_DELAY_MS = 500;\nexport const debouncedSave = (save) => {\n  let timer;\n  return (text) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => {\n      save(text);\n    }, SAVE_DELAY_MS);\n  };\n};",
+          "ts": "const SAVE_DELAY_MS = 500;\nexport const debouncedSave = (\n  save: (text: string) => void,\n): ((text: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => {\n      save(text);\n    }, SAVE_DELAY_MS);\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G7",
+      "why": "бюджет кадра пульса переписан словами «плавно, без рывков»: число снято, и бюджет перестал быть проверяемым",
+      "patch": [
+        {
+          "path": ".context/01-facts.md",
+          "find": "| кадр пульса | `16` мс на кадр |",
+          "replace": "| кадр пульса | плавно, без рывков |"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/pulsePhase.ts",
+        "text": "const FULL_TURN = 2 * Math.PI;\n\nexport const pulsePhase = (time: number, periodMs: number): number =>\n  Math.sin(((time % periodMs) / periodMs) * FULL_TURN);\n"
+      },
+      "culprits": [
+        ".context/01-facts.md"
+      ]
+    },
+    {
+      "criterion": "R1-тер",
+      "why": "проверка зависимостей на уязвимости осталась в конвейере, но её исход гасится «|| true»: известная уязвимость больше не останавливает сборку",
+      "patch": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "find": "      - run: npm audit --audit-level=high\n",
+          "replace": "      - run: npm audit --audit-level=high || true\n"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/hasBody.ts",
+        "text": "import type { Note } from \"./notes\";\n\nexport const hasBody = (note: Note): boolean => note.body.trim() !== \"\";\n"
+      },
+      "culprits": [
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "criterion": "R3",
+      "why": "ради одного запоминания сортировки первая страница берёт всю библиотеку Redux звёздным импортом: тяжёлая зависимость в критическом пути там, где хватает одной строки",
+      "create": {
+        "path": "app/sortedNotes.ts",
+        "text": "import * as toolkit from \"@reduxjs/toolkit\";\n\nimport { newestFirst, type Note } from \"../shared/notes/notes\";\n\nexport const sortedNotes = toolkit.createSelector(\n  [(notes: readonly Note[]) => notes],\n  (notes) => newestFirst(notes),\n);\n"
+      },
+      "patch": [
+        {
+          "path": "src/app/NotesPage.tsx",
+          "find": "import { newestFirst } from \"../shared/notes/notes\";\n",
+          "replace": ""
+        },
+        {
+          "path": "src/app/NotesPage.tsx",
+          "find": "import { saveDraft } from \"./saveDraft\";",
+          "replace": "import { saveDraft } from \"./saveDraft\";\nimport { sortedNotes } from \"./sortedNotes\";"
+        },
+        {
+          "path": "src/app/NotesPage.tsx",
+          "find": "  const sorted = newestFirst(notes.data);",
+          "replace": "  const sorted = sortedNotes(notes.data);"
+        }
+      ],
+      "culprits": [
+        "app/sortedNotes.ts"
+      ]
+    },
+    {
+      "criterion": "R4",
+      "why": "панель истории нужна только у открытой заметки и тянет хранилище Redux, а входит в первую страницу статическим импортом: редкое не отделено от нужного сразу",
+      "create": {
+        "path": "app/HistoryPanel.tsx",
+        "text": "import { configureStore } from \"@reduxjs/toolkit\";\nimport { useState } from \"react\";\n\ntype Visit = { readonly at: number };\n\nexport function HistoryPanel() {\n  const [store] = useState(() =>\n    configureStore({ reducer: (state: readonly Visit[] = []) => state }),\n  );\n  return <aside aria-label=\"history\">{store.getState().length}</aside>;\n}\n"
+      },
+      "patch": [
+        {
+          "path": "src/app/NotesPage.tsx",
+          "find": "import { saveDraft } from \"./saveDraft\";",
+          "replace": "import { HistoryPanel } from \"./HistoryPanel\";\nimport { saveDraft } from \"./saveDraft\";"
+        },
+        {
+          "path": "src/app/NotesPage.tsx",
+          "find": "      <NoteList notes={sorted} onOpen={setOpenId} />",
+          "replace": "      <NoteList notes={sorted} onOpen={setOpenId} />\n      {openId === null ? null : <HistoryPanel />}"
+        }
+      ],
+      "culprits": [
+        "src/app/NotesPage.tsx"
+      ]
+    },
+    {
+      "criterion": "R5",
+      "why": "бюджет поставки поднят с 200 до 450 КБ без объяснения роста: причина не названа ни в фактах, ни в решениях",
+      "patch": [
+        {
+          "path": ".context/01-facts.md",
+          "find": "| поставка | `200` КБ сжатого кода",
+          "replace": "| поставка | `450` КБ сжатого кода"
+        }
+      ],
+      "create": {
+        "path": "shared/notes/titleInitials.ts",
+        "text": "export const titleInitials = (title: string): string =>\n  title\n    .split(\" \")\n    .filter(Boolean)\n    .map((word) => word.charAt(0).toUpperCase())\n    .join(\"\");\n"
+      },
+      "culprits": [
+        ".context/01-facts.md"
+      ]
+    },
+    {
+      "criterion": "S5",
+      "why": "запись журнала в консоль перестала смотреть на сборку: диагностика пишет и в поставке, выключить её нечем",
+      "patch": [
+        {
+          "path": "src/shared/log/logger.ts",
+          "find": "  if (import.meta.env.PROD) return;\n",
+          "replace": ""
+        }
+      ],
+      "culprits": [
+        "src/shared/log/logger.ts"
+      ]
+    },
+    {
+      "criterion": "S8",
+      "why": "новая версия пишет черновик номером 3 без смены формы, а прежняя знает только 1 и 2: после отката каждый черновик, записанный новой, теряется; необратимость не объявлена",
+      "patch": [
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "const DraftV2 = z.object({\n  version: z.literal(2),",
+          "replace": "const DRAFT_VERSION = 3;\n\nconst DraftV2 = z.object({\n  version: z.union([z.literal(2), z.literal(DRAFT_VERSION)]),"
+        },
+        {
+          "path": "src/shared/storage/draftStorage.ts",
+          "find": "    localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 2, ...draft }));",
+          "replace": "    localStorage.setItem(\n      DRAFT_KEY,\n      JSON.stringify({ version: DRAFT_VERSION, ...draft }),\n    );"
+        }
+      ],
+      "culprits": [
+        "src/shared/storage/draftStorage.ts"
+      ]
     }
   ],
   "covers": [
