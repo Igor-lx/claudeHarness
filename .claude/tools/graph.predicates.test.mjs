@@ -1340,3 +1340,25 @@ describe("смешанные папки обвязки названы карто
       expect(fs.readdirSync(path.join(shelf, dir)).sort(), dir).toEqual([...mine].sort());
   });
 });
+
+describe("формы состояния", () => {
+  // Контейнер модуля, объявленный константой, — состояние наравне с `let`:
+  // каталог свода `свод.2-3.2` не числил файл с `new Map` модуля среди
+  // файлов с состоянием, а признак «модульное» модели его видел.
+  it("модульная переменная — `let` и контейнер `new Map`/`Set`, объявленный константой", () => {
+    const { stateFormOf } = vocabulary;
+    expect(stateFormOf("let count = 0;\n")).toBe("модульная переменная");
+    expect(stateFormOf("const rows = new Map<string, HTMLElement>();\n")).toBe(
+      "модульная переменная",
+    );
+    expect(stateFormOf("export const seen: Set<string> = new Set();\n")).toBe(
+      "модульная переменная",
+    );
+    expect(stateFormOf("const cache: WeakMap<object, number> = new WeakMap();\n")).toBe(
+      "модульная переменная",
+    );
+    // Таблица-константа и контейнер внутри функции — не состояние модуля.
+    expect(stateFormOf("const LIMITS = [1, 2, 3];\n")).toBe("");
+    expect(stateFormOf("export const f = () => {\n  const seen = new Set();\n};\n")).toBe("");
+  });
+});

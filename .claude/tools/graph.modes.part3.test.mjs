@@ -2953,6 +2953,13 @@ describe("экономия свода по журналу пробы 2026-10-13"
         "находку ставят строкой критерия",
       );
       expect(fs.readFileSync(protoAt, "utf8")).toBe(blank);
+      // «Чисто» пачкой со ссылкой на находку другого критерия — один отказ
+      // здесь, а не дыра `bar` на каждом критерии ядра (свод `свод.2-3.2`).
+      fs.writeFileSync(answersAt, "ядро@app/zzWide.ts | чисто | дефект назван в `G1`\n");
+      const cited = tool("bar-fill", answersAt);
+      expect(cited).toContain("чисто со ссылкой на находку другого критерия");
+      expect(cited.match(/со ссылкой на находку/g)?.length).toBe(1);
+      expect(fs.readFileSync(protoAt, "utf8")).toBe(blank);
       // Прежний ответ пачка не трогает.
       fs.writeFileSync(
         answersAt,
