@@ -15090,6 +15090,25 @@ const barModelOf = (
       );
     }
   };
+  // Строка ресурса на каждый захват в строке `line` с номером `i + 1`.
+  const addResources = (where, text, line, i, fresh) => {
+    const taken = resourceKindsIn(line).split(", ");
+    for (const res of RESOURCE_KINDS) {
+      if (!taken.includes(res.name)) continue;
+      const given =
+        res.releases === null
+          ? ""
+          : barReleaseLine(res.name + "|" + (i + 1) + "|" + text);
+      add(
+        "ресурс",
+        where + ":" + (i + 1),
+        line.trim().slice(0, 70),
+        "",
+        fresh ? "новое" : "",
+        given !== "" ? "есть: строка " + given : "",
+      );
+    }
+  };
   const headEdges = (x) => {
     if (!change || !inSubject.has(x)) return importsOf.get(x) ?? new Set();
     const h = headCode(x);
@@ -15325,22 +15344,7 @@ const barModelOf = (
           owesState ? "нет" : "да",
           isNewLine(line) ? "новое" : "",
         );
-      const taken = resourceKindsIn(line).split(", ");
-      for (const res of RESOURCE_KINDS) {
-        if (!taken.includes(res.name)) continue;
-        const given =
-          res.releases === null
-            ? ""
-            : barReleaseLine(res.name + "|" + (i + 1) + "|" + text);
-        add(
-          "ресурс",
-          where + ":" + (i + 1),
-          line.trim().slice(0, 70),
-          "",
-          isNewLine(line) ? "новое" : "",
-          given !== "" ? "есть: строка " + given : "",
-        );
-      }
+      if (want("ресурс")) addResources(where, text, line, i, isNewLine(line));
     });
     if (SYMPTOM_SORTS.some(want)) addSignals(f, symptomsOf(f));
     for (const one of want("место") || want("порознь") ? placeSymptomsOf(f) : [])
@@ -15569,11 +15573,22 @@ const barModelOf = (
   // критерия вне ядра без строки о соседе судилась по правленому: своды
   // прогона плана `2026-11-14` пропустили посадки в соседе девять раз из
   // десяти. Сдвига у неправленого соседа нет, и вопрос только о сдвиге на
-  // нём не встаёт. Решено разработчиком `2026-11-16`, вопрос 24.
+  // нём не встаёт. Решено разработчиком `2026-11-16`, вопрос 24. Ресурс
+  // соседа — тоже: подписка без снятия в соседе прошла свод проб
+  // `2026-11-20` без строки, о которой спрашивают `F2`, `E4`, `M3`, `M2`.
+  // Строки состояния соседу не ставят: их вопросы — о состоянии, которое
+  // принесла правка.
   if (change)
-    for (const f of area)
-      if (!inFocus.has(f) && files.includes(f) && !isTest(f) && SYMPTOM_SORTS.some(want))
-        addSignals(f, symptomsOf(f));
+    for (const f of area) {
+      if (inFocus.has(f) || !files.includes(f) || isTest(f)) continue;
+      if (SYMPTOM_SORTS.some(want)) addSignals(f, symptomsOf(f));
+      if (!want("ресурс")) continue;
+      const text = readFileSync(f, "utf8");
+      text.split(LF).forEach((line, i) => {
+        if (!/^\s*(\/\/|\*|\/\*)/.test(line))
+          addResources(rel(f), text, line, i, false);
+      });
+    }
 
   // Тесты предмета — их признаки: без утверждения, подмена, «изменилось»,
   // снимок. Тест читают ради кода, который он держит.

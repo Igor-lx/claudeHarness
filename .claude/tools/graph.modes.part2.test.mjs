@@ -123,7 +123,7 @@ describe("свод на правке — по той же области, что
       put("src/shared/zzKeys/zzKeys.ts", 'export const ZZ_COUNT_KEY = "zz.count";\n');
       put(
         "src/shared/zzStore/zzStore.ts",
-        'import { ZZ_TITLE } from "../../app/zzTitle";\nimport { ZZ_COUNT_KEY } from "../zzKeys/zzKeys";\n\nexport const zzSave = (v: number): void => {\n  window.localStorage.setItem(ZZ_COUNT_KEY, ZZ_TITLE + v);\n};\n',
+        'import { ZZ_TITLE } from "../../app/zzTitle";\nimport { ZZ_COUNT_KEY } from "../zzKeys/zzKeys";\n\nexport const zzSave = (v: number): void => {\n  window.localStorage.setItem(ZZ_COUNT_KEY, ZZ_TITLE + v);\n};\n\nexport const zzWatch = (onChange: () => void): void => {\n  window.addEventListener("storage", onChange);\n};\n',
       );
       put(
         "src/components/ZzMeter/ZzMeter.tsx",
@@ -176,6 +176,8 @@ describe("свод на правке — по той же области, что
       // Признаки модели — и о соседе, которого правка не тронула: его запись в
       // хранилище встаёт строкой, на которую отвечает строка на всю работу.
       expect(proto).toMatch(/\| П\d+ \| внешнее \| `shared\/zzStore\/zzStore\.ts:\d+` \|/);
+      // Ресурс соседа без снятия — тоже строка: о ней спрашивают F2, E4, M3, M2.
+      expect(proto).toMatch(/\| П\d+ \| ресурс \| `shared\/zzStore\/zzStore\.ts:\d+` \| window\.addEventListener\("storage"/);
       // База и документация — строка на каждый файл области.
       for (const f of [
         "components/ZzCounter/ZzCounter.tsx",
