@@ -1164,6 +1164,7 @@ export const BAR_SIGNALS = [
   { ids: ["R5"], sort: "настройка", mark: "бюджет", words: "правка тронула запись о бюджете поставки, и в основании не сказано, чем объяснён сдвиг" },
   { ids: ["R4-бис", "Q4"], sort: "поставка", mark: "чужой адрес", words: "лист стилей тянет ресурс с чужого адреса, и в основании не сказано о кэше и о доверии к источнику" },
   { ids: ["J1"], sort: "тест", mark: "без утверждения", words: "тест без утверждения, и в основании не сказано, чем он падает" },
+  { ids: ["J3", "J1"], sort: "тест", mark: "вызов без утверждения", words: "тест зовёт проверяемое и выбрасывает результат, и в основании не сказано, какое утверждение держит эту ветку" },
   { ids: ["J7"], sort: "тест", mark: "подмена", words: "тест подменяет часть системы, и в основании не сказано, что подмена не прячет" },
   { ids: ["J5"], sort: "тест", mark: "различие", words: "тест проверяет «изменилось», и в основании не сказано, различает ли значение" },
   { ids: ["J4"], sort: "тест", mark: "помощник", words: "тест судит своим помощником проверки, и в основании не назван известный неверный пример, на котором помощник сверен" },
@@ -1896,7 +1897,7 @@ export const BAR_FORMS = {
     "файл вне области мутационного прогона — строки замера у него нет",
   ],
   J3: [
-    "покрытие строк без покрытия смысла — строка тестов называет тесты файла, а какие ветви они держат, решает чтение",
+    "покрытие строк без покрытия смысла, кроме вызова проверяемого отдельной инструкцией, — строка тестов называет тесты файла, признак теста видит выброшенный результат имени проекта, а какие ветви держит утверждение, решает чтение",
   ],
   J4: [
     "метод проверки вне теста: измеритель, сверка, скрипт замера — признака текста нет",
@@ -4700,6 +4701,12 @@ const testSignalsOf = (text, own) => {
     if (new RegExp("\\b(?:expect|assert)\\w*\\s*\\([^;]*" + NAME_START + escapeRe(name) + "\\s*\\(").test(bare))
       at("тест", m.index + m[0].indexOf(name), name, "помощник");
   }
+  // Проверяемое имя проекта, позванное отдельной инструкцией, — результат
+  // выброшен: строка исполнена ради покрытия (`J3`). Свод `свод.2-3.3`, промах
+  // `419`: ветка поиска шла вызовом, утверждение стояло на пустом запросе.
+  if (own !== undefined && own.size > 0)
+    for (const m of bare.matchAll(/(?<=[;{}\n]\s*)(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^;\n]*\)\s*;/g))
+      if (own.has(m[1])) at("тест", m.index, m[1], "вызов без утверждения");
   // Ожидаемое, взятое из проверяемого кода — его функцией либо константой,
   // — сдвигается вместе с кодом: тест сверяет код с ним самим. Имена
   // проекта — то, что тест берёт импортом из файлов проекта, не из тестов.
@@ -6047,6 +6054,10 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/a.ts\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.classList.toggle(\"open\");\n  setTimeout(done, 300);\n};","1:целое;3:движение/таймер"],
   ["signalsSummary","src/a.ts\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.style.opacity = \"0\";\n  setTimeout(done, 300);\n};","1:целое;3:движение/таймер"],
   ["signalsSummary", "src/a.ts\nexport const later = (done: () => void): void => {\n  setTimeout(done, 300);\n};", ""],
+  // Вызов проверяемого отдельной инструкцией в тесте — `J3` (свод `свод.2-3.3`, промах `419`).
+  ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  matching([], \"zzz\");\n  expect(matching([], \"\")).toHaveLength(0);\n});","4:тест/вызов без утверждения"],
+  ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", async () => {\n  await matching([], \"zzz\");\n  expect(matching([], \"\")).toHaveLength(0);\n});","4:тест/вызов без утверждения"],
+  ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  expect(matching([], \"\")).toHaveLength(0);\n});",""],
   ["signalsSummary", "src/a.ts\nconst pattern = /x/;\nexport const pick = (heads: string[]) => heads.filter((head) => pattern.test(head));", ""],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / 8;", "2:дубль"],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / slots;", ""],
