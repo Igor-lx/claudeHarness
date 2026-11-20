@@ -5031,14 +5031,14 @@
     },
     {
       "criterion": "M2",
-      "why": "сосед правленого заводит подписку на клавиши на каждый вызов и не снимает её: код рассчитывает, что его позовут один раз",
+      "why": "сосед правленого: хук подписывается на клавиши прямо в теле, на каждом проходе отрисовки, и не снимает прежнюю подписку: код рассчитывает, что тело выполнится один раз",
       "change": "сосед",
       "into": [
         {
           "role": "виновник",
           "file": "модуль",
-          "text": "export const listenForSave = (onSave) => {\n  document.addEventListener(\"keydown\", (event) => {\n    if (event.key === \"s\" && event.ctrlKey) onSave();\n  });\n};",
-          "ts": "export const listenForSave = (onSave: () => void): void => {\n  document.addEventListener(\"keydown\", (event) => {\n    if (event.key === \"s\" && event.ctrlKey) onSave();\n  });\n};"
+          "text": "import { useCallback } from \"react\";\nexport const useSaveShortcut = (onSave) => {\n  const onKey = useCallback(\n    (event) => {\n      if (event.key === \"s\" && event.ctrlKey) onSave();\n    },\n    [onSave],\n  );\n  document.addEventListener(\"keydown\", onKey);\n};",
+          "ts": "import { useCallback } from \"react\";\n\nexport const useSaveShortcut = (onSave: () => void): void => {\n  const onKey = useCallback(\n    (event: KeyboardEvent) => {\n      if (event.key === \"s\" && event.ctrlKey) onSave();\n    },\n    [onSave],\n  );\n  document.addEventListener(\"keydown\", onKey);\n};"
         }
       ]
     },
