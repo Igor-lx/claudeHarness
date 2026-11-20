@@ -1504,7 +1504,7 @@ const UNSEEN = {
     "повтор с переименованными именами в другом файле, переставленными строками, расчёт внутри файла не присваиванием и не возвратом — полем литерала, доводом вызова — либо в теле метода — повтор ищут окном нормализованных строк, совпадением тел функций верхнего уровня и формой строки-расчёта внутри файла",
   log: "журнал через свою обёртку либо пакет журнала — признак видит `console`",
   measure:
-    "измерение через пакет метрик, профилировщик либо `Date.now` — признак видит `performance.mark`, `measure`, `console.time` и `PerformanceObserver`",
+    "измерение через пакет метрик, профилировщик либо `Date.now` — признак видит `performance.mark`, `measure`, `now`, `console.time` и `PerformanceObserver`",
   manifest:
     "зависимость, заведённая до работы, любая зависимость на задаче чтения и правка одного манифеста, без кода и стилей, — свода у неё нет, и строку задать некому; строка спрашивает зависимости, которые правка добавила либо переставила в манифесте, и пакеты, которые она впервые взяла в код поставки",
   witness: (what, asks) =>
@@ -4583,7 +4583,7 @@ const codeSignalsOf = (file, text, own) => {
   each(/createElement\s*\(\s*["'](?:script|iframe)["']/g, plain, (m) => at("вставка", m.index, m[0], "сторонний"));
   each(/\bconsole\s*\.\s*(?:log|info|debug|warn|error|trace|table|dir)\s*\(/g, bare, (m) => at("журнал", m.index, m[0]));
   each(
-    /\bperformance\s*\.\s*(?:mark|measure)\s*\(|\bconsole\s*\.\s*time(?:End|Log)?\s*\(|\bnew\s+PerformanceObserver\s*\(/g,
+    /\bperformance\s*\.\s*(?:mark|measure|now)\s*\(|\bconsole\s*\.\s*time(?:End|Log)?\s*\(|\bnew\s+PerformanceObserver\s*\(/g,
     bare,
     (m) => at("измерение", m.index, m[0]),
   );
@@ -6247,7 +6247,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.tsx\nexport const run = new Function(source);\nexport const S = () => <script src={url} />;\nexport const F = () => <iframe src={url} />;", "1:вставка/сторонний;2:вставка/сторонний;3:вставка/сторонний"],
   ["signalsSummary", "src/a.ts\nexport const tag = document.createElement(\"script\");\nexport const frame = document.createElement(\"iframe\");", "1:вставка/сторонний;2:вставка/сторонний"],
   ["signalsSummary", "src/a.ts\nconsole.info(value);\nconsole.debug(value);\nconsole.warn(value);\nconsole.error(value);\nconsole.trace(value);\nconsole.table(value);\nconsole.dir(value);", "1:журнал;2:журнал;3:журнал;4:журнал;5:журнал;6:журнал;7:журнал"],
-  ["signalsSummary", "src/a.ts\nperformance.measure(name);\nconsole.time(name);\nconsole.timeEnd(name);\nconsole.timeLog(name);\nexport const watcher = new PerformanceObserver(onEntries);", "1:измерение;2:измерение;3:измерение;4:измерение;5:измерение"],
+  ["signalsSummary", "src/a.ts\nperformance.measure(name);\nconsole.time(name);\nconsole.timeEnd(name);\nconsole.timeLog(name);\nexport const watcher = new PerformanceObserver(onEntries);\nexport const started = performance.now();", "6:время;1:измерение;2:измерение;3:измерение;4:измерение;5:измерение;6:измерение"],
   ["signalsSummary", "src/a.tsx\nexport const T0 = () => <p title=\"Hello\" />;\nexport const T1 = () => <img alt=\"Logo\" />;\nexport const T2 = () => <p aria-label=\"Close\" />;\nexport const T3 = () => <Field label=\"Name\" />;", "1:текст/в разметке;2:текст/в разметке;3:текст/в разметке;4:текст/в разметке"],
   ["signalsSummary", "src/a.ts\nexport const a = date.toLocaleDateString();\nexport const b = date.toLocaleTimeString();\nexport const c = value.toLocaleString();", "1:текст/формат;2:текст/формат;3:текст/формат"],
   ["signalsSummary", "src/a.ts\nexport const noun = (count: number) => (count !== 1 ? \"items\" : \"item\");", "1:текст/множественное"],
@@ -6399,7 +6399,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const a = sessionStorage.getItem(\"role\");\nexport const b = localStorage.getItem(\"adminMode\");\nexport const c = localStorage.getItem(\"permissions\");\nexport const d = localStorage.getItem(\"accessLevel\");\nexport const e = searchParams.get(\"role\");\nexport const f = searchParams.get(\"admin\");", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;1:права/из клиента;2:права/из клиента;3:права/из клиента;4:права/из клиента;5:права/из клиента;6:права/из клиента"],
   ["signalsSummary", "src/a.ts\nexport const a = import.meta.env.VITE_DB_PRIVATE_KEY;\nexport const b = import.meta.env.VITE_ADMIN_PASSWORD;\nexport const c = import.meta.env.VITE_GITHUB_TOKEN;\nexport const d = import.meta.env.VITE_MAPS_API_KEY;\nexport const e = process.env.NEXT_PUBLIC_STRIPE_SECRET;\nexport const f = process.env.REACT_APP_DB_PRIVATE_KEY;\nexport const g = process.env.EXPO_PUBLIC_ADMIN_PASSWORD;\nexport const h = process.env.PUBLIC_GITHUB_TOKEN;\nexport const i = process.env.VITE_MAPS_API_KEY;", "1:внешнее/окружение;2:внешнее/окружение;3:внешнее/окружение;4:внешнее/окружение;5:внешнее/окружение;6:внешнее/окружение;7:внешнее/окружение;8:внешнее/окружение;9:внешнее/окружение;1:секрет/в поставку;2:секрет/в поставку;3:секрет/в поставку;4:секрет/в поставку;5:секрет/в поставку;6:секрет/в поставку;7:секрет/в поставку;8:секрет/в поставку;9:секрет/в поставку"],
   ["signalsSummary", "src/a.ts\nexport const a = \"sk_live_abc\";\nexport const b = \"sk_test_abc\";\nexport const c = \"rk_live_abc\";\nexport const d = \"ghp_abc\";\nexport const e = \"gho_abc\";\nexport const f = \"github_pat_abc\";\nexport const g = \"xoxb-abc\";\nexport const h = \"AKIAABCDEFGHIJKLMNOP\";\nexport const i = \"-----BEGIN RSA PRIVATE KEY-----\";", "1:секрет/литерал;2:секрет/литерал;3:секрет/литерал;4:секрет/литерал;5:секрет/литерал;6:секрет/литерал;7:секрет/литерал;8:секрет/литерал;9:секрет/литерал"],
-  ["signalsSummary", "src/a.ts\nexport const a = new Date();\nexport const b = performance.now();\nexport const c = Math.random();\nexport const d = crypto.randomUUID();\nexport const e = crypto.getRandomValues(bytes);", "1:время;2:время;3:время;4:время;5:время"],
+  ["signalsSummary", "src/a.ts\nexport const a = new Date();\nexport const b = performance.now();\nexport const c = Math.random();\nexport const d = crypto.randomUUID();\nexport const e = crypto.getRandomValues(bytes);", "1:время;2:время;3:время;4:время;5:время;2:измерение"],
   ["signalsSummary", "src/a.ts\nexport const x: any = read();", "1:обход/любое;1:обход/без причины"],
   ["signalsSummary", "src/a.ts\nexport const x: any = read(); // the reader is untyped", "1:обход/любое"],
   ["signalsSummary", "src/a.ts\nexport const x: unknown = read();", ""],
