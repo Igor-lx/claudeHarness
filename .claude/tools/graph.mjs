@@ -13699,6 +13699,22 @@ const rangesOf = (text) =>
     return m === null ? [1, 0] : [Number(m[1]), Number(m[2] ?? m[1])];
   });
 const absOfRel = (r) => barAbsOf(r) ?? trimmedPath(path.join(ROOT, r));
+/** Документы файла таблицы «База и документация» — тем же разбором, что у
+ * `tested`: строки документов с его путём или именем, дверь папки, документ
+ * по имени единицы. Свод `свод.2-3.1` ответил «документа нет» о файле с
+ * `docs/README.md`, и печать это приняла. */
+const barDocsOfFile = (file) => {
+  const abs = absOfRel(file);
+  if (isTest(abs) || (!files.includes(abs) && !styleFiles.includes(abs))) return [];
+  const docs = docsFor(abs);
+  return [
+    ...new Set([
+      ...[...docs.exact, ...docs.loose].map(([n]) => n),
+      ...(docs.door === null ? [] : [rel(docs.door)]),
+      ...docs.unitDocs.map(rel),
+    ]),
+  ];
+};
 
 /** Описание страницы политики: критерии подряд по порядку ВСЕЙ политики
  * сжимаются в диапазон, пропуск разрывает его. Описание самодостаточно:
@@ -17548,6 +17564,24 @@ const barSkeletonOf = ({
               " |",
           ),
           "",
+          ...(() => {
+            const described = (baseFiles ?? marks.map((m) => m.file))
+              .map((file) => [file, barDocsOfFile(file)])
+              .filter(([, docs]) => docs.length > 0);
+            return described.length === 0
+              ? []
+              : [
+                  "Документы файлов — те же, что печатает `tested`; " +
+                    barQuoted("не требуется") +
+                    " о документации называет документ в причине:",
+                  "",
+                  ...described.map(
+                    ([file, docs]) =>
+                      "- " + barQuoted(file) + ": " + docs.map(barQuoted).join(", "),
+                  ),
+                  "",
+                ];
+          })(),
         ]
       : []),
     ...(parts === null ? [] : partsSectionOf(parts)),
@@ -18468,6 +18502,24 @@ const barHolesOf = ({
               mapStale.get(file).map(barQuoted).join(", ") +
               " — строка карты правится",
           );
+        else if (i === 1 && one === "не требуется" && c[2] !== "") {
+          const docs = barDocsOfFile(file);
+          const said = quotedIn(c[2]).map((q) => q.replace(/:[0-9]+$/, ""));
+          if (
+            docs.length > 0 &&
+            !docs.some((d) =>
+              said.some((q) => q === d || q.endsWith("/" + d) || d.endsWith("/" + q)),
+            )
+          )
+            holes.push(
+              file +
+                ", документация: " +
+                barQuoted("не требуется") +
+                ", а файл описывают " +
+                docs.map(barQuoted).join(", ") +
+                " — причина называет документ: что в нём и почему правка его не задела",
+            );
+        }
         if (c[2] === "")
           holes.push(
             file +
@@ -21309,6 +21361,17 @@ if (mode === "bar-fill") {
         : "Файла ответов нет: " + answersAt + ".",
     );
   const body = readFileSync(protocolAt, "utf8");
+  // Запись в запечатанный протокол гасит печать только на следующем `bar`, и
+  // свод начинают с пустого (свод `свод.2-3.1`, `2026-11-20`).
+  const sealed = barHeaderOf(body).seal;
+  if (sealed !== null && sealed !== "нет")
+    refuse(
+      "Протокол запечатан: запись после печати её гасит, и свод пришлось бы делать заново.",
+      "Предмет с печати не менялся — свод закрыт, вписывать нечего. Сделать его заново: записать",
+      "протокол пустым инструментом Write и позвать `graph.mjs bar` — удаление файла среда",
+      "спрашивает подтверждением, и задача встаёт.",
+      "Предмет менялся — сперва `graph.mjs bar`: он пересоберёт протокол на нынешнем виде.",
+    );
   const lines = body.split(LF);
   // Строка таблицы, которую заполняет сессия: ключ и номера граф, которые
   // она заполняет. Таблицу строки узнают по разделу, в котором она стоит.

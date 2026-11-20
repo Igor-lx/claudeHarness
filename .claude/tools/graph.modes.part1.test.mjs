@@ -4087,6 +4087,36 @@ describe("ядро по предметам уровня: правка, чтен�
       expect(tool("bar")).toContain(
         "components/zzBar/zzBar.tsx, база: «правлено», а графа не называет файла базы, правленого этой работой",
       );
+      // «Не требуется» о документации называет документ файла — тот, что
+      // печатает `tested`: «документа нет» о файле с README папки печать
+      // принимала (свод `свод.2-3.1`).
+      fs.mkdirSync(path.join(box, "src", "components", "zzBar", "docs"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "components", "zzBar", "docs", "README.md"),
+        "# zzBar\n\nThe bar shows the cart total.\n",
+      );
+      // Документ сдвигает предмет: протокол пересобирается, исходы переносятся.
+      tool("bar");
+      const docRow = /^\| `components\/zzBar\/zzBar\.tsx` \| (?:правлено|не требуется) \|.*$/m;
+      const docHole =
+        "components/zzBar/zzBar.tsx, документация: `не требуется`, а файл описывают `components/zzBar/docs/README.md`";
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace(docRow, "| `components/zzBar/zzBar.tsx` | правлено | не требуется | `.context/05-flows.md` — документа нет |"),
+      );
+      const noDoc = tool("bar");
+      expect(noDoc).toContain(docHole);
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace(docRow, "| `components/zzBar/zzBar.tsx` | правлено | не требуется | `.context/05-flows.md`; `components/zzBar/docs/README.md` о назначении, правка его не задела |"),
+      );
+      expect(tool("bar")).not.toContain(docHole);
+      // Скелет называет документы каждого файла таблицы.
+      fs.writeFileSync(protoAt, "");
+      tool("bar");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(
+        "- `components/zzBar/zzBar.tsx`: `components/zzBar/docs/README.md`",
+      );
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
@@ -4859,6 +4889,15 @@ describe("ответы свода файлом", () => {
         odd < 0 ? "" : filled.split("\n")[odd] + "\n" + wrote[odd],
       ).toBe(-1);
       expect(tool("bar").out).toContain("печать поставлена");
+      // Запечатанный протокол `bar-fill` не правит: отказ до записи, с тем же
+      // советом, что даёт `bar` на правленом после печати.
+      const sealedBody = fs.readFileSync(protoAt, "utf8");
+      const late = tool("bar-fill", answersAt);
+      expect(late.code, late.out).toBe(1);
+      expect(late.out).toContain("Протокол запечатан");
+      expect(late.out).toContain("пустым инструментом Write");
+      expect(fs.readFileSync(protoAt, "utf8")).toBe(sealedBody);
+      expect(tool("bar").out).toContain("печать уже стоит");
       // Свой файл режим не трогает. Файл по умолчанию — в папке страниц: его
       // путь называют ключи, без него отказ называет путь, вписанный он снят.
       expect(fs.existsSync(answersAt)).toBe(true);
