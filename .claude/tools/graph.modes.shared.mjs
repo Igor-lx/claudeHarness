@@ -16,6 +16,7 @@ import {
   bareCodeOf,
   crossCandidatesOf,
   crossWordsOf,
+  policyKinOf,
 } from "./graph.predicates.mjs";
 import { CHILD_OUTPUT_BYTES, layShelf } from "./graph.seat.mjs";
 
@@ -513,6 +514,16 @@ export const crossFilled = (text, root) => {
     if (keys.length > 0)
       findings.push({ who: c[0] + (c[1] === "—" ? "" : " для " + c[1]), keys, what: c[5] });
   }
+  // Родство критериев — из политики посадки, как его читает режим.
+  const kin = new Map();
+  for (const name of ["quality.md", "quality-scoped.md"]) {
+    const at = path.join(root, ".claude", "rules", name);
+    if (!fs.existsSync(at)) continue;
+    for (const pair of policyKinOf(fs.readFileSync(at, "utf8")).split(";").filter(Boolean)) {
+      const [a, b] = pair.split(">");
+      for (const [x, y] of [[a, b], [b, a]]) kin.set(x, (kin.get(x) ?? new Set()).add(y));
+    }
+  }
   const partsOf = (key) => [key.slice(0, key.lastIndexOf(":")), Number(key.slice(key.lastIndexOf(":") + 1))];
   const rows = findings
     .sort((x, y) => {
@@ -529,6 +540,7 @@ export const crossFilled = (text, root) => {
       const cand = crossCandidatesOf(one.who.split(" ")[0], {
         rows: modelAt.get(one.keys[0]) ?? [],
         live: new Set([...askable].filter((id) => !mine.has(id))),
+        kin,
       });
       const answer = said.get(finding) || (cand.length > 0 ? cand.map((id) => "не " + id).join(", ") : "никакие");
       return "| " + finding + " | " + what + " | " + cand.join(", ") + " | " + answer + " |";
