@@ -3274,6 +3274,62 @@ describe("экономия свода по журналу пробы 2026-10-13"
     }
   }, 300000);
 
+  // Конфиг вне частей дыра велит назвать частью, а ключ новой части режим
+  // отвергал «ключа нет»: свод `свод.3-3.4`, `2026-11-20`.
+  it("ключ следующего номера заводит новую часть, номер дальше — отказ с числом частей", () => {
+    const box = seatEmpty("partnew-");
+    try {
+      const tool = toolIn(box);
+      const git = gitIn(box);
+      const ats = ["zzMath", "zzOther"].map((name) =>
+        path.join(box, "src", "shared", name, name + ".ts"),
+      );
+      for (const at of ats) {
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(
+          at,
+          "export const zzAdd = (a: number, b: number): number => a + b;\n",
+        );
+      }
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      for (const at of ats)
+        fs.writeFileSync(
+          at,
+          "export const zzAdd = (a: number, b: number): number => b + a;\n",
+        );
+      fs.appendFileSync(path.join(box, ".prettierrc.json"), "\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      expect(tool("bar")).toContain(
+        "файл `.prettierrc.json` не отнесён к части — назвать его в графе «файлы» нужной части либо своей: ключом «часть 3»",
+      );
+      const answersAt = path.join(box, ".context", "bar-pages", "answers.txt");
+      const blank = fs.readFileSync(protoAt, "utf8");
+      fs.writeFileSync(answersAt, "часть 4 | `.prettierrc.json` | format\n");
+      const far = tool("bar-fill", answersAt);
+      expect(far).toContain(
+        "строка 1: части 4 нет — в таблице частей 2; новую часть заводят ключом «часть 3»",
+      );
+      expect(fs.readFileSync(protoAt, "utf8")).toBe(blank);
+      fs.writeFileSync(
+        answersAt,
+        "часть 3 | `.prettierrc.json` | format config\n",
+      );
+      expect(tool("bar-fill", answersAt)).toContain("Ответы вписаны");
+      const out = tool("bar");
+      expect(out).not.toContain("не отнесён к части");
+      const lines = fs.readFileSync(protoAt, "utf8").split("\n");
+      const from = lines.indexOf("## Части правки");
+      const rows = lines.slice(from + 1).filter((l) => /^\| [0-9]+ \|/.test(l));
+      expect(rows.length).toBe(3);
+      expect(rows[2]).toBe("| 3 | `.prettierrc.json` | format config |");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("страница кода называет правленые и снятые строки над текстом, и слово страницы от них не зависит", () => {
     const box = seatEmpty("pagediff-");
     try {
