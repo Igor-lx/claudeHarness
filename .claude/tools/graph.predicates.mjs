@@ -721,6 +721,8 @@ export const MODEL_LEVEL = {
   контекст: "узел",
   ограничение: "узел",
   требование: "узел",
+  правило: "приложение",
+  остановка: "приложение",
   переходы: "узел",
   проброс: "узел",
   размер: "узел",
@@ -1094,6 +1096,10 @@ export const BAR_SIGNALS = [
   { ids: ["G9"], sort: "кэш", words: "контейнер модуля растёт и не чистится, и в основании не сказано, чем ограничен его рост" },
   { ids: ["H3"], sort: "комментарий", words: "в предмете есть комментарии, и в основании не сказано, что каждый прошёл четыре вопроса" },
   { ids: ["H5"], sort: "комментарий", mark: "предупреждение", words: "комментарий предупреждает о слабом месте, и в основании не сказано, почему оно описано, а не переписано" },
+  // Комментарий, держащий проверяемое правило, — `J2`; обработчик ухода со
+  // страницы — `S6`. Свод `свод.2-3.4`: оба держались одним вниманием и ушли.
+  { ids: ["J2"], sort: "правило", words: "комментарий держит правило, которое можно проверить машиной, и в основании не сказано, почему оно не держится тестом, типом либо линтом" },
+  { ids: ["S6"], sort: "остановка", words: "в предмете обработчик ухода со страницы, и в основании не сказано, что остановка не оставляет начатое половиной" },
   { ids: ["B2"], sort: "требование", words: "комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
   { ids: ["J9-бис"], sort: "ограничение", words: "в предмете объявлено ограничение, и в основании не назван тест, который его держит" },
   { ids: ["J9-бис"], sort: "копия", words: "инвариант «вход не меняется» держится копией перед изменяющим методом, и в основании не назван тест, который заметит снос копии" },
@@ -1443,14 +1449,12 @@ export const BAR_ATTENTION = {
   G7: "бюджет живёт в записях проекта числом; есть ли он — вопрос к базе, а не к строке",
   H2: "второй способ одного выглядит как первый: идиомы проекта сверяют чтением `10-idioms.md`",
   "H8-тер": "свой слой поверх готового механизма текстом неотличим от законной обёртки",
-  J2: "правило о правилах: исполняется тем, что правило заводится вместе с крючком",
   J8: "сложность оснастки против сложности кода — суждение; размер её не мерит",
   J9: "на какой вопрос отвечает тест — суждение о том, что он проверяет",
   "O5-бис": "что закреплять визуальным контрактом, решает проект",
   "R1-тер": "проверка зависимостей на уязвимости — шаг процесса, в тексте кода её нет",
   R4: "осмысленность разбиения поставки — суждение о том, что нужно сразу",
   S1: "способ узнать об отказе в бою живёт вне предмета, у проекта он один",
-  S6: "старт и остановка — свойство процесса целиком: что он делает при запуске и при уходе, в строке узла не видно",
   S8: "откат — свойство выкладки и формы данных: читает ли старая версия записанное новой, в коде одной версии не видно",
   "S2-бис": "признак связи событий заводится там, где цепочка начинается, и в строке не виден",
 };
@@ -1896,6 +1900,10 @@ export const BAR_FORMS = {
     "утверждение, которое не может упасть (`expect(true).toBe(true)`, проверка подмены), — признак и правила линта видят тест без утверждения и утверждение без проверки, а силу утверждения меряет замер мутаций",
     "файл вне области мутационного прогона — строки замера у него нет",
   ],
+  J2: [
+    "правило, записанное в документе либо в базе, а не комментарием кода, — признак читает комментарии файлов предмета",
+    "правило в комментарии другими словами, чем образец, и правило согласия с другим местом — признак знает порядок и единственность словами образца",
+  ],
   J3: [
     "покрытие строк без покрытия смысла, кроме вызова проверяемого отдельной инструкцией, — строка тестов называет тесты файла, признак теста видит выброшенный результат имени проекта, а какие ветви держит утверждение, решает чтение",
   ],
@@ -2113,6 +2121,11 @@ export const BAR_FORMS = {
     "обработчик есть, но отвечает на исчерпание тем же исключением, — признак видит запись, а что с ней при отказе, решает чтение",
   ],
   S2: [UNSEEN.log],
+  S6: [
+    "старт: проверка настройки и ожидание зависимостей при запуске — признак видит только уход со страницы",
+    "остановка вне страницы: сервер, воркер, сигнал процесса — признак видит события ухода в браузере",
+    "уход через `visibilitychange` — признак его не берёт: на нём же законно ставят паузу",
+  ],
   S3: [UNSEEN.measure],
   S4: [
     UNSEEN.measure,
@@ -3682,6 +3695,10 @@ const WARNING_WORDS =
   /\b(?:hack|hacky|workaround|careful|caution|fragile|beware|temporary|kludge)\b|do(?:n't| not) touch|осторожн|костыл|обходн|временн|хрупк|не трогать/i;
 /** Слова комментария, ставящие условие вызывающему: требование, которое не
  * выражено типом. */
+/** Слова комментария, держащего правило о данных, которое проверила бы
+ * машина: порядок, единственность, согласие с другим местом. */
+const RULE_WORDS =
+  /\b(?:keep \w+|must be) (?:in \w+ order|sorted|unique)\b|по алфавиту/i;
 const OBLIGATION_WORDS =
   /\b(?:must(?: not)? (?:be|call)|only (?:after|before|once|when)|never call|do(?:n't| not) (?:call|pass|change|mutate)|has to be|callers? (?:must|should)|should be (?:stable|memoized)|keep (?:it )?stable)\b|обязан|только после|только до|нельзя (?:менять|звать|вызывать|передавать)|вызывающ/i;
 // Граница слова `\b` кириллицы не видит: пометка «ОГРАНИЧЕНИЕ —» прежде не
@@ -3780,6 +3797,7 @@ const commentSignals = (text, line) => {
     const sample = commentSampleOf(said);
     line("комментарий", from, sample, WARNING_WORDS.test(said) ? "предупреждение" : "");
     if (OBLIGATION_WORDS.test(said)) line("требование", from, sample);
+    if (RULE_WORDS.test(said)) line("правило", from, sample);
     if (CONSTRAINT_MARK.test(said)) line("ограничение", from, sample);
   }
 };
@@ -3919,6 +3937,11 @@ const codeSignalsOf = (file, text, own) => {
     /addEventListener\s*\(\s*["'](?:scroll|mousemove|pointermove|touchmove|wheel|resize|drag|dragover)["']/g,
     plain,
     (m) => at("частое", m.index, m[0].replace(/^addEventListener\s*\(\s*/, "")),
+  );
+  // Уход со страницы: начатое в обработчике обрывается вместе с ней (`S6`).
+  const unkept = /\bfetch\s*\(/.test(bare) && !/\bkeepalive\b|\bsendBeacon\b/.test(plain);
+  each(/addEventListener\s*\(\s*["\x27](?:pagehide|beforeunload|unload)["\x27]/g, plain, (m) =>
+    at("остановка", m.index, m[0].replace(/^addEventListener\s*\(\s*/, ""), unkept ? "запрос без keepalive" : ""),
   );
   const layoutWrites =
     /\.\s*style\s*\.\s*[\w$]+\s*=(?!=)|\.\s*style\s*\.\s*setProperty\s*\(|\bclassList\s*\.\s*(?:add|remove|toggle)\s*\(/.test(
@@ -6058,6 +6081,15 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  matching([], \"zzz\");\n  expect(matching([], \"\")).toHaveLength(0);\n});","4:тест/вызов без утверждения"],
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", async () => {\n  await matching([], \"zzz\");\n  expect(matching([], \"\")).toHaveLength(0);\n});","4:тест/вызов без утверждения"],
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  expect(matching([], \"\")).toHaveLength(0);\n});",""],
+  // Уход со страницы — `S6`; комментарий, держащий правило, — `J2` (свод `свод.2-3.4`).
+  ["signalsSummary","src/a.ts\nexport const saveOnLeave = (title: string, body: string): void => {\n  window.addEventListener(\"pagehide\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка/запрос без keepalive"],
+  ["signalsSummary","src/a.ts\nexport const saveOnLeave = (body: string): void => {\n  window.addEventListener(\"beforeunload\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body, keepalive: true });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка"],
+  ["signalsSummary","src/a.ts\nexport const saveOnLeave = (body: string): void => {\n  window.addEventListener(\"unload\", () => {\n    navigator.sendBeacon(\"/drafts\", body);\n  });\n  void fetch(\"/ping\");\n};","3:внешнее/сеть;5:внешнее/сеть;2:остановка"],
+  ["signalsSummary","src/a.ts\n// Keep these in alphabetical order: the screen lists them as is.\nexport const LANGUAGES = [\"de\", \"en\"];","1:комментарий;1:правило"],
+  ["signalsSummary","src/a.ts\n// Keep names unique.\nexport const NAMES = [\"de\", \"en\"];","1:комментарий;1:правило"],
+  ["signalsSummary","src/a.ts\n// The list must be sorted.\nexport const IDS = [\"a\"];","1:комментарий;1:требование;1:правило"],
+  ["signalsSummary","src/a.ts\n// Список держать по алфавиту.\nexport const LANGUAGES = [\"de\", \"en\"];","1:комментарий;1:правило"],
+  ["signalsSummary","src/a.ts\n// Mirrors the server list.\nexport const IDS = [\"a\"];","1:комментарий"],
   ["signalsSummary", "src/a.ts\nconst pattern = /x/;\nexport const pick = (heads: string[]) => heads.filter((head) => pattern.test(head));", ""],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / 8;", "2:дубль"],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / slots;", ""],
@@ -6388,7 +6420,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\n// callers must call init first\ngo();", "1:комментарий;1:требование"],
   ["signalsSummary", "src/a.ts\n// CONSTRAINT — width never shrinks\ngo();", "1:комментарий;1:ограничение"],
   ["signalsSummary", "src/a.ts\n// hack around the cache\ngo();\n// hacky but fast\ngo();\n// careful with order\ngo();\n// caution: shared\ngo();\n// fragile ordering\ngo();\n// beware of reentry\ngo();\n// temporary until the next release\ngo();\n// kludge for safari\ngo();\n// don't touch this\ngo();\n// do not touch this\ngo();\n// осторожно с порядком\ngo();\n// костыль для сафари\ngo();\n// обходной путь\ngo();\n// временное решение\ngo();\n// хрупкий порядок\ngo();\n// не трогать\ngo();", "1:комментарий/предупреждение;3:комментарий/предупреждение;5:комментарий/предупреждение;7:комментарий/предупреждение;9:комментарий/предупреждение;11:комментарий/предупреждение;13:комментарий/предупреждение;15:комментарий/предупреждение;17:комментарий/предупреждение;19:комментарий/предупреждение;21:комментарий/предупреждение;23:комментарий/предупреждение;25:комментарий/предупреждение;27:комментарий/предупреждение;29:комментарий/предупреждение;31:комментарий/предупреждение"],
-  ["signalsSummary", "src/a.ts\n// must be sorted\ngo();\n// must call init\ngo();\n// only after mount\ngo();\n// only before render\ngo();\n// only once per page\ngo();\n// only when visible\ngo();\n// never call twice\ngo();\n// don't call directly\ngo();\n// do not pass null\ngo();\n// don't change the order\ngo();\n// do not mutate the input\ngo();\n// has to be stable\ngo();\n// caller must lock first\ngo();\n// callers should retry\ngo();\n// should be stable across renders\ngo();\n// should be memoized upstream\ngo();\n// keep it stable\ngo();\n// обязан звать первым\ngo();\n// только после монтирования\ngo();\n// только до отрисовки\ngo();\n// нельзя менять порядок\ngo();\n// нельзя звать дважды\ngo();\n// нельзя вызывать из рендера\ngo();\n// нельзя передавать пустое\ngo();\n// вызывающий держит порядок\ngo();", "1:комментарий;1:требование;3:комментарий;3:требование;5:комментарий;5:требование;7:комментарий;7:требование;9:комментарий;9:требование;11:комментарий;11:требование;13:комментарий;13:требование;15:комментарий;15:требование;17:комментарий;17:требование;19:комментарий;19:требование;21:комментарий;21:требование;23:комментарий;23:требование;25:комментарий;25:требование;27:комментарий;27:требование;29:комментарий;29:требование;31:комментарий;31:требование;33:комментарий;33:требование;35:комментарий;35:требование;37:комментарий;37:требование;39:комментарий;39:требование;41:комментарий;41:требование;43:комментарий;43:требование;45:комментарий;45:требование;47:комментарий;47:требование;49:комментарий;49:требование"],
+  ["signalsSummary", "src/a.ts\n// must be sorted\ngo();\n// must call init\ngo();\n// only after mount\ngo();\n// only before render\ngo();\n// only once per page\ngo();\n// only when visible\ngo();\n// never call twice\ngo();\n// don't call directly\ngo();\n// do not pass null\ngo();\n// don't change the order\ngo();\n// do not mutate the input\ngo();\n// has to be stable\ngo();\n// caller must lock first\ngo();\n// callers should retry\ngo();\n// should be stable across renders\ngo();\n// should be memoized upstream\ngo();\n// keep it stable\ngo();\n// обязан звать первым\ngo();\n// только после монтирования\ngo();\n// только до отрисовки\ngo();\n// нельзя менять порядок\ngo();\n// нельзя звать дважды\ngo();\n// нельзя вызывать из рендера\ngo();\n// нельзя передавать пустое\ngo();\n// вызывающий держит порядок\ngo();", "1:комментарий;1:требование;1:правило;3:комментарий;3:требование;5:комментарий;5:требование;7:комментарий;7:требование;9:комментарий;9:требование;11:комментарий;11:требование;13:комментарий;13:требование;15:комментарий;15:требование;17:комментарий;17:требование;19:комментарий;19:требование;21:комментарий;21:требование;23:комментарий;23:требование;25:комментарий;25:требование;27:комментарий;27:требование;29:комментарий;29:требование;31:комментарий;31:требование;33:комментарий;33:требование;35:комментарий;35:требование;37:комментарий;37:требование;39:комментарий;39:требование;41:комментарий;41:требование;43:комментарий;43:требование;45:комментарий;45:требование;47:комментарий;47:требование;49:комментарий;49:требование"],
   ["signalsSummary", "src/a.ts\n// ОГРАНИЧЕНИЕ — ширина не убывает\ngo();", "1:комментарий;1:ограничение"],
   ["signalsSummary", "src/a.ts\nexport const msDelay = 101;\nexport const millisDelay = 102;\nexport const millisecondsDelay = 103;\nexport const secDelay = 104;\nexport const secondsDelay = 105;\nexport const pxGap = 106;\nexport const remGap = 107;\nexport const emGap = 108;\nexport const pctWidth = 109;\nexport const percentWidth = 110;\nexport const degOffset = 111;\nexport const radOffset = 112;\nexport const framesDelay = 113;\nexport const fpsSpeed = 114;\nexport const hzSpeed = 115;\nexport const kbSize = 116;\nexport const mbSize = 117;\nexport const bytesSize = 118;\nexport const countThreshold = 119;\nexport const ratioThreshold = 120;\nexport const factorSpeed = 121;\nexport const minsDelay = 122;\nexport const minutesTimeout = 123;\nexport const hoursTtl = 124;\nexport const daysTtl = 125;\nexport const MS_DELAY = 126;", ""],
   ["signalsSummary", "src/a.ts\nexport const hasItems = false;\nexport const haveRows = false;\nexport const canEdit = false;\nexport const couldRetry = false;\nexport const shouldShow = false;\nexport const mustSave = false;\nexport const wasSent = false;\nexport const wereLoaded = false;\nexport const willClose = false;\nexport const didMount = false;\nexport const doesFit = false;\nexport const needsSave = false;\nexport const allowsDrop = false;\nexport const mayRetry = false;\nexport const OPEN_BY_DEFAULT = false;", ""],
