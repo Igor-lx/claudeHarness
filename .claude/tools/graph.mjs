@@ -12295,12 +12295,20 @@ const symptomsOf = (f) => {
 
 /** Признаки места: файл общего слоя, который берёт одна единица переноса, и
  * узел, из которого потребители разных единиц берут непересекающиеся части.
- * Первое — вопрос к раскладке, второе — к тому, один ли это узел. */
-const placeSymptomsOf = (f) => {
+ * Первое — вопрос к раскладке, второе — к тому, один ли это узел.
+ * `gone` — что удалённые файлы правки брали по последнему коммиту: удалённый
+ * потребитель — тоже сторона «порознь». Без него удаление потребителя одной
+ * половины снимало строку, и половина без потребителя читалась мёртвым
+ * кодом, а не сборной утилитой (свод `свод.3-3.2`, посадка `450` `A9`). */
+const GONE_USER = "удалённый потребитель";
+const placeSymptomsOf = (f, gone = new Map()) => {
   const out = [];
   if (isBarrel(f) || isTest(f)) return out;
   const users = [...dependentsOf(f)].filter((u) => !isTest(u));
   const units = [...new Set(users.map(unitOf))].sort();
+  const goneNames = gone.get(f) ?? null;
+  // Звезда либо голый импорт имён не дают: о частях судить не по чему.
+  const goneSide = goneNames !== null && goneNames.size > 0 ? goneNames : null;
   const tree = SRC_ROOTS.find((one) => trimmedPath(f).startsWith(trimmedPath(one) + "/"));
   const shared = [
     rel(f),
@@ -12311,7 +12319,7 @@ const placeSymptomsOf = (f) => {
       sort: "место",
       what: "общий узел, а берёт его одна единица переноса: " + units[0],
     });
-  if (units.length < 2) return out;
+  if (units.length + (goneSide === null ? 0 : 1) < 2) return out;
   const byUnit = new Map();
   for (const u of users) {
     const took = new Set();
@@ -12332,6 +12340,7 @@ const placeSymptomsOf = (f) => {
     if (!byUnit.has(k)) byUnit.set(k, new Set());
     for (const n of took) byUnit.get(k).add(n);
   }
+  if (goneSide !== null) byUnit.set(GONE_USER, new Set(goneSide));
   const sets = [...byUnit.values()];
   const apart = sets.every((a, i) =>
     sets.every((b, j) => i === j || [...a].every((n) => !b.has(n))),
@@ -12342,8 +12351,14 @@ const placeSymptomsOf = (f) => {
       what:
         "потребители берут непересекающиеся части: " +
         [...byUnit]
-          .sort(([a], [b]) => (a < b ? -1 : 1))
-          .map(([u, s]) => u + " — " + [...s].sort().join(", "))
+          .sort(([a], [b]) => (a === GONE_USER ? 1 : b === GONE_USER ? -1 : a < b ? -1 : 1))
+          .map(
+            ([u, s]) =>
+              u +
+              " — " +
+              [...s].sort().join(", ") +
+              (u === GONE_USER ? ", больше их не берёт никто" : ""),
+          )
           .join("; "),
     });
   return out;
@@ -14963,6 +14978,8 @@ const barModelOf = (
   { kind, subject, only = null, lead = [], area = [], asked = null },
 ) => {
   const out = [];
+  // Что удалённое правки брало: удалённый потребитель — сторона «порознь».
+  const gone = kind === "на изменение" ? goneTakesOf(subject ?? []) : new Map();
   // Строка, что есть только ради вопроса к своему критерию, встаёт в модель,
   // пока о её виде и пометке спрашивает хоть один живой критерий: `asked` —
   // живые критерии протокола. Иначе раздел планки, объявленный неприменимым,
@@ -15194,6 +15211,14 @@ const barModelOf = (
       );
     }
   }
+  // Владелец вне фокуса, у которого удаление отняло потребителя части:
+  // строка «порознь» встаёт и у него, а не только у файлов фокуса.
+  if (change && want("порознь"))
+    for (const t of gone.keys()) {
+      if (inFocus.has(t) || isTest(t)) continue;
+      for (const one of placeSymptomsOf(t, gone))
+        if (one.sort === "порознь") add(one.sort, rel(t), one.what);
+    }
   // Удаление отняло у владельца место вызова: вход, который удалённый
   // передавал иначе, на оставшихся местах стал одним значением (`A3`), а
   // ветка того значения — мёртвой (`H4`). Строка встаёт и у владельца вне
@@ -15348,7 +15373,7 @@ const barModelOf = (
       if (want("ресурс")) addResources(where, text, line, i, isNewLine(line));
     });
     if (SYMPTOM_SORTS.some(want)) addSignals(f, symptomsOf(f));
-    for (const one of want("место") || want("порознь") ? placeSymptomsOf(f) : [])
+    for (const one of want("место") || want("порознь") ? placeSymptomsOf(f, gone) : [])
       add(one.sort, where, one.what);
 
     // Чем файл проверен: тесты, называющие его, и мутационный замер. Нет

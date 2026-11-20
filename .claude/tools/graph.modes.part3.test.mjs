@@ -3330,6 +3330,48 @@ describe("экономия свода по журналу пробы 2026-10-13"
     }
   }, 300000);
 
+  // Удаление потребителя одной половины снимало строку «порознь», и половина
+  // без потребителя читалась мёртвым кодом: свод `свод.3-3.2`, посадка `450`.
+  it("удалённый потребитель — сторона «порознь»: половина без потребителя спрашивает A9", () => {
+    const box = seatEmpty("partgone-");
+    try {
+      const tool = toolIn(box);
+      const git = gitIn(box);
+      const put = (rel, text) => {
+        const at = path.join(box, "src", rel);
+        fs.mkdirSync(path.dirname(at), { recursive: true });
+        fs.writeFileSync(at, text);
+      };
+      put(
+        "shared/zzFormat/zzFormat.ts",
+        "export const zzWords = (t: string): string[] => t.split(\" \");\nexport const zzSize = (n: number): string => String(n) + \" KB\";\n",
+      );
+      put(
+        "shared/zzFirst/zzFirst.ts",
+        'import { zzWords } from "../zzFormat/zzFormat";\nexport const zzFirst = (t: string): string => zzWords(t)[0] ?? "";\n',
+      );
+      put(
+        "app/zzSized.ts",
+        'import { zzSize } from "../shared/zzFormat/zzFormat";\nexport const zzSized = (n: number): string => zzSize(n);\n',
+      );
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "своё", "--no-verify");
+      fs.rmSync(path.join(box, "src", "app", "zzSized.ts"));
+      tool("bar");
+      tool("bar");
+      const read = fs.readFileSync(
+        path.join(box, ".context", "bar-protocol.md"),
+        "utf8",
+      );
+      expect(read).toMatch(
+        /^\| П\d+ \| порознь \| `[^`]*zzFormat\.ts` \| потребители берут непересекающиеся части: shared\/zzFirst — zzWords; удалённый потребитель — zzSize, больше их не берёт никто \|/m,
+      );
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   it("страница кода называет правленые и снятые строки над текстом, и слово страницы от них не зависит", () => {
     const box = seatEmpty("pagediff-");
     try {
