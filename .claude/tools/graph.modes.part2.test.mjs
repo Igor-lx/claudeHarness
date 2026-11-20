@@ -3336,11 +3336,23 @@ describe("запись карты не спорит с кодом", () => {
       const unmappedSaid = bar();
       expect(unmappedSaid).toMatch(/Сначала база: записи нет — [^\n]*`app\/zzStepper\.ts`/);
       expect(unmappedSaid).not.toMatch(/Сначала база: записи нет — [^\n]*`app\/zzCounter\.ts`/);
+      // Код отвечает строкой карты, тест — строкой реестра тестов: подсказка
+      // называет только нужное (свод `свод.3-3.2` искал реестр без тестов).
+      expect(unmappedSaid).toMatch(/Сначала база: записи нет — [^\n]*Завести строки карты до ответов/);
+      expect(unmappedSaid).not.toMatch(/Сначала база: записи нет — [^\n]*реестра тестов/);
       fs.writeFileSync(
         map,
         fs.readFileSync(map, "utf8").replace(head, head + "\n| `src/app/zzStepper.ts` | шаг счётчика | нет | нет |"),
       );
       expect(bar()).not.toContain("Сначала база: записи нет");
+      fs.mkdirSync(path.join(box, "src", "app", "tests"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "app", "tests", "zzStepper.test.ts"),
+        'import { zzStepper } from "../zzStepper";\n\nexport const zzProbe = zzStepper;\n',
+      );
+      const testSaid = bar();
+      expect(testSaid).toMatch(/Сначала база: записи нет — [^\n]*`app\/tests\/zzStepper\.test\.ts`[^\n]*Завести строки реестра тестов до ответов/);
+      expect(testSaid).not.toMatch(/Сначала база: записи нет — [^\n]*строки карты/);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
