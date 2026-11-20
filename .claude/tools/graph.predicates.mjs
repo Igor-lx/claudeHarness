@@ -2636,7 +2636,16 @@ export const barRowSpotFault = (row) => {
   const { what, past, bare } = barPastOf(whatText);
   if (bare.length > 0)
     return "в «мимо:» строка без причины: " + bare.map((n) => "П" + n).join(", ") + " — «мимо: П" + bare[0] + " — почему не нарушение»";
-  const cited = citedIds(what, true);
+  // «Пn: не сдвинуто» — ответ о строке радиуса (`barRadiusFault`), а не
+  // ссылка на нарушение: прежде он требовал файл строки местом находки, и
+  // несдвинутые узлы ложились находками (свод `свод.2-3.4`).
+  const unmoved = new Set(
+    what
+      .split(";")
+      .filter((part) => /не сдвинуто/.test(part))
+      .flatMap((part) => [...citedIds(part, true)]),
+  );
+  const cited = new Set([...citedIds(what, true)].filter((n) => !unmoved.has(n)));
   const rowsOf = (text) =>
     text
       .split(";")
@@ -2653,7 +2662,10 @@ export const barRowSpotFault = (row) => {
   // Строка, о которой спрашивает критерий, вне мест находки получает ответ, как
   // у «чисто»: иначе нашлось одно место, а строку в другом файле прошли мимо.
   // Выведено: промах `M1` перепроверки свода проб `2026-11-19`.
-  const silent = rowsOf(ownText).filter(([mid]) => !cited.has(Number(mid.slice(1))) && !past.has(Number(mid.slice(1))));
+  const silent = rowsOf(ownText).filter(([mid]) => {
+    const n = Number(mid.slice(1));
+    return !cited.has(n) && !past.has(n) && !unmoved.has(n);
+  });
   return silent.length === 0
     ? ""
     : "нашлось, а строки модели, о которых спрашивает критерий, без ответа: " +
@@ -5183,6 +5195,13 @@ export const PREDICATE_CASES = [
   ],
   // Номер в «мимо:» файла местом не требует; тот же номер в «что» — требует.
   ["barRowSpotFault", "app/use.ts:3|флаг; мимо: П2 — не о нарушении|П2=shared/own.ts|П2=shared/own.ts", ""],
+  // Ответ радиуса «П2: не сдвинуто» — не ссылка на нарушение (свод `свод.2-3.4`).
+  ["barRowSpotFault", "a/A.tsx:3|сдвинут ответ; П2: не сдвинуто — срок тот же|П1=a/A.tsx;П2=b/b.ts|П1=a/A.tsx;П2=b/b.ts", ""],
+  [
+    "barRowSpotFault",
+    "a/A.tsx:3|сдвинут ответ через П2; П3: не сдвинуто — срок тот же|П2=b/b.ts;П3=c/c.ts|П2=b/b.ts;П3=c/c.ts",
+    "нашлось, а файл строки модели, на которую она ссылается, не назван: П2 (`b/b.ts`) — адресом либо в «ещё мест:»; строку не о нарушении номером не называют",
+  ],
   [
     "barRowSpotFault",
     "app/use.ts:3|см. П2; мимо: П2 — не о нарушении|П2=shared/own.ts|",
