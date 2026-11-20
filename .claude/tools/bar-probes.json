@@ -5431,14 +5431,16 @@
     },
     {
       "criterion": "B9",
-      "why": "поле pretty осталось в типе настроек выгрузки, но больше ничего не делает: снятие не объявлено, замены нет, потребители получают сжатый вывод без признака",
-      "into": [
+      "why": "довод detail у записи ошибки остался в типе журнала, но правка перестала его читать: снятие не объявлено, замены нет, вызывающий, передавший подробности, теряет их без признака",
+      "patch": [
         {
-          "role": "виновник",
-          "file": "модуль",
-          "text": "export const exportTitles = (titles, options = {}) =>\n  options.format === \"text\" ? titles.join(\"\\n\") : JSON.stringify(titles);",
-          "ts": "export type ExportOptions = {\n  readonly format?: \"json\" | \"text\";\n  readonly pretty?: boolean;\n};\n\nexport const exportTitles = (\n  titles: readonly string[],\n  options: ExportOptions = {},\n): string =>\n  options.format === \"text\" ? titles.join(\"\\n\") : JSON.stringify(titles);"
+          "path": "src/shared/log/logger.ts",
+          "find": "  error: (event, detail = {}) => {\n    sink({ level: \"error\", event, traceId, detail });\n  },",
+          "replace": "  error: (event) => {\n    sink({ level: \"error\", event, traceId, detail: {} });\n  },"
         }
+      ],
+      "culprits": [
+        "src/shared/log/logger.ts"
       ]
     },
     {
