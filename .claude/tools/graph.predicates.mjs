@@ -1135,6 +1135,9 @@ export const BAR_SIGNALS = [
   { ids: ["D4"], sort: "идентификаторы", words: "однотипные идентификаторы разного смысла, и в основании не сказано, чем их не перепутают" },
   { ids: ["D5"], sort: "необязательные", words: "у типа россыпь необязательных полей, и в основании не сказано, почему не размеченный союз" },
   { ids: ["F1"], sort: "ресурс", words: "у ресурса в основании не назван владелец его жизненного цикла" },
+  // Подписка на каждый вызов рассчитывает, что её позовут один раз: свод
+  // `свод.2-3.2` назвал `E4`, `F2`, `M3`, а `M2` не спросил.
+  { ids: ["M2"], sort: "ресурс", words: "ресурс заводится на каждый вызов, и в основании не сказано, что будет при втором вызове" },
   // Повтор внутри одного узла изоляцией не оправдать (`I5`): свой вопрос
   // первым, иначе общий спрашивал бы о «другом месте».
   { ids: ["I5", "A6-бис"], sort: "повтор", mark: "внутри узла", words: "тот же расчёт повторён внутри одного узла с другими именами — ценой переносимости это не оправдать, и в основании не сказано, почему расчёт не вынесен" },
@@ -1490,7 +1493,7 @@ const UNSEEN = {
   flag: "флаг без пометки типа и без умолчания — признак ищет `: boolean` и умолчание `true` либо `false`",
   list: "список, который рисуют не через `.map` в разметке и не элементом, положенным в массив: компонент списка, виртуальный список — признак видит `.map` в фигурных скобках разметки и `push` элемента разметки",
   motion:
-    "движение средствами, которых нет в образце: `setInterval` со сдвигом, `anime`, `react-transition-group`, `useTransition` — образец знает `requestAnimationFrame`, `animate`, `motion`, `gsap`, `useSpring` и движение листа стилей",
+    "движение средствами, которых нет в образце: `setInterval` со сдвигом, `anime`, `react-transition-group`, `useTransition` — образец знает `requestAnimationFrame`, `animate`, `motion`, `gsap`, `useSpring`, движение листа стилей и `setTimeout` рядом со сменой класса либо стиля в одном файле",
   method: "метод класса и объекта — тела признак ищет у `function` и у `const` со стрелкой",
   repeat:
     "повтор с переименованными именами в другом файле, переставленными строками, расчёт внутри файла не присваиванием и не возвратом — полем литерала, доводом вызова — либо в теле метода — повтор ищут окном нормализованных строк, совпадением тел функций верхнего уровня и формой строки-расчёта внутри файла",
@@ -1591,7 +1594,7 @@ export const BAR_FORMS = {
   A14: [UNSEEN.wrapper, UNSEEN.outside],
   A15: [
     "соисполнитель из фабричной функции — признак видит `new` и обращение к единственному экземпляру",
-    "соисполнитель из пакета — признак спрашивает имена из файлов проекта и классы файла",
+    "соисполнитель из пакета — признак спрашивает имена из файлов проекта, классы файла и каналы среды: `BroadcastChannel`, `WebSocket`, `EventSource`, `Worker`, `SharedWorker`, `XMLHttpRequest`, `MessageChannel`",
     "готовый экземпляр, взятый импортом и вызванный напрямую, — создания в узле нет",
     "соисполнитель из встроенного класса среды: `new Intl.DateTimeFormat`, `new URL` — признак видит классы проекта, а встроенные дали бы его на каждом `new Map` и `new Date`",
   ],
@@ -4175,9 +4178,13 @@ const codeSignalsOf = (file, text, own) => {
   const codeLines = bareLines.filter((x) => x.trim() !== "").length;
   if (codeLines >= SIZE_FROM) line("размер", 1, "строк кода " + codeLines);
   const classes = new Set([...bare.matchAll(/\bclass\s+([A-Z][\w$]*)/g)].map((m) => m[1]));
+  const PLATFORM_PEERS = new Set(["BroadcastChannel", "WebSocket", "EventSource", "Worker", "SharedWorker", "XMLHttpRequest", "MessageChannel"]);
   each(/\bnew\s+([A-Z][\w$]*)\s*\(|\b([A-Z][\w$]*)\s*\.\s*(?:getInstance|instance)\b/g, bare, (m) => {
     const name = m[1] ?? m[2];
-    if (own.has(name) || classes.has(name)) at("создаёт", m.index, m[0]);
+    // Канал и соединение среды — тоже соисполнитель: свод `свод.2-3.2`
+    // пропустил `new BroadcastChannel` внутри перенесённого узла (`A15`).
+    if (own.has(name) || classes.has(name) || (m[1] !== undefined && PLATFORM_PEERS.has(name)))
+      at("создаёт", m.index, m[0]);
   });
   const moduleLets = [...bare.matchAll(/(?:^|\n)(?:export\s+)?let\s+([\w$]+)/g)].map((m) => m[1]);
   // Контейнер модуля, объявленный константой: пишут в него методом либо полем.
@@ -4498,6 +4505,10 @@ const codeSignalsOf = (file, text, own) => {
   each(/\.\s*animate\s*\(|\bmotion\s*\.\s*[a-z]+\b|\bgsap\s*\.|\buseSpring\s*\(/g, bare, (m) =>
     at("движение", m.index, m[0], "код"),
   );
+  // Конец движения, угаданный таймером рядом со сменой класса либо стиля:
+  // свод `свод.2-3.2` пропустил `setTimeout` на длительность сворачивания (`N1`).
+  if (/\bclassList\s*\.\s*(?:add|remove|toggle)\s*\(|\.\s*style\s*\.\s*[\w$]+\s*=(?!=)/.test(bare))
+    each(/\bsetTimeout\s*\(/g, bare, (m) => at("движение", m.index, m[0], "таймер"));
   if (markup) {
     each(
       /<(?:div|span|li|td|tr|p|section|article|img|label)\b[^<>]*?\bon(?:Click|MouseDown|MouseUp|PointerDown|PointerUp|KeyDown)\s*=/g,
@@ -6028,6 +6039,14 @@ export const PREDICATE_CASES = [
   // Регулярное выражение и форматтер на каждом шаге обхода — `G6` (свод `свод.2-3.1`).
   ["signalsSummary", "src/a.ts\nexport const pick = (heads: string[], query: string) =>\n  heads.filter((head) => new RegExp(query).test(head));", "2:аллокация"],
   ["signalsSummary", "src/a.ts\nexport const label = (counts: number[]) =>\n  counts.map((count) => new Intl.NumberFormat(\"en\").format(count));", "2:аллокация"],
+  // Канал среды, созданный в узле, — `A15`; таймер рядом со сменой класса — движение `N1`
+  // (свод `свод.2-3.2`); таймер без смены класса движением не считается.
+  ["signalsSummary", "src/a.ts\nexport const announce = (id: string): void => {\n  const channel = new BroadcastChannel(\"notes\");\n  channel.postMessage(id);\n};", "2:внешнее/сообщение;3:внешнее/сообщение;2:создаёт"],
+  ["signalsSummary", "src/a.ts\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.classList.add(\"collapsing\");\n  setTimeout(done, 300);\n};", "1:целое;3:движение/таймер"],
+  ["signalsSummary","src/a.ts\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.classList.remove(\"open\");\n  setTimeout(done, 300);\n};","1:целое;3:движение/таймер"],
+  ["signalsSummary","src/a.ts\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.classList.toggle(\"open\");\n  setTimeout(done, 300);\n};","1:целое;3:движение/таймер"],
+  ["signalsSummary","src/a.ts\nexport const collapse = (element: HTMLElement, done: () => void): void => {\n  element.style.opacity = \"0\";\n  setTimeout(done, 300);\n};","1:целое;3:движение/таймер"],
+  ["signalsSummary", "src/a.ts\nexport const later = (done: () => void): void => {\n  setTimeout(done, 300);\n};", ""],
   ["signalsSummary", "src/a.ts\nconst pattern = /x/;\nexport const pick = (heads: string[]) => heads.filter((head) => pattern.test(head));", ""],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / 8;", "2:дубль"],
   ["signalsSummary", "src/a.ts\nexport const slots = 8;\nexport const width = (total: number) => total / slots;", ""],
@@ -6311,7 +6330,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const a = window.outerHeight;\nexport const b = window.innerWidth;\nexport const c = visualViewport;", "1:раскладка/окно;2:раскладка/окно;3:раскладка/окно"],
   ["signalsSummary", "src/a.ts\nexport const w0 = items.map((x) => ids.includes(x.id));\nexport const w1 = items.forEach((x) => ids.includes(x.id));\nexport const w2 = items.reduce((acc, x) => acc + ids.indexOf(x.id), start);\nexport const w3 = items.some((x) => ids.includes(x.id));\nexport const w4 = items.every((x) => ids.includes(x.id));\nexport const w5 = items.flatMap((x) => ids.filter((y) => y === x.id));\nexport const w6 = items.find((x) => ids.includes(x.id));\nexport const w7 = items.findIndex((x) => ids.includes(x.id));", "1:поиск;2:поиск;3:поиск;4:поиск;5:поиск;6:поиск;7:поиск;8:поиск"],
   ["signalsSummary", "src/a.ts\nfor (const x of items) {\n  if (ids.includes(x.id)) found.push(x);\n}\nwhile (queue.length > limit) {\n  if (ids.includes(queue.shift())) hits.push(queue.length);\n}", "2:поиск;5:поиск"],
-  ["signalsSummary", "src/a.ts\nexport const a = axios(url);\nexport const b = axios.get(url);\nexport const c = new XMLHttpRequest();\nexport const d = new WebSocket(url);\nexport const e = new EventSource(url);\nnavigator.sendBeacon(url, body);", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;4:внешнее/сеть;5:внешнее/сеть;6:внешнее/сеть"],
+  ["signalsSummary", "src/a.ts\nexport const a = axios(url);\nexport const b = axios.get(url);\nexport const c = new XMLHttpRequest();\nexport const d = new WebSocket(url);\nexport const e = new EventSource(url);\nnavigator.sendBeacon(url, body);", "1:внешнее/сеть;2:внешнее/сеть;3:внешнее/сеть;4:внешнее/сеть;5:внешнее/сеть;6:внешнее/сеть;3:создаёт;4:создаёт;5:создаёт"],
   ["signalsSummary", "src/a.ts\nexport const a = sessionStorage.getItem(k);\nexport const b = indexedDB.open(name);\nexport const c = document.cookie;\nexport const d = caches.open(name);\nexport const e = caches.match(request);\nexport const f = caches.keys();\nexport const g = caches.delete(name);", "1:внешнее/хранилище;2:внешнее/хранилище;3:внешнее/хранилище;4:внешнее/хранилище;5:внешнее/хранилище;6:внешнее/хранилище;7:внешнее/хранилище"],
   ["signalsSummary", "src/a.ts\nexport const a = location.hash;\nexport const b = location.href;\nexport const c = location.pathname;\nexport const d = useSearchParams();\nexport const e = useParams();\nexport const f = useLocation();", "1:внешнее/адрес;2:внешнее/адрес;3:внешнее/адрес;4:внешнее/адрес;5:внешнее/адрес;6:внешнее/адрес"],
   ["signalsSummary", "src/a.ts\nworker.postMessage(data);\nworker.onmessage = onMessage;", "1:внешнее/сообщение;2:внешнее/сообщение"],
