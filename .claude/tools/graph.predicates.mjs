@@ -723,6 +723,10 @@ export const MODEL_LEVEL = {
   требование: "узел",
   правило: "приложение",
   остановка: "приложение",
+  оркестрация: "узел",
+  ввод: "узел",
+  визуальное: "узел",
+  область: "слой",
   переходы: "узел",
   проброс: "узел",
   размер: "узел",
@@ -1100,7 +1104,14 @@ export const BAR_SIGNALS = [
   // страницы — `S6`. Свод `свод.2-3.4`: оба держались одним вниманием и ушли.
   { ids: ["J2"], sort: "правило", words: "комментарий держит правило, которое можно проверить машиной, и в основании не сказано, почему оно не держится тестом, типом либо линтом" },
   { ids: ["S6"], sort: "остановка", words: "в предмете обработчик ухода со страницы либо отложенная запись без него, и в основании не сказано, что остановка не оставляет начатое половиной" },
-  { ids: ["B2"], sort: "требование", words: "комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
+  // Промахи свода `свод.3-3.2`–`свод.3-3.4`, державшиеся одним вниманием либо
+  // вне держателя: у каждого нарушение видно текстом.
+  { ids: ["A7-бис"], sort: "оркестрация", words: "функция ждёт и шаг, пришедший входом, и шаг, который исполняет сама, и в основании не сказано, почему порядок шагов и их исполнение в одном узле" },
+  { ids: ["E14"], sort: "ввод", mark: "очищено до ответа", words: "поле ввода очищается до ответа записи, и в основании не сказано, что останется у человека при отказе" },
+  { ids: ["O5-бис"], sort: "визуальное", mark: "вычислено", words: "разметка ставит вычисленное значение свойства, и в основании не назван тест, который закрепляет это значение, а не одно наличие элемента" },
+  { ids: ["A8-бис"], sort: "область", mark: "без слова области", words: "файл общей области не берёт ничего из своей папки и не называет её слова, и в основании не сказано, этой ли он области и где названа её граница" },
+  { ids: ["R4"], sort: "поставка", mark: "по условию", words: "узел показывают по условию, а берут статическим импортом в первую загрузку, и в основании не сказано, нужен ли он сразу" },
+  { ids: ["B2"], sort: "требование", words:"комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
   { ids: ["J9-бис"], sort: "ограничение", words: "в предмете объявлено ограничение, и в основании не назван тест, который его держит" },
   { ids: ["J9-бис"], sort: "копия", words: "инвариант «вход не меняется» держится копией перед изменяющим методом, и в основании не назван тест, который заметит снос копии" },
   { ids: ["H6-бис"], sort: "имя", mark: "булево", words: "булево названо не утверждением, и в основании не сказано почему" },
@@ -1439,21 +1450,17 @@ export const LINT_EXEMPT_FORM =
  * обвязки, и новый критерий в планку без этого решения не входит. Найден
  * признак — запись уходит, а критерий получает вопрос модели. */
 export const BAR_ATTENTION = {
-  "A8-бис": "граница области названа словами в базе и документации, а не в коде",
   "B2-бис": "единообразие — свойство всех узлов разом: одно по смыслу под разными именами текстом не опознать",
   B6: "безопасная сторона умолчания зависит от смысла входа; булево умолчание спрашивает `B1`",
   C2: "соглашение на месте вызова без знания инварианта неотличимо от конструкции",
   E13: "граница отказа — свойство композиции целиком, её отсутствие не видно ни в одной строке",
-  E14: "подтверждено ли необратимое и сохранён ли ввод — суждение о сценарии, в строке их отсутствие не видно",
   F4: "ссылка на элемент в коллекции без знания, удалён ли он, неотличима от законной",
   G7: "бюджет живёт в записях проекта числом; есть ли он — вопрос к базе, а не к строке",
   H2: "второй способ одного выглядит как первый: идиомы проекта сверяют чтением `10-idioms.md`",
   "H8-тер": "свой слой поверх готового механизма текстом неотличим от законной обёртки",
   J8: "сложность оснастки против сложности кода — суждение; размер её не мерит",
   J9: "на какой вопрос отвечает тест — суждение о том, что он проверяет",
-  "O5-бис": "что закреплять визуальным контрактом, решает проект",
   "R1-тер": "проверка зависимостей на уязвимости — шаг процесса, в тексте кода её нет",
-  R4: "осмысленность разбиения поставки — суждение о том, что нужно сразу",
   S1: "способ узнать об отказе в бою живёт вне предмета, у проекта он один",
   S8: "откат — свойство выкладки и формы данных: читает ли старая версия записанное новой, в коде одной версии не видно",
   "S2-бис": "признак связи событий заводится там, где цепочка начинается, и в строке не виден",
@@ -1563,7 +1570,19 @@ export const BAR_FORMS = {
   ],
   "A6-бис": [UNSEEN.repeat, "один расчёт разными конструкциями: цикл и `reduce` — текстом не опознаётся"],
   "A7-бис": [
-    "узел решает и порядок шагов, и их исполнение без обращения наружу — признак видит обращение наружу, а порядок своих шагов пишется теми же строками, что исполнение",
+    "узел решает и порядок шагов, и их исполнение без обращения наружу и без ожидания шага, пришедшего входом, — признаки видят обращение наружу и функцию, ждущую шаг входа рядом со своим, а порядок своих синхронных шагов пишется теми же строками, что исполнение",
+  ],
+  "A8-бис": [
+    "чужая предметная область в файле, который берёт что-то из своей папки либо называет слово области, — признак видит только файл, не связанный с областью текстом",
+    "граница, размытая внутри файла, и область вне папок общего слоя — признак читает путь `shared/<область>/` и текст файла целиком",
+  ],
+  E14: [
+    "необратимое действие без подтверждения и без отмены — признак видит очистку поля до записи, а необратимость действия решает смысл сценария",
+    "ошибка ввода, не называющая поле, и очистка формы целиком (`reset`) либо по другому имени записи — признак знает присваивание пустого значения и сеттер пустой строкой перед `save`, `submit`, `send`, `persist`, `post`",
+  ],
+  "O5-бис": [
+    "контракт в имени класса по условию либо в переменной листа — признак видит вычисленное значение в атрибуте `style`",
+    "структура разметки как контракт — какую закреплять, решает проект, и признак её не видит",
   ],
   A9: [
     "сборная утилита, которую берёт одна единица либо которую все берут одинаково, — «порознь» спрашивают от двух единиц с непересекающимися частями",
@@ -2088,6 +2107,10 @@ export const BAR_FORMS = {
     "два пакета одного назначения под разными именами — сверки ловят одноранговую зависимость, объявленную дважды, и пакет, повторяющий платформу",
   ],
   R3: [UNSEEN.manifest, "вес зависимости в критическом пути поставки — строка называет зависимость, а вес её покажет сборка"],
+  R4: [
+    "тяжёлое, показанное сразу, но нужное не всем, и пакет, взятый статическим импортом не в разметке, — признак видит узел разметки, показанный только по условию",
+    "показ по условию, записанный не тернарным выражением и не `&&` прямо перед элементом, — признак смотрит на то, что стоит перед `<Имя`",
+  ],
   "R4-бис": [
     "тяжёлые картинки и шрифты в исходном виде и кэш на стороне сервера — признак видит чужой адрес в листе стилей",
     "чужой адрес в разметке страницы и в коде — признак читает листы стилей",
@@ -3963,6 +3986,45 @@ const codeSignalsOf = (file, text, own) => {
     each(/\bsetTimeout\s*\(\s*\([^)]*\)\s*=>\s*\{?\s*(?:[\w$]+\s*\.\s*)?(?:save|persist|send)\w*\s*\(/gi, bare, (m) =>
       at("остановка", m.index, "setTimeout", "отложено без сброса при уходе"),
     );
+  // Вычисленное значение свойства в разметке — видимый контракт, который
+  // ломается без признака в тестах, проверяющих одно наличие (`O5-бис`), и
+  // узел, показанный по условию, но взятый статическим импортом в первую
+  // загрузку (`R4`). Промахи свода `свод.3-3.3` и `свод.3-3.4`.
+  if (markup) {
+    each(/\bstyle\s*=\s*\{\{/g, bare, (m) => {
+      const open = m.index + m[0].length - 1;
+      const close = closeOf(bare, open);
+      if (close < 0) return;
+      if (/["\x27]?[\w$-]+["\x27]?\s*:\s*[`A-Za-z_$(]/.test(bare.slice(open + 1, close)))
+        at("визуальное", m.index, "style", "вычислено");
+    });
+    if (!/\blazy\s*\(/.test(bare))
+      each(/^\s*import\s+(?:\{([^}]*)\}|([A-Z][\w$]*))\s*from\s*["\x27]\.{1,2}\//gm, plain, (m) => {
+        const names = (m[1] ?? m[2])
+          .split(",")
+          .map((one) => one.trim().split(/\s+as\s+/).pop())
+          .filter((name) => /^[A-Z][\w$]*$/.test(name));
+        for (const name of names) {
+          const shown = [...bare.matchAll(new RegExp("<" + escapeRe(name) + "(?![\\w$])", "g"))];
+          if (shown.length === 0) continue;
+          if (shown.every((s) => /(?:&&|\?|:)\s*\(?\s*$/.test(bare.slice(Math.max(0, s.index - 40), s.index))))
+            at("поставка", shown[0].index, name, "по условию");
+        }
+      });
+  }
+  // Файл общей области, который не берёт ничего из своей папки и не называет
+  // слова области: другая предметная область без названной границы
+  // (`A8-бис`). Промах свода `свод.3-3.3`, посадка `469`.
+  const area = /(?:^|\/)shared\/([^/]+)\/([^/.]+)\.[cm]?[jt]sx?$/.exec(file);
+  if (area !== null && area[2] !== "index") {
+    const stem = area[1].toLowerCase().replace(/s$/, "");
+    if (
+      !/\bfrom\s*["\x27]\.\/|\bimport\s*\(\s*["\x27]\.\//.test(plain) &&
+      !plain.toLowerCase().includes(stem) &&
+      !area[2].toLowerCase().includes(stem)
+    )
+      at("область", 0, area[1], "без слова области");
+  }
   const layoutWrites =
     /\.\s*style\s*\.\s*[\w$]+\s*=(?!=)|\.\s*style\s*\.\s*setProperty\s*\(|\bclassList\s*\.\s*(?:add|remove|toggle)\s*\(/.test(
       bare,
@@ -4366,6 +4428,45 @@ const codeSignalsOf = (file, text, own) => {
       (templated || /\.(?:toFixed|toLocaleString)\s*\(|\bIntl\.|["'][^"'\n]*\S[^"'\n]*["']\s*\+|\+\s*["'][^"'\n]*\S/.test(said))
     )
       at("оформление", one.at, one.name);
+  }
+  // Порядок шагов и их исполнение в одной функции (`A7-бис`): она ждёт шаг,
+  // пришедший входом, и шаг, исполненный ею самой. Функция, чьи шаги все
+  // приходят входом, — чистая оркестрация. Промах свода `свод.3-3.2`, `457`.
+  const ordered = new Set();
+  for (const one of bodies) {
+    if (one.to < 0 || ordered.has(one.from)) continue;
+    let code = bare.slice(one.from + 1, one.to);
+    for (const m of code.matchAll(/=>\s*\{|\bfunction\b[^{]*\{/g)) {
+      const b = m.index + m[0].length - 1;
+      const e = closeOf(code, b);
+      if (e > b) code = code.slice(0, b + 1) + " ".repeat(e - b - 1) + code.slice(e);
+    }
+    const steps = new Set(
+      topLevelParts(one.params, 0)
+        .map((part) => /^\s*([A-Za-z_$][\w$]*)\s*\??\s*:\s*\(/.exec(part.text)?.[1])
+        .filter((name) => name !== undefined),
+    );
+    if (steps.size === 0) continue;
+    const awaited = [...code.matchAll(/\bawait\s+([\w$]+)(\s*\()?/g)].map((m) => steps.has(m[1]) && m[2] !== undefined);
+    if (awaited.includes(true) && awaited.includes(false)) {
+      ordered.add(one.from);
+      at("оркестрация", one.at, one.name);
+    }
+  }
+  // Поле ввода очищено до ответа записи (`E14`): отказ сохранения стирает
+  // набранное. Промах свода `свод.3-3.2`, посадка `454`.
+  const cleared = new Set();
+  for (const one of bodies) {
+    if (one.to < 0) continue;
+    const code = bare.slice(one.from + 1, one.to);
+    const clear = /\.value\s*=\s*(["'`])\1|\bset[A-Z][\w$]*\s*\(\s*(["'`])\2\s*\)/.exec(code);
+    if (clear === null) continue;
+    const where = one.from + 1 + clear.index;
+    if (cleared.has(where)) continue;
+    if (/\b(?:save|submit|send|persist|post)\w*\s*\(/i.test(code.slice(clear.index + clear[0].length))) {
+      cleared.add(where);
+      at("ввод", where, clear[0], "очищено до ответа");
+    }
   }
   // Вход, из которого берут одно поле: узлу нужен элемент, а дают целое.
   for (const one of bodies) {
@@ -6114,6 +6215,34 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSearch = (search: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => search(text), DELAY_MS);\n  };\n};",""],
   ["signalsSummary","src/a.ts\nexport const later = (persist: (t: string) => void) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => persist(text), 1);\n};","3:остановка/отложено без сброса при уходе"],
   ["signalsSummary","src/a.ts\nexport const later = (api: { sendDraft: (t: string) => void }) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => {\n    api.sendDraft(text);\n  }, 1);\n};","3:остановка/отложено без сброса при уходе"],
+  // Сняты с внимания и из формы вне держателя (свод `свод.3-4д`): поле,
+  // очищенное до записи, — `E14`; ожидание шага входа рядом со своим —
+  // `A7-бис`; вычисленный стиль — `O5-бис`; файл области без её слова —
+  // `A8-бис`; показ по условию статическим импортом — `R4`. Законные пары —
+  // без строки.
+  ["signalsSummary","src/a.ts\nexport const submit = async (input: HTMLInputElement, save: (t: string) => Promise<boolean>) => {\n  const tag = input.value;\n  input.value = \"\";\n  return save(tag);\n};","3:ввод/очищено до ответа;1:целое"],
+  ["signalsSummary","src/a.ts\nexport const submit = async (text: string, setText: (t: string) => void, send: (t: string) => Promise<void>) => {\n  setText(\"\");\n  await send(text);\n};","3:гонка/без отмены;2:ввод/очищено до ответа"],
+  ["signalsSummary","src/a.ts\nexport const keep = async (input: HTMLInputElement, save: (t: string) => Promise<boolean>) => {\n  const ok = await save(input.value);\n  if (ok) input.value = \"\";\n  return ok;\n};","1:целое"],
+  ["signalsSummary","src/a.ts\nexport const load = async (file: File, save: (t: string) => Promise<void>) => {\n  const text = await file.text();\n  await save(text.trim());\n};","1:оркестрация"],
+  ["signalsSummary","src/a.ts\nexport const run = async (read: () => Promise<string>, save: (t: string) => Promise<void>) => {\n  const t = await read();\n  await save(t);\n};",""],
+  ["signalsSummary","src/a.tsx\nexport function Bar({ percent }: { percent: number }) {\n  return <span style={{ width: `${String(percent)}%` }} />;\n}","2:визуальное/вычислено"],
+  ["signalsSummary","src/a.tsx\nexport function Bar() {\n  return <span style={{ width: \"50%\", top: 3 }} />;\n}",""],
+  ["signalsSummary","src/shared/notes/sessionToken.ts\nexport const forget = (): void => {\n  sessionStorage.clear();\n};","2:внешнее/хранилище;2:запись/хранилище;1:область/без слова области"],
+  ["signalsSummary","src/shared/notes/matching.ts\nimport type { Entry } from \"./entry\";\nexport const same = (a: Entry) => a;",""],
+  ["signalsSummary","src/shared/notes/pick.ts\nexport const firstNote = (ids: string[]) => ids[0];",""],
+  ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ open }: { open: boolean }) {\n  return <main>{open ? <History /> : null}</main>;\n}","3:поставка/по условию;2:имя/булево"],
+  ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ open }: { open: boolean }) {\n  return <main><History />{open && <History />}</main>;\n}","2:имя/булево"],
+  ["signalsSummary","src/app/Page.tsx\nimport { lazy } from \"react\";\nimport { Spinner } from \"./Spinner\";\nconst History = lazy(() => import(\"./History\"));\nexport function Page({ open }: { open: boolean }) {\n  return <main>{open && <Spinner />}</main>;\n}","4:имя/булево;3:мёртвое"],
+  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, persist: (t: string) => Promise<void>) => {\n  input.value = \"\";\n  await persist(\"x\");\n};","2:ввод/очищено до ответа;1:целое"],
+  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, api: { post: (t: string) => Promise<void> }) => {\n  input.value = \"\";\n  await api.post(\"x\");\n};","2:ввод/очищено до ответа;1:целое"],
+  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, submitForm: (t: string) => Promise<void>) => {\n  input.value = \"\";\n  await submitForm(\"x\");\n};","2:ввод/очищено до ответа;1:целое"],
+  ["signalsSummary","src/a.ts\nexport const load = async (file: File, items: string[], save: (t: string) => Promise<void>) => {\n  await file.text();\n  items.forEach(async (one) => {\n    await save(one);\n  });\n};","3:пакет"],
+  ["signalsSummary","src/a.ts\nexport const load = async (file: File, save: (t: string) => Promise<void>) => {\n  await file.text();\n  async function inner() {\n    await save(\"x\");\n  }\n  return inner;\n};",""],
+  ["signalsSummary","src/a.tsx\nexport function Bar({ x }: { x: number }) {\n  return <span style={{ top: 3, left: x }} />;\n}","2:визуальное/вычислено"],
+  ["signalsSummary","shared/notes/token.ts\nexport const forget = (): void => {\n  go();\n};","1:область/без слова области"],
+  ["signalsSummary","src/shared/notes/token.ts\nexport const later = () => import(\"./token2\");",""],
+  ["signalsSummary","src/app/Page.tsx\nimport { useState } from \"react\";\nimport History from \"./History\";\nexport function Page() {\n  const [open] = useState(false);\n  return <main>{open && <History />}</main>;\n}","5:поставка/по условию"],
+  ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ id }: { id: string | null }) {\n  return <main>{id === null ? null : <History />}</main>;\n}","3:поставка/по условию"],
   // Уход со страницы — `S6`; комментарий, держащий правило, — `J2` (свод `свод.2-3.4`).
   ["signalsSummary","src/a.ts\nexport const flushOnExit = (title: string, body: string): void => {\n  window.addEventListener(\"pagehide\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка/запрос без keepalive"],
   ["signalsSummary","src/a.ts\nexport const flushOnExit = (body: string): void => {\n  window.addEventListener(\"beforeunload\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body, keepalive: true });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка"],
