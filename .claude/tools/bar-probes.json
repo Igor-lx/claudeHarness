@@ -5730,14 +5730,14 @@
     },
     {
       "criterion": "S3",
-      "why": "сосед правленого: замер отрисовки сам вызывает принудительный пересчёт раскладки, чтобы её «дождаться», — измерение создаёт ту работу, которую мерит",
+      "why": "сосед правленого: замер отрисовки читает раскладку после каждого шага цикла между отметками замера — шагов N, пересчётов раскладки N вместо одного на кадр, и результат чтения не нужен никому, кроме замера: измерение создаёт ту работу, которую мерит",
       "change": "сосед",
       "into": [
         {
           "role": "виновник",
           "file": "модуль",
-          "text": "export const drawTimed = (element, draw) => {\n  const started = performance.now();\n  draw();\n  element.getBoundingClientRect();\n  return performance.now() - started;\n};",
-          "ts": "export const drawTimed = (element: HTMLElement, draw: () => void): number => {\n  const started = performance.now();\n  draw();\n  element.getBoundingClientRect();\n  return performance.now() - started;\n};"
+          "text": "export const drawStepsTimed = (element, steps) => {\n  const started = performance.now();\n  for (const step of steps) {\n    step();\n    element.getBoundingClientRect();\n  }\n  return performance.now() - started;\n};",
+          "ts": "export const drawStepsTimed = (\n  element: HTMLElement,\n  steps: ReadonlyArray<() => void>,\n): number => {\n  const started = performance.now();\n  for (const step of steps) {\n    step();\n    element.getBoundingClientRect();\n  }\n  return performance.now() - started;\n};"
         }
       ]
     },
