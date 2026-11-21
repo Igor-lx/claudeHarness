@@ -6228,11 +6228,11 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  expect(matching([], \"\")).toHaveLength(0);\n});",""],
   // Отложенная запись без сброса при уходе — тоже `S6`; с обработчиком ухода
   // и у отложенного поиска строки нет (свод `свод.3-3.4`, посадка `476`).
-  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSave = (save: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => save(text), DELAY_MS);\n  };\n};","6:остановка/отложено без сброса при уходе"],
-  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSave = (save: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => save(text), DELAY_MS);\n  };\n};\nwindow.addEventListener(\"visibilitychange\", flush);",""],
+  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const writeSoon = (save: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => save(text), DELAY_MS);\n  };\n};","6:остановка/отложено без сброса при уходе"],
+  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const writeSoon = (save: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => save(text), DELAY_MS);\n  };\n};\nwindow.addEventListener(\"visibilitychange\", flush);",""],
   ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSearch = (search: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => search(text), DELAY_MS);\n  };\n};",""],
   ["signalsSummary","src/a.ts\nexport const later = (persist: (t: string) => void) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => persist(text), 1);\n};","3:остановка/отложено без сброса при уходе"],
-  ["signalsSummary","src/a.ts\nexport const later = (api: { sendDraft: (t: string) => void }) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => {\n    api.sendDraft(text);\n  }, 1);\n};","3:остановка/отложено без сброса при уходе"],
+  ["signalsSummary","src/a.ts\nexport const later = (api: { sendText: (t: string) => void }) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => {\n    api.sendText(text);\n  }, 1);\n};","3:остановка/отложено без сброса при уходе"],
   // Сняты с внимания и из формы вне держателя (свод `свод.3-4д`): поле,
   // очищенное до записи, — `E14`; ожидание шага входа рядом со своим —
   // `A7-бис`; вычисленный стиль — `O5-бис`; файл области без её слова —
@@ -6245,7 +6245,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/a.ts\nexport const run = async (read: () => Promise<string>, save: (t: string) => Promise<void>) => {\n  const t = await read();\n  await save(t);\n};",""],
   ["signalsSummary","src/a.tsx\nexport function Bar({ percent }: { percent: number }) {\n  return <span style={{ width: `${String(percent)}%` }} />;\n}","2:визуальное/вычислено"],
   ["signalsSummary","src/a.tsx\nexport function Bar() {\n  return <span style={{ width: \"50%\", top: 3 }} />;\n}",""],
-  ["signalsSummary","src/shared/notes/sessionToken.ts\nexport const forget = (): void => {\n  sessionStorage.clear();\n};","2:внешнее/хранилище;2:запись/хранилище;1:область/без слова области"],
+  ["signalsSummary","src/shared/notes/authKey.ts\nexport const forget = (): void => {\n  sessionStorage.clear();\n};","2:внешнее/хранилище;2:запись/хранилище;1:область/без слова области"],
   ["signalsSummary","src/shared/notes/matching.ts\nimport type { Entry } from \"./entry\";\nexport const same = (a: Entry) => a;",""],
   ["signalsSummary","src/shared/notes/pick.ts\nexport const firstNote = (ids: string[]) => ids[0];",""],
   ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ open }: { open: boolean }) {\n  return <main>{open ? <History /> : null}</main>;\n}","3:поставка/по условию;2:имя/булево"],
@@ -6263,8 +6263,8 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ id }: { id: string | null }) {\n  return <main>{id === null ? null : <History />}</main>;\n}","3:поставка/по условию"],
   // Чтение раскладки внутри замера — `S3`; форма элемента в листе — `O5-бис`
   // (перепроверка `свод.3-5`, посадки `455` и `207`).
-  ["signalsSummary","src/a.ts\nexport const drawTimed = (node: Element): number => {\n  const from = performance.now();\n  node.getBoundingClientRect();\n  return performance.now() - from;\n};","2:время;4:время;3:раскладка/чтение;2:измерение/чтение раскладки внутри;4:измерение/чтение раскладки внутри"],
-  ["signalsSummary","src/a.ts\nexport const drawTimed = (draw: () => void): number => {\n  const from = performance.now();\n  draw();\n  return performance.now() - from;\n};","2:время;4:время;2:измерение;4:измерение"],
+  ["signalsSummary","src/a.ts\nexport const timedDraw = (node: Element): number => {\n  const from = performance.now();\n  node.getBoundingClientRect();\n  return performance.now() - from;\n};","2:время;4:время;3:раскладка/чтение;2:измерение/чтение раскладки внутри;4:измерение/чтение раскладки внутри"],
+  ["signalsSummary","src/a.ts\nexport const timedDraw = (draw: () => void): number => {\n  const from = performance.now();\n  draw();\n  return performance.now() - from;\n};","2:время;4:время;2:измерение;4:измерение"],
   ["signalsSummary","src/a.module.scss\n.dot {\n  border-radius: 50%;\n}","2:визуальное/форма в листе"],
   ["signalsSummary","src/a.module.scss\n.box {\n  aspect-ratio: 1;\n  clip-path: circle(50%);\n}","2:визуальное/форма в листе;3:визуальное/форма в листе"],
   // Уход со страницы — `S6`; комментарий, держащий правило, — `J2` (свод `свод.2-3.4`).

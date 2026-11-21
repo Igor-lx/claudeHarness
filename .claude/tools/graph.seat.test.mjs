@@ -3041,6 +3041,18 @@ describe("полка не несёт того, что ломается на др
 describe("загрузчик среды посадки", () => {
   const BOOT = path.join(SHELF, "seat", "bootstrap.sh");
   const declared = verifiedOfSeed();
+  // Настоящая копия программы по PATH: обёртка среды Claude Code в
+  // `~/.claude/` зовёт следующую копию по PATH, а в поддельном PATH её нет.
+  const realTool = (name) => {
+    const own = path.join(os.homedir(), ".claude") + path.sep;
+    for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+      const at = path.join(dir, name);
+      if (dir === "" || at.startsWith(own)) continue;
+      const stat = fs.statSync(at, { throwIfNoEntry: false });
+      if (stat?.isFile() && (stat.mode & 0o111) !== 0) return at;
+    }
+    return "";
+  };
   const fakeBin = (tools) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "boot-bin-"));
     for (const [name, version] of Object.entries(tools)) {
@@ -3049,7 +3061,7 @@ describe("загрузчик среды посадки", () => {
       fs.chmodSync(at, 0o755);
     }
     for (const name of ["sed", "head", "uname", "cut", "grep", "dirname", "id", "printf"]) {
-      const real = spawnSync("sh", ["-c", "command -v " + name], { encoding: "utf8" }).stdout.trim();
+      const real = realTool(name);
       if (real.startsWith("/")) fs.symlinkSync(real, path.join(dir, name));
     }
     return dir;
@@ -3100,7 +3112,7 @@ describe("загрузчик среды посадки", () => {
   const canInstall =
     process.platform === "linux" &&
     bashAt !== "" &&
-    ["sha256sum", ...shell].every((name) => spawnSync("sh", ["-c", "command -v " + name]).status === 0);
+    ["sha256sum", ...shell].every((name) => realTool(name) !== "");
   const install = (
     nodeSays,
     before = () => {},
@@ -3125,8 +3137,7 @@ describe("загрузчик среды посадки", () => {
     for (const [name, body] of Object.entries(system))
       fs.writeFileSync(path.join(bin, name), "#!/bin/sh\n" + body + "\n", { mode: 0o755 });
     for (const one of ["sha256sum", ...shell].filter((one) => one !== without)) {
-      const real = spawnSync("sh", ["-c", "command -v " + one], { encoding: "utf8" }).stdout.trim();
-      fs.symlinkSync(real, path.join(bin, one));
+      fs.symlinkSync(realTool(one), path.join(bin, one));
     }
     const home = path.join(box, "home");
     fs.mkdirSync(home);
