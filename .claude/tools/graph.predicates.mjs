@@ -1099,7 +1099,7 @@ export const BAR_SIGNALS = [
   // Комментарий, держащий проверяемое правило, — `J2`; обработчик ухода со
   // страницы — `S6`. Свод `свод.2-3.4`: оба держались одним вниманием и ушли.
   { ids: ["J2"], sort: "правило", words: "комментарий держит правило, которое можно проверить машиной, и в основании не сказано, почему оно не держится тестом, типом либо линтом" },
-  { ids: ["S6"], sort: "остановка", words: "в предмете обработчик ухода со страницы, и в основании не сказано, что остановка не оставляет начатое половиной" },
+  { ids: ["S6"], sort: "остановка", words: "в предмете обработчик ухода со страницы либо отложенная запись без него, и в основании не сказано, что остановка не оставляет начатое половиной" },
   { ids: ["B2"], sort: "требование", words: "комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
   { ids: ["J9-бис"], sort: "ограничение", words: "в предмете объявлено ограничение, и в основании не назван тест, который его держит" },
   { ids: ["J9-бис"], sort: "копия", words: "инвариант «вход не меняется» держится копией перед изменяющим методом, и в основании не назван тест, который заметит снос копии" },
@@ -2125,6 +2125,7 @@ export const BAR_FORMS = {
     "старт: проверка настройки и ожидание зависимостей при запуске — признак видит только уход со страницы",
     "остановка вне страницы: сервер, воркер, сигнал процесса — признак видит события ухода в браузере",
     "уход через `visibilitychange` — признак его не берёт: на нём же законно ставят паузу",
+    "отложенная запись помощником из пакета (`debounce`) либо другим глаголом — признак видит `clearTimeout` рядом с `setTimeout` вокруг `save`, `persist`, `send` в файле без обработчика ухода",
   ],
   S3: [UNSEEN.measure],
   S4: [
@@ -3948,9 +3949,20 @@ const codeSignalsOf = (file, text, own) => {
   );
   // Уход со страницы: начатое в обработчике обрывается вместе с ней (`S6`).
   const unkept = /\bfetch\s*\(/.test(bare) && !/\bkeepalive\b|\bsendBeacon\b/.test(plain);
-  each(/addEventListener\s*\(\s*["\x27](?:pagehide|beforeunload|unload)["\x27]/g, plain, (m) =>
+  const leaving = /addEventListener\s*\(\s*["\x27](?:pagehide|beforeunload|unload)["\x27]/g;
+  each(leaving, plain, (m) =>
     at("остановка", m.index, m[0].replace(/^addEventListener\s*\(\s*/, ""), unkept ? "запрос без keepalive" : ""),
   );
+  // Отложенная запись — таймер, сбрасываемый каждым вызовом, вокруг записи, —
+  // без обработчика ухода теряет последний ввод при закрытии страницы.
+  if (
+    /\bclearTimeout\s*\(/.test(bare) &&
+    !new RegExp(leaving.source).test(plain) &&
+    !/["\x27]visibilitychange["\x27]/.test(plain)
+  )
+    each(/\bsetTimeout\s*\(\s*\([^)]*\)\s*=>\s*\{?\s*(?:[\w$]+\s*\.\s*)?(?:save|persist|send)\w*\s*\(/gi, bare, (m) =>
+      at("остановка", m.index, "setTimeout", "отложено без сброса при уходе"),
+    );
   const layoutWrites =
     /\.\s*style\s*\.\s*[\w$]+\s*=(?!=)|\.\s*style\s*\.\s*setProperty\s*\(|\bclassList\s*\.\s*(?:add|remove|toggle)\s*\(/.test(
       bare,
@@ -6095,6 +6107,13 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  matching([], \"zzz\");\n  expect(matching([], \"\")).toHaveLength(0);\n});","4:тест/вызов без утверждения"],
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", async () => {\n  await matching([], \"zzz\");\n  expect(matching([], \"\")).toHaveLength(0);\n});","4:тест/вызов без утверждения"],
   ["signalsSummary","src/shared/tests/a.test.ts\nimport { expect, it } from \"vitest\";\nimport { matching } from \"../notes\";\nit(\"runs\", () => {\n  expect(matching([], \"\")).toHaveLength(0);\n});",""],
+  // Отложенная запись без сброса при уходе — тоже `S6`; с обработчиком ухода
+  // и у отложенного поиска строки нет (свод `свод.3-3.4`, посадка `476`).
+  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSave = (save: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => save(text), DELAY_MS);\n  };\n};","6:остановка/отложено без сброса при уходе"],
+  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSave = (save: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => save(text), DELAY_MS);\n  };\n};\nwindow.addEventListener(\"visibilitychange\", flush);",""],
+  ["signalsSummary","src/a.ts\nconst DELAY_MS = 500;\nexport const debouncedSearch = (search: (t: string) => void) => {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  return (text: string) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => search(text), DELAY_MS);\n  };\n};",""],
+  ["signalsSummary","src/a.ts\nexport const later = (persist: (t: string) => void) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => persist(text), 1);\n};","3:остановка/отложено без сброса при уходе"],
+  ["signalsSummary","src/a.ts\nexport const later = (api: { sendDraft: (t: string) => void }) => (text: string) => {\n  clearTimeout(0);\n  setTimeout(() => {\n    api.sendDraft(text);\n  }, 1);\n};","3:остановка/отложено без сброса при уходе"],
   // Уход со страницы — `S6`; комментарий, держащий правило, — `J2` (свод `свод.2-3.4`).
   ["signalsSummary","src/a.ts\nexport const flushOnExit = (title: string, body: string): void => {\n  window.addEventListener(\"pagehide\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка/запрос без keepalive"],
   ["signalsSummary","src/a.ts\nexport const flushOnExit = (body: string): void => {\n  window.addEventListener(\"beforeunload\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body, keepalive: true });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка"],
