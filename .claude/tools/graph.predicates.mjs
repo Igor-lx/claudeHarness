@@ -433,8 +433,11 @@ export const barNoSubject = (row) => {
  * строка классов, встроенный стиль, стиль шаблоном.
  *
  * На входе текст кода, на выходе найденные признаки через запятую —
- * `time`, `async`, `list`, `style`; ни одного — пустая строка. */
-const SUBJECT_TIME =
+ * `time`, `async`, `list`, `style`; ни одного — пустая строка.
+ *
+ * Образец времени — один на инструмент: им же сверки карты и файлов базы
+ * спрашивают предмет файла порядка. */
+export const SUBJECT_TIME =
   /\buse(?:Layout|Insertion)?Effect\b|\buseSyncExternalStore\b|\bset(?:Timeout|Interval|Immediate)\s*\(|\brequest(?:AnimationFrame|IdleCallback)\s*\(|\bqueueMicrotask\s*\(|\baddEventListener\s*\(|\baddListener\s*\(|\.(?:on|once)\s*\(|\.on[a-z]+\s*=(?!=)|\bnew\s+[A-Za-z]*Observer\b|\.subscribe\s*\(|\bwatchPosition\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|BroadcastChannel|MessageChannel)\b/;
 const SUBJECT_ASYNC =
   /\basync\b|\bawait\b|\bPromise\b|\.(?:then|catch|finally)\s*\(|\bAbortController\b|\bfetch\s*\(|\bXMLHttpRequest\b|\.on(?:load|error|message|success)\s*=(?!=)|\bqueueMicrotask\s*\(|\brequestIdleCallback\s*\(|\bnew\s+(?:WebSocket|EventSource|Worker|SharedWorker|FileReader)\b|\bpostMessage\s*\(/;

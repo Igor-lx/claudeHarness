@@ -3251,6 +3251,51 @@ describe("запись карты не спорит с кодом", () => {
     }
   }, 240000);
 
+  // Время — то же, что видит модель свода: сокет, открытый помощником вне
+  // эффекта, ставит обработчик на будущее. Образец из пяти имён его не видел,
+  // и карта с «нет» в графе эффектов проходила (шаг `эффекты.1`).
+  it("сокет вне эффекта — предмет порядка: отрицание карты красно, файл порядка обязателен", () => {
+    const box = seatEmpty("karta-vremya-");
+    try {
+      fs.writeFileSync(
+        path.join(box, "src", "app", "zzFeed.ts"),
+        "export const openZzFeed = (url: string): WebSocket => new WebSocket(url);\n",
+      );
+      const map = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |";
+      const had = fs.readFileSync(map, "utf8");
+      fs.writeFileSync(
+        map,
+        had.replace(head, head + "\n| `src/app/zzFeed.ts` | лента | нет | нет |"),
+      );
+      const first = verifyIn(box);
+      expect((first.get("Запись карты не спорит с кодом") ?? []).join("\n")).toContain(
+        "zzFeed.ts: карта говорит «нет» в графе эффектов",
+      );
+      expect(
+        (first.get("Файлы базы заведены под свой предмет") ?? []).join("\n"),
+      ).toContain("06-timing.md — предмет в коде есть, а файла базы нет: timing");
+      fs.copyFileSync(
+        path.join(box, ".claude", "seat", "templates", "06-timing.md"),
+        path.join(box, ".context", "06-timing.md"),
+      );
+      expect(
+        (verifyIn(box).get("Предмет из кода назван в своём файле базы") ?? []).join("\n"),
+      ).toContain("zzFeed.ts");
+      fs.writeFileSync(
+        map,
+        had.replace(
+          head,
+          head + "\n| `src/app/zzFeed.ts` | лента | нет | сокет ленты |",
+        ),
+      );
+      expect(verifyIn(box).get("Запись карты не спорит с кодом")).toBeUndefined();
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 240000);
+
   // Таблица «База и документация» принимала «не требуется» у файла, чью
   // запись карты опровергает код. Найдено ревьюером пачки проб.
   it("свод не принимает «не требуется» в базе у файла, чью запись опровергает сверка", () => {

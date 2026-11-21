@@ -148,6 +148,7 @@ import {
   SCOPE_MODULE_KINDS,
   SCOPE_PAIRED,
   SCOPE_STYLE_KINDS,
+  SUBJECT_TIME,
   scopesImplied,
   sectionsOf,
   selfCheck,
@@ -4623,9 +4624,8 @@ const BRIEF_SUBJECTS = {
   // модульная переменная, внешнее хранилище и кэш запроса — тоже источники
   // одного факта, и прежде второй такой источник модель не показывала вовсе.
   state: { test: (text) => stateFormOf(text) !== "" },
-  timing: new RegExp(
-    "\\buseEffect\\s*[\\(<]|\\buseLayoutEffect\\s*[\\(<]|\\bsetTimeout\\s*[\\(<]|\\bsetInterval\\s*[\\(<]|\\brequestAnimationFrame\\s*[\\(<]",
-  ),
+  // Время — образец модели свода, один на инструмент (шаг `эффекты.1`).
+  timing: SUBJECT_TIME,
 };
 
 /** Идёт ли посадка. ЕДИНСТВЕННОЕ чтение флага на весь инструмент.
