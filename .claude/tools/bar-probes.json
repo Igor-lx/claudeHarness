@@ -5627,13 +5627,13 @@
     },
     {
       "criterion": "C8-бис",
-      "why": "команда «сохранить сейчас» хранится полем состояния редактора: намерение смешано с тем, что есть, и после исполнения команды флаг остаётся в состоянии",
+      "why": "команда «сохранить сейчас» хранится полем состояния редактора: событие просьбы ставит флаг, событие «сохранено» его не снимает — намерение смешано с тем, что есть, и после исполнения команды флаг остаётся в состоянии",
       "into": [
         {
           "role": "виновник",
           "file": "модуль",
-          "text": "export const afterTyping = (state, text) => ({\n  ...state,\n  text,\n  saveNow: text.endsWith(\"\\n\"),\n});",
-          "ts": "export type EditorState = { readonly text: string; readonly saveNow: boolean };\nexport const afterTyping = (state: EditorState, text: string): EditorState => ({\n  ...state,\n  text,\n  saveNow: text.endsWith(\"\\n\"),\n});"
+          "text": "export const editorStep = (state, event) => {\n  if (event.kind === \"typed\") return { ...state, text: event.text };\n  if (event.kind === \"saveRequested\") return { ...state, saveNow: true };\n  return state;\n};",
+          "ts": "export type EditorState = { readonly text: string; readonly saveNow: boolean };\nexport type EditorEvent =\n  | { readonly kind: \"typed\"; readonly text: string }\n  | { readonly kind: \"saveRequested\" }\n  | { readonly kind: \"saved\" };\nexport const editorStep = (\n  state: EditorState,\n  event: EditorEvent,\n): EditorState => {\n  if (event.kind === \"typed\") return { ...state, text: event.text };\n  if (event.kind === \"saveRequested\") return { ...state, saveNow: true };\n  return state;\n};"
         }
       ]
     },
