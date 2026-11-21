@@ -44,6 +44,7 @@ import {
   shellVariableOf,
   shellWriteTargetOf,
   pageReadByShell,
+  codeReadByShell,
   protocolReadByShell,
   BAR_PROTOCOL_FILE,
   sandboxEscape,
@@ -783,6 +784,14 @@ if (mode === "guard") {
   // Страница свода, прочитанная оболочкой, шапку правил не будит: тела
   // критериев в контекст не придут.
   const page = pageReadByShell(command);
+  // Файл кода, прочитанный оболочкой, не приносит планку и не ложится в
+  // прочитанное, которое спрашивают ворота конца хода.
+  const code = codeReadByShell(command, (word) => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const rel = path.relative(root, path.resolve(process.cwd(), word));
+    // Путь на другом диске Windows остаётся абсолютным и проекту не принадлежит.
+    return !path.isAbsolute(rel) && PROJECT_CODE_PATH.test(rel.split(path.sep).join("/"));
+  });
   const protocol = await protocolFault(read, command);
   const variable = shellVariableOf(command);
   // Файл проекта пишут Write и правят Edit, а не перенаправлением оболочки:
@@ -805,7 +814,7 @@ if (mode === "guard") {
   if (hook) {
     const stale = rulesFreshnessStep(said);
     codeReadStep(said);
-    if (why === "" && page === "" && protocol === "" && variable === "" && written === "") {
+    if (why === "" && page === "" && code === "" && protocol === "" && variable === "" && written === "") {
       if (stale !== "")
         console.log(
           JSON.stringify({
@@ -832,6 +841,14 @@ if (mode === "guard") {
           "`.\n" +
           "Политика приходит в контекст по шапке правил, когда файл открыт Read; прочитанный оболочкой файл её не приносит, и свод судил бы по заголовкам.\n" +
           "Страницы перечисляет `node .claude/tools/graph.mjs bar-read`, путь к файлу ключей печатает `bar`; открыть — Read.\n",
+      );
+    else if (code !== "")
+      process.stderr.write(
+        "Обвязка: файл кода проекта читается инструментом Read, а не `" +
+          code +
+          "`.\n" +
+          "Открытый Read файл кода приносит в контекст планку по шапке правил и ложится в прочитанное сессией, которое спрашивают ворота конца хода; прочитанный оболочкой — ни того, ни другого.\n" +
+          "Поиск по коду — инструмент Grep, нет его — `grep` одной командой. Порядок — `.claude/rules/environment.md`, раздел «Отсюда раздел труда, а не отказ от Bash».\n",
       );
     else if (protocol !== "") process.stderr.write(protocol);
     else if (variable === "")
@@ -861,6 +878,11 @@ if (mode === "guard") {
       : "    чтение страницы свода: " + page,
   );
   console.log(
+    code === ""
+      ? "  чтения файла кода оболочкой нет"
+      : "    чтение файла кода оболочкой: " + code,
+  );
+  console.log(
     protocol === ""
       ? "  чтения протокола свода оболочкой нет"
       : "    чтение протокола свода: " +
@@ -877,7 +899,7 @@ if (mode === "guard") {
       : "    запись файла проекта оболочкой: " + written,
   );
   process.exit(
-    why === "" && page === "" && protocol === "" && variable === "" && written === "" ? 0 : 1,
+    why === "" && page === "" && code === "" && protocol === "" && variable === "" && written === "" ? 0 : 1,
   );
 }
 

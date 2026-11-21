@@ -96,6 +96,17 @@ describe("словарь области", () => {
     ]);
   });
 
+  // Поиск пропускается и внутри `sh -c` и `eval`: исключение идёт вглубь.
+  // Работник ревью `процесс.3` прочёл код `cat`.
+  it("чтение файла кода оболочкой названо командой, поиск — нет", () => {
+    const isCode = (w) => w.endsWith(".ts");
+    expect(vocabulary.codeReadByShell("cat src/a.ts", isCode)).toBe("cat");
+    expect(vocabulary.codeReadByShell("sh -c 'head src/a.ts'", isCode)).toBe("head");
+    expect(vocabulary.codeReadByShell("eval sed -n 1p src/a.ts", isCode)).toBe("sed");
+    for (const fine of ["grep x src/a.ts", "sh -c 'rg x src/a.ts'", "eval egrep x src/a.ts", "cat notes.md", "ls src/a.ts"])
+      expect(vocabulary.codeReadByShell(fine, isCode), fine).toBe("");
+  });
+
   it("самопроверка не находит расхождений", () => {
     expect(selfCheck()).toEqual([]);
   });

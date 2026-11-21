@@ -592,7 +592,6 @@ describe("страж обхода ворот", () => {
       "ls .context/bar-pages",
       "git status --short -- .context/bar-pages",
       "node .claude/tools/graph.mjs bar-read 1",
-      "cat src/app/App.tsx",
     ])
       expect(ask(home, fine).status, fine).toBe(0);
     // Коммит мимо ворот называется своей причиной, не путаясь со страницей.
@@ -600,6 +599,34 @@ describe("страж обхода ворот", () => {
     expect(bypass.status).toBe(2);
     expect(bypass.stderr).toContain("commit --no-verify");
     expect(bypass.stderr).not.toContain("инструментом Read");
+  }, 180000);
+
+  // Работник ревью `процесс.3` прочёл код `cat`: планка не пришла, и
+  // прочитанное ворота конца хода не видели.
+  it("останавливает чтение файла кода проекта оболочкой, называя Read, а поиск и чужое пропускает", () => {
+    const home = path.join(TOOL_DIR, "..", "..");
+    for (const [read, by] of [
+      ["cat src/app/App.tsx", "cat"],
+      ["sed -n 1,40p src/components/Note/Note.tsx", "sed"],
+      ["head -20 ./src/shared/time/clock.ts && echo x", "head"],
+      ["tail " + path.join(home, "src", "app", "app.module.css"), "tail"],
+    ]) {
+      const stopped = ask(home, read);
+      expect(stopped.status, read).toBe(2);
+      expect(stopped.stderr).toContain("файл кода проекта читается инструментом Read, а не `" + by + "`");
+      expect(stopped.stderr).toContain("ворота конца хода");
+      expect(stopped.stderr).toContain("инструмент Grep");
+    }
+    for (const fine of [
+      "grep -n useState src/app/App.tsx",
+      "rg Note src/components",
+      "cat .claude/tools/hook.mjs",
+      "cat " + path.join(os.tmpdir(), "zz.ts"),
+      "ls src/app/App.tsx",
+      "git diff -- src/app/App.tsx",
+      "cat .context/00-map.md",
+    ])
+      expect(ask(home, fine).status, fine).toBe(0);
   }, 180000);
 
   it("отвечает в папке без базы проекта", () => {

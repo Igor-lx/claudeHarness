@@ -8053,21 +8053,21 @@ const SHELL_READERS = new Set([
  * строка. Довод, названный файлом, выбирает `touches`. Разбирается оболочка,
  * а не подстрока, как у `gitHookBypass`; команда внутри `sh -c` и `eval` — та
  * же команда. */
-const shellReadOf = (command, touches) => {
+const shellReadOf = (command, touches, skip = new Set()) => {
   const check = (ws) => {
     let k = 0;
     while (k < ws.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[k])) k += 1;
     const head = ws[k];
     if (head === undefined) return "";
-    if (head === "eval") return shellReadOf(ws.slice(k + 1).join(" "), touches);
+    if (head === "eval") return shellReadOf(ws.slice(k + 1).join(" "), touches, skip);
     if (/^(?:.*\/)?(?:ba|z|da)?sh$/.test(head)) {
       const at = ws.indexOf("-c", k + 1);
       return at < 0 || ws[at + 1] === undefined
         ? ""
-        : shellReadOf(ws[at + 1], touches);
+        : shellReadOf(ws[at + 1], touches, skip);
     }
     const name = head.replace(/^.*\//, "").toLowerCase();
-    return SHELL_READERS.has(name) && ws.slice(k + 1).some(touches) ? name : "";
+    return SHELL_READERS.has(name) && !skip.has(name) && ws.slice(k + 1).some(touches) ? name : "";
   };
   for (const ws of shellCommandsOf(command)) {
     const why = check(ws);
@@ -8092,6 +8092,21 @@ export const pageReadByShell = (command) =>
       .split("/")
       .some((part) => part === BAR_PAGES_DIR),
   );
+
+/** Поиск по образцу среди читающих команд: запасной путь поиска, когда
+ * инструмента Grep в среде нет (`environment.md`, раздел «Что списком не
+ * снимается»). */
+const SHELL_SEARCHERS = new Set(["grep", "egrep", "fgrep", "rg", "ag"]);
+
+/** Чтение файла кода проекта командой оболочки — имя команды, иначе пустая
+ * строка; `isCode` решает, назван ли доводом файл кода проекта.
+ *
+ * Файл кода, открытый инструментом Read, приносит планку по шапке правил и
+ * ложится в прочитанное сессией, которое спрашивают ворота конца хода; `cat`
+ * не даёт ни того, ни другого, и ответ о прочитанном коде проходит без свода.
+ * Поиск `grep` страж пропускает. Выведено: работник ревью `процесс.3` прочёл
+ * код `cat`. Держит набор тестов: довод — функция. */
+export const codeReadByShell = (command, isCode) => shellReadOf(command, isCode, SHELL_SEARCHERS);
 
 /** Переменная оболочки в команде — её запись, иначе пустая строка.
  *
