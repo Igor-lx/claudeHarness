@@ -212,6 +212,38 @@ describe("ворота конца хода", () => {
     }
   }, 300000);
 
+  it("пауза о прочитанном коде без правки переживает начало сессии и печатается; правка либо коммит её снимают", () => {
+    const box = seatEmpty("stop-read-pause-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=stop", "-c", "user.email=stop@local", "-c", "core.hooksPath=", ...args],
+          { cwd: box, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      const event = (mode, said) =>
+        spawnSync(process.execPath, [graph, ...mode], { cwd: box, encoding: "utf8", input: JSON.stringify(said) });
+      const start = () => String(event(["stop", "--session"], { session_id: "s1", source: "resume" }).stdout);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      event(["guard", "--hook"], { session_id: "s1", tool_name: "Read", tool_input: { file_path: path.join(box, "src/app/App.tsx") } });
+      const paused = spawnSync(process.execPath, [graph, "stop", "--pause", "спрошу вес шрифта до правки стилей"], { cwd: box, encoding: "utf8" });
+      expect(paused.stdout).toContain("Пауза поставлена");
+      // Два начала подряд — причина печатается оба раза: пауза не стёрта.
+      expect(start()).toContain("незаконченная работа — спрошу вес шрифта до правки стилей");
+      expect(start()).toContain("незаконченная работа — спрошу вес шрифта до правки стилей");
+      // Коммит закрывает прочитанное — пауза ни о чём; прочитанное другой
+      // сессии её не держит.
+      event(["guard", "--hook"], { session_id: "s2", tool_name: "Read", tool_input: { file_path: path.join(box, "src/app/main.tsx") } });
+      event(["guard", "--hook"], { session_id: "s1", tool_name: "Bash", tool_input: { command: "git commit -m x" } });
+      expect(start()).not.toContain("незаконченная работа");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   // Удаление файла среда спрашивает подтверждением: работник шага 5.2 прогона
   // приёмки встал на «снести протокол». Свод заново — пустым протоколом.
   it("протокол прошлой работы, не назвавший ни одного файла правки, назван прошлым, а не перечнем чужих файлов", () => {
@@ -246,6 +278,56 @@ describe("ворота конца хода", () => {
       expect(held.status).toBe(2);
       expect(held.stderr).toContain("свода этой правки нет: протокол описывает прошлую работу");
       expect(held.stderr).not.toContain("назван сводом, а в правке его нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("закоммиченный протокол прошлой работы, деливший файл с правкой, назван прошлым — в конце хода, в начале сессии и в воротах", () => {
+    const box = seatEmpty("stop-past-shared-");
+    try {
+      const graph = path.join(box, ".claude", "tools", "graph.mjs");
+      const git = (...args) =>
+        spawnSync("git", ["-c", "user.name=stop", "-c", "user.email=stop@local", ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+      const tool = (...args) =>
+        String(spawnSync(process.execPath, [graph, ...args], { cwd: box, encoding: "utf8" }).stdout ?? "");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "посадка", "--no-verify");
+      const put = (name, text) => fs.writeFileSync(path.join(box, "src", "app", name), text);
+      put("zzShared.ts", "export const zzShared = (n: number): number => n * 2;\n");
+      put("zzOther.ts", "export const zzOther = (n: number): number => n * 4;\n");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба" });
+      expect(tool("bar")).toContain("печать поставлена");
+      git("add", "-A");
+      git("commit", "-qm", "прошлая работа", "--no-verify");
+      // Новая работа трогает один файл прошлой и свод ещё не начинала.
+      put("zzShared.ts", "export const zzShared = (n: number): number => n * 5;\n");
+      const past = "свода этой правки нет: протокол описывает прошлую работу";
+      const held = spawnSync(process.execPath, [graph, "stop", "--hook"], { cwd: box, encoding: "utf8", input: "{}" });
+      expect(held.status).toBe(2);
+      expect(held.stderr).toContain(past);
+      expect(held.stderr).not.toContain("назван сводом, а в правке его нет");
+      expect(held.stderr).not.toContain("zzOther.ts");
+      const session = spawnSync(process.execPath, [graph, "stop", "--session"], { cwd: box, encoding: "utf8", input: "{}" });
+      const said = String(session.stdout) + String(session.stderr);
+      expect(said).toContain(past);
+      expect(said).not.toContain("zzOther.ts");
+      git("add", "-A");
+      const gate = git("-c", "core.hooksPath=.claude/hooks/git", "commit", "-qm", "без свода");
+      expect(gate.status).not.toBe(0);
+      expect(gate.stdout + gate.stderr).toContain(past);
+      expect(gate.stdout + gate.stderr).not.toContain("zzOther.ts");
+      // Начатый свод этой правки — уже не прошлый: протокол правлен.
+      git("reset", "-q");
+      tool("bar");
+      const started = spawnSync(process.execPath, [graph, "stop", "--hook"], { cwd: box, encoding: "utf8", input: "{}" });
+      expect(started.stderr).not.toContain(past);
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

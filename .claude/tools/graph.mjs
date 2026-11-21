@@ -3678,12 +3678,35 @@ const untouchedSeed = (at, repoRoot, seeds) => {
  * @param want [{file, mark}] — файлы предмета с отпечатками их содержимого
  * @param body текст протокола, либо null — протокола нет
  */
-const barCoverFault = (want, body) => {
+const barCoverFault = (want, body, past = false) => {
   if (!want.length) return "";
+  if (past) return BAR_PAST_WORK + " — он в последнем коммите без правки; `bar` начнёт свод этой правки";
   const sealed = barSealFault(body);
   if (sealed !== "") return sealed;
   return barNamedFault(want, body, true);
 };
+/** Протокол — свод прошлой, закоммиченной работы: лежит в последнем коммите
+ * без правки, и серии, чьи части ждут коммита, нет. О нынешней правке его
+ * файлы не говорят ничего, а перечень их «назван сводом, а в правке его нет»
+ * читался рядом с настоящим незаконченным как чужой мусор (продолжение
+ * работника удаления, `процесс.3`). `staged` — сверять индекс, а не дерево. */
+const barProtocolCommitted = (protoAt, staged = false) => {
+  if (protoAt === null) return false;
+  const git = (args) =>
+    spawnSync("git", args, {
+      cwd: REPO_AT,
+      encoding: "utf8",
+      maxBuffer: CHILD_OUTPUT_BYTES,
+    });
+  const relAt = trimmedPath(path.relative(REPO_AT, protoAt));
+  if (git(["cat-file", "-e", "HEAD:" + relAt]).status !== 0) return false;
+  if (workBaseOf(REPO_AT) !== "HEAD") return false;
+  if (staged)
+    return git(["diff", "--cached", "--quiet", "HEAD", "--", relAt]).status === 0;
+  const now = git(["status", "--porcelain", "--", relAt]);
+  return now.status === 0 && now.stdout.trim() === "";
+};
+const BAR_PAST_WORK = "свода этой правки нет: протокол описывает прошлую работу";
 /** Отпечатки предмета против протокола; `whole` — и обратное: всё, что
  * протокол называет, есть в правке. Коммит части серии несёт часть правки,
  * и обратного с него не спрашивают — его спрашивают с последней части. */
@@ -3695,7 +3718,7 @@ const barNamedFault = (want, body, whole) => {
   // прогона приёмки `2026-11-17`).
   if (whole && had.size > 0 && !want.some((one) => had.has(one.file)))
     return (
-      "свода этой правки нет: протокол описывает прошлую работу — файлов " +
+      BAR_PAST_WORK + " — файлов " +
       had.size +
       ", ни один не в правке; `bar` начнёт свод этой правки"
     );
@@ -9005,7 +9028,10 @@ if (mode === "stop") {
   const body =
     protoAt !== null && existsSync(protoAt) ? readFileSync(protoAt, "utf8") : null;
   const fault =
-    want.length === 0 ? "" : barCoverFault(want, body) || barGroundFault(body);
+    want.length === 0
+      ? ""
+      : barCoverFault(want, body, barProtocolCommitted(protoAt)) ||
+        barGroundFault(body);
   // Свод на задаче чтения, начатый этой работой, держит ход так же, как
   // правка кода: доктрина спрашивает свод в обоих родах. Начатый — протокол
   // правлен против последнего коммита; лежащий в истории ход не держит.
@@ -9145,10 +9171,21 @@ if (mode === "stop") {
       said.push(
         "репозитория нет либо git недоступен — ворота конца хода и перед коммитом правку не проверяют",
       );
+    // Пауза о прочитанном коде без правки — вопрос разработчику до первой
+    // правки — годна, пока прочитанное этой сессии не закрыл коммит и правки
+    // кода нет. Ответа хода здесь нет, и правило конца хода её стирало без
+    // печати: продолжение работника на хуки `процесс.4` не получило причины.
+    const readPaused =
+      state.pause != null &&
+      want.length === 0 &&
+      readFault === "" &&
+      readSessionsNow.some(
+        (one) => barDigest("прочитан код " + one.session) === state.pause.digest,
+      );
     // Между сессиями правку могли закоммитить мимо ворот, откатить или
     // накрыть сводом: пауза и след о ней тогда ни о чём, и печатать их —
     // звать сессию к работе, которой нет. Правило то же, что у конца хода.
-    if (holdFault === "") {
+    if (holdFault === "" && !readPaused) {
       if (state.pause != null || state.trace != null || state.blocks != null) {
         state.pause = null;
         state.trace = null;
@@ -9157,7 +9194,7 @@ if (mode === "stop") {
       }
     }
     // Пауза о прежнем виде правки ни о чём: о нынешнем скажет строка ниже.
-    if (paused)
+    if (paused || readPaused)
       said.push(
         "незаконченная работа — " +
           state.pause.reason +
@@ -20393,7 +20430,15 @@ if (mode === "gate") {
   } catch {
     tree = null;
   }
-  const fault = tree === null ? barCoverFault(want, body) : barSealFault(body);
+  // Протокол в индексе — тот же, что в последнем коммите: свод прошлой
+  // работы, и о нынешнем коде его печать и отпечатки не говорят ничего.
+  const past =
+    CONFIG.barProtocol != null &&
+    barProtocolCommitted(path.join(BASE, CONFIG.barProtocol), true);
+  const fault =
+    tree === null || past
+      ? barCoverFault(want, body, past)
+      : barSealFault(body);
   // Печать — открытый отпечаток: протокол с «чисто» во всех строках и
   // печатью, посчитанной руками, прошёл бы по ней одной. Поэтому протокол
   // принимают тем же приёмом, что режим `bar` делает перед печатью, — со
@@ -21139,7 +21184,9 @@ if (mode === "series") {
     );
   // Деревья частей строят из рабочего дерева, и ворота верят им без
   // отпечатков: серия гоняется только на правке, которую печать покрывает.
-  const cover = codeFree ? "" : barCoverFault(barMarks(subject), was.body);
+  const cover = codeFree
+    ? ""
+    : barCoverFault(barMarks(subject), was.body, barProtocolCommitted(at));
   if (cover !== "")
     refuse(
       "Свод не покрывает правку: " + cover,
