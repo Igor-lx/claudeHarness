@@ -1109,6 +1109,7 @@ export const BAR_SIGNALS = [
   { ids: ["A7-бис"], sort: "оркестрация", words: "функция ждёт и шаг, пришедший входом, и шаг, который исполняет сама, и в основании не сказано, почему порядок шагов и их исполнение в одном узле" },
   { ids: ["E14"], sort: "ввод", mark: "очищено до ответа", words: "поле ввода очищается до ответа записи, и в основании не сказано, что останется у человека при отказе" },
   { ids: ["O5-бис"], sort: "визуальное", mark: "вычислено", words: "разметка ставит вычисленное значение свойства, и в основании не назван тест, который закрепляет это значение, а не одно наличие элемента" },
+  { ids: ["O5-бис"], sort: "визуальное", mark: "форма в листе", scope: "fresh", words: "правка меняет форму элемента в листе — скругление, пропорцию, обрезку, — и в основании не сказано, чем закреплена прежняя форма и что ломается с новой" },
   { ids: ["A8-бис"], sort: "область", mark: "без слова области", words: "файл общей области не берёт ничего из своей папки и не называет её слова, и в основании не сказано, этой ли он области и где названа её граница" },
   { ids: ["R4"], sort: "поставка", mark: "по условию", words: "узел показывают по условию, а берут статическим импортом в первую загрузку, и в основании не сказано, нужен ли он сразу" },
   { ids: ["B2"], sort: "требование", words:"комментарий ставит условие вызывающему, и в основании не сказано, почему оно не выражено типом" },
@@ -1220,6 +1221,7 @@ export const BAR_SIGNALS = [
   { ids: ["S7"], sort: "запись", words: "предмет пишет наружу, и в основании не сказано, что при исчерпании: полная квота, отказ, переполнение" },
   { ids: ["S2", "S5", "Q3"], sort: "журнал", words: "предмет пишет в журнал, и в основании не сказано о форме записи, поставке и чувствительном" },
   { ids: ["S3", "S4", "S5"], sort: "измерение", words: "в предмете измерение, и в основании не сказано о его цене и выключении" },
+  { ids: ["S3"], sort: "измерение", mark: "чтение раскладки внутри", words: "между отметками замера стоит чтение раскладки, и в основании не сказано, почему пересчёт, который оно вызывает, не входит в измеренное" },
   { ids: ["T1", "T4"], sort: "текст", mark: "в разметке", words: "текст для человека вшит в разметку, и в основании не сказано почему" },
   { ids: ["T2"], sort: "текст", mark: "формат", words: "величина форматируется без региона, и в основании не сказано почему" },
   { ids: ["T3"], sort: "текст", mark: "множественное", words: "множественное число выбрано сравнением с единицей, и в основании не сказано о правилах языка" },
@@ -1581,7 +1583,7 @@ export const BAR_FORMS = {
     "ошибка ввода, не называющая поле, и очистка формы целиком (`reset`) либо по другому имени записи — признак знает присваивание пустого значения и сеттер пустой строкой перед `save`, `submit`, `send`, `persist`, `post`",
   ],
   "O5-бис": [
-    "контракт в имени класса по условию либо в переменной листа — признак видит вычисленное значение в атрибуте `style`",
+    "контракт в имени класса по условию, в переменной листа либо в размере и цвете листа — признаки видят вычисленное значение в атрибуте `style` и правленую строку формы листа: скругление, пропорцию, обрезку",
     "структура разметки как контракт — какую закреплять, решает проект, и признак её не видит",
   ],
   A9: [
@@ -3837,6 +3839,9 @@ const commentSignals = (text, line) => {
 /** Методы, меняющие контейнер, у которого их зовут. */
 const BOX_MUTATORS =
   "push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|delete|clear";
+/** Чтение раскладки, которое заставляет браузер пересчитать её на месте. */
+const LAYOUT_READ =
+  /\bgetBoundingClientRect\s*\(|\.\s*(?:offset(?:Width|Height|Top|Left)|client(?:Width|Height)|scroll(?:Top|Left|Width|Height))\b|\bgetComputedStyle\s*\(/g;
 const codeSignalsOf = (file, text, own) => {
   const bare = bareCodeOf(text);
   const plain = commentlessOf(text);
@@ -4030,7 +4035,7 @@ const codeSignalsOf = (file, text, own) => {
       bare,
     );
   each(
-    /\bgetBoundingClientRect\s*\(|\.\s*(?:offset(?:Width|Height|Top|Left)|client(?:Width|Height)|scroll(?:Top|Left|Width|Height))\b|\bgetComputedStyle\s*\(/g,
+    LAYOUT_READ,
     bare,
     (m) => at("раскладка", m.index, m[0], layoutWrites ? "чтение и запись" : "чтение"),
   );
@@ -4695,11 +4700,18 @@ const codeSignalsOf = (file, text, own) => {
   each(/\beval\s*\(|\bnew\s+Function\s*\(|<script\b|<iframe\b/g, bare, (m) => at("вставка", m.index, m[0], "сторонний"));
   each(/createElement\s*\(\s*["'](?:script|iframe)["']/g, plain, (m) => at("вставка", m.index, m[0], "сторонний"));
   each(/\bconsole\s*\.\s*(?:log|info|debug|warn|error|trace|table|dir)\s*\(/g, bare, (m) => at("журнал", m.index, m[0]));
-  each(
-    /\bperformance\s*\.\s*(?:mark|measure|now)\s*\(|\bconsole\s*\.\s*time(?:End|Log)?\s*\(|\bnew\s+PerformanceObserver\s*\(/g,
-    bare,
-    (m) => at("измерение", m.index, m[0]),
-  );
+  // Чтение раскладки между отметками замера само вызывает пересчёт, который
+  // мерят (`S3`). Промах `455` дважды: строка без пометки читалась «нагрузка —
+  // только запись». Перепроверка `свод.3-5`.
+  const measured = [
+    ...bare.matchAll(
+      /\bperformance\s*\.\s*(?:mark|measure|now)\s*\(|\bconsole\s*\.\s*time(?:End|Log)?\s*\(|\bnew\s+PerformanceObserver\s*\(/g,
+    ),
+  ];
+  const forced =
+    measured.length > 1 &&
+    new RegExp(LAYOUT_READ.source).test(bare.slice(measured[0].index, measured.at(-1).index));
+  for (const m of measured) at("измерение", m.index, m[0], forced ? "чтение раскладки внутри" : "");
   if (markup) {
     // Позиция — первая буква текста, а не скобка перед ним: текст на своей
     // строке под тегом вставал строкой выше.
@@ -4768,6 +4780,12 @@ const styleSignalsOf = (text, project) => {
       at("стиль", m.index, m[0].replace(/\s*\{$/, ""), "раскладка в движении");
   });
   each(/\bwill-change\s*:|\btranslateZ\s*\(|\btranslate3d\s*\(/g, (m) => at("стиль", m.index, m[0], "слой композитора"));
+  // Форма элемента — скругление, пропорция, обрезка: видимый контракт, чью
+  // поломку замечает только глаз (`O5-бис`); спрашивают правленую строку.
+  // Промах перепроверки `свод.3-5`, посадка `207`.
+  each(/\b(?:border-radius|aspect-ratio|clip-path)\s*:/g, (m) =>
+    at("визуальное", m.index, m[0].replace(/\s*:$/, ""), "форма в листе"),
+  );
   // Ресурс с чужого адреса: лист, шрифт, картинка — граница доверия и
   // поставка, которой проект не владеет. Читается сырой текст: `//` адреса
   // без кавычек разбор листа принял бы за комментарий.
@@ -6243,6 +6261,12 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/shared/notes/token.ts\nexport const later = () => import(\"./token2\");",""],
   ["signalsSummary","src/app/Page.tsx\nimport { useState } from \"react\";\nimport History from \"./History\";\nexport function Page() {\n  const [open] = useState(false);\n  return <main>{open && <History />}</main>;\n}","5:поставка/по условию"],
   ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ id }: { id: string | null }) {\n  return <main>{id === null ? null : <History />}</main>;\n}","3:поставка/по условию"],
+  // Чтение раскладки внутри замера — `S3`; форма элемента в листе — `O5-бис`
+  // (перепроверка `свод.3-5`, посадки `455` и `207`).
+  ["signalsSummary","src/a.ts\nexport const drawTimed = (node: Element): number => {\n  const from = performance.now();\n  node.getBoundingClientRect();\n  return performance.now() - from;\n};","2:время;4:время;3:раскладка/чтение;2:измерение/чтение раскладки внутри;4:измерение/чтение раскладки внутри"],
+  ["signalsSummary","src/a.ts\nexport const drawTimed = (draw: () => void): number => {\n  const from = performance.now();\n  draw();\n  return performance.now() - from;\n};","2:время;4:время;2:измерение;4:измерение"],
+  ["signalsSummary","src/a.module.scss\n.dot {\n  border-radius: 50%;\n}","2:визуальное/форма в листе"],
+  ["signalsSummary","src/a.module.scss\n.box {\n  aspect-ratio: 1;\n  clip-path: circle(50%);\n}","2:визуальное/форма в листе;3:визуальное/форма в листе"],
   // Уход со страницы — `S6`; комментарий, держащий правило, — `J2` (свод `свод.2-3.4`).
   ["signalsSummary","src/a.ts\nexport const flushOnExit = (title: string, body: string): void => {\n  window.addEventListener(\"pagehide\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка/запрос без keepalive"],
   ["signalsSummary","src/a.ts\nexport const flushOnExit = (body: string): void => {\n  window.addEventListener(\"beforeunload\", () => {\n    void fetch(\"/drafts\", { method: \"POST\", body, keepalive: true });\n  });\n};","3:внешнее/сеть;3:запись/сеть;2:остановка"],
