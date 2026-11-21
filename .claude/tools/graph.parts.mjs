@@ -10,6 +10,10 @@
 
 export const PARTS_TITLE = "Части правки";
 export const PARTS_HEAD = "| часть | файлы | что |";
+/** Ключ строки, чьи файлы остаются вне всех частей: правка рабочего дерева,
+ * сделанная не этой работой, — правило, дописанное разработчиком посреди
+ * хода. Дерево части несёт их по основанию, рабочее дерево — правленными. */
+export const PARTS_ASIDE = "мимо";
 
 const cellsOf = (line) =>
   line
@@ -18,9 +22,8 @@ const cellsOf = (line) =>
     .map((c) => c.trim());
 const tickedIn = (text) => [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
 
-/** Таблица частей из текста протокола: строки по порядку. Раздела нет —
- * `null`: одна часть на весь предмет, обычная работа тем же путём. */
-export const partsTableOf = (body) => {
+/** Строки таблицы частей, ключ «мимо» тоже: по порядку. */
+const partsRowsOf = (body) => {
   const lines = body.split(/\r?\n/);
   const at = lines.indexOf("## " + PARTS_TITLE);
   if (at < 0) return null;
@@ -43,6 +46,22 @@ export const partsTableOf = (body) => {
   }
   return rows;
 };
+
+/** Таблица частей из текста протокола: строки по порядку, без строк «мимо».
+ * Раздела нет либо в нём одни строки «мимо» — `null`: одна часть на весь
+ * предмет, обычная работа тем же путём. */
+export const partsTableOf = (body) => {
+  const rows = partsRowsOf(body);
+  if (rows === null) return null;
+  const parts = rows.filter((r) => r.n !== PARTS_ASIDE);
+  return parts.length === 0 && rows.length > 0 ? null : parts;
+};
+
+/** Файлы строк «мимо» таблицы частей, по порядку; строк нет — пусто. */
+export const partsAsideOf = (body) =>
+  (partsRowsOf(body) ?? [])
+    .filter((r) => r.n === PARTS_ASIDE)
+    .flatMap((r) => r.files);
 
 /** Таблица частей без пустых строк: часть без файлов и без «что» ничего не
  * коммитит, а приём отказывал на ней дважды, и сессия снимала её правкой
@@ -70,8 +89,9 @@ export const partsPruned = (body) => {
   return lines.filter((_, i) => !drop.has(i)).join("\n");
 };
 
-/** Протокол с таблицей частей, заменённой на `rows`; `rows === null` —
- * раздел снимается: часть одна. Раздела нет — `null`. */
+/** Протокол с таблицей частей, заменённой на `rows`; строки «мимо» прежней
+ * таблицы остаются. `rows === null` и строк «мимо» нет — раздел снимается:
+ * часть одна. Раздела нет — `null`. */
 export const partsReplaced = (body, rows) => {
   const lines = body.split("\n");
   const at = lines.indexOf("## " + PARTS_TITLE);
@@ -80,13 +100,16 @@ export const partsReplaced = (body, rows) => {
   while (end < lines.length && !lines[end].startsWith("## ")) end += 1;
   return [
     ...lines.slice(0, at),
-    ...(rows === null ? [] : partsSectionOf(rows)),
+    ...partsSectionOf(rows, partsAsideOf(body)),
     ...lines.slice(end),
   ].join("\n");
 };
 
-/** Раздел протокола с таблицей частей; строка — файлы и слова «что». */
-export const partsSectionOf = (rows) => [
+/** Раздел протокола с таблицей частей; строка — файлы и слова «что»,
+ * последней — строка «мимо» с файлами `aside`. Ни частей, ни `aside` —
+ * раздела нет. */
+export const partsSectionOf = (rows, aside = []) =>
+  rows === null && aside.length === 0 ? [] : [
   "## " + PARTS_TITLE,
   "",
   "Правка уходит в историю частями — коммит на часть. Части предложила",
@@ -97,11 +120,13 @@ export const partsSectionOf = (rows) => [
   "Графа «что» — сообщение коммита",
   "части. Тесты и прочие файлы в папке единицы переноса идут с её частью,",
   "записи базы и документации — с частью, чьи файлы называют; другие",
-  "файлы — конфиги, манифест — называют в графе «файлы».",
+  "файлы — конфиги, манифест — называют в графе «файлы». Правку, сделанную",
+  "не этой работой, называют строкой с ключом «мимо»: в части она не идёт и",
+  "остаётся в рабочем дереве.",
   "",
   PARTS_HEAD,
   "| --- | --- | --- |",
-  ...rows.map(
+  ...(rows ?? []).map(
     (r, k) =>
       "| " +
       (k + 1) +
@@ -111,6 +136,15 @@ export const partsSectionOf = (rows) => [
       (r.what ?? "") +
       " |",
   ),
+  ...(aside.length === 0
+    ? []
+    : [
+        "| " +
+          PARTS_ASIDE +
+          " | " +
+          aside.map((f) => "`" + f + "`").join(", ") +
+          " | правка не этой работы |",
+      ]),
   "",
 ];
 

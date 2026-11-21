@@ -240,10 +240,12 @@ import {
   componentsOf,
   hunksOf,
   linesOf,
+  partsAsideOf,
   partsPruned,
   partsSectionOf,
   partsTableOf,
   partsReplaced,
+  PARTS_ASIDE,
   PARTS_HEAD,
   PARTS_TITLE,
   recordsOf,
@@ -2545,8 +2547,30 @@ const barDigest = (text) =>
  * самого протокола, и исход «нашлось» переписывался в «чисто» уже под печатью.
  * Правка одного файла из пяти обязана гасить свод целиком, и правка одной
  * строки исхода — тоже. */
-const barSealOf = (text) =>
-  barDigest(text.split(BAR_NOSEAL_RE).join(BAR_NOSEAL));
+/** Строка «мимо» таблицы частей в отпечаток не входит: она называет правку
+ * не этой работы, видную только серии, и о коде ничего не судит, — а правка
+ * под печатью требовала бы свод заново. Раздел частей без единой части —
+ * заведённый ради одной строки «мимо» — не входит целиком. Файл предмета
+ * строка не выносит: серия отказывает дырой. */
+const BAR_ASIDE_ROW = "| " + PARTS_ASIDE + " |";
+const barSealOf = (text) => {
+  const lines = text
+    .split(BAR_NOSEAL_RE)
+    .join(BAR_NOSEAL)
+    .split("\n")
+    .filter((line) => !line.startsWith(BAR_ASIDE_ROW));
+  const at = lines.indexOf("## " + PARTS_TITLE);
+  let end = at + 1;
+  while (at >= 0 && end < lines.length && !lines[end].startsWith("## "))
+    end += 1;
+  const partless =
+    at >= 0 && !lines.slice(at, end).some((line) => /^\| \d+ \|/.test(line));
+  return barDigest(
+    (partless ? [...lines.slice(0, at), ...lines.slice(end)] : lines).join(
+      "\n",
+    ),
+  );
+};
 /** Отпечатки предмета. Путь держится АБСОЛЮТНЫМ: короткая форма считается от
  * корня исходников, и обратная склейка от корня репозитория била мимо — все
  * отпечатки выходили меткой «нет файла». */
@@ -3074,7 +3098,7 @@ const BAR_FILL_FORMS = {
     from: 1,
     key: "часть N",
     cells: ["файлы", "что"],
-    rule: "файлы — пути в обратных кавычках через запятую; что — сообщение коммита части; ключ следующего номера заводит новую часть; часть без файлов и без «что» режим снимает сам",
+    rule: "файлы — пути в обратных кавычках через запятую; что — сообщение коммита части; ключ следующего номера заводит новую часть; часть без файлов и без «что» режим снимает сам; ключ «часть мимо» с одной графой «файлы» называет правку не этой работы — она вне частей, остаётся в рабочем дереве, печать не гасит",
   },
   core: {
     from: 3,
@@ -3361,20 +3385,24 @@ const barKeysFileOf = (at, holes = []) => {
  * модели читать нельзя: без этой строки — в ключах и при отказе о частях —
  * её правили вслепую, по отказам (восьмой прогон пробы `2026-10-16`). */
 const barPartsLineOf = (body) => {
-  const parts = partsTableOf(body);
-  if (parts === null || parts.length === 0) return null;
+  const parts = partsTableOf(body) ?? [];
+  const aside = partsAsideOf(body);
+  if (parts.length === 0 && aside.length === 0) return null;
   return (
     "таблица частей (ключ — `часть N`): " +
-    parts
-      .map(
+    [
+      ...parts.map(
         (r) =>
           r.n +
           " — " +
           r.files.map(barQuoted).join(", ") +
           " — " +
           (r.what === "" ? "«что» пусто" : r.what),
-      )
-      .join("; ")
+      ),
+      ...(aside.length === 0
+        ? []
+        : ["мимо — " + aside.map(barQuoted).join(", ")]),
+    ].join("; ")
   );
 };
 
@@ -17127,6 +17155,7 @@ const barSkeletonOf = ({
   salt = "",
   machineRow = null,
   parts = null,
+  partsAside = [],
   guide = null,
   address = null,
   neighbours = null,
@@ -17626,7 +17655,7 @@ const barSkeletonOf = ({
           })(),
         ]
       : []),
-    ...(parts === null ? [] : partsSectionOf(parts)),
+    ...partsSectionOf(parts, partsAside),
   ];
   return rows.join(LF);
 };
@@ -19155,6 +19184,7 @@ const barProcess = ({
             : randomBytes(4).toString("hex"),
         machineRow,
         parts: barPartsRowsOf(partsOf, was),
+        partsAside: was === null ? [] : partsAsideOf(was.body),
         guide,
         address,
         neighbours,
@@ -19650,8 +19680,10 @@ const partDiffOf = (abs, repoRoot) => {
 };
 
 /** Части правки: предложение машины, таблица протокола, раскладка и дыры.
- * Таблицы нет — одна часть на весь предмет. */
-const barPartsOf = ({ subject, repoRoot, body }) => {
+ * Таблицы нет — одна часть на весь предмет. `defaults` — ещё и список
+ * файлов, ушедших к части 1 без называния: его печатает серия, чтобы правка
+ * не этой работы не уехала в коммит части незамеченной. */
+const barPartsOf = ({ subject, repoRoot, body, defaults = false }) => {
   const renames = partRenamesOf(subject);
   const link = partLinkOf(renames);
   const proposal = componentsOf(subject, link);
@@ -19665,9 +19697,13 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     // Номера частей, которые одна запись базы называет вместе: скелет
     // сливает их сам, как компоненты связи.
     joins: [],
+    // Файлы строк «мимо»: вне всех частей, в рабочем дереве остаются.
+    aside: new Set(),
+    unnamed: [],
   };
-  if (table === null) return out;
-  const holes = out.holes;
+  if (body == null) return out;
+  const asideNamed = partsAsideOf(body);
+  if (table === null && asideNamed.length === 0 && !defaults) return out;
   const changed = (changedPathsNow(repoRoot) ?? []).map((f) =>
     trimmedPath(path.join(repoRoot, f)),
   );
@@ -19676,9 +19712,27 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     [path.join(ROOT, q), path.join(repoRoot, q)]
       .map(trimmedPath)
       .find((one) => changedSet.has(one)) ?? null;
+  const subjectSet = new Set(subject);
+  for (const q of asideNamed) {
+    const abs = absOf(q);
+    if (abs === null)
+      out.holes.push("мимо: " + barQuoted(q) + " не правлен этой работой");
+    else if (subjectSet.has(abs))
+      out.holes.push(
+        "мимо: " +
+          barQuoted(q) +
+          " — файл предмета свода строкой «мимо» не выносится: его правка и есть работа",
+      );
+    else out.aside.add(abs);
+  }
+  // Работа в одну часть: раскладку считают как у таблицы из одной строки,
+  // чтобы назвать, что ушло к части без называния; дыр она не даёт.
+  const rows =
+    table ?? [{ n: "1", files: subject.map((f) => rel(f)), what: "-" }];
+  const holes = table === null ? [] : out.holes;
   // Явные: файлы, названные таблицей.
   const partOf = out.partOf;
-  table.forEach((row, k) => {
+  rows.forEach((row, k) => {
     const n = k + 1;
     if (row.n !== String(n))
       holes.push(
@@ -19701,6 +19755,10 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
         );
         continue;
       }
+      if (out.aside.has(abs)) {
+        holes.push(barQuoted(q) + " назван и частью " + n + ", и строкой «мимо»");
+        continue;
+      }
       if (partOf.has(abs)) {
         // Дважды в одной части — не конфликт частей: файл лежит в ней один.
         if (partOf.get(abs) !== n)
@@ -19710,7 +19768,7 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
       } else partOf.set(abs, n);
     }
   });
-  const count = table.length;
+  const count = rows.length;
   for (const f of subject)
     if (!partOf.has(f))
       holes.push(
@@ -19743,7 +19801,7 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
       unitPart.set(unitOf(f), n);
   const tool = new Set(partToolFiles());
   for (const f of changed) {
-    if (partOf.has(f)) continue;
+    if (partOf.has(f) || out.aside.has(f)) continue;
     if (tool.has(f)) {
       partOf.set(f, 1);
       continue;
@@ -19759,8 +19817,10 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
       out.splits.set(f, null);
       continue;
     }
-    if (count === 1) partOf.set(f, 1);
-    else
+    if (count === 1) {
+      partOf.set(f, 1);
+      out.unnamed.push(f);
+    } else
       holes.push(
         "файл " +
           barQuoted(trimmedPath(path.relative(repoRoot, f))) +
@@ -19804,9 +19864,11 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
     const partOfLine = { removed: new Map(), added: new Map() };
     const said = new Set();
     const where = trimmedPath(path.relative(repoRoot, f));
+    let namedSome = false;
     const judge = (lines, rec, i, side, map) => {
       const [s, e] = rec[i];
       const named = partsNamedIn(lines.slice(s, e + 1).join(""));
+      if (named.length > 0) namedSome = true;
       // Запись, не называющая файлов ни одной части, идёт с первой, как
       // протокол и следы прогонов: выбор части для неё ничего не решает, а
       // отказ на шапке файла вопросов сессия снимала бессмысленным выбором.
@@ -19831,8 +19893,9 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
       judge(d.oldLines, oldRec, i, "-", partOfLine.removed);
     for (const i of added) judge(d.newLines, newRec, i, "+", partOfLine.added);
     out.splits.set(f, { ...d, partOf: partOfLine });
+    if (!namedSome) out.unnamed.push(f);
     // Самопроверка: все части вместе дают рабочее дерево байт в байт.
-    const all = new Set(table.map((_, k) => k + 1));
+    const all = new Set(rows.map((_, k) => k + 1));
     if (
       removed.every((i) => partOfLine.removed.has(i)) &&
       added.every((i) => partOfLine.added.has(i)) &&
@@ -19844,6 +19907,12 @@ const barPartsOf = ({ subject, repoRoot, body }) => {
           barQuoted(where) +
           " не равна рабочему дереву",
       );
+  }
+  // Одна часть: деревья строят из целых файлов, раскладка по записям не нужна.
+  if (table === null) {
+    out.partOf = new Map();
+    out.splits = new Map();
+    out.joins = [];
   }
   return out;
 };
@@ -21032,10 +21101,22 @@ if (mode === "series") {
   // цепочку требует: она идёт одной частью на всё правленое (решение Р7).
   const codeFree = subject !== null && subject.length === 0;
   const parts = codeFree
-    ? { table: null, holes: [], splits: new Map(), partOf: new Map() }
+    ? {
+        table: null,
+        holes: [],
+        splits: new Map(),
+        partOf: new Map(),
+        aside: new Set(),
+        unnamed: [],
+      }
     : was === null || subject === null
       ? null
-      : barPartsOf({ subject, repoRoot: REPO_AT, body: was.body });
+      : barPartsOf({
+          subject,
+          repoRoot: REPO_AT,
+          body: was.body,
+          defaults: true,
+        });
   const count =
     parts === null ? 0 : parts.table === null ? 1 : parts.table.length;
   sayLooked("частей правки", count);
@@ -21069,7 +21150,7 @@ if (mode === "series") {
   );
   const whole = new Map(
     changed
-      .filter((f) => !parts.splits.has(f))
+      .filter((f) => !parts.splits.has(f) && !parts.aside.has(f))
       .map((f) => [f, parts.partOf.get(f) ?? 1]),
   );
   // Живая серия — от своего основания: закоммиченные части лежат в нём же.
@@ -21144,6 +21225,29 @@ if (mode === "series") {
         (r.code === null
           ? "не гонялась: встала раньше"
           : "код " + r.code + (r.was ? ", отметка была" : "")),
+    );
+  // Правка рабочего дерева, которую не назвала таблица частей, уходит в
+  // часть 1, и с ней — правка не этой работы. Называют её здесь: оставить
+  // её вне коммита можно только строкой «мимо», а не ручным состоянием git.
+  if (parts.unnamed.length > 0) {
+    console.log(
+      "  к части 1 без называния — правку не этой работы вынести строкой с ключом «" +
+        PARTS_ASIDE +
+        "» и её путём в графе «файлы» раздела «" +
+        PARTS_TITLE +
+        "» протокола; раздела нет — завести его с шапкой " +
+        barQuoted(PARTS_HEAD) +
+        ", печать строка не гасит:",
+    );
+    for (const f of parts.unnamed)
+      console.log("    " + barQuoted(trimmedPath(path.relative(REPO_AT, f))));
+  }
+  if (parts.aside.size > 0)
+    console.log(
+      "  мимо частей, в рабочем дереве: " +
+        [...parts.aside]
+          .map((f) => barQuoted(trimmedPath(path.relative(REPO_AT, f))))
+          .join(", "),
     );
   // Коммиты серии — по слову разработчика: части по порядку, каждая через
   // обычные хуки, сообщение — из графы «что».
@@ -21419,7 +21523,11 @@ if (mode === "bar-fill") {
   // Запись в запечатанный протокол гасит печать только на следующем `bar`, и
   // свод начинают с пустого (свод `свод.2-3.1`, `2026-11-20`).
   const sealed = barHeaderOf(body).seal;
-  if (sealed !== null && sealed !== "нет")
+  // Строку «мимо» печать в отпечаток не берёт — её вписывают и под печатью.
+  const asideOnly = asked.every(({ line }) =>
+    line.startsWith("часть " + PARTS_ASIDE + " "),
+  );
+  if (sealed !== null && sealed !== "нет" && !asideOnly)
     refuse(
       "Протокол запечатан: запись после печати её гасит, и свод пришлось бы делать заново.",
       "Предмет с печати не менялся — свод закрыт, вписывать нечего. Сделать его заново: записать",
@@ -21434,7 +21542,7 @@ if (mode === "bar-fill") {
   // Таблица частей: последняя строка и число частей — ключ следующего номера
   // заводит новую часть. Дыра «не отнесён к части» вела к ключу новой части,
   // а режим отвергал его «ключа нет» (свод `свод.3-3.4`, `2026-11-20`).
-  const partsAt = { last: -1, count: 0, added: [] };
+  const partsAt = { last: -1, count: 0, added: [], aside: -1, asideRow: null };
   let section = "";
   lines.forEach((line, at) => {
     if (line.startsWith("## ")) section = line;
@@ -21442,6 +21550,10 @@ if (mode === "bar-fill") {
     if (!line.startsWith("| ")) return;
     const cells = barCellsOf(line);
     const head = cells[0] ?? "";
+    if (section === "## " + PARTS_TITLE && head === PARTS_ASIDE) {
+      partsAt.aside = at;
+      return;
+    }
     let key = null;
     let fill = null;
     if (
@@ -21639,6 +21751,24 @@ if (mode === "bar-fill") {
       fresh.push({ finding: key.slice("также ".length), also: parts[1] });
       continue;
     }
+    // Правка не этой работы — строкой «мимо»: вне частей, печать не гасит.
+    if (row === undefined && key === "часть " + PARTS_ASIDE) {
+      const given = parts.slice(1);
+      if (given.length !== 1 || !given[0].includes(BAR_TICK))
+        faults.push(
+          "строка " +
+            n +
+            ": у «часть " +
+            PARTS_ASIDE +
+            "» одна графа — файлы, пути в обратных кавычках через запятую",
+        );
+      else {
+        seen.add(key);
+        partsAt.asideRow =
+          "| " + PARTS_ASIDE + " | " + given[0] + " | правка не этой работы |";
+      }
+      continue;
+    }
     const newPart = /^часть ([0-9]+)$/.exec(key);
     if (row === undefined && newPart !== null && parts.length > 1) {
       const next = partsAt.count + partsAt.added.length + 1;
@@ -21765,7 +21895,25 @@ if (mode === "bar-fill") {
   if (faults.length > 0) refuse(...faults);
   // Новые части — после последней строки таблицы: прочие строки вписаны по
   // своим номерам, и вставка их не сдвигает.
+  // Строка «мимо» — последней в таблице; таблицы нет — раздел из неё одной.
+  if (partsAt.asideRow !== null && partsAt.aside >= 0)
+    lines[partsAt.aside] = partsAt.asideRow;
   if (partsAt.added.length > 0) lines.splice(partsAt.last + 1, 0, ...partsAt.added);
+  if (partsAt.asideRow !== null && partsAt.aside < 0) {
+    if (partsAt.last >= 0)
+      lines.splice(
+        partsAt.last + 1 + partsAt.added.length,
+        0,
+        partsAt.asideRow,
+      );
+    else
+      lines.push(
+        ...(lines.at(-1) === "" ? [] : [""]),
+        ...partsSectionOf(null, ["-"]).slice(0, -2),
+        partsAt.asideRow,
+        "",
+      );
+  }
   const written =
     fresh.length === 0
       ? lines.join(LF)

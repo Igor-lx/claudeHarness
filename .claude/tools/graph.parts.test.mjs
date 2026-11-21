@@ -10,6 +10,8 @@ import {
   componentsOf,
   hunksOf,
   linesOf,
+  partsAsideOf,
+  partsReplaced,
   partsSectionOf,
   partsTableOf,
   recordsOf,
@@ -72,6 +74,26 @@ describe("части правки: таблица в протоколе", () => 
       { n: "3", files: ["b.ts"], what: "", line: 6 },
     ]);
     expect(partsTableOf("")).toBeNull();
+  });
+
+  it("строка «мимо» — вне частей: печатается последней, переживает замену, без частей — одна часть", () => {
+    const section = partsSectionOf(
+      [{ files: ["a.ts"], what: "правка" }],
+      ["CLAUDE.md"],
+    );
+    const body = ["# протокол", "", ...section, "## Дальше"].join("\n");
+    expect(partsTableOf(body).map((r) => r.n)).toEqual(["1"]);
+    expect(partsAsideOf(body)).toEqual(["CLAUDE.md"]);
+    expect(section.filter((l) => l.startsWith("| ")).at(-1)).toBe(
+      "| мимо | `CLAUDE.md` | правка не этой работы |",
+    );
+    // Замена частей строку «мимо» сохраняет; одна «мимо» — части нет.
+    const merged = partsReplaced(body, null);
+    expect(partsAsideOf(merged)).toEqual(["CLAUDE.md"]);
+    expect(partsTableOf(merged)).toBeNull();
+    expect(partsSectionOf(null, [])).toEqual([]);
+    expect(partsAsideOf("# протокол\n")).toEqual([]);
+    expect(partsReplaced(partsReplaced(body, null), null)).toContain("| мимо |");
   });
 });
 

@@ -5344,6 +5344,21 @@ describe("серия", () => {
       const sealed = tool("bar").out;
       expect(sealed).toContain("печать поставлена");
       expect(sealed).toContain("части ждут коммита: 1–2 из 2");
+      // Строка «мимо» у таблицы из двух частей печать не гасит.
+      const rulesAt = path.join(box, "CLAUDE.md");
+      const rules = fs.readFileSync(rulesAt, "utf8");
+      const sealedBody = fs.readFileSync(protoAt, "utf8");
+      fs.appendFileSync(rulesAt, "\nчужое\n");
+      const answersAt = path.join(box, ".git", "mimo-answers.txt");
+      fs.writeFileSync(answersAt, "часть мимо | `CLAUDE.md`\n");
+      expect(tool("bar-fill", answersAt).code).toBe(0);
+      expect(fs.readFileSync(protoAt, "utf8")).toMatch(
+        /\| 2 \| [^\n]*\n\| мимо \| `CLAUDE\.md` \| правка не этой работы \|\n/,
+      );
+      expect(tool("bar").out).toContain("печать уже стоит");
+      fs.rmSync(answersAt);
+      fs.writeFileSync(rulesAt, rules);
+      fs.writeFileSync(protoAt, sealedBody);
       // Серия не прогнана — ворота не пускают всю пачку разом.
       git("add", "-A");
       const unrun = git("commit", "-qm", "всё разом");
@@ -5489,6 +5504,122 @@ describe("серия", () => {
         "half\n\nBar-series: " + sealOf + " 1/1 " + parts[0].tree,
       );
       expect(past()).toContain("назван сводом, а в правке его нет");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it("правка не этой работы — строкой «мимо»: часть её не несёт, рабочее дерево сохраняет; без строки серия её называет", () => {
+    const box = seatEmpty("seriya-mimo-");
+    try {
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          ["-c", "user.name=u", "-c", "user.email=u@local", ...args],
+          { cwd: box, encoding: "utf8" },
+        );
+      const tool = (...args) => {
+        const r = spawnSync(
+          process.execPath,
+          [path.join(box, ".claude", "tools", "graph.mjs"), ...args],
+          { cwd: box, encoding: "utf8" },
+        );
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      fakeCheck(box);
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      git("config", "core.hooksPath", ".claude/hooks/git");
+      const mapAt = path.join(box, ".context", "00-map.md");
+      const head =
+        "| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n";
+      fs.writeFileSync(
+        mapAt,
+        fs
+          .readFileSync(mapAt, "utf8")
+          .replace(head, head + "| `src/shared/zza/zza.ts` | первое | нет | нет |\n"),
+      );
+      fs.mkdirSync(path.join(box, "src", "shared", "zza"), { recursive: true });
+      fs.writeFileSync(
+        path.join(box, "src", "shared", "zza", "zza.ts"),
+        "export const zza = 1;\n",
+      );
+      // Чужая правка: разработчик дописал правило посреди работы.
+      const rulesAt = path.join(box, "CLAUDE.md");
+      fs.appendFileSync(rulesAt, "\n## Чужое правило\n\nДописано не этой работой.\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      expect(tool("bar").out).toContain("печать поставлена");
+      // Без строки «мимо» правка ложится в часть 1 — серия её называет.
+      const named = tool("series");
+      expect(named.code, named.out).toBe(0);
+      expect(named.out).toContain("к части 1 без называния");
+      expect(named.out).toMatch(/без называния[^]*`CLAUDE\.md`/);
+      const aside = (files) =>
+        "\n## Части правки\n\n| часть | файлы | что |\n| --- | --- | --- |\n| мимо | " +
+        files +
+        " | правка не этой работы |\n";
+      const sealedBody = fs.readFileSync(protoAt, "utf8");
+      // Файл предмета свода строкой «мимо» не выносится, нетронутый — тоже.
+      for (const [files, hole] of [
+        ["`src/shared/zza/zza.ts`", "строкой «мимо» не выносится"],
+        ["`README.md`", "не правлен этой работой"],
+      ]) {
+        fs.writeFileSync(protoAt, sealedBody + aside(files));
+        const refused = tool("series");
+        expect(refused.code, refused.out).toBe(1);
+        expect(refused.out).toContain(hole);
+      }
+      // Строка «мимо» печать не гасит: о коде она не судит. Таблицы частей
+      // у работы в одну часть нет — ключ заводит раздел.
+      fs.writeFileSync(protoAt, sealedBody);
+      const answersAt = path.join(box, ".git", "mimo-answers.txt");
+      fs.writeFileSync(answersAt, "часть мимо | `CLAUDE.md`\n");
+      const filled = tool("bar-fill", answersAt);
+      expect(filled.code, filled.out).toBe(0);
+      fs.rmSync(answersAt);
+      expect(fs.readFileSync(protoAt, "utf8")).toContain(
+        "## Части правки\n\n",
+      );
+      expect(tool("bar").out).toContain("печать уже стоит");
+      // Пересборка протокола строку «мимо» сохраняет.
+      fs.writeFileSync(
+        path.join(box, "src", "shared", "zza", "zza.ts"),
+        "export const zza = 2;\n",
+      );
+      tool("bar");
+      const rebuilt = fs.readFileSync(protoAt, "utf8");
+      expect(rebuilt).toContain("| мимо | `CLAUDE.md` |");
+      // Страница правленого кода сменилась: её слово снимают чтением заново.
+      fs.writeFileSync(
+        protoAt,
+        rebuilt
+          .split("\n")
+          .map((line) => {
+            const c = line.split("|");
+            return c.length === 5 && /^ \d+ $/.test(c[1])
+              ? "|" + c[1] + "|" + c[2] + "|  |"
+              : line;
+          })
+          .join("\n"),
+      );
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      expect(tool("bar").out).toContain("печать поставлена");
+      const ran = tool("series");
+      expect(ran.code, ran.out).toBe(0);
+      expect(ran.out).not.toContain("без называния");
+      expect(tool("series", "--stage", "1").code).toBe(0);
+      const made = git("commit", "-qm", "add zza");
+      expect(made.status, made.stdout + made.stderr).toBe(0);
+      const carried = git("show", "--name-only", "--format=", "HEAD").stdout;
+      expect(carried).toContain("src/shared/zza/zza.ts");
+      expect(carried).not.toContain("CLAUDE.md");
+      expect(git("status", "--porcelain", "--", "CLAUDE.md").stdout).toContain(
+        " M CLAUDE.md",
+      );
+      expect(fs.readFileSync(rulesAt, "utf8")).toContain("## Чужое правило");
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }
