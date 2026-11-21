@@ -24,6 +24,12 @@
       ]
     },
     {
+      "section": "Покрытие карты",
+      "side": "reverse",
+      "file": ".context/00-map.md",
+      "append": "Запись о `{исходники}/zzGone.ts` — файла нет на диске."
+    },
+    {
       "section": "Покрытие тестов",
       "create": {
         "path": "{исходники}/zzProbe.test.tsx",
@@ -36,6 +42,12 @@
         "path": "zzOutside/zzProbe.test.ts",
         "text": "export const zzProbe = 1;"
       }
+    },
+    {
+      "section": "Покрытие тестов",
+      "side": "reverse",
+      "file": ".context/08-tests.md",
+      "append": "Строка о `{исходники}/tests/zzGone.test.ts` — теста нет на диске."
     },
     {
       "section": "Пункт долга держит названную сверку",
@@ -89,6 +101,7 @@
     },
     {
       "section": "Гарантия держится тестом",
+      "side": "reverse",
       "file": ".context/08-tests.md",
       "append": "Номер `REQ-999999` назван здесь, а в таблице гарантий его нет."
     },
@@ -98,6 +111,22 @@
         "path": "{исходники}/zzProbe.ts",
         "text": "// Оставлено намеренно: проба сверки.\nexport const zzProbe = 1;"
       }
+    },
+    {
+      "section": "Пометки решений",
+      "side": "reverse",
+      "edits": [
+        {
+          "create": {
+            "path": "{исходники}/zzProbe.ts",
+            "text": "export const zzProbe = 1;"
+          }
+        },
+        {
+          "file": ".context/09-decisions.md",
+          "append": "Решение `{исходники}/zzProbe.ts:1` «намеренно: проба снята из кода»."
+        }
+      ]
     },
     {
       "section": "Режимы инструмента описаны",
@@ -134,6 +163,27 @@
       "file": ".claude/skills/task/SKILL.md",
       "find": "description: Начать задачу",
       "replace": "summary: Начать задачу"
+    },
+    {
+      "section": "Скиллы проекта",
+      "side": "reverse",
+      "file": ".context/01-facts.md",
+      "find": "| `handoff` | `.claude/skills/handoff/SKILL.md` |",
+      "replace": "| `zz-нет` | скилла нет |\n| `handoff` | `.claude/skills/handoff/SKILL.md` |"
+    },
+    {
+      "section": "Скиллы проекта",
+      "create": {
+        "path": ".claude/skills/zz-проба/SKILL.md",
+        "text": "---\nname: zz-проба\ndescription: Проба сверки: скилл без строки в памятке.\nuser-invocable: true\n---\n\n# Проба"
+      }
+    },
+    {
+      "section": "Скиллы проекта",
+      "side": "reverse",
+      "file": ".claude/skills/README.md",
+      "find": "| `handoff` | собрать обвязку для передачи",
+      "replace": "| `zz-нет` | проба: скилла нет | никто |\n| `handoff` | собрать обвязку для передачи"
     },
     {
       "section": "Шаблон правил заполнен",
@@ -234,6 +284,13 @@
       "replace": "| Ссылки markdownn | адрес в круглых скобках"
     },
     {
+      "section": "Таблица сверок описывает существующие сверки",
+      "side": "reverse",
+      "file": ".claude/tools/checks.md",
+      "find": "| Ссылки markdown | адрес в круглых скобках",
+      "replace": "| Сверки zz-нет | проба: строка без сверки |\n| Ссылки markdown | адрес в круглых скобках"
+    },
+    {
       "section": "Рецепт находит место в свежей посадке",
       "file": ".claude/tools/falsify.json",
       "find": "\"find\": \"| M. Модель рендера фреймворка | да |\"",
@@ -285,6 +342,13 @@
       "replace": "| производительность | ёмкостъ |"
     },
     {
+      "section": "Характеристика качества названа в планке",
+      "side": "reverse",
+      "file": ".claude/rationale/quality.md",
+      "find": "| совместимость | `B9`, `J9-тер`, `K3`, `O1`, `O2-бис`, `R1-бис`, `R2` |",
+      "replace": "| zz-проба | `A1` | — |\n| совместимость | `B9`, `J9-тер`, `K3`, `O1`, `O2-бис`, `R1-бис`, `R2` |"
+    },
+    {
       "section": "Ссылка на критерий планки несёт его заголовок",
       "file": ".claude/rules/glossary.md",
       "find": "H6 «Один термин — одна концепция»",
@@ -301,6 +365,12 @@
       "section": "Файлы обвязки видны git",
       "file": ".gitignore",
       "append": "/.claude/state/"
+    },
+    {
+      "section": "Файлы обвязки видны git",
+      "side": "reverse",
+      "file": ".gitignore",
+      "append": "!.stryker-tmp"
     },
     {
       "section": "Концы строк рабочего дерева сходятся с объявленными",
@@ -356,6 +426,14 @@
       "file": ".claude/seat/templates/package.json",
       "find": "    \"prettier\": \"3.9.10\",",
       "replace": "    \"prettier\": \"3.9.10\",\n    \"пакет-которого-никто-не-объявлял\": \"^1.0.0\","
+    },
+    {
+      "section": "Пакеты семени разобраны по звеньям",
+      "side": "reverse",
+      "own": true,
+      "file": ".context/graph.config.mjs",
+      "find": "packages: [\"prettier\"]",
+      "replace": "packages: [\"prettier\", \"zz-пакета-в-семени-нет\"]"
     },
     {
       "section": "Запись карты не спорит с кодом",
@@ -505,6 +583,7 @@
     },
     {
       "section": "Шаги перехода закрывают измерение",
+      "side": "reverse",
       "file": ".context/15-transition.md",
       "find": "| --- | --- | --- | --- | --- | --- |",
       "replace": "| --- | --- | --- | --- | --- | --- |\n| 98 | Проба: ребро, которого нет, `src/app/App.tsx` → `src/app/main.tsx` | `1` | «Правила направления» | развести | `1` файл |"
@@ -736,6 +815,13 @@
       "replace": "\"typecheckkk\","
     },
     {
+      "section": "Цепочка проверок объявлена данными",
+      "side": "reverse",
+      "file": ".claude/seat/templates/package.json",
+      "find": "\"scripts\": {",
+      "replace": "\"scripts\": {\n    \"zz-проба\": \"node -e 0\","
+    },
+    {
       "section": "Звено цепочки не задвоено",
       "file": "package.json",
       "find": "\"test:coverage\": \"vitest run --coverage\"",
@@ -767,6 +853,22 @@
         "path": "{исходники}/zzProbe.ts",
         "text": "// CONSTRAINT: форма не та\nexport const zzProbe = 1;"
       }
+    },
+    {
+      "section": "Пометки CONSTRAINT",
+      "side": "reverse",
+      "edits": [
+        {
+          "create": {
+            "path": "{исходники}/zzProbe.ts",
+            "text": "export const zzProbe = 1;"
+          }
+        },
+        {
+          "file": ".context/07-invariants.md",
+          "append": "Ограничение `{исходники}/zzProbe.ts:1` «CONSTRAINT — проба снята из кода»."
+        }
+      ]
     },
     {
       "section": "Якоря",
@@ -810,6 +912,13 @@
       "replace": "| `02-todo-нет.md` |"
     },
     {
+      "section": "Таблица файлов базы сходится с семенами",
+      "side": "reverse",
+      "file": ".claude/rules/base-format.md",
+      "find": "| `02-todo.md` |",
+      "replace": "| `zz-нет.md` | проба: семени нет |\n| `02-todo.md` |"
+    },
+    {
       "section": "Ограда кода в прозе закрыта",
       "file": ".context/10-idioms.md",
       "append": "```\nОграда без пары."
@@ -826,6 +935,7 @@
     },
     {
       "section": "Разделы правил классифицированы",
+      "side": "reverse",
       "file": "CLAUDE.md",
       "copyTo": "src/CLAUDE.md"
     },
@@ -864,6 +974,13 @@
       ]
     },
     {
+      "section": "Разделы правил классифицированы",
+      "own": true,
+      "file": ".context/graph.config.mjs",
+      "find": "    rules: [",
+      "replace": "    rules: [\"../zz-нет/CLAUDE.md\", "
+    },
+    {
       "section": "Исключения сверок используются",
       "file": ".context/graph.config.mjs",
       "find": "  corpusOutside: null,",
@@ -885,9 +1002,16 @@
     },
     {
       "section": "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
+      "side": "reverse",
       "file": "package.json",
       "find": "\"check\": \"",
       "replace": "\"check\": \"{менеджер} run unknown-link && "
+    },
+    {
+      "section": "Инструменты звеньев на месте (предупреждение, прогон не роняет)",
+      "file": "package.json",
+      "find": "\"prettier\": \"",
+      "replace": "\"prettier-нет\": \""
     },
     {
       "section": "Звёздные бочки",
@@ -895,6 +1019,14 @@
         "path": "{исходники}/zzProbe.ts",
         "text": "export * from \"./zzProbeSource\";\nexport const zzProbe = 1;"
       }
+    },
+    {
+      "section": "Звёздные бочки",
+      "side": "reverse",
+      "own": true,
+      "file": ".context/graph.config.mjs",
+      "find": "starBarrels: [",
+      "replace": "starBarrels: [\"{исходники}/zzNoStar.ts\", "
     },
     {
       "section": "Якоря на документацию в коде",
@@ -998,6 +1130,7 @@
     },
     {
       "section": "Решения адресуемы",
+      "side": "reverse",
       "create": {
         "path": "{исходники}/zzAdrRef.ts",
         "text": "// Settled by ADR-9998.\nexport const zzAdrRef = 1;"
@@ -1022,6 +1155,7 @@
     },
     {
       "section": "Константы настроек описаны",
+      "side": "reverse",
       "edits": [
         {
           "create": {
@@ -1065,6 +1199,14 @@
       "file": "eslint.config.mjs",
       "append": "export const проба = { files: [\"**/*.ts\"], rules: { \"no-debugger\": \"off\" } };",
       "own": true
+    },
+    {
+      "section": "Выключения правил линта",
+      "side": "reverse",
+      "own": true,
+      "file": ".context/graph.config.mjs",
+      "find": "allowed: [",
+      "replace": "allowed: [[\"zz/проба/**\", \"no-debugger\"], "
     },
     {
       "section": "Объявленный состав папок и радиусы",

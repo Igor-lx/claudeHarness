@@ -1031,6 +1031,40 @@ describe("рецепт без предмета по своему условию 
     expect(keys.length).toBeGreaterThan(10);
     expect(keys.filter((k) => !here.includes("{ " + k + ":")), "условие без теста").toEqual([]);
   });
+
+  // Рецепт, ломающий одну сторону двусторонней сверки, держит только её:
+  // вторая ветка ломается без признака, и `falsify` печатает «поймали все».
+  // Сторону называет строка таблицы сверок; оговорка рядом с ней сторону
+  // снимает. Выведено: шаг `процесс.4` — обратную сторону «Покрытия карты» не
+  // ломал ни рецепт, ни тест.
+  it("сверка, объявленная в обе стороны, держит рецепт на каждую сторону", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const recipes = JSON.parse(fs.readFileSync(path.join(here, "falsify.json"), "utf8")).recipes;
+    const rows = fs
+      .readFileSync(path.join(here, "checks.md"), "utf8")
+      .split("\n")
+      .filter((l) => l.startsWith("| ") && !l.startsWith("| ---"));
+    const SIDE = /в обе стороны|обратная сторона/gi;
+    const WAIVED = /не заводится|не нужна|не проверяется|нет намеренно/;
+    const twoSided = rows
+      .filter((l) => [...l.matchAll(SIDE)].some((m) => !WAIVED.test(l.slice(m.index, m.index + 60))))
+      .map((l) => l.split("|")[1].trim());
+    expect(twoSided.length).toBeGreaterThan(15);
+    const lacking = twoSided.flatMap((name) => {
+      const own = recipes.filter((r) => r.section === name);
+      return [
+        ...(own.some((r) => r.side === undefined) ? [] : [name + " — прямая сторона без рецепта"]),
+        ...(own.some((r) => r.side === "reverse") ? [] : [name + " — обратная сторона без рецепта"]),
+      ];
+    });
+    expect(lacking).toEqual([]);
+    // Пометка стороны стоит только у рецепта двусторонней сверки и только одна.
+    const stray = recipes
+      .filter((r) => r.side !== undefined)
+      .filter((r) => r.side !== "reverse" || !twoSided.includes(r.section))
+      .map((r) => r.section + " — " + String(r.side));
+    expect(stray).toEqual([]);
+  });
 });
 
 /**
