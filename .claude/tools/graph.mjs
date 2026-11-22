@@ -3725,7 +3725,7 @@ const barProtocolCommitted = (protoAt, staged = false) => {
   if (workBaseOf(REPO_AT) !== "HEAD") return false;
   if (staged)
     return git(["diff", "--cached", "--quiet", "HEAD", "--", relAt]).status === 0;
-  const now = git(["status", "--porcelain", "--", relAt]);
+  const now = git(["status", "--porcelain", "-z", "--", relAt]);
   return now.status === 0 && now.stdout.trim() === "";
 };
 const BAR_PAST_WORK = "свода этой правки нет: протокол описывает прошлую работу";
