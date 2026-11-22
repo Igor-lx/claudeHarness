@@ -11253,15 +11253,18 @@ if (mode === "bar-probe") {
     };
     // Импорт встаёт за последним импортом файла, тело — в конец. Файл без
     // импортов получает импорт вместе с телом: модуль это допускает. Лист
-    // стилей импортов не разбирает: правило ложится в конец.
+    // стилей импортов не разбирает: правило ложится в конец. Ответ — строки
+    // посаженного в файле, с единицы: по ним суд даёт второй вердикт.
+    const linesOf = (head, tail) => {
+      const from = head.split(NEWLINE).length;
+      return [from, from + tail.split(NEWLINE).length - 1];
+    };
     const place = (f, text) => {
       let was = readFileSync(inBox(f), "utf8");
       if (!CODE_FILE.test(f)) {
-        writeFileSync(
-          inBox(f),
-          was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + text + NEWLINE,
-        );
-        return;
+        const head = was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE;
+        writeFileSync(inBox(f), head + text + NEWLINE);
+        return linesOf(head, text);
       }
       const lines = text.split(NEWLINE);
       const imports = lines.filter((l) => /^import\b/.test(l));
@@ -11283,20 +11286,24 @@ if (mode === "bar-probe") {
         imports.length > 0 && last < 0
           ? imports.join(NEWLINE) + NEWLINE + NEWLINE + body
           : body;
-      writeFileSync(
-        inBox(f),
-        was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE + tail + NEWLINE,
-      );
+      const head = was + (was.endsWith(NEWLINE) ? "" : NEWLINE) + NEWLINE;
+      writeFileSync(inBox(f), head + tail + NEWLINE);
+      return linesOf(head, tail);
     };
     const plantOne = ({ plant, roleFile }) => {
       const creates = createsOf(plant);
+      const roleLines = new Map();
       if (plant.into !== undefined) {
         for (const one of plant.into) {
-          const f = roleFile.get(one.role ?? "виновник");
-          place(
-            f,
-            bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, role) =>
-              specFrom(f, roleFile.get(role)),
+          const role = one.role ?? "виновник";
+          const f = roleFile.get(role);
+          roleLines.set(
+            role,
+            place(
+              f,
+              bodyFor(one, f).replace(/\{\{from:([^}]+)\}\}/g, (_, r) =>
+                specFrom(f, roleFile.get(r)),
+              ),
             ),
           );
         }
@@ -11343,6 +11350,16 @@ if (mode === "bar-probe") {
             : [plant.patch[0].path])
       ).map((c) => movedTo.get(c) ?? c);
       const culprits = named.map((c) => trimmedPath(own(c)));
+      // Строки посаженного у каждого виновника: у роли — вписанные в её
+      // файл, у созданного — весь файл (`null`), у правленого конфига строк
+      // нет (`false`): там суд сличает один путь.
+      const lines = named.map((c) =>
+        roleLines.has(c)
+          ? roleLines.get(c)
+          : (plant.patch ?? []).some((one) => one.path === c)
+            ? false
+            : null,
+      );
       return {
         criterion: plant.criterion,
         why: plant.why,
@@ -11350,6 +11367,7 @@ if (mode === "bar-probe") {
         number: plant.number,
         file: culprits[0],
         files: culprits,
+        lines,
       };
     };
     // Посадка удалением и в соседе вписана в последний коммит песочницы, и
@@ -11615,36 +11633,57 @@ if (mode === "bar-probe") {
     );
     let verdict = refused;
     let atPlant = null;
+    let lineVerdict = null;
     if (rows !== null) {
       const planted = culprits.map(plantedName);
       // Адрес строки — первое нарушение, прочие места перечислены в графе
       // «что», и посаженное среди них тоже названо.
+      const placesOf = (one) =>
+        [one.addr, ...barMorePlacesOf(one.what).split(",")]
+          .map((place) => place.trim())
+          .filter((place) => place !== "");
       const hitsPlanted = (one) =>
         one.outcome === "нашлось" &&
-        planted.some((p) =>
-          [one.addr, ...barMorePlacesOf(one.what).split(",")].some(
-            (place) => place !== "" && place.includes(p),
-          ),
-        );
+        planted.some((p) => placesOf(one).some((place) => place.includes(p)));
+      // Второй вердикт — по строкам посаженного: файл виновника велик, и
+      // находка о другой его строке посаженного не называет. Строки известны
+      // у роли; созданный файл посажен целиком, конфиг — без строк.
+      const spans = plant.lines ?? null;
+      const hitsPlantedLine = (one) =>
+        one.outcome === "нашлось" &&
+        planted.some((p, k) => {
+          const span = spans?.[k];
+          if (span === false) return false;
+          return placesOf(one).some((place) => {
+            const at = place.indexOf(p);
+            if (at < 0) return false;
+            if (span === null) return true;
+            const n = /^:([0-9]+)/.exec(place.slice(at + p.length));
+            return n !== null && Number(n[1]) >= span[0] && Number(n[1]) <= span[1];
+          });
+        });
+      const judge = (hits) => {
+        const mine = rows.filter((one) => one.id === plant.criterion);
+        const mineFound = mine.filter((one) => one.outcome === "нашлось");
+        if (mine.some(hits)) return "поймано";
+        if (mineFound.length > 0)
+          return (
+            "критерий назван, адрес другой: " +
+            mineFound.map((one) => one.addr).join(", ")
+          );
+        const byOther = [...new Set(rows.filter(hits).map((one) => one.id))];
+        return byOther.length > 0
+          ? "названо другим критерием: " + byOther.join(", ")
+          : "мимо";
+      };
       atPlant = new Set(rows.filter(hitsPlanted).map((one) => one.id)).size;
-      const mine = rows.filter((one) => one.id === plant.criterion);
-      const mineFound = mine.filter((one) => one.outcome === "нашлось");
-      if (mine.some(hitsPlanted)) verdict = "поймано";
-      else if (mineFound.length > 0)
-        verdict =
-          "критерий назван, адрес другой: " +
-          mineFound.map((one) => one.addr).join(", ");
-      else {
-        const byOther = [
-          ...new Set(rows.filter(hitsPlanted).map((one) => one.id)),
-        ];
-        verdict =
-          byOther.length > 0
-            ? "названо другим критерием: " + byOther.join(", ")
-            : "мимо";
-      }
+      verdict = judge(hitsPlanted);
+      if (Array.isArray(spans) && spans.some((span) => span !== false))
+        lineVerdict = judge(hitsPlantedLine);
     }
     console.log("  исход: " + verdict);
+    if (lineVerdict !== null)
+      console.log("  по строкам посадки: " + lineVerdict);
     if (found !== null)
       console.log(
         "  находок в своде: " +
@@ -11652,7 +11691,7 @@ if (mode === "bar-probe") {
           ", критериев по адресу посадки: " +
           atPlant,
       );
-    verdicts.push({ plant, verdict, atPlant });
+    verdicts.push({ plant, verdict, atPlant, lineVerdict });
   }
 
   if (ledgerAt !== null && !machineOnly) {
@@ -11666,10 +11705,11 @@ if (mode === "bar-probe") {
       );
       process.exit(1);
     }
-    for (const { plant, verdict, atPlant } of verdicts)
+    for (const { plant, verdict, atPlant, lineVerdict } of verdicts)
       book.runs.push({
         criterion: plant.criterion,
         verdict,
+        ...(lineVerdict === null ? {} : { lineVerdict }),
         kind: plant.kind ?? "новым файлом",
         when: localDay(),
         ...(entries.length > 1 ? { batch: entries.length } : {}),
