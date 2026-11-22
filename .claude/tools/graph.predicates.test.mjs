@@ -68,7 +68,10 @@ describe("словарь области", () => {
   it("список, сложенный циклом, назван образцом push", () => {
     const text = "export const L = ({ lines }) => {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n};";
     const hits = vocabulary.signalsOf("src/a.tsx", text, { kind: "код", own: new Set() });
-    expect(hits.filter((h) => h.sort === "список").map((h) => h.sample)).toEqual(["push"]);
+    const lists = hits.filter((h) => h.sort === "список");
+    expect(lists.filter((h) => h.mark !== "без пустого").map((h) => h.sample)).toEqual(["push"]);
+    // Ветки на пустой перечень нет — строка `E11` встаёт и у списка циклом.
+    expect(lists.filter((h) => h.mark === "без пустого").map((h) => h.line)).toEqual([3]);
   });
 
   // Регулярное выражение и форматтер на каждом шаге обхода — строка `G6`;
