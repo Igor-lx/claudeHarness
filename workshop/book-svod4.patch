@@ -1,0 +1,87 @@
+diff --git a/.claude/tools/bar-probes.json b/.claude/tools/bar-probes.json
+index bdbddbe..089e0d0 100644
+--- a/.claude/tools/bar-probes.json
++++ b/.claude/tools/bar-probes.json
+@@ -6613,11 +6613,20 @@
+     },
+     {
+       "criterion": "J9",
+-      "why": "правило порядка «новее раньше» проверено отрисовкой списка в тестовом окружении, а не отдельным тестом без окружения: правило предметной области проверяется уровнем интеграции",
+-      "create": {
+-        "path": "components/NoteList/tests/NoteListOrder.test.tsx",
+-        "text": "import { render, screen } from \"@testing-library/react\";\nimport { I18nextProvider } from \"react-i18next\";\nimport { expect, it, vi } from \"vitest\";\n\nimport { i18n } from \"../../../shared/i18n/i18n\";\nimport { newestFirst } from \"../../../shared/notes/notes\";\nimport { NoteList } from \"../NoteList\";\n\nit(\"orders notes newest first\", () => {\n  render(\n    <I18nextProvider i18n={i18n}>\n      <NoteList\n        notes={newestFirst([\n          { id: \"a\", title: \"Old\", body: \"\", createdAt: 1 },\n          { id: \"b\", title: \"New\", body: \"\", createdAt: 2 },\n        ])}\n        onOpen={vi.fn()}\n      />\n    </I18nextProvider>,\n  );\n  expect(\n    screen.getAllByRole(\"button\").map((button) => button.textContent),\n  ).toEqual([\"New\", \"Old\"]);\n});\n"
+-      }
++      "why": "правило предметной области «архивные в конце» проверено только отрисовкой списка в тестовом окружении, своего теста без окружения у него нет: правило проверяется уровнем интеграции",
++      "create": [
++        {
++          "path": "shared/notes/archivedLast.ts",
++          "text": "import type { Note } from \"./notes\";\n\nexport const archivedLast = (\n  notes: readonly Note[],\n  archived: ReadonlySet<string>,\n): Note[] => [\n  ...notes.filter((note) => !archived.has(note.id)),\n  ...notes.filter((note) => archived.has(note.id)),\n];\n"
++        },
++        {
++          "path": "components/NoteList/tests/NoteListArchived.test.tsx",
++          "text": "import { render, screen } from \"@testing-library/react\";\nimport { I18nextProvider } from \"react-i18next\";\nimport { expect, it, vi } from \"vitest\";\n\nimport { i18n } from \"../../../shared/i18n/i18n\";\nimport { archivedLast } from \"../../../shared/notes/archivedLast\";\nimport { NoteList } from \"../NoteList\";\n\nit(\"shows archived notes after the rest\", () => {\n  render(\n    <I18nextProvider i18n={i18n}>\n      <NoteList\n        notes={archivedLast(\n          [\n            { id: \"a\", title: \"Old\", body: \"\", createdAt: 1 },\n            { id: \"b\", title: \"Live\", body: \"\", createdAt: 2 },\n          ],\n          new Set([\"a\"]),\n        )}\n        onOpen={vi.fn()}\n      />\n    </I18nextProvider>,\n  );\n  expect(\n    screen.getAllByRole(\"button\").map((button) => button.textContent),\n  ).toEqual([\"Live\", \"Old\"]);\n});\n"
++        }
++      ],
++      "culprits": [
++        "components/NoteList/tests/NoteListArchived.test.tsx"
++      ]
+     },
+     {
+       "criterion": "Q6",
+@@ -6786,6 +6795,56 @@
+           "ts": "let previousTitle = \"\";\n\nexport const titleChanged = (title: string): boolean => {\n  const changed = title !== previousTitle;\n  previousTitle = title;\n  return changed;\n};"
+         }
+       ]
++    },
++    {
++      "criterion": "C2",
++      "why": "«читатель в списке один раз» держит проверка в функции добавления, а восстановление из сохранённого дописывает без неё: условие держит соглашение на месте записи, а не конструкция",
++      "into": [
++        {
++          "role": "виновник",
++          "file": "модуль",
++          "text": "export const withReader = (readers, id) =>\n  readers.ids.includes(id) ? readers : { ids: [...readers.ids, id] };\nexport const restoredReaders = (readers, saved) => ({\n  ids: [...readers.ids, ...saved],\n});",
++          "ts": "export type Readers = { readonly ids: readonly string[] };\n\nexport const withReader = (readers: Readers, id: string): Readers =>\n  readers.ids.includes(id) ? readers : { ids: [...readers.ids, id] };\n\nexport const restoredReaders = (\n  readers: Readers,\n  saved: readonly string[],\n): Readers => ({\n  ids: [...readers.ids, ...saved],\n});"
++        }
++      ]
++    },
++    {
++      "criterion": "L6",
++      "why": "счётчик сохраняемых заметок — общее изменяемое модуля, его правят несколько незавершённых сохранений без точки согласования: ответ «всё сохранено» зависит от порядка завершения",
++      "into": [
++        {
++          "role": "виновник",
++          "file": "модуль",
++          "text": "let savingCount = 0;\nexport const saveNotesBatch = async (save, titles) => {\n  savingCount += titles.length;\n  await save(titles);\n  savingCount -= titles.length;\n  return savingCount === 0;\n};",
++          "ts": "let savingCount = 0;\n\nexport const saveNotesBatch = async (\n  save: (titles: readonly string[]) => Promise<void>,\n  titles: readonly string[],\n): Promise<boolean> => {\n  savingCount += titles.length;\n  await save(titles);\n  savingCount -= titles.length;\n  return savingCount === 0;\n};"
++        }
++      ]
++    },
++    {
++      "criterion": "C9",
++      "why": "заголовок, пришедший поздно, пишется в ссылку без отмены: ответ на прежний ключ, пришедший после ответа на новый, перезаписывает свежий",
++      "held": "вопрос модели",
++      "create": {
++        "path": "app/useLatestTitle.ts",
++        "text": "import { useEffect, useRef } from \"react\";\n\nexport const useLatestTitle = (\n  load: (key: string) => Promise<string>,\n  key: string,\n) => {\n  const shown = useRef(\"\");\n  useEffect(() => {\n    void load(key).then((title) => {\n      shown.current = title;\n    });\n  }, [load, key]);\n  return shown;\n};\n"
++      }
++    },
++    {
++      "criterion": "E11",
++      "why": "блок открытых задач без открытых задач рисует заголовок над пустым перечнем: пустое состояние не задумано — ни слова, ни действия",
++      "create": {
++        "path": "app/OpenTasks.tsx",
++        "text": "type Task = {\n  readonly id: string;\n  readonly title: string;\n  readonly done: boolean;\n};\n\ntype Props = {\n  readonly heading: string;\n  readonly tasks: readonly Task[];\n};\n\nexport function OpenTasks({ heading, tasks }: Props) {\n  return (\n    <section>\n      <h2>{heading}</h2>\n      <ul>\n        {tasks\n          .filter((task) => !task.done)\n          .map((task) => (\n            <li key={task.id}>{task.title}</li>\n          ))}\n      </ul>\n    </section>\n  );\n}\n"
++      }
++    },
++    {
++      "criterion": "M4",
++      "why": "хвост журнала — окно, которое сдвигается с каждой новой строкой, а ключ строки — её место в окне: при сдвиге каждый элемент получает чужой ключ",
++      "held": "вопрос модели",
++      "create": {
++        "path": "app/LogTail.tsx",
++        "text": "const TAIL_SIZE = 5;\n\ntype Props = {\n  readonly lines: readonly string[];\n};\n\nexport function LogTail({ lines }: Props) {\n  if (lines.length === 0) return null;\n  return (\n    <ol>\n      {lines.slice(-TAIL_SIZE).map((line, index) => (\n        <li key={index}>{line}</li>\n      ))}\n    </ol>\n  );\n}\n"
++      }
+     }
+   ],
+   "covers": [
