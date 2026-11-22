@@ -19772,10 +19772,16 @@ const barPartsOf = ({ subject, repoRoot, body, defaults = false }) => {
       .map(trimmedPath)
       .find((one) => changedSet.has(one)) ?? null;
   const subjectSet = new Set(subject);
+  // Дерево части серии строится без файлов «мимо»: там их правки нет по
+  // построению, а сверила их серия на рабочем дереве. Продолжение работника
+  // на хуки `процесс.5г-2`: цепочка части краснела на чужой правке `CLAUDE.md`.
+  const inSeriesTree = /^[0-9]+\/[0-9]+$/.test(process.env[SERIES_PART] ?? "");
   for (const q of asideNamed) {
     const abs = absOf(q);
-    if (abs === null)
-      out.holes.push("мимо: " + barQuoted(q) + " не правлен этой работой");
+    if (abs === null) {
+      if (!inSeriesTree)
+        out.holes.push("мимо: " + barQuoted(q) + " не правлен этой работой");
+    }
     else if (subjectSet.has(abs))
       out.holes.push(
         "мимо: " +
@@ -19910,9 +19916,29 @@ const barPartsOf = ({ subject, repoRoot, body, defaults = false }) => {
     if (!filesOfPart.has(n)) filesOfPart.set(n, []);
     filesOfPart.get(n).push(f);
   }
-  const partsNamedIn = (text) =>
+  // Под заголовком папки запись называет файл голым именем — так пишет
+  // карта. Без папки заголовка строка карты о файле части не называла
+  // ничего (продолжение работника на хуки `процесс.5г-2`).
+  const headDirAt = (lines, s) => {
+    for (let k = s; k >= 0; k -= 1) {
+      const head = /^#{2,4}[^`]*`([^`]+)`/.exec(lines[k]);
+      if (head === null) continue;
+      const token = head[1].replace(/[*]+$/, "").replace(/[/]+$/, "");
+      if (!token.includes("/")) return "";
+      return CODE_OR_STYLE.test(token) ? token.slice(0, token.lastIndexOf("/") + 1) : token + "/";
+    }
+    return "";
+  };
+  const partsNamedIn = (text, dir = "") =>
     [...filesOfPart]
-      .filter(([, list]) => list.some((f) => namesFileIn(text, f)))
+      .filter(([, list]) =>
+        list.some(
+          (f) =>
+            namesFileIn(text, f) ||
+            (dir !== "" &&
+              quotedIn(text).some((t) => !t.includes("/") && namesFileIn("`" + dir + t + "`", f))),
+        ),
+      )
       .map(([n]) => n)
       .sort((x, y) => x - y);
   for (const f of out.splits.keys()) {
@@ -19926,7 +19952,7 @@ const barPartsOf = ({ subject, repoRoot, body, defaults = false }) => {
     let namedSome = false;
     const judge = (lines, rec, i, side, map) => {
       const [s, e] = rec[i];
-      const named = partsNamedIn(lines.slice(s, e + 1).join(""));
+      const named = partsNamedIn(lines.slice(s, e + 1).join(""), headDirAt(lines, s));
       if (named.length > 0) namedSome = true;
       // Запись, не называющая файлов ни одной части, идёт с первой, как
       // протокол и следы прогонов: выбор части для неё ничего не решает, а

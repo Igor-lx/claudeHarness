@@ -5707,6 +5707,74 @@ describe("серия", () => {
     }
   }, 300000);
 
+  // Продолжение работника на хуки `процесс.5г-2`: цепочка части — настоящая
+  // сверка — краснела на строке «мимо», потому что в дереве части чужой
+  // правки нет по построению; запись карты голым именем под заголовком папки
+  // числилась ушедшей к части без называния.
+  it("строка «мимо» проходит сверку в дереве части, а запись карты под заголовком папки названа", () => {
+    const box = seatEmpty("seriya-mimo-verify-");
+    try {
+      const git = (...args) =>
+        spawnSync("git", ["-c", "user.name=u", "-c", "user.email=u@local", ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+      const tool = (...args) => {
+        const r = spawnSync(process.execPath, [path.join(box, ".claude", "tools", "graph.mjs"), ...args], {
+          cwd: box,
+          encoding: "utf8",
+        });
+        return { code: r.status, out: String(r.stdout ?? "") };
+      };
+      const pkgAt = path.join(box, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgAt, "utf8"));
+      // Цепочка — настоящая сверка, а судит она только приём протокола: прочие
+      // сверки пустой посадки к предмету теста не относятся.
+      pkg.scripts.check =
+        "node -e \"const r=require('child_process').spawnSync(process.execPath,['.claude/tools/graph.mjs','verify'],{encoding:'utf8'});process.stdout.write(r.stdout);process.exit(/протокол не принят/.test(r.stdout)?1:0)\"";
+      fs.writeFileSync(pkgAt, JSON.stringify(pkg, null, 2) + "\n");
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-qm", "основание", "--no-verify");
+      git("config", "core.hooksPath", ".claude/hooks/git");
+      fs.appendFileSync(
+        path.join(box, ".context", "00-map.md"),
+        "\n## `src/shared/zza`\n\n| Файл | Отвечает за | Состояние | Эффекты |\n| --- | --- | --- | --- |\n| `zza.ts` | первое | нет | нет |\n",
+      );
+      fs.mkdirSync(path.join(box, "src", "shared", "zza"), { recursive: true });
+      fs.writeFileSync(path.join(box, "src", "shared", "zza", "zza.ts"), "export const zza = 1;\n");
+      const rulesAt = path.join(box, "CLAUDE.md");
+      fs.appendFileSync(rulesAt, "\n## Чужое правило\n\nДописано не этой работой.\n");
+      const protoAt = path.join(box, ".context", "bar-protocol.md");
+      tool("bar");
+      // Таблица с частью, как у работника: без строки части дыры «мимо» в
+      // приёме не спрашивали. Строку части печать накрывает, строку «мимо» — нет.
+      const parts = (aside) =>
+        "\n## Части правки\n\n| часть | файлы | что |\n| --- | --- | --- |\n| 1 | `shared/zza/zza.ts` | feat(zza): add zza |\n| мимо | " +
+        aside +
+        " | правка не этой работы |\n";
+      fs.appendFileSync(protoAt, parts("`CLAUDE.md`"));
+      fillBar(protoAt, { release: "не нужно: проба", keepParts: true });
+      const sealed = tool("bar").out;
+      expect(sealed).toContain("печать поставлена");
+      expect(fs.readFileSync(protoAt, "utf8")).toContain("| 1 | `shared/zza/zza.ts` |");
+      const ran = tool("series");
+      expect(ran.code, ran.out).toBe(0);
+      expect(ran.out).not.toContain("не правлен этой работой");
+      expect(ran.out).not.toContain("без называния");
+      // В рабочем дереве строка «мимо» о нетронутом файле по-прежнему дыра.
+      fs.writeFileSync(
+        protoAt,
+        fs.readFileSync(protoAt, "utf8").replace("| мимо | `CLAUDE.md` |", "| мимо | `README.md` |"),
+      );
+      const refused = tool("series");
+      expect(refused.code, refused.out).toBe(1);
+      expect(refused.out).toContain("не правлен этой работой");
+    } finally {
+      fs.rmSync(box, { recursive: true, force: true });
+    }
+  }, 300000);
+
   // Коммит, кончающий слияние, получает двух родителей. Первая часть серии,
   // закоммиченная посреди слияния, становилась таким коммитом с частью работы:
   // история говорила «ветка влита», а её правки лежали в следующем коммите.
