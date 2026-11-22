@@ -95,6 +95,14 @@ describe("части правки: таблица в протоколе", () => 
     expect(partsAsideOf("# протокол\n")).toEqual([]);
     expect(partsReplaced(partsReplaced(body, null), null)).toContain("| мимо |");
   });
+
+  it("раздел без «мимо» кончается последней частью; раздел без строк — пустая таблица, а не одна часть", () => {
+    const section = partsSectionOf([{ files: ["a.ts"], what: "правка" }]);
+    expect(section.slice(-2)).toEqual(["| 1 | `a.ts` | правка |", ""]);
+    expect(partsSectionOf([{ files: ["a.ts"], what: "правка" }], []).slice(-2)).toEqual(section.slice(-2));
+    const bare = ["# протокол", "", ...partsSectionOf([], []), "## Дальше"].join("\n");
+    expect(partsTableOf(bare)).toEqual([]);
+  });
 });
 
 describe("части правки: компоненты связности", () => {

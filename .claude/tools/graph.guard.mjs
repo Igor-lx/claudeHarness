@@ -133,7 +133,7 @@ export const SESSIONS_KEPT = 8;
  * форме — `null`. */
 export const sessionsIn = (state, isRecord) => {
   if (isRecord(state)) return [state];
-  if (state !== null && typeof state === "object" && Array.isArray(state.sessions) && state.sessions.every(isRecord))
+  if (Array.isArray(state?.sessions) && state.sessions.every(isRecord))
     return state.sessions;
   return null;
 };

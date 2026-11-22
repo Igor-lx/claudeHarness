@@ -206,7 +206,7 @@ const typesOnlyOf = (src) => {
   let at = 0;
   let seen = 0;
   for (;;) {
-    while (at < text.length && /\s/.test(text[at])) at += 1;
+    while (/\s/.test(text.charAt(at))) at += 1;
     if (at >= text.length) return seen > 0;
     const rest = text.slice(at);
     const transfer = typeTransferAt(rest);

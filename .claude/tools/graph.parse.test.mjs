@@ -126,6 +126,33 @@ describe.each(PARSERS)("разбор модуля (%s): из одних типо
     expect(typesOnly("")).toBe(false);
     expect(typesOnly("// nothing here\n")).toBe(false);
   });
+
+  it("каждая форма строки из типов узнаётся и одна", () => {
+    expect(typesOnly('import type Tag from "./tag";\nexport type Row = Tag;\n')).toBe(true);
+    expect(typesOnly('export { type Tag, } from "./tag";\n')).toBe(true);
+    expect(typesOnly('export { type Tag } from "./tag";\n')).toBe(true);
+    expect(typesOnly("type A = 1;\ntype B = 2;\n")).toBe(true);
+    expect(typesOnly("export interface Shape {\n  type: string;\n  kind: number;\n}\n")).toBe(true);
+  });
+
+  it("строка кода после объявления типа находится, как бы оно ни кончалось", () => {
+    for (const code of [
+      'export {} from "./note";',
+      'import {} from "./note";',
+      'import Note, { type Id } from "./note";',
+      'import * as note from "./note";',
+    ])
+      expect(typesOnly("export type T = number;\n" + code + "\n")).toBe(false);
+    expect(typesOnly("export type T = number; export const LIMIT = 3;\n")).toBe(false);
+    expect(typesOnly("type T = number\nexport const LIMIT = 3;\n")).toBe(false);
+    expect(typesOnly("type T = number\n  export const LIMIT = 3;\n")).toBe(false);
+  });
+});
+
+it("разбор модуля (регулярные выражения): из одних типов — текст, который компилятор не примет, не из типов", () => {
+  // Скобка без пары и импорт без источника: разбор не уверен — считает кодом.
+  expect(parseModuleRegex("export type T = number);\n").typesOnly).toBe(false);
+  expect(parseModuleRegex("import { type A };\nexport type B = 1;\n").typesOnly).toBe(false);
 });
 
 describe.each(PARSERS)("разбор модуля (%s): строки импорта", (_, parse) => {

@@ -221,6 +221,9 @@ describe("состояние хука держит запись на кажду�
     expect(sessionsIn({ session: "a", files: [] }, isRecord)).toEqual([{ session: "a", files: [] }]);
     expect(sessionsIn({ sessions: [{ session: "a" }] }, isRecord)).toEqual([{ session: "a" }]);
     expect(sessionsIn({ sessions: [{ session: 1 }] }, isRecord)).toBe(null);
+    expect(sessionsIn({ sessions: [{ session: "a" }, { session: 1 }] }, isRecord)).toBe(null);
+    expect(sessionsIn("sessions", isRecord)).toBe(null);
+    expect(sessionsIn(undefined, isRecord)).toBe(null);
     expect(sessionsIn({ sessions: 5 }, isRecord)).toBe(null);
     expect(sessionsIn(null, isRecord)).toBe(null);
   });

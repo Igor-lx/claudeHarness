@@ -921,6 +921,27 @@ describe("рецепт под другим именем семени остаё�
   });
 });
 
+it("тип ответа: начало тела за ним либо -1, когда тела нет", () => {
+  expect(vocabulary.afterReturnType("f(): number {}", 3)).toBe(12);
+  expect(vocabulary.afterReturnType("f()", 3)).toBe(-1);
+  expect(vocabulary.afterReturnType("f(): number;", 3)).toBe(-1);
+  expect(vocabulary.afterReturnType("f(): number) {}", 3)).toBe(-1);
+  expect(vocabulary.afterReturnType("f(): number", 3)).toBe(-1);
+  // Конец объявления и непарная скобка кончают поиск, даже если тело дальше.
+  expect(vocabulary.afterReturnType("f(): number; {}", 3)).toBe(-1);
+  expect(vocabulary.afterReturnType("f(): number = {}", 3)).toBe(-1);
+  expect(vocabulary.afterReturnType("f(): A)( x {}", 3)).toBe(-1);
+  // Скобка тела только на своём уровне: тип ответа с функцией внутри.
+  const nested = "f(): (() => { a: number }) {}";
+  expect(vocabulary.afterReturnType(nested, 3)).toBe(nested.lastIndexOf("{"));
+  const shape = "f(): { a: number; b: string } {}";
+  expect(vocabulary.afterReturnType(shape, 3)).toBe(shape.lastIndexOf("{"));
+  // Тип ответа читается на 400 знаков от двоеточия и не дальше.
+  expect(vocabulary.afterReturnType("f(): A" + " ".repeat(396) + "{}", 3)).toBe(402);
+  expect(vocabulary.afterReturnType("f(): A" + " ".repeat(397) + "{}", 3)).toBe(-1);
+  expect(vocabulary.afterReturnType("f(): " + "A | ".repeat(120) + "B {}", 3)).toBe(-1);
+});
+
 describe("словари модели свода без пустых записей", () => {
   it("у каждого вида строки модели уровень из четырёх", () => {
     const sorts = new Set([...vocabulary.BAR_SIGNALS, ...vocabulary.BAR_CUTS].map((row) => row.sort));
