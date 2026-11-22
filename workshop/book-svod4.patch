@@ -1,5 +1,5 @@
 diff --git a/.claude/tools/bar-probes.json b/.claude/tools/bar-probes.json
-index bdbddbe..089e0d0 100644
+index bdbddbe..9f8ea04 100644
 --- a/.claude/tools/bar-probes.json
 +++ b/.claude/tools/bar-probes.json
 @@ -6613,11 +6613,20 @@
@@ -28,7 +28,7 @@ index bdbddbe..089e0d0 100644
      },
      {
        "criterion": "Q6",
-@@ -6786,6 +6795,56 @@
+@@ -6786,6 +6795,47 @@
            "ts": "let previousTitle = \"\";\n\nexport const titleChanged = (title: string): boolean => {\n  const changed = title !== previousTitle;\n  previousTitle = title;\n  return changed;\n};"
          }
        ]
@@ -63,7 +63,7 @@ index bdbddbe..089e0d0 100644
 +      "held": "вопрос модели",
 +      "create": {
 +        "path": "app/useLatestTitle.ts",
-+        "text": "import { useEffect, useRef } from \"react\";\n\nexport const useLatestTitle = (\n  load: (key: string) => Promise<string>,\n  key: string,\n) => {\n  const shown = useRef(\"\");\n  useEffect(() => {\n    void load(key).then((title) => {\n      shown.current = title;\n    });\n  }, [load, key]);\n  return shown;\n};\n"
++        "text": "import { useEffect, useRef } from \"react\";\n\nexport const useLatestTitle = (\n  load: (key: string) => Promise<string>,\n  key: string,\n) => {\n  const shownRef = useRef(\"\");\n  useEffect(() => {\n    void load(key).then((title) => {\n      shownRef.current = title;\n    });\n  }, [load, key]);\n  return shownRef;\n};\n"
 +      }
 +    },
 +    {
@@ -72,15 +72,6 @@ index bdbddbe..089e0d0 100644
 +      "create": {
 +        "path": "app/OpenTasks.tsx",
 +        "text": "type Task = {\n  readonly id: string;\n  readonly title: string;\n  readonly done: boolean;\n};\n\ntype Props = {\n  readonly heading: string;\n  readonly tasks: readonly Task[];\n};\n\nexport function OpenTasks({ heading, tasks }: Props) {\n  return (\n    <section>\n      <h2>{heading}</h2>\n      <ul>\n        {tasks\n          .filter((task) => !task.done)\n          .map((task) => (\n            <li key={task.id}>{task.title}</li>\n          ))}\n      </ul>\n    </section>\n  );\n}\n"
-+      }
-+    },
-+    {
-+      "criterion": "M4",
-+      "why": "хвост журнала — окно, которое сдвигается с каждой новой строкой, а ключ строки — её место в окне: при сдвиге каждый элемент получает чужой ключ",
-+      "held": "вопрос модели",
-+      "create": {
-+        "path": "app/LogTail.tsx",
-+        "text": "const TAIL_SIZE = 5;\n\ntype Props = {\n  readonly lines: readonly string[];\n};\n\nexport function LogTail({ lines }: Props) {\n  if (lines.length === 0) return null;\n  return (\n    <ol>\n      {lines.slice(-TAIL_SIZE).map((line, index) => (\n        <li key={index}>{line}</li>\n      ))}\n    </ol>\n  );\n}\n"
 +      }
      }
    ],
