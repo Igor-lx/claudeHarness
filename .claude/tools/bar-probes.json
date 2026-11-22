@@ -6544,7 +6544,7 @@
       "why": "тест порядка «новее раньше» строит две заметки фабрикой-классом с изменяемым счётчиком и цепочкой вызовов: оснастка сложнее проверяемого вычитания",
       "create": {
         "path": "shared/notes/tests/newerFirstOrder.test.ts",
-        "text": "import { expect, it } from \"vitest\";\n\nimport { newerFirst } from \"../newerFirst\";\nimport type { Note } from \"../notes\";\n\nclass NoteFactory {\n  private sequence = 0;\n  private readonly made: Note[] = [];\n\n  next(step: number): this {\n    this.sequence += step;\n    this.made.push({\n      id: `n${String(this.sequence)}`,\n      title: \"\",\n      body: \"\",\n      createdAt: this.sequence,\n    });\n    return this;\n  }\n\n  build(): Note[] {\n    return [...this.made];\n  }\n}\n\nit(\"puts the later note first\", () => {\n  const notes = new NoteFactory().next(1).next(1).build();\n  expect(notes.sort(newerFirst).map((note) => note.id)).toEqual([\"n2\", \"n1\"]);\n});\n"
+        "text": "import { expect, it } from \"vitest\";\n\nimport { newerFirst } from \"../newerFirst\";\nimport type { Note } from \"../notes\";\n\nclass NoteFactory {\n  private sequence = 0;\n  private readonly made: Note[] = [];\n\n  next(step: number): this {\n    this.sequence += step;\n    this.made.push({\n      id: `n${String(this.sequence)}`,\n      title: \"\",\n      body: \"\",\n      createdAt: this.sequence,\n    });\n    return this;\n  }\n\n  build(): Note[] {\n    return [...this.made];\n  }\n}\n\nit(\"puts the later note first\", () => {\n  const notes = new NoteFactory().next(1).next(1).build();\n  expect([...notes].sort(newerFirst).map((note) => note.id)).toEqual([\n    \"n2\",\n    \"n1\",\n  ]);\n});\n"
       }
     },
     {
