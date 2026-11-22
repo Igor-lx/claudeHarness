@@ -6568,7 +6568,7 @@
       "why": "мигание делает один кадр на каждую отрисовку: эффект без списка зависимостей ставит кадр после прохода рендера, и движение идёт, только пока компонент перерисовывают",
       "create": {
         "path": "components/Pulse/useBlink.ts",
-        "text": "import { useEffect, type RefObject } from \"react\";\n\nconst BLINK_MS = 500;\n\nexport const useBlink = (target: RefObject<HTMLElement | null>): void => {\n  useEffect(() => {\n    const frame = requestAnimationFrame((time) => {\n      target.current?.classList.toggle(\n        \"dim\",\n        Math.floor(time / BLINK_MS) % 2 === 0,\n      );\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  });\n};\n"
+        "text": "import { useEffect } from \"react\";\n\nconst BLINK_MS = 500;\n\nexport const useBlink = (target: {\n  readonly current: HTMLElement | null;\n}): void => {\n  useEffect(() => {\n    const frame = requestAnimationFrame((time) => {\n      target.current?.classList.toggle(\n        \"dim\",\n        Math.floor(time / BLINK_MS) % 2 === 0,\n      );\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  });\n};\n"
       }
     },
     {
