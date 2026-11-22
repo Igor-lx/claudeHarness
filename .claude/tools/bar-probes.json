@@ -6195,6 +6195,597 @@
       "culprits": [
         "src/shared/storage/draftStorage.ts"
       ]
+    },
+    {
+      "criterion": "B6",
+      "why": "разметка тела заметки по умолчанию отдаётся сырой: экранирование надо попросить, и вызов без настроек вставит чужой HTML как есть",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const bodyMarkup = (body, { escape = false } = {}) =>\n  escape ? body.replaceAll(\"<\", \"&lt;\") : body;",
+          "ts": "export const bodyMarkup = (\n  body: string,\n  { escape = false }: { readonly escape?: boolean } = {},\n): string => (escape ? body.replaceAll(\"<\", \"&lt;\") : body);"
+        }
+      ]
+    },
+    {
+      "criterion": "F4",
+      "why": "подгонка подписи держит подпись в слушателе окна навсегда: подпись, снятая со страницы, остаётся в памяти отсоединённым узлом, и каждая новая подпись добавляет ещё один",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const fitLabelOnResize = (label) => {\n  window.addEventListener(\"resize\", () => {\n    label.classList.toggle(\"tight\", label.scrollWidth > label.clientWidth);\n  });\n};",
+          "ts": "export const fitLabelOnResize = (label: HTMLElement): void => {\n  window.addEventListener(\"resize\", () => {\n    label.classList.toggle(\"tight\", label.scrollWidth > label.clientWidth);\n  });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G5",
+      "why": "раскладка карточек столбиком читает низ предыдущей карточки сразу после записи положения следующей: каждое чтение заново считает раскладку, чтения и записи не сгруппированы",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const stackBelow = (items) => {\n  let above;\n  for (const item of items) {\n    if (above !== undefined)\n      item.style.top = `${String(above.getBoundingClientRect().bottom)}px`;\n    above = item;\n  }\n};",
+          "ts": "export const stackBelow = (items: readonly HTMLElement[]): void => {\n  let above: HTMLElement | undefined;\n  for (const item of items) {\n    if (above !== undefined)\n      item.style.top = `${String(above.getBoundingClientRect().bottom)}px`;\n    above = item;\n  }\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "H5",
+      "why": "разбор даты из заголовка знает, что дефис внутри самого заголовка сдвигает дату, и описывает это комментарием вместо разбора по последнему разделителю",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "// Works only while titles never contain \" - \": a dash inside the title\n// shifts the date into the wrong part, so titles are kept dash-free.\nexport const titleDate = (heading) => heading.split(\" - \")[1] ?? \"\";",
+          "ts": "// Works only while titles never contain \" - \": a dash inside the title\n// shifts the date into the wrong part, so titles are kept dash-free.\nexport const titleDate = (heading: string): string =>\n  heading.split(\" - \")[1] ?? \"\";"
+        }
+      ]
+    },
+    {
+      "criterion": "T3",
+      "why": "подпись числа заметок выбирает форму сравнением «больше одного»: ноль заметок подписан единственным числом, правила языка не учтены",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const notesCaption = (count) =>\n  `${String(count)} note${count > 1 ? \"s\" : \"\"}`;",
+          "ts": "export const notesCaption = (count: number): string =>\n  `${String(count)} note${count > 1 ? \"s\" : \"\"}`;"
+        }
+      ]
+    },
+    {
+      "criterion": "C3",
+      "why": "результаты поиска запоминаются по тексту запроса в словаре модуля навсегда: каждый новый запрос добавляет запись, вытеснения нет, и смена заметок не сбрасывает устаревшее",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const searchHits = new Map();\nexport const cachedSearch = (query, search) => {\n  const known = searchHits.get(query);\n  if (known !== undefined) return known;\n  const found = search(query);\n  searchHits.set(query, found);\n  return found;\n};",
+          "ts": "const searchHits = new Map<string, readonly string[]>();\n\nexport const cachedSearch = (\n  query: string,\n  search: (wanted: string) => readonly string[],\n): readonly string[] => {\n  const known = searchHits.get(query);\n  if (known !== undefined) return known;\n  const found = search(query);\n  searchHits.set(query, found);\n  return found;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "D4",
+      "why": "срок отложенной заметки смешивает секунды и миллисекунды в одном типе числа, а проверка берёт два момента подряд того же типа: перепутанные единицы или порядок доводов компилятор не заметит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const MS_PER_SECOND = 1000;\nexport const snoozeUntil = (now, snoozeSeconds) =>\n  now + snoozeSeconds * MS_PER_SECOND;\nexport const isSnoozed = (until, now) => until > now;",
+          "ts": "const MS_PER_SECOND = 1000;\n\nexport const snoozeUntil = (now: number, snoozeSeconds: number): number =>\n  now + snoozeSeconds * MS_PER_SECOND;\n\nexport const isSnoozed = (until: number, now: number): boolean => until > now;"
+        }
+      ]
+    },
+    {
+      "criterion": "O1",
+      "why": "лист берёт кнопки внутри элементов списка любой вложенной единицы: начертание чужой разметки задаёт не её владелец",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "стиль",
+          "text": ".panel li > button {\n  font-weight: 600;\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "T4",
+      "why": "значок закрытия у метки поставлен смещением от левого края под длину английской подписи: длиннее перевод — значок ляжет поверх текста, письмо справа налево его не отразит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "стиль",
+          "text": ".chip {\n  position: relative;\n}\n\n.chip::after {\n  position: absolute;\n  top: 0;\n  left: 64px;\n  content: \"×\";\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "Q3",
+      "why": "отчёт о сбое сохранения уносит наружу адрес почты автора и весь текст заметки: в журнал отказов чувствительное попадает без нужды",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const reportSaveFailure = (email, body, send) => {\n  send(JSON.stringify({ event: \"save-failed\", email, body }));\n};",
+          "ts": "export const reportSaveFailure = (\n  email: string,\n  body: string,\n  send: (payload: string) => void,\n): void => {\n  send(JSON.stringify({ event: \"save-failed\", email, body }));\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K5",
+      "why": "порядок сортировки сохраняется номером позиции в списке вариантов: вариант, вставленный в середину списка, после обновления кода молча переназначит смысл каждого сохранённого номера",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const SORT_KEY = \"notes-sort\";\nconst SORT_ORDERS = [\"newest\", \"oldest\", \"title\"];\nexport const writeSortOrder = (order) => {\n  localStorage.setItem(SORT_KEY, String(SORT_ORDERS.indexOf(order)));\n};\nexport const readSortOrder = () =>\n  SORT_ORDERS[Number(localStorage.getItem(SORT_KEY))] ?? \"newest\";",
+          "ts": "const SORT_KEY = \"notes-sort\";\nconst SORT_ORDERS = [\"newest\", \"oldest\", \"title\"] as const;\n\ntype SortOrder = (typeof SORT_ORDERS)[number];\n\nexport const writeSortOrder = (order: SortOrder): void => {\n  localStorage.setItem(SORT_KEY, String(SORT_ORDERS.indexOf(order)));\n};\n\nexport const readSortOrder = (): SortOrder =>\n  SORT_ORDERS[Number(localStorage.getItem(SORT_KEY))] ?? \"newest\";"
+        }
+      ]
+    },
+    {
+      "criterion": "S2",
+      "why": "запись о синхронизации склеивает номер заметки и время в текст события: полей нет, событие каждый раз новое, и по журналу не найти ни заметку, ни медленные синхронизации",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const logSync = (info, noteId, elapsedMs) => {\n  info(`synced note ${noteId} in ${String(elapsedMs)} ms`);\n};",
+          "ts": "export const logSync = (\n  info: (event: string) => void,\n  noteId: string,\n  elapsedMs: number,\n): void => {\n  info(`synced note ${noteId} in ${String(elapsedMs)} ms`);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C2",
+      "why": "«метки заметки не повторяются» держит проверка в функции добавления, а не конструкция набора: объединение двух наборов кладёт повторы без проверки",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const withTag = (tags, name) =>\n  tags.names.includes(name) ? tags : { names: [...tags.names, name] };\nexport const joinTags = (first, second) => ({\n  names: [...first.names, ...second.names],\n});",
+          "ts": "export type NoteTags = { readonly names: readonly string[] };\n\nexport const withTag = (tags: NoteTags, name: string): NoteTags =>\n  tags.names.includes(name) ? tags : { names: [...tags.names, name] };\n\nexport const joinTags = (first: NoteTags, second: NoteTags): NoteTags => ({\n  names: [...first.names, ...second.names],\n});"
+        }
+      ],
+      "create": {
+        "path": "app/mergedTags.ts",
+        "text": "import { joinTags, type NoteTags } from \"{{from:владелец}}\";\n\nexport const mergedTags = (first: NoteTags, second: NoteTags): NoteTags =>\n  joinTags(first, second);\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "L5",
+      "why": "поиск по мере ввода показывает ответы в порядке их прихода: медленный ответ раннего запроса приходит последним и затирает ответ на последний введённый текст",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const searchAsYouType = (search, show) => (query) => {\n  void search(query).then(show);\n};",
+          "ts": "export const searchAsYouType =\n  (\n    search: (query: string) => Promise<readonly string[]>,\n    show: (titles: readonly string[]) => void,\n  ): ((query: string) => void) =>\n  (query) => {\n    void search(query).then(show);\n  };"
+        }
+      ],
+      "create": {
+        "path": "app/titleSearch.ts",
+        "text": "import { searchAsYouType } from \"{{from:владелец}}\";\n\nexport const titleSearch = (\n  show: (titles: readonly string[]) => void,\n): ((query: string) => void) =>\n  searchAsYouType(() => Promise.resolve([]), show);\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "E10",
+      "why": "сбой загрузки части тел заметок подменён пустой строкой: упавшая заметка неотличима от пустой, частичный отказ выдан за полный успех без своего случая",
+      "change": "удаление",
+      "into": [
+        {
+          "role": "владелец",
+          "file": "модуль",
+          "text": "export const loadNoteBodies = async (ids, load) => {\n  const settled = await Promise.allSettled(ids.map(load));\n  return settled.map((result) =>\n    result.status === \"fulfilled\" ? result.value : \"\",\n  );\n};",
+          "ts": "export const loadNoteBodies = async (\n  ids: readonly string[],\n  load: (id: string) => Promise<string>,\n): Promise<string[]> => {\n  const settled = await Promise.allSettled(ids.map(load));\n  return settled.map((result) =>\n    result.status === \"fulfilled\" ? result.value : \"\",\n  );\n};"
+        }
+      ],
+      "create": {
+        "path": "app/bodiesForExport.ts",
+        "text": "import { loadNoteBodies } from \"{{from:владелец}}\";\n\nexport const bodiesForExport = (ids: readonly string[]): Promise<string[]> =>\n  loadNoteBodies(ids, (id) => Promise.resolve(id));\n"
+      },
+      "culprits": [
+        "владелец"
+      ]
+    },
+    {
+      "criterion": "L1",
+      "why": "сосед правленого: второй экспорт во время первого не отменяет его, не ждёт и не отклоняется — оба идут разом, и конец первого снимает признак «идёт экспорт», пока второй ещё идёт",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let exportInFlight = null;\nexport const exportNotes = (build) => {\n  exportInFlight = build();\n  void exportInFlight.finally(() => {\n    exportInFlight = null;\n  });\n  return exportInFlight;\n};\nexport const isExporting = () => exportInFlight !== null;",
+          "ts": "let exportInFlight: Promise<Blob> | null = null;\n\nexport const exportNotes = (build: () => Promise<Blob>): Promise<Blob> => {\n  exportInFlight = build();\n  void exportInFlight.finally(() => {\n    exportInFlight = null;\n  });\n  return exportInFlight;\n};\n\nexport const isExporting = (): boolean => exportInFlight !== null;"
+        }
+      ]
+    },
+    {
+      "criterion": "C8",
+      "why": "сосед правленого: жизненный цикл синхронизации выведен из трёх отметок времени и их сравнений — состояния не названы, и при равных отметках «идёт» и «упала» выводятся разом",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let syncStartedAt = 0;\nlet syncFinishedAt = 0;\nlet syncFailedAt = 0;\nexport const markSyncStart = (now) => {\n  syncStartedAt = now;\n};\nexport const markSyncDone = (now) => {\n  syncFinishedAt = now;\n};\nexport const markSyncFailed = (now) => {\n  syncFailedAt = now;\n};\nexport const isSyncing = () =>\n  syncStartedAt > syncFinishedAt && syncStartedAt > syncFailedAt;\nexport const lastSyncFailed = () => syncFailedAt >= syncFinishedAt;",
+          "ts": "let syncStartedAt = 0;\nlet syncFinishedAt = 0;\nlet syncFailedAt = 0;\n\nexport const markSyncStart = (now: number): void => {\n  syncStartedAt = now;\n};\n\nexport const markSyncDone = (now: number): void => {\n  syncFinishedAt = now;\n};\n\nexport const markSyncFailed = (now: number): void => {\n  syncFailedAt = now;\n};\n\nexport const isSyncing = (): boolean =>\n  syncStartedAt > syncFinishedAt && syncStartedAt > syncFailedAt;\n\nexport const lastSyncFailed = (): boolean => syncFailedAt >= syncFinishedAt;"
+        }
+      ]
+    },
+    {
+      "criterion": "N5",
+      "why": "сосед правленого: бегущая строка считает сдвиг от времени старта — в скрытой вкладке кадры стоят, а по возвращении строка прыгает на весь пропущенный путь; что делать в фоне, не решено",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const MARQUEE_PX_PER_MS = 0.05;\nexport const runMarquee = (track) => {\n  const startedAt = performance.now();\n  let frame = 0;\n  const step = (now) => {\n    const shift = (now - startedAt) * MARQUEE_PX_PER_MS;\n    track.style.transform = `translateX(${String(-shift)}px)`;\n    frame = requestAnimationFrame(step);\n  };\n  frame = requestAnimationFrame(step);\n  return () => {\n    cancelAnimationFrame(frame);\n  };\n};",
+          "ts": "const MARQUEE_PX_PER_MS = 0.05;\n\nexport const runMarquee = (track: HTMLElement): (() => void) => {\n  const startedAt = performance.now();\n  let frame = 0;\n  const step = (now: number): void => {\n    const shift = (now - startedAt) * MARQUEE_PX_PER_MS;\n    track.style.transform = `translateX(${String(-shift)}px)`;\n    frame = requestAnimationFrame(step);\n  };\n  frame = requestAnimationFrame(step);\n  return () => {\n    cancelAnimationFrame(frame);\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A14",
+      "why": "сосед правленого: правило копии заметки само берёт случайный номер и часы прямым вызовом из середины — проверить и перенести его без внешнего мира нельзя, порта нет",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const duplicateNote = (note) => ({\n  id: crypto.randomUUID(),\n  title: `${note.title} (copy)`,\n  body: note.body,\n  createdAt: Date.now(),\n});",
+          "ts": "export const duplicateNote = (note: {\n  readonly title: string;\n  readonly body: string;\n}): {\n  readonly id: string;\n  readonly title: string;\n  readonly body: string;\n  readonly createdAt: number;\n} => ({\n  id: crypto.randomUUID(),\n  title: `${note.title} (copy)`,\n  body: note.body,\n  createdAt: Date.now(),\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "Q8",
+      "why": "перенесённое право правки решает роль, которую клиент сам хранит в браузере, и та же роль уходит серверу заголовком: право получает от клиента сторона ресурса",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/notes/editRights.ts",
+          "text": "const ROLE_KEY = \"notes-role\";\n\nexport const canEditNote = (): boolean =>\n  localStorage.getItem(ROLE_KEY) === \"editor\";\n\nexport const editRequestInit = (body: string): RequestInit => ({\n  method: \"PATCH\",\n  headers: { \"X-Role\": localStorage.getItem(ROLE_KEY) ?? \"viewer\" },\n  body,\n});\n"
+        },
+        {
+          "path": "app/editNote.ts",
+          "text": "import { canEditNote, editRequestInit } from \"../shared/notes/editRights\";\n\nexport const editNote = async (url: string, body: string): Promise<boolean> => {\n  if (!canEditNote()) return false;\n  const response = await fetch(url, editRequestInit(body));\n  return response.ok;\n};\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/notes/editRights.ts",
+          "to": "shared/notes/noteRights.ts"
+        }
+      ],
+      "culprits": [
+        "shared/notes/noteRights.ts"
+      ]
+    },
+    {
+      "criterion": "E13",
+      "why": "перенесённый выбор раскладки разбирает сохранённое прямо при загрузке модуля: битое значение бросает при импорте, и падает всё приложение, а не одна настройка",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/storage/layoutPreference.ts",
+          "text": "const LAYOUT_KEY = \"notes-layout\";\n\nconst stored: unknown = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? \"{}\");\n\nexport const compactLayout =\n  typeof stored === \"object\" &&\n  stored !== null &&\n  \"compact\" in stored &&\n  stored.compact === true;\n"
+        },
+        {
+          "path": "app/layoutMode.ts",
+          "text": "import { compactLayout } from \"../shared/storage/layoutPreference\";\n\nexport const layoutMode = (): \"compact\" | \"comfortable\" =>\n  compactLayout ? \"compact\" : \"comfortable\";\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/storage/layoutPreference.ts",
+          "to": "shared/storage/layoutChoice.ts"
+        }
+      ],
+      "culprits": [
+        "shared/storage/layoutChoice.ts"
+      ]
+    },
+    {
+      "criterion": "A8-бис",
+      "why": "в область заметок перенесена рассылка писем — адресат, тема и ключ отписки: чужая предметная область легла в папку заметок, граница не названа",
+      "change": "перенос",
+      "create": [
+        {
+          "path": "shared/notes/digestMail.ts",
+          "text": "import type { Note } from \"./notes\";\n\nexport type DigestMail = {\n  readonly to: string;\n  readonly subject: string;\n  readonly unsubscribeToken: string;\n  readonly lines: readonly string[];\n};\n\nexport const weeklyDigest = (\n  to: string,\n  unsubscribeToken: string,\n  notes: readonly Note[],\n): DigestMail => ({\n  to,\n  subject: \"Your notes this week\",\n  unsubscribeToken,\n  lines: notes.map((note) => note.title),\n});\n"
+        },
+        {
+          "path": "app/sendDigest.ts",
+          "text": "import { weeklyDigest } from \"../shared/notes/digestMail\";\nimport type { Note } from \"../shared/notes/notes\";\n\nexport const sendDigest = async (\n  to: string,\n  token: string,\n  notes: readonly Note[],\n): Promise<boolean> => {\n  const response = await fetch(\"/digest\", {\n    method: \"POST\",\n    body: JSON.stringify(weeklyDigest(to, token, notes)),\n  });\n  return response.ok;\n};\n"
+        }
+      ],
+      "move": [
+        {
+          "from": "shared/notes/digestMail.ts",
+          "to": "shared/notes/weeklyDigest.ts"
+        }
+      ],
+      "culprits": [
+        "shared/notes/weeklyDigest.ts"
+      ]
+    },
+    {
+      "criterion": "J5",
+      "why": "тест ключа страницы поиска различает входы, которые различаются и без разделителя: снятый разделитель склеит «plan» с «11» и «plan1» с «1» в один ключ, а тест пройдёт",
+      "create": [
+        {
+          "path": "shared/notes/pageKey.ts",
+          "text": "export const pageKey = (query: string, page: number): string =>\n  `${query}:${String(page)}`;\n"
+        },
+        {
+          "path": "shared/notes/tests/pageKey.test.ts",
+          "text": "import { expect, it } from \"vitest\";\n\nimport { pageKey } from \"../pageKey\";\n\nit(\"gives different pages of one query different keys\", () => {\n  expect(pageKey(\"plan\", 1)).not.toBe(pageKey(\"plan\", 2));\n});\n"
+        }
+      ],
+      "culprits": [
+        "shared/notes/tests/pageKey.test.ts"
+      ]
+    },
+    {
+      "criterion": "J8",
+      "why": "тест порядка «новее раньше» строит две заметки фабрикой-классом с изменяемым счётчиком и цепочкой вызовов: оснастка сложнее проверяемого вычитания",
+      "create": {
+        "path": "shared/notes/tests/newerFirstOrder.test.ts",
+        "text": "import { expect, it } from \"vitest\";\n\nimport { newerFirst } from \"../newerFirst\";\nimport type { Note } from \"../notes\";\n\nclass NoteFactory {\n  private sequence = 0;\n  private readonly made: Note[] = [];\n\n  next(step: number): this {\n    this.sequence += step;\n    this.made.push({\n      id: `n${String(this.sequence)}`,\n      title: \"\",\n      body: \"\",\n      createdAt: this.sequence,\n    });\n    return this;\n  }\n\n  build(): Note[] {\n    return [...this.made];\n  }\n}\n\nit(\"puts the later note first\", () => {\n  const notes = new NoteFactory().next(1).next(1).build();\n  expect(notes.sort(newerFirst).map((note) => note.id)).toEqual([\"n2\", \"n1\"]);\n});\n"
+      }
+    },
+    {
+      "criterion": "J7",
+      "why": "тест загрузки заметок подменяет схему и перевод формы передачи: разбор ответа, ради которого загрузка и пишется, заменён пропуском, и тест проходит на ответе любой формы",
+      "create": {
+        "path": "shared/api/tests/notesApiPassThrough.test.ts",
+        "text": "import { afterEach, expect, it, vi } from \"vitest\";\n\nimport { fetchNotes } from \"../notesApi\";\n\nvi.mock(\"../noteDto\", async () => {\n  const { z } = await import(\"zod\");\n  return { NoteDto: z.unknown(), toNote: (dto: unknown) => dto };\n});\n\nafterEach(() => {\n  vi.unstubAllGlobals();\n});\n\nit(\"returns the notes the server sent\", async () => {\n  vi.stubGlobal(\n    \"fetch\",\n    vi.fn(() => Promise.resolve(new Response(JSON.stringify([{ id: \"a\" }])))),\n  );\n  const loaded = await fetchNotes(\n    \"https://api.example.test\",\n    new AbortController().signal,\n  );\n  expect(loaded).toEqual({ state: \"ready\", data: [{ id: \"a\" }] });\n});\n"
+      }
+    },
+    {
+      "criterion": "M6",
+      "why": "строка заголовка оборачивает в хуки запоминания перевод в верхний регистр и обработчик для обычной кнопки: запоминать нечего, обёртка — лишняя работа",
+      "create": {
+        "path": "app/NoteTitleLine.tsx",
+        "text": "import { useCallback, useMemo } from \"react\";\n\ntype Props = {\n  readonly title: string;\n  readonly onPick: (title: string) => void;\n};\n\nexport function NoteTitleLine({ title, onPick }: Props) {\n  const upper = useMemo(() => title.toUpperCase(), [title]);\n  const pick = useCallback(() => {\n    onPick(title);\n  }, [onPick, title]);\n  return (\n    <button type=\"button\" onClick={pick}>\n      {upper}\n    </button>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "N3",
+      "why": "мигание делает один кадр на каждую отрисовку: эффект без списка зависимостей ставит кадр после прохода рендера, и движение идёт, только пока компонент перерисовывают",
+      "create": {
+        "path": "components/Pulse/useBlink.ts",
+        "text": "import { useEffect, type RefObject } from \"react\";\n\nconst BLINK_MS = 500;\n\nexport const useBlink = (target: RefObject<HTMLElement | null>): void => {\n  useEffect(() => {\n    const frame = requestAnimationFrame((time) => {\n      target.current?.classList.toggle(\n        \"dim\",\n        Math.floor(time / BLINK_MS) % 2 === 0,\n      );\n    });\n    return () => {\n      cancelAnimationFrame(frame);\n    };\n  });\n};\n"
+      }
+    },
+    {
+      "criterion": "N4",
+      "why": "открытость ящика хранится флагом модуля рядом с анимацией, которая сама знает направление и положение: флаг меняется сразу, движение — постепенно, и прерванное движение расходится с флагом",
+      "create": {
+        "path": "app/drawerMotion.ts",
+        "text": "const DRAWER_MS = 200;\n\nlet drawerOpen = false;\nlet drawerMotion: Animation | null = null;\n\nexport const toggleDrawer = (drawer: HTMLElement): boolean => {\n  drawerOpen = !drawerOpen;\n  drawerMotion ??= drawer.animate(\n    [{ transform: \"translateX(-100%)\" }, { transform: \"none\" }],\n    { duration: DRAWER_MS, fill: \"both\" },\n  );\n  drawerMotion.playbackRate = drawerOpen ? 1 : -1;\n  drawerMotion.play();\n  return drawerOpen;\n};\n"
+      }
+    },
+    {
+      "criterion": "P5",
+      "why": "живая область заводится вместе с сообщением и снимается с ним: область, появившаяся сразу с текстом, вспомогательная технология не объявляет — изменение проходит молча",
+      "create": {
+        "path": "app/SavedNotice.tsx",
+        "text": "type Props = { readonly message: string | null };\n\nexport function SavedNotice({ message }: Props) {\n  if (message === null) return null;\n  return <div aria-live=\"polite\">{message}</div>;\n}\n"
+      }
+    },
+    {
+      "criterion": "E11",
+      "why": "блок недавних заметок без заметок рисует заголовок над пустым перечнем: пустое состояние не задумано — ни слова, ни действия",
+      "create": {
+        "path": "app/RecentNotes.tsx",
+        "text": "const RECENT_LIMIT = 3;\n\ntype Props = {\n  readonly heading: string;\n  readonly titles: readonly string[];\n};\n\nexport function RecentNotes({ heading, titles }: Props) {\n  return (\n    <section>\n      <h2>{heading}</h2>\n      <ol>\n        {titles.slice(0, RECENT_LIMIT).map((title) => (\n          <li key={title}>{title}</li>\n        ))}\n      </ol>\n    </section>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "F1",
+      "why": "подписка на смену сети вешает два слушателя окна и ничего не возвращает: снять их некому, у подписки нет владельца, и каждый вызов добавляет ещё пару",
+      "create": {
+        "path": "shared/net/watchOnline.ts",
+        "text": "export const watchOnline = (onChange: (online: boolean) => void): void => {\n  const report = (): void => {\n    onChange(navigator.onLine);\n  };\n  window.addEventListener(\"online\", report);\n  window.addEventListener(\"offline\", report);\n};\n"
+      }
+    },
+    {
+      "criterion": "Q9",
+      "why": "ключ подписи запросов вписан строкой в код, который уезжает в браузер: подписать любой адрес может каждый, кто открыл поставку",
+      "create": {
+        "path": "shared/api/signedUrl.ts",
+        "text": "const SIGNING_SECRET = \"c2lnbmluZy1rZXktbm90ZXMtMjAyNg\";\n\nexport const signedUrl = async (path: string): Promise<string> => {\n  const encoder = new TextEncoder();\n  const key = await crypto.subtle.importKey(\n    \"raw\",\n    encoder.encode(SIGNING_SECRET),\n    { name: \"HMAC\", hash: \"SHA-256\" },\n    false,\n    [\"sign\"],\n  );\n  const signature = await crypto.subtle.sign(\"HMAC\", key, encoder.encode(path));\n  const bytes = String.fromCodePoint(...new Uint8Array(signature));\n  return `${path}?sig=${encodeURIComponent(btoa(bytes))}`;\n};\n"
+      }
+    },
+    {
+      "criterion": "J9",
+      "why": "правило порядка «новее раньше» проверено отрисовкой списка в тестовом окружении, а не отдельным тестом без окружения: правило предметной области проверяется уровнем интеграции",
+      "create": {
+        "path": "components/NoteList/tests/NoteListOrder.test.tsx",
+        "text": "import { render, screen } from \"@testing-library/react\";\nimport { I18nextProvider } from \"react-i18next\";\nimport { expect, it, vi } from \"vitest\";\n\nimport { i18n } from \"../../../shared/i18n/i18n\";\nimport { newestFirst } from \"../../../shared/notes/notes\";\nimport { NoteList } from \"../NoteList\";\n\nit(\"orders notes newest first\", () => {\n  render(\n    <I18nextProvider i18n={i18n}>\n      <NoteList\n        notes={newestFirst([\n          { id: \"a\", title: \"Old\", body: \"\", createdAt: 1 },\n          { id: \"b\", title: \"New\", body: \"\", createdAt: 2 },\n        ])}\n        onOpen={vi.fn()}\n      />\n    </I18nextProvider>,\n  );\n  expect(\n    screen.getAllByRole(\"button\").map((button) => button.textContent),\n  ).toEqual([\"New\", \"Old\"]);\n});\n"
+      }
+    },
+    {
+      "criterion": "Q6",
+      "why": "политика источников разрешила скрипты со всего стороннего хранилища, и страница грузит оттуда «последнюю» версию виджета без проверки целостности: подмена файла там исполнится на странице",
+      "create": {
+        "path": "app/loadWidget.ts",
+        "text": "const WIDGET_URL = \"https://cdn.example.test/feedback/latest.js\";\n\nexport const loadFeedbackWidget = (): void => {\n  const script = document.createElement(\"script\");\n  script.src = WIDGET_URL;\n  document.head.append(script);\n};\n"
+      },
+      "patch": [
+        {
+          "path": "index.html",
+          "find": "default-src 'self'; connect-src",
+          "replace": "default-src 'self'; script-src 'self' https://cdn.example.test; connect-src"
+        }
+      ],
+      "culprits": [
+        "index.html",
+        "app/loadWidget.ts"
+      ]
+    },
+    {
+      "criterion": "N2",
+      "why": "новая команда затухания во время идущего движения отбрасывается: элемент доходит до прежней цели и остаётся там, последняя команда потеряна",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const FADE_MS = 180;\nlet fading = false;\nexport const fadeTo = (element, opacity) => {\n  if (fading) return;\n  fading = true;\n  const motion = element.animate([{ opacity }], {\n    duration: FADE_MS,\n    fill: \"forwards\",\n  });\n  motion.onfinish = () => {\n    fading = false;\n  };\n};",
+          "ts": "const FADE_MS = 180;\n\nlet fading = false;\n\nexport const fadeTo = (element: HTMLElement, opacity: number): void => {\n  if (fading) return;\n  fading = true;\n  const motion = element.animate([{ opacity }], {\n    duration: FADE_MS,\n    fill: \"forwards\",\n  });\n  motion.onfinish = () => {\n    fading = false;\n  };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "O4",
+      "why": "точка перелома названа по устройству — портретный планшет, — а не по тому, что ломается в раскладке: при другой ширине колонок число ничего не говорит",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "стиль",
+          "text": "$tablet-portrait: 834px;\n\n@media (max-width: $tablet-portrait) {\n  .grid {\n    grid-template-columns: 1fr;\n  }\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "O3",
+      "why": "счёт карточек в ряду в коде повторяет ширину карточки и зазор из листа сетки числами 240 и 16: связь двух мест не выражена ни общим источником, ни записью",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const CARD_WIDTH_PX = 240;\nconst CARD_GAP_PX = 16;\nexport const cardsPerRow = (width) =>\n  Math.max(\n    1,\n    Math.floor((width + CARD_GAP_PX) / (CARD_WIDTH_PX + CARD_GAP_PX)),\n  );",
+          "ts": "const CARD_WIDTH_PX = 240;\nconst CARD_GAP_PX = 16;\n\nexport const cardsPerRow = (width: number): number =>\n  Math.max(\n    1,\n    Math.floor((width + CARD_GAP_PX) / (CARD_WIDTH_PX + CARD_GAP_PX)),\n  );"
+        },
+        {
+          "role": "лист",
+          "file": "стиль",
+          "text": ".cards {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, 240px);\n  gap: 16px;\n}"
+        }
+      ],
+      "culprits": [
+        "виновник",
+        "лист"
+      ]
+    },
+    {
+      "criterion": "O5",
+      "why": "код считает высоту превью на три строки, а лист обрезает превью на двух: сколько строк видно, решено в двух местах по-разному",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const PREVIEW_LINES = 3;\nconst PREVIEW_LINE_PX = 20;\nexport const previewHeight = () => PREVIEW_LINES * PREVIEW_LINE_PX;",
+          "ts": "const PREVIEW_LINES = 3;\nconst PREVIEW_LINE_PX = 20;\n\nexport const previewHeight = (): number => PREVIEW_LINES * PREVIEW_LINE_PX;"
+        },
+        {
+          "role": "лист",
+          "file": "стиль",
+          "text": ".preview {\n  max-height: 40px;\n  overflow: hidden;\n  line-height: 20px;\n}"
+        }
+      ],
+      "culprits": [
+        "виновник",
+        "лист"
+      ]
+    },
+    {
+      "criterion": "L3",
+      "why": "создание заметки повторяет запрос при неудачном ответе без ключа повтора: заметку, которую сервер создал до сбоя ответа, создают второй и третий раз — дубли не контролируются",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const CREATE_ATTEMPTS = 3;\nexport const createNoteWithRetry = async (\n  send,\n  title,\n  attemptsLeft = CREATE_ATTEMPTS,\n) => {\n  const response = await send(title);\n  return response.ok || attemptsLeft <= 1\n    ? response\n    : createNoteWithRetry(send, title, attemptsLeft - 1);\n};",
+          "ts": "const CREATE_ATTEMPTS = 3;\n\nexport const createNoteWithRetry = async (\n  send: (title: string) => Promise<Response>,\n  title: string,\n  attemptsLeft = CREATE_ATTEMPTS,\n): Promise<Response> => {\n  const response = await send(title);\n  return response.ok || attemptsLeft <= 1\n    ? response\n    : createNoteWithRetry(send, title, attemptsLeft - 1);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "L6",
+      "why": "список выгрузок в работе — общее изменяемое модуля, его правят несколько незавершённых выгрузок без точки согласования: одноимённые выгрузки снимают друг друга, а возвращённый снимок зависит от порядка завершения",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const pendingUploads = [];\nexport const uploadAttachment = async (name, upload) => {\n  pendingUploads.push(name);\n  await upload(name);\n  pendingUploads.splice(pendingUploads.indexOf(name), 1);\n  return [...pendingUploads];\n};",
+          "ts": "const pendingUploads: string[] = [];\n\nexport const uploadAttachment = async (\n  name: string,\n  upload: (name: string) => Promise<void>,\n): Promise<readonly string[]> => {\n  pendingUploads.push(name);\n  await upload(name);\n  pendingUploads.splice(pendingUploads.indexOf(name), 1);\n  return [...pendingUploads];\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "S1",
+      "why": "сбой загрузки заголовков подменяется прошлым удачным ответом без записи наружу: пользователь видит устаревшее, а в бою отказ не обнаруживается ничем",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let lastGoodTitles = [];\nexport const titlesOrLastGood = async (load) => {\n  try {\n    lastGoodTitles = await load();\n  } catch {\n    return lastGoodTitles;\n  }\n  return lastGoodTitles;\n};",
+          "ts": "let lastGoodTitles: readonly string[] = [];\n\nexport const titlesOrLastGood = async (\n  load: () => Promise<readonly string[]>,\n): Promise<readonly string[]> => {\n  try {\n    lastGoodTitles = await load();\n  } catch {\n    return lastGoodTitles;\n  }\n  return lastGoodTitles;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C7",
+      "why": "признак пустой полки хранится полем рядом со списком: снятие последней заметки его не правит, производное разошлось с источником",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const shelfWith = (shelf, title) => ({\n  titles: [...shelf.titles, title],\n  empty: false,\n});\nexport const shelfWithout = (shelf, title) => ({\n  ...shelf,\n  titles: shelf.titles.filter((kept) => kept !== title),\n});",
+          "ts": "export type NoteShelf = {\n  readonly titles: readonly string[];\n  readonly empty: boolean;\n};\n\nexport const shelfWith = (shelf: NoteShelf, title: string): NoteShelf => ({\n  titles: [...shelf.titles, title],\n  empty: false,\n});\n\nexport const shelfWithout = (shelf: NoteShelf, title: string): NoteShelf => ({\n  ...shelf,\n  titles: shelf.titles.filter((kept) => kept !== title),\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "E12",
+      "why": "перенос заметки между папками — снятие из старой, затем добавление в новую, двумя запросами без отката: сбой второго шага оставляет заметку ни в одной папке",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const moveToFolder = async (noteId, removeFrom, addTo) => {\n  await removeFrom(noteId);\n  await addTo(noteId);\n};",
+          "ts": "export const moveToFolder = async (\n  noteId: string,\n  removeFrom: (id: string) => Promise<void>,\n  addTo: (id: string) => Promise<void>,\n): Promise<void> => {\n  await removeFrom(noteId);\n  await addTo(noteId);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "N6",
+      "why": "переход к заметке всегда прокручивает плавно: просьба о меньшем движении не спрошена, и плавная прокрутка идёт и тем, кто её отключил",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const revealNote = (row) => {\n  row.scrollIntoView({ behavior: \"smooth\", block: \"center\" });\n};",
+          "ts": "export const revealNote = (row: HTMLElement): void => {\n  row.scrollIntoView({ behavior: \"smooth\", block: \"center\" });\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A9-кватер",
+      "why": "сравнение заголовка с прежним держит прежний в переменной модуля: на одинаковый вход функция отвечает по-разному и зависит от порядка вызовов, хотя прежний заголовок мог прийти входом",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "let previousTitle = \"\";\nexport const titleChanged = (title) => {\n  const changed = title !== previousTitle;\n  previousTitle = title;\n  return changed;\n};",
+          "ts": "let previousTitle = \"\";\n\nexport const titleChanged = (title: string): boolean => {\n  const changed = title !== previousTitle;\n  previousTitle = title;\n  return changed;\n};"
+        }
+      ]
     }
   ],
   "covers": [
