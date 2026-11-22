@@ -757,6 +757,7 @@ export const MODEL_LEVEL = {
   порядок: "узел",
   документ: "единица",
   копия: "единица",
+  инвариант: "единица",
   идентификаторы: "узел",
   близнец: "приложение",
   повтор: "приложение",
@@ -1086,7 +1087,12 @@ export const BAR_SIGNALS = [
   { ids: ["I2", "E6"], sort: "текст отказа", words: "отказ различают по тексту его сообщения, и в основании не сказано, почему не по виду отказа — замена текста у узла сломает потребителя" },
   { ids: ["E10", "E12"], sort: "пакет", words: "предмет выполняет пакет операций, и в основании не сказано, что при частичном отказе" },
   { ids: ["C9", "L1", "L2", "L3", "L5", "L6", "E9"], sort: "гонка", words: "асинхронный результат пишется в состояние, и в основании не сказано, что при двух запусках, отмене и уходе потребителя" },
+  // Признак лежал в строке, а держатель о нём не спрашивал: промахи свода
+  // проб `2026-11-22` — посадки `523` `L6`, `513` `E11`, `496` `C2`.
+  { ids: ["L6"], sort: "гонка", mark: "общее изменяемое", words: "асинхронная работа правит изменяемое модуля по обе стороны ожидания, и в основании не названа точка согласования: очередь, единственный полёт, блокировка либо номер версии" },
   { ids: ["E11", "M4", "G6-бис"], sort: "список", words: "предмет рисует список, и в основании не сказано о пустом списке, ключах и длине" },
+  { ids: ["E11"], sort: "список", mark: "без пустого", words: "предмет рисует список, а ветки на пустой перечень в файле нет, и в основании не названа строка, которая рисует пустое состояние: слово и действие для первого запуска и пустого результата" },
+  { ids: ["C2"], sort: "инвариант", words: "условие коллекции проверяют перед записью в одной функции, а другая пишет в ту же коллекцию без проверки, и в основании не сказано, чем условие держится на каждом пути записи — конструкцией, а не проверкой на месте" },
   { ids: ["G4-бис", "G1"], sort: "контекст", words: "значение поставщика собирается на каждом проходе, и в основании не сказано почему" },
   { ids: ["G2", "G4", "G6"], sort: "частое", words: "в предмете обработчик частого события, и в основании не сказано, назван ли горячий путь и что на нём выделяется" },
   { ids: ["O5", "O3"], sort: "раскладка", words: "предмет меряет раскладку кодом, и в основании не сказано, не спорит ли это с правилами стилей" },
@@ -1457,7 +1463,6 @@ export const LINT_EXEMPT_FORM =
 export const BAR_ATTENTION = {
   "B2-бис": "единообразие — свойство всех узлов разом: одно по смыслу под разными именами текстом не опознать",
   B6: "безопасная сторона умолчания зависит от смысла входа; булево умолчание спрашивает `B1`",
-  C2: "соглашение на месте вызова без знания инварианта неотличимо от конструкции",
   E13: "граница отказа — свойство композиции целиком, её отсутствие не видно ни в одной строке",
   F4: "ссылка на элемент в коллекции без знания, удалён ли он, неотличима от законной",
   G7: "бюджет живёт в записях проекта числом; есть ли он — вопрос к базе, а не к строке",
@@ -1506,9 +1511,9 @@ const UNSEEN = {
   releaseLinted:
     "снятие не на каждой ветке выхода, снятие экземпляра без имени и снятие одноимённого экземпляра в другой области видимости — срез ищет снятие того же экземпляра по имени где угодно в файле, а не его ветку и область; правила линта судят уборку эффекта у слушателя, таймера, интервала и наблюдателей размера и пересечения, а вне эффекта и у прочих ресурсов эти формы не видит никто",
   race:
-    "асинхронный результат, который пишут не сеттером: в хранилище, в ссылку, в поле — признак гонки ставится, когда в файле есть `await` либо `.then` и запись сеттером",
+    "асинхронный результат, который пишут через объект, взятый импортом, либо свою обёртку хранилища, — признак гонки ставится, когда в файле есть `await` либо `.then` и запись: сеттер, `setState`, `.current`, поле `this`, хранилище браузера, `let` модуля и метод либо ключ константы модуля",
   flag: "флаг без пометки типа и без умолчания — признак ищет `: boolean` и умолчание `true` либо `false`",
-  list: "список, который рисуют не через `.map` в разметке и не элементом, положенным в массив: компонент списка, виртуальный список — признак видит `.map` в фигурных скобках разметки и `push` элемента разметки",
+  list: "список, который рисуют не через `.map` в разметке и не элементом, положенным в массив: компонент списка, виртуальный список, обработчик `map`, отданный по имени, — признак видит `.map` в фигурных скобках разметки, `.map`, чья стрелка отдаёт элемент разметки, и `push` элемента разметки",
   motion:
     "движение средствами, которых нет в образце: `setInterval` со сдвигом, `anime`, `react-transition-group`, `useTransition` — образец знает `requestAnimationFrame`, `animate`, `motion`, `gsap`, `useSpring`, движение листа стилей и `setTimeout` рядом со сменой класса либо стиля в одном файле",
   method: "метод класса и объекта — тела признак ищет у `function` и у `const` со стрелкой",
@@ -1691,6 +1696,11 @@ export const BAR_FORMS = {
     "недопустимое сочетание полей не булева рода: `status` и `error` вместе — признак считает булевы поля, необязательные спрашивает `D5`",
     "одно булево поле рядом с другим состоянием — признак ставится от двух булевых полей",
   ],
+  C2: [
+    "инвариант, который не проверяет ни одна функция записи, — признак видит пару «проверка на одном пути, запись без неё на другом»",
+    "условие не членства — порядок, предел, монотонность, «окно только растёт», — проверку признак опознаёт по `includes`, `some` и `indexOf`",
+    "запись присваиванием, в другом файле либо через обёртку — запись признак ищет распаковкой, `push`, `unshift`, `concat` и `splice` в том же файле",
+  ],
   C3: [
     "кэш в поле класса, в замыкании либо в состоянии компонента — признак видит контейнер модуля, объявленный константой",
     "контейнер, который чистят, но не по правилу, — признак видит наличие удаления, а не правило",
@@ -1819,7 +1829,11 @@ export const BAR_FORMS = {
   E10: [
     "пакет операций без `Promise.all` и без `await` в цикле: цепочка вызовов, `then` подряд — признак видит `Promise.all` и родственные, `forEach(async` и `await` в цикле",
   ],
-  E11: [UNSEEN.list, "пустое состояние без списка: пустой поиск, нет данных — признак спрашивает список"],
+  E11: [
+    UNSEEN.list,
+    "пустое состояние без списка: пустой поиск, нет данных — признак спрашивает список",
+    "ветка на пустой перечень, которая есть, но рисует пустоту, — признак ищет сравнение длины с нулём, её отрицание и имя пустого состояния, а не то, что ветка показывает",
+  ],
   E12: [
     "многошаговое изменение через свою обёртку записи либо разнесённое по двум функциям — признак шагов видит сеттер либо `dispatch` и запись в сеть либо хранилище в теле одной функции",
   ],
@@ -2005,6 +2019,7 @@ export const BAR_FORMS = {
   L6: [
     UNSEEN.race,
     "общее изменяемое, к которому обращаются операции на сервере, в воркере либо в другой вкладке, — признак гонки смотрит один файл",
+    "изменяемое модуля, которое правят из другого файла, — признак ищет запись в объявленное тем же файлом",
   ],
   M1: [
     "код в расчёте на один вызов вне эффекта с пустыми зависимостями и без ссылки-флага: флаг в состоянии, в поле объекта либо ссылка не булевой — признак видит эффект с пустым списком зависимостей, изменяемое модуля и ссылку, заведённую булевой и переписанную обратным значением",
@@ -3842,6 +3857,94 @@ const commentSignals = (text, line) => {
 /** Методы, меняющие контейнер, у которого их зовут. */
 const BOX_MUTATORS =
   "push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|delete|clear";
+/** Ветка на пустой перечень: сравнение длины с нулём, отрицание длины, длина
+ * в условии и имя пустого состояния. */
+const EMPTY_BRANCH =
+  /\.length\s*(?:[!=]==?|[<>]=?)\s*0\b|!\s*[\w$.?]+\.length\b|\.length\s*(?:\?|&&)|\b(?:is)?[eE]mpty\w*\b/;
+
+/** Начала утверждений верхнего уровня — строка с первой колонки, не
+ * закрывающая скобка: по ним файл делится на функции. */
+const TOP_START = /^[^\s})\]]/gm;
+const topSpansOf = (bare) => {
+  const starts = [...bare.matchAll(TOP_START)].map((m) => m.index);
+  return (i) => {
+    let from = 0;
+    for (const s of starts) if (s <= i) from = s;
+    return from;
+  };
+};
+/** Конец объявления верхнего уровня, начатого в `from`. */
+const topSpanEnd = (bare, from) => {
+  const next = new RegExp(TOP_START.source, "gm");
+  next.lastIndex = from + 1;
+  const m = next.exec(bare);
+  return m === null ? bare.length : m.index;
+};
+
+/** Запись в изменяемое модуля: `let` переприсваиванием, константа модуля —
+ * методом, меняющим контейнер, либо записью по ключу. Строка объявления
+ * записью не считается. */
+const moduleWritesOf = (bare) => {
+  const out = [];
+  const lets = [...bare.matchAll(/^(?:export\s+)?let\s+([\w$]+)/gm)];
+  const boxes = [...bare.matchAll(/^(?:export\s+)?const\s+([\w$]+)/gm)];
+  const esc = (n) => n.replace(/\$/g, "\\$");
+  for (const [re, decls] of [
+    [(n) => new RegExp("(?<![\\w$.])" + esc(n) + "\\s*(?:[-+*/%]|\\?\\?|\\|\\||&&)?=(?![=>])", "g"), lets],
+    [
+      (n) =>
+        new RegExp(
+          "(?<![\\w$.])" + esc(n) + "\\s*(?:\\.\\s*(?:" + BOX_MUTATORS + ")\\s*\\(|\\[[^\\]\\n]*\\]\\s*=(?![=>]))",
+          "g",
+        ),
+      boxes,
+    ],
+  ])
+    for (const d of decls) {
+      const declEnd = d.index + d[0].length;
+      for (const m of bare.matchAll(re(d[1])))
+        if (m.index >= declEnd) out.push({ at: m.index, name: d[1] });
+    }
+  return out.sort((a, b) => a.at - b.at);
+};
+
+/** Запись в коллекцию, чьё условие другая функция файла проверяет перед
+ * записью: распаковка, `push`, `unshift`, `concat`, `splice` — в функции без
+ * проверки той же коллекции. `add` множества и функция, собирающая `new Set`,
+ * держат уникальность сами. Строка на функцию и коллекцию. */
+const unguardedWritesOf = (bare) => {
+  const spanOf = topSpansOf(bare);
+  const guarded = new Map();
+  for (const m of bare.matchAll(
+    /([\w$]+)\s*\??\.\s*(?:includes|some|indexOf)\s*\(/g,
+  )) {
+    if (!guarded.has(m[1])) guarded.set(m[1], new Set());
+    guarded.get(m[1]).add(spanOf(m.index));
+  }
+  const out = [];
+  for (const [name, spans] of guarded) {
+    const e = name.replace(/\$/g, "\\$");
+    const seen = new Set();
+    for (const m of bare.matchAll(
+      new RegExp(
+        "\\.\\.\\.\\s*(?:[\\w$]+\\s*\\??\\.\\s*)*" +
+          e +
+          "\\b(?!\\s*\\??\\.|\\s*[([])|(?<![\\w$])" +
+          e +
+          "\\s*\\.\\s*(?:push|unshift|concat|splice)\\s*\\(",
+        "g",
+      ),
+    )) {
+      const s = spanOf(m.index);
+      if (spans.has(s) || seen.has(s)) continue;
+      if (/\bnew\s+Set\s*\(/.test(bare.slice(s, topSpanEnd(bare, s)))) continue;
+      seen.add(s);
+      out.push({ at: m.index, name });
+    }
+  }
+  return out.sort((a, b) => a.at - b.at);
+};
+
 /** Чтение раскладки, которое заставляет браузер пересчитать её на месте. */
 const LAYOUT_READ =
   /\bgetBoundingClientRect\s*\(|\.\s*(?:offset(?:Width|Height|Top|Left)|client(?:Width|Height)|scroll(?:Top|Left|Width|Height))\b|\bgetComputedStyle\s*\(/g;
@@ -3947,25 +4050,60 @@ const codeSignalsOf = (file, text, own) => {
   });
 
   // --- асинхронное: результат пишется в состояние --------------------------
+  // Запись — не только сеттер: ссылка, поле, хранилище и изменяемое модуля.
+  // Прежде признак ждал сеттера, и список выгрузок модуля, который правили
+  // незавершённые выгрузки, прошёл мимо (свод проб `2026-11-22`, `523` `L6`).
   const pending = [...bare.matchAll(/\bawait\b|\.\s*then\s*\(/g)];
-  if (pending.length > 0 && new RegExp(SETTER + "|\\bthis\\s*\\.\\s*setState\\s*\\(").test(bare)) {
+  const shared = pending.length === 0 ? [] : moduleWritesOf(bare);
+  if (
+    pending.length > 0 &&
+    (shared.length > 0 ||
+      new RegExp(
+        SETTER +
+          "|\\bthis\\s*\\.\\s*setState\\s*\\(|\\.\\s*current\\s*=(?![=>])|\\bthis\\s*\\.\\s*[\\w$]+\\s*=(?![=>])|\\b(?:localStorage|sessionStorage)\\s*\\.\\s*(?:setItem|removeItem|clear)\\s*\\(",
+      ).test(bare))
+  ) {
     const guarded =
       /\bAbortController\b|\bsignal\b|\bcancel\w*|\bignore\b|\b(?:is)?[mM]ounted\b|\b(?:is)?[aA]ctive\b|\bstale\b|\brequestId\b|\blatest\w*/.test(
         bare,
       );
     for (const m of pending.slice(0, 6))
       at("гонка", m.index, m[0].includes("then") ? ".then" : "await", guarded ? "" : "без отмены");
+    for (const w of shared.slice(0, 3)) at("гонка", w.at, w.name, "общее изменяемое");
   }
+
+  // --- инвариант коллекции: проверка на одном пути записи -------------------
+  // Условие коллекции, которое держит проверка перед записью в одной функции,
+  // а другая пишет туда же без неё, — соглашение, а не конструкция (`C2`).
+  // Промах свода проб `2026-11-22`, посадка `496`: объединение клало повторы.
+  for (const w of unguardedWritesOf(bare)) at("инвариант", w.at, w.name, "без проверки");
 
   // --- разметка: список, частые события, раскладка, поставщик ---------------
   if (markup) {
     const positional = /\bkey=\{\s*(?:i|idx|index|[\w$]*Index)\s*\}/.test(bare);
+    // Список — `.map` в фигурных скобках разметки и `.map`, чей обработчик
+    // отдаёт разметку: цепочку `slice(…).map` первый образец не видел, и
+    // пустой перечень прошёл без вопроса (свод проб `2026-11-22`, `513`).
+    const lists = [];
     each(/\{\s*[\w$]+(?:\s*\??\.\s*[\w$]+)*\s*\??\.\s*map\s*\(/g, bare, (m) =>
-      at("список", m.index, m[0].replace(/^\{\s*/, ""), positional ? "ключ по позиции" : ""),
+      lists.push([m.index, m[0].replace(/^\{\s*/, "")]),
+    );
+    each(/\.\s*map\s*\(\s*(?:\(\s*[^()]*\)|[\w$]+)\s*=>\s*\(?\s*<[A-Za-z]/g, bare, (m) =>
+      lists.push([m.index, "map"]),
     );
     // Список, нарисованный циклом: элемент разметки кладут в массив. Свод
     // 3.3.4 прогона `2026-11-14` пропустил журнал, собранный `for … push`.
-    each(/\.\s*push\s*\(\s*<[A-Za-z]/g, bare, (m) => at("список", m.index, "push", positional ? "ключ по позиции" : ""));
+    each(/\.\s*push\s*\(\s*<[A-Za-z]/g, bare, (m) => lists.push([m.index, "push"]));
+    const listLines = new Set();
+    for (const [i, sample] of lists.sort((a, b) => a[0] - b[0])) {
+      if (listLines.has(bareLineAt(i))) continue;
+      listLines.add(bareLineAt(i));
+      at("список", i, sample, positional ? "ключ по позиции" : "");
+    }
+    // Пустой перечень без своей ветки рисует заголовок над пустотой (`E11`).
+    // Промах свода проб `2026-11-22`, посадка `513`.
+    if (lists.length > 0 && !EMPTY_BRANCH.test(bare))
+      at("список", lists[0][0], "нет ветки на пустой", "без пустого");
     each(/\bvalue=\{\s*[{[]/g, bare, (m) => at("контекст", m.index, "value"));
   }
   each(
@@ -6539,12 +6677,32 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (stale) return;\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (id !== requestId) return;\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (v !== latestValue) return;\n  setValue(v);\n};", "2:гонка"],
-  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, idx) => <li key={idx}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:имя/сокращение"],
-  ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n};", "3:список"],
+  ["signalsSummary", "src/a.ts\nconst queuedSends: string[] = [];\n\nexport const upload = async (name: string) => {\n  queuedSends.push(name);\n  await send(name);\n  queuedSends.splice(queuedSends.indexOf(name), 1);\n};", "5:гонка/без отмены;4:гонка/общее изменяемое;6:гонка/общее изменяемое"],
+  ["signalsSummary", "src/a.ts\nconst queuedSends: string[] = [];\n\nexport const upload = (name: string) => {\n  queuedSends.push(name);\n};", "1:кэш"],
+  ["signalsSummary", "src/a.ts\nlet last = 0;\nexport const go = async () => {\n  last = await load();\n};", "3:гонка/без отмены;3:гонка/общее изменяемое"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  ref.current = await load();\n};", "2:гонка/без отмены"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  localStorage.setItem(\"k\", await load());\n};", "2:внешнее/хранилище;2:запись/хранилище;2:гонка/без отмены"],
+  ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  return v;\n};", ""],
+  ["signalsSummary", "src/a.ts\nexport const withLabel = (labels: Labels, name: string): Labels =>\n  labels.items.includes(name) ? labels : { items: [...labels.items, name] };\n\nexport const mergedLabels = (first: Labels, second: Labels): Labels => ({\n  items: [...first.items, ...second.items],\n});", "5:инвариант/без проверки;4:целое;4:целое"],
+  ["signalsSummary", "src/a.ts\nexport const withLabel = (labels: Labels, name: string): Labels =>\n  labels.items.includes(name) ? labels : { items: [...labels.items, name] };\n\nexport const mergedLabels = (first: Labels, second: Labels): Labels => ({\n  items: [...new Set([...first.items, ...second.items])],\n});", "4:целое;4:целое"],
+  ["signalsSummary", "src/a.ts\nexport const add = (ids: Set<string>, id: string) => {\n  if (ids.has(id)) return;\n  ids.add(id);\n};\nexport const addAll = (ids: Set<string>, more: string[]) => {\n  for (const id of more) ids.add(id);\n};", ""],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) =>\n  titles.length === 0 ? <p>None yet</p> : <ul>{titles.map((t) => <li key={t}>{t}</li>)}</ul>;", "2:список;2:текст/в разметке"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles, empty }) => <ul>{titles.map((t) => <li key={t}>{t}</li>)}{empty}</ul>;", "1:список"],
+  ["signalsSummary", "src/a.ts\nexport const add = (ids: string[], id: string) => {\n  if (ids.includes(id)) return;\n  ids.push(id);\n};\nexport const addAll = (ids: string[], more: string[]) => {\n  ids.push(...more);\n};", "6:инвариант/без проверки"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) => titles.length > 0 && <ul>{titles.map((t) => <li key={t}>{t}</li>)}</ul>;", "1:список"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) => {\n  if (!titles.length) return null;\n  return <ul>{titles.map((t) => <li key={t}>{t}</li>)}</ul>;\n};", "3:список"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) => (titles.length ? <ul>{titles.map((t) => <li key={t}>{t}</li>)}</ul> : null);", "1:список"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) => <section>{titles.length && <ul>{titles.map((t) => <li key={t}>{t}</li>)}</ul>}</section>;", "1:список"],
+  ["signalsSummary", "src/a.ts\nexport const add = (ids: string[], id: string) => {\n  if (ids.some((x) => x === id)) return;\n  ids.push(id);\n};\nexport const addAll = (ids: string[], more: string[]) => {\n  ids.push(...more);\n};", "6:инвариант/без проверки"],
+  ["signalsSummary", "src/a.ts\nexport const add = (ids: string[], id: string) => {\n  if (ids.indexOf(id) >= 0) return;\n  ids.push(id);\n};\nexport const addAll = (ids: string[], more: string[]) => {\n  ids.push(...more);\n};", "6:инвариант/без проверки"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) => {\n  const rows = titles.slice(0, 3).map((t) => <li key={t}>{t}</li>);\n  return titles.length === 0 ? null : <ol>{rows}</ol>;\n};", "2:список"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ titles }) => {\n  const rows = titles.filter(Boolean).map(t => <li key={t}>{t}</li>);\n  return titles.length === 0 ? null : <ol>{rows}</ol>;\n};", "2:список"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, idx) => <li key={idx}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:список/без пустого;1:имя/сокращение"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  for (const line of lines) rows.push(<li key={line}>{line}</li>);\n  return <ul>{rows}</ul>;\n};", "3:список;3:список/без пустого"],
   ["signalsSummary", "src/a.tsx\nexport const add = (rows, row) => {\n  rows.push(row <1 ? 1 : row);\n};", ""],
-  ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  lines.forEach((line, i) => rows. push ( <li key={i}>{line}</li>));\n  return <ul>{rows}</ul>;\n};", "3:список/ключ по позиции"],
-  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, index) => <li key={index}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
-  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, rowIndex) => <li key={rowIndex}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
+  ["signalsSummary", "src/a.tsx\nexport const L = ({ lines }) => {\n  const rows = [];\n  lines.forEach((line, i) => rows. push ( <li key={i}>{line}</li>));\n  return <ul>{rows}</ul>;\n};", "3:список/ключ по позиции;3:список/без пустого"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, index) => <li key={index}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:список/без пустого"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, rowIndex) => <li key={rowIndex}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:список/без пустого"],
   ["signalsSummary", "src/a.tsx\nexport const A0 = () => <div onScroll={go} />;\nexport const A1 = () => <div onMouseMove={go} />;\nexport const A2 = () => <div onPointerMove={go} />;\nexport const A3 = () => <div onTouchMove={go} />;\nexport const A4 = () => <div onWheel={go} />;\nexport const A5 = () => <div onDrag={go} />;\nexport const A6 = () => <div onDragOver={go} />;\nexport const watcher = new ResizeObserver(onResize);", "1:частое;2:частое;3:частое;4:частое;5:частое;6:частое;7:частое;8:частое"],
   ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"mousemove\", go);\nwindow.addEventListener(\"pointermove\", go);\nwindow.addEventListener(\"touchmove\", go);\nwindow.addEventListener(\"wheel\", go);\nwindow.addEventListener(\"resize\", go);\nwindow.addEventListener(\"drag\", go);\nwindow.addEventListener(\"dragover\", go);", "1:частое;2:частое;3:частое;4:частое;5:частое;6:частое;7:частое"],
   ["signalsSummary", "src/a.ts\nexport const w = node.getBoundingClientRect().width;\nnode.style.setProperty(\"--w\", w + \"px\");", "1:раскладка/чтение и запись"],
@@ -6594,8 +6752,8 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  setValue(v);\n};", "2:гонка/без отмены"],
   ["signalsSummary", "src/a.ts\nexport const go = async (signal) => {\n  const v = await load(signal);\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  await load();\n  setTimeout(done, 1);\n};", ""],
-  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;", "1:список/ключ по позиции"],
-  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x) => <li key={x}>{x}</li>)}</ul>;", "1:список"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;", "1:список/ключ по позиции;1:список/без пустого"],
+  ["signalsSummary", "src/a.tsx\nexport const L = () => <ul>{items.map((x) => <li key={x}>{x}</li>)}</ul>;", "1:список;1:список/без пустого"],
   ["signalsSummary", "src/a.tsx\nexport const P = () => <Ctx.Provider value={{ a, b }} />;", "1:контекст"],
   ["signalsSummary", "src/a.tsx\nexport const P = () => <Ctx.Provider value={state} />;", ""],
   ["signalsSummary", "src/a.ts\nwindow.addEventListener(\"scroll\", onScroll);", "1:частое"],

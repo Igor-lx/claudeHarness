@@ -1824,6 +1824,10 @@ describe("проба планки в существующем коде", () => {
       const parts = relCulprit.split("/");
       const unit = parts.length >= 3 ? parts.slice(0, 2).join("/") : relCulprit;
       const line = text.split("\n").findIndex((l) => l.includes("tally.keys.push")) + 1;
+      // Посадка помнит строки посаженного: суд даёт по ним второй вердикт.
+      expect(mark.lines[0][0]).toBeLessThanOrEqual(line);
+      expect(mark.lines[0][1]).toBeGreaterThanOrEqual(line);
+      expect(mark.lines[0][0]).toBeGreaterThan(2);
       fs.appendFileSync(
         path.join(sandbox, ".context", "13-questions.md"),
         "\nВопрос о `src/" + relCulprit + "`: C4.\n",
@@ -1886,11 +1890,15 @@ describe("проба планки в существующем коде", () => {
       );
       const moreMark = path.join(os.tmpdir(), "bar-probe-" + id + "8.plant.json");
       fs.writeFileSync(moreMark, JSON.stringify({ ...mark, box: twinMore, file: moreWhere, files: [moreWhere] }));
-      expect(run(box, "bar-probe", id + "8", "--machine")).toContain("исход: поймано");
+      const more = run(box, "bar-probe", id + "8", "--machine");
+      expect(more).toContain("исход: поймано");
+      // Первая строка файла — не посаженное: по строкам находка не названа.
+      expect(more).toContain("по строкам посадки: критерий назван, адрес другой");
       fs.rmSync(twinMore, { recursive: true, force: true });
       fs.rmSync(moreMark, { force: true });
       const judged = run(box, "bar-probe", id);
       expect(judged).toContain("исход: поймано");
+      expect(judged).toContain("по строкам посадки: поймано");
       expect(fs.existsSync(sandbox)).toBe(false);
       expect(judged).toContain("в существующем коде: проб 2, поймано 1");
       // Суд мерит и точность: сколько критериев свод назвал по адресу посадки.
