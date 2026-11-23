@@ -6674,6 +6674,7 @@ export const PREDICATE_CASES = [
   ["signalsSummary", "src/a.ts\nlet busy: Promise<void> | null = null;\nexport const go = () => {\n  busy = load();\n  void busy.finally(() => {\n    busy = null;\n  });\n};", "4:гонка/без отмены;3:гонка/общее изменяемое;5:гонка/общее изменяемое"],
   ["signalsSummary", "src/a.ts\nexport const go = () => {\n  load().catch(() => setFailed(true));\n};", "2:гонка/без отмены"],
   ["signalsSummary", "src/a.ts\nexport const go = () => {\n  load().catch(report);\n};", ""],
+  ["signalsSummary", "src/a.ts\nconst queue: string[] = [];\nlet count = 0;\nexport const go = async () => {\n  queue.push(\"a\");\n  queue.push(\"b\");\n  queue.push(\"c\");\n  count = 1;\n  await send();\n};", "8:гонка/без отмены;4:гонка/общее изменяемое;5:гонка/общее изменяемое;6:гонка/общее изменяемое;1:кэш"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  const controller = new AbortController();\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (cancelled) return;\n  setValue(v);\n};", "2:гонка"],
   ["signalsSummary", "src/a.ts\nexport const go = async () => {\n  const v = await load();\n  if (ignore) return;\n  setValue(v);\n};", "2:гонка"],
