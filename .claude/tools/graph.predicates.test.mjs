@@ -117,7 +117,7 @@ describe("словарь области", () => {
   // Команда, которая ждёт работу, пришедшую входом, без признака «уже идёт»:
   // второй вызов до ответа первого повторяет операцию. Промах свода задачи
   // 1-бис `551` `L3`.
-  it("ожидание команды из входа без признака полёта названо повтором; метод входа и признак полёта — нет", () => {
+  it("ожидание команды из входа без признака полёта названо полётом; метод входа и признак полёта — нет", () => {
     const text =
       "export const addOnSubmit =\n" +
       "  (post: (t: string) => Promise<void>, append: (t: string) => void) =>\n" +
@@ -133,7 +133,7 @@ describe("словарь области", () => {
       "  await send();\n" +
       "}\n";
     const hits = vocabulary.signalsOf("src/a.ts", text, { kind: "код", own: new Set() });
-    expect(hits.filter((h) => h.sort === "повтор").map((h) => [h.line, h.sample])).toEqual([
+    expect(hits.filter((h) => h.sort === "полёт").map((h) => [h.line, h.sample])).toEqual([
       [4, "await post("],
     ]);
   });
@@ -147,6 +147,21 @@ describe("словарь области", () => {
     expect(vocabulary.codeReadByShell("eval sed -n 1p src/a.ts", isCode)).toBe("sed");
     for (const fine of ["grep x src/a.ts", "sh -c 'rg x src/a.ts'", "eval egrep x src/a.ts", "cat notes.md", "ls src/a.ts"])
       expect(vocabulary.codeReadByShell(fine, isCode), fine).toBe("");
+  });
+
+  // Признак текста под именем вида, который заводит сама модель, делит с
+  // ним вопросы. Перепроверка `свод.5` задачи 1-бис: `повтор`.
+  it("ни один признак текста не носит имени вида, который заводит модель", () => {
+    const emitted = new Set(
+      PREDICATE_CASES.filter(([name]) => name === "signalsSummary").flatMap(([, input]) => {
+        const at = input.indexOf("\n");
+        return vocabulary
+          .signalsOf(input.slice(0, at), input.slice(at + 1), { kind: "код", own: new Set() })
+          .map((h) => h.sort);
+      }),
+    );
+    expect(emitted.has("полёт")).toBe(true);
+    expect(vocabulary.MODEL_QUESTION_SORTS.filter((sort) => emitted.has(sort))).toEqual([]);
   });
 
   it("самопроверка не находит расхождений", () => {
