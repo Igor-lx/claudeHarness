@@ -6461,6 +6461,8 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/a.ts\nexport const run = async (s: { isSaving: boolean }, save: () => Promise<void>) => {\n  if (s.isSaving) return;\n  await save();\n};","1:целое"],
   ["signalsSummary","src/a.js\nexport const add = (post) => async (t) => {\n  await post(t);\n};","2:полёт"],
   ["signalsSummary","src/a.ts\nexport const add = async (post: () => Promise<void>) => await post();","1:полёт"],
+  ["signalsSummary","src/a.ts\nexport async function f(post: () => Promise<void>) {\nawait post();\n}","2:полёт"],
+  ["signalsSummary","src/a.ts\nexport async function f(post: () => Promise<void>) {\n  const g = async (post: () => Promise<void>) => {\n    await post();\n  };\n  return g;\n}","3:полёт"],
   ["signalsSummary","src/a.ts\nexport const tags = (m: Map<string, string[]>, id: string) => m.get(id) ?? [];","1:пустота/умолчание"],
   ["signalsSummary","src/a.ts\nexport const title = (byId: Record<string, string>, id: string) => byId[id] || \"\";","1:пустота/умолчание"],
   ["signalsSummary","src/a.ts\nexport const prefs = (s: { getItem: (k: string) => object | null }) => s.getItem(\"k\") ?? {};","1:пустота/умолчание"],
