@@ -7257,6 +7257,427 @@
         "path": "app/PublishButton.tsx",
         "text": "import { useState } from \"react\";\n\ntype Props = {\n  readonly publish: () => Promise<void>;\n};\n\nexport function PublishButton({ publish }: Props) {\n  const [status, setStatus] = useState<\"idle\" | \"published\" | \"failed\">(\"idle\");\n  const run = async (): Promise<void> => {\n    try {\n      await publish();\n      setStatus(\"published\");\n    } catch {\n      setStatus(\"failed\");\n    }\n  };\n  return (\n    <div>\n      <button\n        type=\"button\"\n        onClick={() => {\n          void run();\n        }}\n      >\n        Publish\n      </button>\n      {status === \"failed\" && <p role=\"alert\">Publishing failed</p>}\n    </div>\n  );\n}\n"
       }
+    },
+    {
+      "criterion": "C7",
+      "why": "отобранный по запросу список хранится полем рядом с полным списком и запросом и пересчитывается только поиском: заметка, добавленная при активном запросе, в показанный список не попадает, пока запрос не введут заново — производное разошлось с источником",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const searchShelf = (shelf, query) => ({\n  ...shelf,\n  query,\n  visible: shelf.all.filter((note) => note.title.includes(query)),\n});\nexport const addToShelf = (shelf, note) => ({\n  ...shelf,\n  all: [...shelf.all, note],\n});",
+          "ts": "type ShelfNote = { readonly id: string; readonly title: string };\n\nexport type Shelf = {\n  readonly all: readonly ShelfNote[];\n  readonly query: string;\n  readonly visible: readonly ShelfNote[];\n};\n\nexport const searchShelf = (shelf: Shelf, query: string): Shelf => ({\n  ...shelf,\n  query,\n  visible: shelf.all.filter((note) => note.title.includes(query)),\n});\n\nexport const addToShelf = (shelf: Shelf, note: ShelfNote): Shelf => ({\n  ...shelf,\n  all: [...shelf.all, note],\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "M5",
+      "why": "копирование заголовка заводится ленивым начальным значением состояния при монтаже и замыкает заголовок первого прохода: после переименования кнопка копирует прежний заголовок",
+      "held": "вопрос модели",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useState } from \"react\";\nexport const useCopyTitle = (title) => {\n  const [copyTitle] = useState(\n    () => () => navigator.clipboard.writeText(title),\n  );\n  return copyTitle;\n};",
+          "ts": "import { useState } from \"react\";\n\nexport const useCopyTitle = (title: string): (() => Promise<void>) => {\n  const [copyTitle] = useState(\n    () => () => navigator.clipboard.writeText(title),\n  );\n  return copyTitle;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "L5",
+      "why": "предпросмотр заметки грузится на каждое наведение и показывается тем ответом, что пришёл последним: быстрый проход указателем по списку оставляет предпросмотр той заметки, чей ответ был медленнее, а не той, над которой указатель остановился",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useState } from \"react\";\nexport const usePreview = (loadPreview) => {\n  const [preview, setPreview] = useState(\"\");\n  const showPreview = async (id) => {\n    setPreview(await loadPreview(id));\n  };\n  return { preview, showPreview };\n};",
+          "ts": "import { useState } from \"react\";\n\nexport const usePreview = (loadPreview: (id: string) => Promise<string>) => {\n  const [preview, setPreview] = useState(\"\");\n  const showPreview = async (id: string): Promise<void> => {\n    setPreview(await loadPreview(id));\n  };\n  return { preview, showPreview };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G1",
+      "why": "список меток под memo получает новый массив из filter на каждой отрисовке родителя: запоминание не срабатывает ни разу, и метки перерисовываются вместе с родителем, хотя не менялись",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "import { memo } from \"react\";\nconst TagChips = memo(function TagChips({ tags }) {\n  return (\n    <ul>\n      {tags.map((tag) => (\n        <li key={tag}>{tag}</li>\n      ))}\n    </ul>\n  );\n});\nexport function NoteTags({ tags }) {\n  return <TagChips tags={tags.filter((tag) => tag !== \"\")} />;\n}",
+          "ts": "import { memo } from \"react\";\n\nconst TagChips = memo(function TagChips({\n  tags,\n}: {\n  readonly tags: readonly string[];\n}) {\n  return (\n    <ul>\n      {tags.map((tag) => (\n        <li key={tag}>{tag}</li>\n      ))}\n    </ul>\n  );\n});\n\nexport function NoteTags({ tags }: { readonly tags: readonly string[] }) {\n  return <TagChips tags={tags.filter((tag) => tag !== \"\")} />;\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "K4",
+      "why": "число для заголовка сводит «ещё не загружено», «загрузка упала» и «заметок нет» в один ноль: пока список грузится и после отказа заголовок говорит «0 заметок»",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const shownCount = (notes) =>\n  notes?.state === \"ready\" ? notes.data.length : 0;",
+          "ts": "type LoadedList =\n  | { readonly state: \"ready\"; readonly data: readonly unknown[] }\n  | { readonly state: \"failed\"; readonly reason: string };\n\nexport const shownCount = (notes: LoadedList | undefined): number =>\n  notes?.state === \"ready\" ? notes.data.length : 0;"
+        }
+      ]
+    },
+    {
+      "criterion": "E6",
+      "why": "проверка права на правку отвечает «нельзя» и на отказ сервера: упавшая сеть показывается пользователю запретом, и вызывающий не отличит ожидаемый отказ от неожиданного",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const canEditNote = async (check, id) => {\n  try {\n    return await check(id);\n  } catch {\n    return false;\n  }\n};",
+          "ts": "export const canEditNote = async (\n  check: (id: string) => Promise<boolean>,\n  id: string,\n): Promise<boolean> => {\n  try {\n    return await check(id);\n  } catch {\n    return false;\n  }\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "L3",
+      "why": "быстрое создание по клавише Enter шлёт сохранение на каждое нажатие и на автоповтор зажатой клавиши: пока первое сохранение идёт, второе и третье уходят следом, и заметка создаётся несколько раз",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "import { useState } from \"react\";\nimport { useTranslation } from \"react-i18next\";\nexport function QuickTitle({ save }) {\n  const { t } = useTranslation();\n  const [title, setTitle] = useState(\"\");\n  return (\n    <input\n      aria-label={t(\"form.title\")}\n      value={title}\n      onChange={(event) => {\n        setTitle(event.target.value);\n      }}\n      onKeyDown={(event) => {\n        if (event.key === \"Enter\") void save(title);\n      }}\n    />\n  );\n}",
+          "ts": "import { useState } from \"react\";\nimport { useTranslation } from \"react-i18next\";\n\nexport function QuickTitle({\n  save,\n}: {\n  readonly save: (title: string) => Promise<void>;\n}) {\n  const { t } = useTranslation();\n  const [title, setTitle] = useState(\"\");\n  return (\n    <input\n      aria-label={t(\"form.title\")}\n      value={title}\n      onChange={(event) => {\n        setTitle(event.target.value);\n      }}\n      onKeyDown={(event) => {\n        if (event.key === \"Enter\") void save(title);\n      }}\n    />\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "K2",
+      "why": "сырые настройки разбирает каждый читатель сам, по своему полю: места, где неизвестное становится известным, нет — пришедший null бросает в каждом читателе на обращении к полю, а размер страницы принимает и отрицательное, и NaN",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const DEFAULT_PAGE_SIZE = 20;\nexport const readSortOrder = (raw) => {\n  const settings = raw;\n  return settings.sort === \"oldest\" ? \"oldest\" : \"newest\";\n};\nexport const readPageSize = (raw) => {\n  const settings = raw;\n  return typeof settings.pageSize === \"number\"\n    ? settings.pageSize\n    : DEFAULT_PAGE_SIZE;\n};",
+          "ts": "const DEFAULT_PAGE_SIZE = 20;\n\nexport const readSortOrder = (raw: unknown): \"newest\" | \"oldest\" => {\n  const settings = raw as { readonly sort?: unknown };\n  return settings.sort === \"oldest\" ? \"oldest\" : \"newest\";\n};\n\nexport const readPageSize = (raw: unknown): number => {\n  const settings = raw as { readonly pageSize?: unknown };\n  return typeof settings.pageSize === \"number\"\n    ? settings.pageSize\n    : DEFAULT_PAGE_SIZE;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "A9-тер",
+      "why": "правило «править можно в первые сутки» записано дважды — условием доступности кнопки и условием в обработчике нажатия: срок поправят в одном месте, и второе продолжит решать по-старому",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "import { useTranslation } from \"react-i18next\";\nconst EDIT_WINDOW_MS = 86_400_000;\nexport function EditNoteButton({ createdAt, now, edit }) {\n  const { t } = useTranslation();\n  return (\n    <button\n      type=\"button\"\n      disabled={now - createdAt > EDIT_WINDOW_MS}\n      onClick={() => {\n        if (now - createdAt <= EDIT_WINDOW_MS) edit();\n      }}\n    >\n      {t(\"form.save\")}\n    </button>\n  );\n}",
+          "ts": "import { useTranslation } from \"react-i18next\";\n\nconst EDIT_WINDOW_MS = 86_400_000;\n\nexport function EditNoteButton({\n  createdAt,\n  now,\n  edit,\n}: {\n  readonly createdAt: number;\n  readonly now: number;\n  readonly edit: () => void;\n}) {\n  const { t } = useTranslation();\n  return (\n    <button\n      type=\"button\"\n      disabled={now - createdAt > EDIT_WINDOW_MS}\n      onClick={() => {\n        if (now - createdAt <= EDIT_WINDOW_MS) edit();\n      }}\n    >\n      {t(\"form.save\")}\n    </button>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "A6-бис",
+      "why": "адрес заметки из заголовка строится в двух узлах разными словами: один сжимает любые пробелы в один дефис, другой режет по одиночному пробелу и обрезает края — заголовок с двумя пробелами или пробелом в конце даёт два разных адреса, и ссылка из одного места не находит заметку другого",
+      "into": [
+        {
+          "role": "первый",
+          "file": "модуль",
+          "text": "export const titleSlug = (title) => title.toLowerCase().replace(/\\s+/g, \"-\");",
+          "ts": "export const titleSlug = (title: string): string =>\n  title.toLowerCase().replace(/\\s+/g, \"-\");"
+        },
+        {
+          "role": "второй",
+          "file": "модуль",
+          "text": "export const noteAnchor = (heading) =>\n  heading.trim().split(\" \").join(\"-\").toLowerCase();",
+          "ts": "export const noteAnchor = (heading: string): string =>\n  heading.trim().split(\" \").join(\"-\").toLowerCase();"
+        }
+      ],
+      "culprits": [
+        "первый",
+        "второй"
+      ]
+    },
+    {
+      "criterion": "C10",
+      "why": "фабрика заметки сама берёт текущее время для номера: на одном входе она отвечает по-разному, две заметки, созданные в одну миллисекунду, получают один номер, и проверить номер без подмены часов нельзя",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const createNote = (title) => ({\n  id: `note-${String(Date.now())}`,\n  title,\n});",
+          "ts": "export type NewNote = { readonly id: string; readonly title: string };\n\nexport const createNote = (title: string): NewNote => ({\n  id: `note-${String(Date.now())}`,\n  title,\n});"
+        }
+      ]
+    },
+    {
+      "criterion": "M1",
+      "why": "эффект открытия заметки шлёт на сервер прибавку счётчика просмотров: повторный монтаж строгого режима и каждый возврат на экран прибавляют просмотр ещё раз — эффект верен, только если вызван один раз",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect } from \"react\";\nexport const useCountView = (countView, noteId) => {\n  useEffect(() => {\n    void countView(noteId);\n  }, [countView, noteId]);\n};",
+          "ts": "import { useEffect } from \"react\";\n\nexport const useCountView = (\n  countView: (noteId: string) => Promise<void>,\n  noteId: string,\n): void => {\n  useEffect(() => {\n    void countView(noteId);\n  }, [countView, noteId]);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C7",
+      "why": "сосед правленого: выбранная заметка хранится копией объекта, а не номером: список пришёл с новым заголовком, а выбранная показывает прежний — производное от списка хранится рядом с ним",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useState } from \"react\";\nexport const useSelection = (notes) => {\n  const [selected, setSelected] = useState(null);\n  const select = (id) => {\n    setSelected(notes.find((note) => note.id === id) ?? null);\n  };\n  return { selected, select };\n};",
+          "ts": "import { useState } from \"react\";\n\ntype Choice = { readonly id: string; readonly title: string };\n\nexport const useSelection = (notes: readonly Choice[]) => {\n  const [selected, setSelected] = useState<Choice | null>(null);\n  const select = (id: string): void => {\n    setSelected(notes.find((note) => note.id === id) ?? null);\n  };\n  return { selected, select };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "M5",
+      "why": "сосед правленого: отметка всех выбранных правит состояние в цикле от захваченного списка: каждый проход начинает с прежнего списка, и из отмеченных остаётся только последняя",
+      "change": "сосед",
+      "held": "вопрос модели",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useState } from \"react\";\nexport const useDoneIds = () => {\n  const [done, setDone] = useState([]);\n  const markAll = (ids) => {\n    for (const id of ids) setDone([...done, id]);\n  };\n  return { done, markAll };\n};",
+          "ts": "import { useState } from \"react\";\n\nexport const useDoneIds = () => {\n  const [done, setDone] = useState<readonly string[]>([]);\n  const markAll = (ids: readonly string[]): void => {\n    for (const id of ids) setDone([...done, id]);\n  };\n  return { done, markAll };\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "C9",
+      "why": "сосед правленого: заголовок грузится через клиент, пришедший входом, и ответ отдаётся прямо в setTitle без отмены: ответ на прежнюю заметку, пришедший после ответа на новую, ставит чужой заголовок, а ответ после ухода экрана пишет в снятое состояние",
+      "change": "сосед",
+      "held": "вопрос модели",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useState } from \"react\";\nexport const useNoteTitle = (client, noteId) => {\n  const [title, setTitle] = useState(\"\");\n  useEffect(() => {\n    void client.titleOf(noteId).then(setTitle);\n  }, [client, noteId]);\n  return title;\n};",
+          "ts": "import { useEffect, useState } from \"react\";\n\nexport const useNoteTitle = (\n  client: { readonly titleOf: (id: string) => Promise<string> },\n  noteId: string,\n): string => {\n  const [title, setTitle] = useState(\"\");\n  useEffect(() => {\n    void client.titleOf(noteId).then(setTitle);\n  }, [client, noteId]);\n  return title;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "G1",
+      "why": "сосед правленого: панель под memo получает детей разметкой, а разметка — новый объект на каждой отрисовке: запоминание не срабатывает ни разу, и memo только добавляет сравнение входов",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "import { memo } from \"react\";\nconst Panel = memo(function Panel({ children }) {\n  return <section>{children}</section>;\n});\nexport function NoteSummary({ title }) {\n  return (\n    <Panel>\n      <h2>{title}</h2>\n    </Panel>\n  );\n}",
+          "ts": "import { memo, type ReactNode } from \"react\";\n\nconst Panel = memo(function Panel({\n  children,\n}: {\n  readonly children: ReactNode;\n}) {\n  return <section>{children}</section>;\n});\n\nexport function NoteSummary({ title }: { readonly title: string }) {\n  return (\n    <Panel>\n      <h2>{title}</h2>\n    </Panel>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "K4",
+      "why": "сосед правленого: архив начинает с пустого списка и пустым же отвечает на отказ: «ещё грузится», «архив пуст» и «загрузка упала» отдаются одним пустым массивом, и экран покажет «пусто» во всех трёх",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect, useState } from \"react\";\nexport const useArchived = (load, report) => {\n  const [ids, setIds] = useState([]);\n  useEffect(() => {\n    let live = true;\n    load()\n      .then((found) => {\n        if (live) setIds(found);\n      })\n      .catch((error) => {\n        report(error);\n        if (live) setIds([]);\n      });\n    return () => {\n      live = false;\n    };\n  }, [load, report]);\n  return ids;\n};",
+          "ts": "import { useEffect, useState } from \"react\";\n\nexport const useArchived = (\n  load: () => Promise<readonly string[]>,\n  report: (error: unknown) => void,\n): readonly string[] => {\n  const [ids, setIds] = useState<readonly string[]>([]);\n  useEffect(() => {\n    let live = true;\n    load()\n      .then((found) => {\n        if (live) setIds(found);\n      })\n      .catch((error: unknown) => {\n        report(error);\n        if (live) setIds([]);\n      });\n    return () => {\n      live = false;\n    };\n  }, [load, report]);\n  return ids;\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "E6",
+      "why": "сосед правленого: испорченная запись закреплённых в хранилище отдаётся пустым списком: сбой разбора неотличим от «ничего не закреплено», вызывающий не узнает об отказе, а следующая запись сотрёт закреплённое пользователем",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const PINNED_KEY = \"pinned-notes\";\nconst isText = (value) => typeof value === \"string\";\nexport const readPinned = () => {\n  try {\n    const parsed = JSON.parse(localStorage.getItem(PINNED_KEY) ?? \"[]\");\n    return Array.isArray(parsed) ? parsed.filter(isText) : [];\n  } catch {\n    return [];\n  }\n};",
+          "ts": "const PINNED_KEY = \"pinned-notes\";\n\nconst isText = (value: unknown): value is string => typeof value === \"string\";\n\nexport const readPinned = (): readonly string[] => {\n  try {\n    const parsed: unknown = JSON.parse(\n      localStorage.getItem(PINNED_KEY) ?? \"[]\",\n    );\n    return Array.isArray(parsed) ? parsed.filter(isText) : [];\n  } catch {\n    return [];\n  }\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "M1",
+      "why": "сосед правленого: эффект раскрывает блок переключением атрибута open: двойной вызов строгого режима переключает дважды, и блок, который должен открыться при показе, остаётся закрытым",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "import { useEffect } from \"react\";\nexport const useOpenOnShow = (details) => {\n  useEffect(() => {\n    details.current?.toggleAttribute(\"open\");\n  }, [details]);\n};",
+          "ts": "import { useEffect } from \"react\";\n\nexport const useOpenOnShow = (details: {\n  readonly current: HTMLDetailsElement | null;\n}): void => {\n  useEffect(() => {\n    details.current?.toggleAttribute(\"open\");\n  }, [details]);\n};"
+        }
+      ]
+    },
+    {
+      "criterion": "K1",
+      "why": "сосед правленого: размер страницы из хранилища берётся числом без проверки: «abc» даёт NaN, «0» и «-5» проходят, и список режется по такому значению в пустоту",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const PAGE_SIZE_KEY = \"page-size\";\nconst DEFAULT_PAGE_SIZE = 20;\nexport const storedPageSize = () =>\n  Number(localStorage.getItem(PAGE_SIZE_KEY) ?? DEFAULT_PAGE_SIZE);",
+          "ts": "const PAGE_SIZE_KEY = \"page-size\";\nconst DEFAULT_PAGE_SIZE = 20;\n\nexport const storedPageSize = (): number =>\n  Number(localStorage.getItem(PAGE_SIZE_KEY) ?? DEFAULT_PAGE_SIZE);"
+        }
+      ]
+    },
+    {
+      "criterion": "A1-бис",
+      "why": "сосед правленого: правило «напомнить завтра в девять утра» считается в обработчике нажатия: проверить его без отрисовки и без подмены часов нельзя, а меняется оно вместе с разметкой кнопки",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "import { useTranslation } from \"react-i18next\";\nconst MORNING_HOUR = 9;\nexport function RemindTomorrow({ remind }) {\n  const { t } = useTranslation();\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        const at = new Date();\n        at.setDate(at.getDate() + 1);\n        at.setHours(MORNING_HOUR, 0, 0, 0);\n        remind(at.getTime());\n      }}\n    >\n      {t(\"form.save\")}\n    </button>\n  );\n}",
+          "ts": "import { useTranslation } from \"react-i18next\";\n\nconst MORNING_HOUR = 9;\n\nexport function RemindTomorrow({\n  remind,\n}: {\n  readonly remind: (at: number) => void;\n}) {\n  const { t } = useTranslation();\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        const at = new Date();\n        at.setDate(at.getDate() + 1);\n        at.setHours(MORNING_HOUR, 0, 0, 0);\n        remind(at.getTime());\n      }}\n    >\n      {t(\"form.save\")}\n    </button>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "A6-бис",
+      "why": "сосед правленого: число слов считается дважды разными словами — для подсказки «осталось слов» и для запрета отправки: одно режет по одиночному пробелу, другое по любым, и текст с двойными пробелами подсказка считает длиннее, чем отправка",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "const WORD_LIMIT = 300;\nexport const wordsLeft = (text) => WORD_LIMIT - text.split(\" \").length;\nexport const overWordLimit = (text) =>\n  text.trim().split(/\\s+/).length > WORD_LIMIT;",
+          "ts": "const WORD_LIMIT = 300;\n\nexport const wordsLeft = (text: string): number =>\n  WORD_LIMIT - text.split(\" \").length;\n\nexport const overWordLimit = (text: string): boolean =>\n  text.trim().split(/\\s+/).length > WORD_LIMIT;"
+        }
+      ]
+    },
+    {
+      "criterion": "E2",
+      "why": "сосед правленого: время последней правки берёт наибольшее из списка без стража на пустоту: Math.max без доводов даёт минус бесконечность, и toISOString бросает RangeError на пустой папке",
+      "change": "сосед",
+      "held": "вопрос модели",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "модуль",
+          "text": "export const latestEdit = (notes) =>\n  new Date(Math.max(...notes.map((note) => note.editedAt))).toISOString();",
+          "ts": "export const latestEdit = (\n  notes: readonly { readonly editedAt: number }[],\n): string =>\n  new Date(Math.max(...notes.map((note) => note.editedAt))).toISOString();"
+        }
+      ]
+    },
+    {
+      "criterion": "A10",
+      "why": "сосед правленого: команда закрепления спускается сквозь список, строку и меню ради одной кнопки: два уровня принимают вход, которым не пользуются, и правка команды трогает все четыре",
+      "change": "сосед",
+      "into": [
+        {
+          "role": "виновник",
+          "file": "разметка",
+          "text": "function PinItem({ id, onPin }) {\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        onPin(id);\n      }}\n    >\n      {id}\n    </button>\n  );\n}\nfunction RowMenu({ id, onPin }) {\n  return (\n    <menu>\n      <li>\n        <PinItem id={id} onPin={onPin} />\n      </li>\n    </menu>\n  );\n}\nfunction NoteRow({ id, title, onPin }) {\n  return (\n    <li>\n      <span>{title}</span>\n      <RowMenu id={id} onPin={onPin} />\n    </li>\n  );\n}\nexport function PinnableList({ notes, onPin }) {\n  return (\n    <ul>\n      {notes.map((note) => (\n        <NoteRow key={note.id} id={note.id} title={note.title} onPin={onPin} />\n      ))}\n    </ul>\n  );\n}",
+          "ts": "function PinItem({\n  id,\n  onPin,\n}: {\n  readonly id: string;\n  readonly onPin: (id: string) => void;\n}) {\n  return (\n    <button\n      type=\"button\"\n      onClick={() => {\n        onPin(id);\n      }}\n    >\n      {id}\n    </button>\n  );\n}\n\nfunction RowMenu({\n  id,\n  onPin,\n}: {\n  readonly id: string;\n  readonly onPin: (id: string) => void;\n}) {\n  return (\n    <menu>\n      <li>\n        <PinItem id={id} onPin={onPin} />\n      </li>\n    </menu>\n  );\n}\n\nfunction NoteRow({\n  id,\n  title,\n  onPin,\n}: {\n  readonly id: string;\n  readonly title: string;\n  readonly onPin: (id: string) => void;\n}) {\n  return (\n    <li>\n      <span>{title}</span>\n      <RowMenu id={id} onPin={onPin} />\n    </li>\n  );\n}\n\nexport function PinnableList({\n  notes,\n  onPin,\n}: {\n  readonly notes: readonly { readonly id: string; readonly title: string }[];\n  readonly onPin: (id: string) => void;\n}) {\n  return (\n    <ul>\n      {notes.map((note) => (\n        <NoteRow key={note.id} id={note.id} title={note.title} onPin={onPin} />\n      ))}\n    </ul>\n  );\n}"
+        }
+      ]
+    },
+    {
+      "criterion": "C7",
+      "why": "адрес заметки хранится вторым состоянием рядом с заголовком и догоняется в обработчике ввода: сброс очищает только заголовок, и отправка уносит пустой заголовок с адресом прежнего",
+      "create": {
+        "path": "app/RenameForm.tsx",
+        "text": "import { useState } from \"react\";\nimport { useTranslation } from \"react-i18next\";\n\ntype Props = {\n  readonly rename: (title: string, slug: string) => void;\n};\n\nexport function RenameForm({ rename }: Props) {\n  const { t } = useTranslation();\n  const [title, setTitle] = useState(\"\");\n  const [slug, setSlug] = useState(\"\");\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        rename(title, slug);\n      }}\n    >\n      <input\n        aria-label={t(\"form.title\")}\n        value={title}\n        onChange={(event) => {\n          setTitle(event.target.value);\n          setSlug(event.target.value.trim().toLowerCase());\n        }}\n      />\n      <button\n        type=\"button\"\n        onClick={() => {\n          setTitle(\"\");\n        }}\n      >\n        {t(\"form.delete\")}\n      </button>\n      <button type=\"submit\">{t(\"form.save\")}</button>\n    </form>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "M5",
+      "why": "шаг вперёд ставит отложенное прибавление от захваченного номера шага: два быстрых нажатия оба прибавляют к прежнему шагу, и одно нажатие теряется",
+      "held": "вопрос модели",
+      "create": {
+        "path": "app/useStepper.ts",
+        "text": "import { useEffect, useRef, useState } from \"react\";\n\nconst STEP_DELAY_MS = 200;\n\nexport const useStepper = () => {\n  const [step, setStep] = useState(0);\n  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);\n  useEffect(\n    () => () => {\n      clearTimeout(timerRef.current);\n    },\n    [],\n  );\n  const next = (): void => {\n    timerRef.current = setTimeout(() => {\n      setStep(step + 1);\n    }, STEP_DELAY_MS);\n  };\n  return { step, next };\n};\n"
+      }
+    },
+    {
+      "criterion": "L5",
+      "why": "проверка свежести стоит до ожидания ответа, а не после: при смене метки флаг гасится уже после пройденной проверки, и ответ на прежнюю метку, пришедший позже, ложится поверх новой",
+      "create": {
+        "path": "app/useTaggedNotes.ts",
+        "text": "import { useEffect, useState } from \"react\";\n\nexport const useTaggedNotes = (\n  load: (tag: string) => Promise<readonly string[]>,\n  report: (error: unknown) => void,\n  tag: string,\n): readonly string[] => {\n  const [ids, setIds] = useState<readonly string[]>([]);\n  useEffect(() => {\n    let live = true;\n    const loadTagged = async (): Promise<void> => {\n      if (!live) return;\n      const found = await load(tag);\n      setIds(found);\n    };\n    loadTagged().catch(report);\n    return () => {\n      live = false;\n    };\n  }, [load, report, tag]);\n  return ids;\n};\n"
+      }
+    },
+    {
+      "criterion": "G1",
+      "why": "выбор фильтра под memo получает варианты литералом массива: на каждой отрисовке это новый массив, хотя варианты постоянны, и запоминание не срабатывает ни разу",
+      "create": {
+        "path": "app/NoteFilters.tsx",
+        "text": "import { memo } from \"react\";\n\ntype Filter = \"all\" | \"pinned\";\n\nconst FilterChoice = memo(function FilterChoice({\n  options,\n  value,\n  choose,\n}: {\n  readonly options: readonly Filter[];\n  readonly value: Filter;\n  readonly choose: (filter: Filter) => void;\n}) {\n  return (\n    <div role=\"group\">\n      {options.map((option) => (\n        <button\n          key={option}\n          type=\"button\"\n          aria-pressed={option === value}\n          onClick={() => {\n            choose(option);\n          }}\n        >\n          {option}\n        </button>\n      ))}\n    </div>\n  );\n});\n\ntype Props = {\n  readonly value: Filter;\n  readonly choose: (filter: Filter) => void;\n};\n\nexport function NoteFilters({ value, choose }: Props) {\n  return (\n    <FilterChoice options={[\"all\", \"pinned\"]} value={value} choose={choose} />\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "E11",
+      "why": "результаты поиска на пустом ответе рисуют пустой список: «ничего не найдено» не сказано никак, и экран выглядит сломанным, а не пустым",
+      "create": {
+        "path": "app/SearchResults.tsx",
+        "text": "type Props = {\n  readonly titles: readonly string[];\n};\n\nexport function SearchResults({ titles }: Props) {\n  return (\n    <ul>\n      {titles.map((title) => (\n        <li key={title}>{title}</li>\n      ))}\n    </ul>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "E6",
+      "why": "отправка закреплённых ждёт все запросы через allSettled и завершается как успех, сколько бы из них ни упало: отказ неотличим от успеха, и вызывающий не узнает, какие закрепления не дошли",
+      "create": {
+        "path": "shared/notes/pushPins.ts",
+        "text": "export const pushPins = async (\n  push: (id: string) => Promise<void>,\n  ids: readonly string[],\n): Promise<void> => {\n  await Promise.allSettled(ids.map(push));\n};\n"
+      }
+    },
+    {
+      "criterion": "C13",
+      "why": "добавление метки дописывает её без проверки: повторное нажатие либо повторная доставка события кладут ту же метку второй раз, и у заметки две одинаковые метки",
+      "create": {
+        "path": "shared/notes/withTag.ts",
+        "text": "export const withTag = (tags: readonly string[], tag: string): string[] => [\n  ...tags,\n  tag.trim().toLowerCase(),\n];\n"
+      }
+    },
+    {
+      "criterion": "P4",
+      "why": "отметка «сделано» — флажок без подписи: заголовок стоит рядом текстом, но с флажком не связан, и вспомогательная технология называет его просто «флажок»",
+      "held": "вопрос модели",
+      "create": {
+        "path": "app/TaskRow.tsx",
+        "text": "type Props = {\n  readonly title: string;\n  readonly done: boolean;\n  readonly toggle: () => void;\n};\n\nexport function TaskRow({ title, done, toggle }: Props) {\n  return (\n    <li>\n      <input type=\"checkbox\" checked={done} onChange={toggle} />\n      <span>{title}</span>\n    </li>\n  );\n}\n"
+      }
+    },
+    {
+      "criterion": "A1",
+      "why": "сводка за неделю одним узлом и отбирает свежие заметки по правилу недели, и оформляет текст письма, и отправляет его: три вопроса в одной функции, ни один не проверить отдельно",
+      "create": {
+        "path": "shared/notes/sendDigest.ts",
+        "text": "const WEEK_MS = 604_800_000;\n\nexport const sendDigest = async (\n  notes: readonly { readonly title: string; readonly createdAt: number }[],\n  now: number,\n  post: (text: string) => Promise<void>,\n): Promise<void> => {\n  const fresh = notes.filter((note) => now - note.createdAt < WEEK_MS);\n  const text = fresh.map((note) => `• ${note.title}`).join(\"\\n\");\n  await post(text);\n};\n"
+      }
+    },
+    {
+      "criterion": "J6",
+      "why": "тест сохранения черновика сверяет строку под внутренним ключом хранилища, а не то, что черновик читается обратно: смена ключа либо формы записи ломает тест при верном поведении, а ответ «failed» при удачной записи он пропускает",
+      "create": {
+        "path": "app/tests/saveDraftStored.test.ts",
+        "text": "import { afterEach, expect, it } from \"vitest\";\n\nimport { saveDraft } from \"../saveDraft\";\n\nafterEach(() => {\n  localStorage.clear();\n});\n\nit(\"stores the draft\", async () => {\n  await saveDraft({ title: \"Plan\", body: \"Steps\" });\n  expect(localStorage.getItem(\"notes-draft\")).toBe(\n    JSON.stringify({ version: 2, title: \"Plan\", body: \"Steps\" }),\n  );\n});\n"
+      }
+    },
+    {
+      "criterion": "J13",
+      "why": "ожидаемое время чтения в тесте посчитано функцией и константой проверяемого модуля: неверный счёт слов либо неверная скорость сдвигают и ответ, и ожидание, и тест проходит",
+      "create": [
+        {
+          "path": "shared/notes/readingTime.ts",
+          "text": "export const WORDS_PER_MINUTE = 200;\n\nexport const wordsOf = (body: string): number =>\n  body.split(/\\s+/).filter(Boolean).length;\n\nexport const readingMinutes = (body: string): number =>\n  Math.ceil(wordsOf(body) / WORDS_PER_MINUTE);\n"
+        },
+        {
+          "path": "shared/notes/tests/readingTime.test.ts",
+          "text": "import { expect, it } from \"vitest\";\n\nimport { readingMinutes, WORDS_PER_MINUTE, wordsOf } from \"../readingTime\";\n\nit(\"rounds reading time up to whole minutes\", () => {\n  const body = \"word \".repeat(450);\n  expect(readingMinutes(body)).toBe(\n    Math.ceil(wordsOf(body) / WORDS_PER_MINUTE),\n  );\n});\n"
+        }
+      ],
+      "culprits": [
+        "shared/notes/tests/readingTime.test.ts"
+      ]
+    },
+    {
+      "criterion": "C4",
+      "why": "удаление заметки вырезает её splice из массива, пришедшего входом, и возвращает его же: мутирует не владелец, вызывающий узнаёт об этом по своему изменившемуся списку, а состояние, сравнивающее по ссылке, перемены не увидит",
+      "create": {
+        "path": "shared/notes/dropNote.ts",
+        "text": "export const dropNote = (\n  notes: { readonly id: string }[],\n  id: string,\n): { readonly id: string }[] => {\n  const index = notes.findIndex((note) => note.id === id);\n  if (index !== -1) notes.splice(index, 1);\n  return notes;\n};\n"
+      }
     }
   ],
   "covers": [
