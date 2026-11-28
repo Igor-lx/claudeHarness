@@ -1073,6 +1073,7 @@ export const BAR_SIGNALS = [
   // Отказ второго шага оставляет первый: оптимистичная запись без отката.
   { ids: ["E12"], sort: "шаги", words: "функция пишет и в своё состояние, и наружу, и в основании не сказано, что останется при отказе второго шага: откат, повтор либо названное промежуточное" },
   { ids: ["C13", "L3", "E12"], sort: "запись", words: "предмет пишет наружу, и в основании не сказано, что даст повтор и сбой посередине" },
+  { ids: ["L3", "C13", "L1", "E9"], sort: "повтор", words: "команда ждёт работу, пришедшую входом, без признака, что такая же уже идёт, и в основании не сказано, что даст второй вызов до ответа первого" },
   { ids: ["Q3"], sort: "запись", mark: "хранилище", words: "предмет пишет в хранилище, и в основании не сказано, нет ли там чувствительного" },
   { ids: ["C10", "A14", "A9-кватер"], sort: "время", words: "предмет берёт время либо случай на месте, и в основании не сказано, почему не входом" },
   { ids: ["A5-тер", "C11"], sort: "разметка", words: "файл разметки обращается наружу либо ко времени, и в основании не сказано, почему это не дело другого слоя" },
@@ -1148,7 +1149,7 @@ export const BAR_SIGNALS = [
   { ids: ["C3"], sort: "кэш", words: "контейнер модуля растёт и не чистится, и в основании не названо правило вытеснения" },
   // Пустота в типе значения контейнера: «нет записи» и «записано пусто»
   // отвечают одним `undefined`. Промах свода пробы `2026-11-18`, посадка `K4`.
-  { ids: ["K4"], sort: "пустота", words: "в типе значения контейнера есть пустота, и в основании не сказано, чем «нет записи» отличается от «записано пусто»" },
+  { ids: ["K4"], sort: "пустота", words: "«нет записи» и «записано пусто» отдаются одним значением — пустотой в типе значения контейнера либо пустым умолчанием на поиске, — и в основании не сказано, чем «ещё не пришло» отличается от «пусто»" },
   // Формы, которых держатели не видели: промахи свода пробы `2026-11-19`.
   { ids: ["F3"], sort: "замыкание", words: "долгоживущий обработчик берёт поле захваченного объекта, и в основании не сказано, почему замыкание держит весь объект" },
   { ids: ["M1", "M2"], sort: "проход", words: "ссылка служит флагом первого прохода, и в основании не сказано, что при повторном монтаже" },
@@ -1995,7 +1996,7 @@ export const BAR_FORMS = {
   ],
   K4: [
     UNSEEN.network,
-    "данные из хранилища либо кэша запроса, где «ещё не пришло» и «пусто» смешаны без контейнера с пустотой в типе значения, — вопрос задаёт строка сети, а признак пустоты видит `Map`, `WeakMap` и `Record`",
+    "«ещё не пришло» и «пусто», смешанные не на поиске: умолчание поля (`data?.tags ?? []`), умолчание при разборе (`{ tags = [] }`), пустой ответ из перехвата отказа — признак пустоты видит пустоту в типе значения `Map`, `WeakMap` и `Record` и пустое умолчание после `get`, `getItem` и выборки по ключу; поиск `find` и `at` — нет",
   ],
   K5: [
     "хранилище через библиотеку-обёртку либо свою обёртку — образец знает `localStorage`, `sessionStorage`, `indexedDB`, `caches` и cookie",
@@ -2012,7 +2013,8 @@ export const BAR_FORMS = {
     "долгая операция не на промисе и не на `fetch`: кадровый цикл, воркер, подписка через обёртку — признак гонки видит `await` и обработчики промиса, а правило линта — `fetch` в эффекте без отмены",
   ],
   L3: [
-    "повтор нажатия, который запускает синхронную работу либо пишет через свою обёртку, — признаки видят запись в сеть и хранилище и асинхронный результат",
+    "повтор нажатия, который запускает синхронную работу, ждёт обёртку, взятую импортом, либо метод входа (`await api.put(…)`), либо берёт ответ команды присваиванием — признаки видят запись в сеть и хранилище, асинхронный результат в состоянии и ожидание отдельным оператором функции, пришедшей входом",
+    "признак полёта есть, а не держит: флаг ставят после ожидания либо не снимают на отказе — признак повтора молчит при любом слове полёта в теле (`pending`, `inFlight`, `busy`, `submitting`, `saving`, `disabled`), а держит ли оно, решает чтение",
   ],
   L4: [UNSEEN.network, "ожидание не сети без таймаута: очередь, воркер, блокировка — признак видит обращения к сети"],
   L5: [UNSEEN.race],
@@ -3772,6 +3774,8 @@ const TRANSITIONS_FROM = 3;
 const FORWARD_FREE = new Set(["children", "className", "style", "key", "ref", "id", "as"]);
 /** Входы, которые берут ради одного поля законно: событие, пропы, служебное. */
 const WHOLE_FREE = /^(?:e|ev|evt|event|props|_[\w$]*|args|rest|ctx|context)$/;
+/** Признак полёта: команда знает, что такая же уже идёт, и второй вызов отклоняет. */
+const IN_FLIGHT = /\b(?:is)?(?:pending|inFlight|busy|submitting|saving|disabled)\b/i;
 /** Подписка, которая живёт до снятия: слушатель, интервал, подписчик. Первая
  * группа — имя обработчика, отданного по имени. */
 const LONG_LIVED =
@@ -4686,6 +4690,36 @@ const codeSignalsOf = (file, text, own) => {
   each(/\b(?:Map|WeakMap|Record)\s*<\s*[^,<>]+,\s*[^<>]*\|\s*(?:undefined|null)\b[^<>]*>/g, bare, (m) =>
     at("пустота", m.index, m[0].replace(/\s+/g, " ").split("|").join("/")),
   );
+  // Отсутствие записи, подменённое пустым умолчанием: `get` и выборка по ключу
+  // отдают одно значение на «не загружено» и на «пусто». Промах свода задачи
+  // 1-бис `537`.
+  each(
+    /(?:\.\s*(?:get|getItem)\s*\([^()\n]*\)|[\w$)\]]\s*\[[^\]\n]+\])\s*(?:\?\?|\|\|)\s*(?:\[\s*\]|\{\s*\}|(["'`])\1)/g,
+    bare,
+    (m) => at("пустота", m.index, m[0].replace(/\s+/g, " "), "умолчание"),
+  );
+  // Команда ждёт работу, пришедшую входом, и не знает, идёт ли уже такая же:
+  // второй вызов до ответа первого повторяет операцию (`L3`). Признак записи
+  // видит сеть и хранилище, а не вход. Промах свода задачи 1-бис `551`.
+  const repeated = new Set();
+  for (const one of bodies) {
+    if (one.to < 0) continue;
+    const code = bare.slice(one.from + 1, one.to);
+    if (IN_FLIGHT.test(code)) continue;
+    const inputs = new Set(
+      topLevelParts(one.params, 0)
+        .map((part) => /^\s*([A-Za-z_$][\w$]*)\s*(?:[?:=]|$)/.exec(part.text)?.[1])
+        .filter((name) => name !== undefined),
+    );
+    // Команда — ожидание отдельным оператором: ответ, взятый присваиванием,
+    // — запрос, а не повтор операции.
+    for (const m of code.matchAll(/(?:^|[;{}\n])\s*(await\s+([A-Za-z_$][\w$]*)\s*\()/g)) {
+      const where = one.from + 1 + m.index + m[0].indexOf(m[1]);
+      if (!inputs.has(m[2]) || repeated.has(where)) continue;
+      repeated.add(where);
+      at("повтор", where, m[1].replace(/\s+/g, " "));
+    }
+  }
   // Долгоживущий обработчик, чьё тело берёт поле захваченного объекта
   // (`F3`): замыкание держит весь объект, пока обработчик подписан. Промах
   // свода пробы `2026-11-19`, посадка в соседе.
@@ -6382,10 +6416,10 @@ export const PREDICATE_CASES = [
   // `A8-бис`; показ по условию статическим импортом — `R4`. Законные пары —
   // без строки.
   ["signalsSummary","src/a.ts\nexport const submit = async (input: HTMLInputElement, save: (t: string) => Promise<boolean>) => {\n  const tag = input.value;\n  input.value = \"\";\n  return save(tag);\n};","3:ввод/очищено до ответа;1:целое"],
-  ["signalsSummary","src/a.ts\nexport const submit = async (text: string, setText: (t: string) => void, send: (t: string) => Promise<void>) => {\n  setText(\"\");\n  await send(text);\n};","3:гонка/без отмены;2:ввод/очищено до ответа"],
+  ["signalsSummary","src/a.ts\nexport const submit = async (text: string, setText: (t: string) => void, send: (t: string) => Promise<void>) => {\n  setText(\"\");\n  await send(text);\n};","3:гонка/без отмены;2:ввод/очищено до ответа;3:повтор"],
   ["signalsSummary","src/a.ts\nexport const keep = async (input: HTMLInputElement, save: (t: string) => Promise<boolean>) => {\n  const ok = await save(input.value);\n  if (ok) input.value = \"\";\n  return ok;\n};","1:целое"],
-  ["signalsSummary","src/a.ts\nexport const load = async (file: File, save: (t: string) => Promise<void>) => {\n  const text = await file.text();\n  await save(text.trim());\n};","1:оркестрация"],
-  ["signalsSummary","src/a.ts\nexport const run = async (read: () => Promise<string>, save: (t: string) => Promise<void>) => {\n  const t = await read();\n  await save(t);\n};",""],
+  ["signalsSummary","src/a.ts\nexport const load = async (file: File, save: (t: string) => Promise<void>) => {\n  const text = await file.text();\n  await save(text.trim());\n};","1:оркестрация;3:повтор"],
+  ["signalsSummary","src/a.ts\nexport const run = async (read: () => Promise<string>, save: (t: string) => Promise<void>) => {\n  const t = await read();\n  await save(t);\n};","3:повтор"],
   ["signalsSummary","src/a.tsx\nexport function Bar({ percent }: { percent: number }) {\n  return <span style={{ width: `${String(percent)}%` }} />;\n}","2:визуальное/вычислено"],
   ["signalsSummary","src/a.tsx\nexport function Bar() {\n  return <span style={{ width: \"50%\", top: 3 }} />;\n}",""],
   ["signalsSummary","src/shared/notes/authKey.ts\nexport const forget = (): void => {\n  sessionStorage.clear();\n};","2:внешнее/хранилище;2:запись/хранилище;1:область/без слова области"],
@@ -6394,11 +6428,22 @@ export const PREDICATE_CASES = [
   ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ open }: { open: boolean }) {\n  return <main>{open ? <History /> : null}</main>;\n}","3:поставка/по условию;2:имя/булево"],
   ["signalsSummary","src/app/Page.tsx\nimport { History } from \"./History\";\nexport function Page({ open }: { open: boolean }) {\n  return <main><History />{open && <History />}</main>;\n}","2:имя/булево"],
   ["signalsSummary","src/app/Page.tsx\nimport { lazy } from \"react\";\nimport { Spinner } from \"./Spinner\";\nconst History = lazy(() => import(\"./History\"));\nexport function Page({ open }: { open: boolean }) {\n  return <main>{open && <Spinner />}</main>;\n}","4:имя/булево;3:мёртвое"],
-  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, persist: (t: string) => Promise<void>) => {\n  input.value = \"\";\n  await persist(\"x\");\n};","2:ввод/очищено до ответа;1:целое"],
+  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, persist: (t: string) => Promise<void>) => {\n  input.value = \"\";\n  await persist(\"x\");\n};","2:ввод/очищено до ответа;1:целое;3:повтор"],
   ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, api: { post: (t: string) => Promise<void> }) => {\n  input.value = \"\";\n  await api.post(\"x\");\n};","2:ввод/очищено до ответа;1:целое"],
-  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, submitForm: (t: string) => Promise<void>) => {\n  input.value = \"\";\n  await submitForm(\"x\");\n};","2:ввод/очищено до ответа;1:целое"],
-  ["signalsSummary","src/a.ts\nexport const load = async (file: File, items: string[], save: (t: string) => Promise<void>) => {\n  await file.text();\n  items.forEach(async (one) => {\n    await save(one);\n  });\n};","3:пакет"],
-  ["signalsSummary","src/a.ts\nexport const load = async (file: File, save: (t: string) => Promise<void>) => {\n  await file.text();\n  async function inner() {\n    await save(\"x\");\n  }\n  return inner;\n};",""],
+  ["signalsSummary","src/a.ts\nexport const a = async (input: HTMLInputElement, submitForm: (t: string) => Promise<void>) => {\n  input.value = \"\";\n  await submitForm(\"x\");\n};","2:ввод/очищено до ответа;1:целое;3:повтор"],
+  ["signalsSummary","src/a.ts\nexport const load = async (file: File, items: string[], save: (t: string) => Promise<void>) => {\n  await file.text();\n  items.forEach(async (one) => {\n    await save(one);\n  });\n};","3:пакет;4:повтор"],
+  ["signalsSummary","src/a.ts\nexport const load = async (file: File, save: (t: string) => Promise<void>) => {\n  await file.text();\n  async function inner() {\n    await save(\"x\");\n  }\n  return inner;\n};","4:повтор"],
+  ["signalsSummary","src/a.ts\nexport const run = async (form: { isSubmitting: boolean }, save: () => Promise<void>) => {\n  if (form.isSubmitting) return;\n  await save();\n};","1:целое"],
+  ["signalsSummary","src/a.tsx\nexport const run = async (b: HTMLButtonElement, save: () => Promise<void>) => {\n  b.disabled = true;\n  await save();\n};","1:целое"],
+  ["signalsSummary","src/a.ts\nexport const run = async (s: { isPending: boolean }, save: () => Promise<void>) => {\n  if (s.isPending) return;\n  await save();\n};","1:целое"],
+  ["signalsSummary","src/a.ts\nexport const run = async (s: { isInFlight: boolean }, save: () => Promise<void>) => {\n  if (s.isInFlight) return;\n  await save();\n};","1:целое"],
+  ["signalsSummary","src/a.ts\nexport const run = async (s: { isBusy: boolean }, save: () => Promise<void>) => {\n  if (s.isBusy) return;\n  await save();\n};","1:целое"],
+  ["signalsSummary","src/a.ts\nexport const run = async (s: { isSaving: boolean }, save: () => Promise<void>) => {\n  if (s.isSaving) return;\n  await save();\n};","1:целое"],
+  ["signalsSummary","src/a.js\nexport const add = (post) => async (t) => {\n  await post(t);\n};","2:повтор"],
+  ["signalsSummary","src/a.ts\nexport const add = async (post: () => Promise<void>) => await post();","1:повтор"],
+  ["signalsSummary","src/a.ts\nexport const tags = (m: Map<string, string[]>, id: string) => m.get(id) ?? [];","1:пустота/умолчание"],
+  ["signalsSummary","src/a.ts\nexport const title = (byId: Record<string, string>, id: string) => byId[id] || \"\";","1:пустота/умолчание"],
+  ["signalsSummary","src/a.ts\nexport const prefs = (s: { getItem: (k: string) => object | null }) => s.getItem(\"k\") ?? {};","1:пустота/умолчание"],
   ["signalsSummary","src/a.tsx\nexport function Bar({ x }: { x: number }) {\n  return <span style={{ top: 3, left: x }} />;\n}","2:визуальное/вычислено"],
   ["signalsSummary","shared/notes/token.ts\nexport const forget = (): void => {\n  go();\n};","1:область/без слова области"],
   ["signalsSummary","src/shared/notes/token.ts\nexport const later = () => import(\"./token2\");",""],

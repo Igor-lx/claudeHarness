@@ -99,6 +99,45 @@ describe("словарь области", () => {
     ]);
   });
 
+  // Отсутствие записи, подменённое пустым умолчанием, — та же пустота без
+  // пустоты в типе: «не загружено» и «пусто» отдаются одним значением.
+  // Промах свода задачи 1-бис `537` `K4`.
+  it("пустое умолчание на поиске названо пустотой, умолчание не на поиске — нет", () => {
+    const text =
+      "export const tags = (cache: ReadonlyMap<string, readonly string[]>, id: string) => cache.get(id) ?? [];\n" +
+      "export const title = (byId: Record<string, string>, id: string) => byId[id] || \"\";\n" +
+      "export const items = (list?: string[]) => list ?? [];\n";
+    const hits = vocabulary.signalsOf("src/a.ts", text, { kind: "код", own: new Set() });
+    expect(hits.filter((h) => h.sort === "пустота").map((h) => [h.line, h.mark])).toEqual([
+      [1, "умолчание"],
+      [2, "умолчание"],
+    ]);
+  });
+
+  // Команда, которая ждёт работу, пришедшую входом, без признака «уже идёт»:
+  // второй вызов до ответа первого повторяет операцию. Промах свода задачи
+  // 1-бис `551` `L3`.
+  it("ожидание команды из входа без признака полёта названо повтором; метод входа и признак полёта — нет", () => {
+    const text =
+      "export const addOnSubmit =\n" +
+      "  (post: (t: string) => Promise<void>, append: (t: string) => void) =>\n" +
+      "  async (text: string): Promise<void> => {\n" +
+      "    await post(text);\n" +
+      "    append(text);\n" +
+      "  };\n" +
+      "export async function save(api: { put: (t: string) => Promise<void> }, t: string) {\n" +
+      "  await api.put(t);\n" +
+      "}\n" +
+      "export async function guarded(send: () => Promise<void>, state: { pending: boolean }) {\n" +
+      "  if (state.pending) return;\n" +
+      "  await send();\n" +
+      "}\n";
+    const hits = vocabulary.signalsOf("src/a.ts", text, { kind: "код", own: new Set() });
+    expect(hits.filter((h) => h.sort === "повтор").map((h) => [h.line, h.sample])).toEqual([
+      [4, "await post("],
+    ]);
+  });
+
   // Поиск пропускается и внутри `sh -c` и `eval`: исключение идёт вглубь.
   // Работник ревью `процесс.3` прочёл код `cat`.
   it("чтение файла кода оболочкой названо командой, поиск — нет", () => {
